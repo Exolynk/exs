@@ -1,0 +1,2 @@
+# exs
+ExS - Exolynk Script
