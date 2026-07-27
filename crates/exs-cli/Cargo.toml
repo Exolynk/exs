@@ -1,0 +1,18 @@
+[package]
+name = "exs-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "exs"
+path = "src/main.rs"
+
+[dependencies]
+exs-compiler = { path = "../exs-compiler" }
+exs-runner = { path = "../exs-runner" }
+exs-value = { path = "../exs-value" }

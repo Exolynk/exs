@@ -1,0 +1,18 @@
+[package]
+name = "exs-runner"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+exs-abi = { path = "../exs-abi" }
+exs-value = { path = "../exs-value" }
+wasmtime.workspace = true
+
+[dev-dependencies]
+exs-runtime = { path = "../exs-runtime" }
+exs-compiler = { path = "../exs-compiler" }
