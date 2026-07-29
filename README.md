@@ -41,7 +41,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Compile and commit `crates/exs-runtime/exs-runtime.wasm` for compiler linking.
 - [x] Implement source loading, lexer, parser, `Module` AST, source spans, and diagnostics.
 - [x] Support a function-only module root with exactly one-parameter `fn main(input)`.
-- [x] Support local `let`, reassignment, `ret`, semicolon validation, integers, floats, booleans, mixed numeric arithmetic/comparisons, logical expressions, calls, and `if`/`else`.
+- [x] Support local `let`, reassignment, `ret`, semicolon validation, integers, floats, booleans, mixed numeric arithmetic/comparisons, logical expressions, calls, conditionals, `while`, and `break`/`continue`.
 - [x] Lower direct functions to Wasm and link them with the runtime template into one `.wasm` output.
 - [x] Implement a minimal Wasmtime runner that passes an `ExsValue` CBOR input to `fn main(input)` and returns an `ExsValue` result without exposing internal references.
 - [x] Add lexer, parser, compiler, and end-to-end Wasm execution tests.
@@ -58,12 +58,13 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Add mutable boxed Lists with literals, dynamic indexing, index assignment, generic member dispatch for `list.push(value)`, and recursive CBOR input/output.
 - [x] Add insertion-ordered boxed Objects with literals, generic bracket/dot access, mutation, member dispatch, and recursive CBOR input/output.
 - [x] Complete generic List operations: `push`, `pop`, `insert`, `remove`, `clear`, and shallow `List + value` / `List + List`.
+- [x] Add `for item in iterable` with runtime-owned shallow List snapshots and Unicode-scalar String snapshots.
 
 ### Phase 4: Garbage collection
 
 - [x] Implement stop-the-world mark-and-sweep collection with reusable value-table slots.
 - [x] Add compiler-generated root frames, temporary runtime roots, and List/Object heap scanning.
-- [x] Test aliasing, cycles, and allocation-triggered collection.
+- [x] Test aliasing, cycles, and allocation-triggered collection, including allocation-heavy loops.
 
 ### Phase 5: Closures
 

@@ -187,6 +187,18 @@ pub extern "C" fn __exs_rt_index_set(
     value::operations::index_set(receiver, index, replacement)
 }
 
+/// Creates the runtime-owned snapshot used by one compiled for loop.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_iter_snapshot(iterable: ValueRef) -> ValueRef {
+    value::operations::iter_snapshot(iterable)
+}
+
+/// Returns the visible scalar or entry count of one runtime value.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_length(value: ValueRef) -> ValueRef {
+    value::operations::length(value)
+}
+
 /// Calls one statically named member method through runtime receiver dispatch.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_call_method(

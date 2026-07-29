@@ -1,11 +1,14 @@
 //! Dynamic Wasm operations shared across runtime value kinds.
 
-use alloc::string::String;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use exs_value::ValueRef;
 
+use crate::gc;
 use crate::runtime;
-use crate::value::{RtValue, list, numeric, object};
+use crate::value::{RtValue, RuntimeList, list, numeric, object};
 
 /// Adds two runtime values through List or numeric dispatch.
 pub(crate) fn add(left: ValueRef, right: ValueRef) -> ValueRef {
@@ -58,6 +61,47 @@ pub(crate) fn index_set(receiver: ValueRef, index: ValueRef, replacement: ValueR
         RtValue::Object(_) => object::operations::set(receiver, index, replacement),
         _ => runtime::trap(),
     }
+}
+
+/// Creates the shallow List or scalar-String snapshot consumed by a for loop.
+pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
+    match runtime::value(iterable) {
+        RtValue::List(list) => {
+            let elements = list.elements.clone();
+            runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })))
+        }
+        RtValue::String(string) => {
+            let scalars = string
+                .as_str()
+                .chars()
+                .map(|scalar| scalar.to_string())
+                .collect::<Vec<_>>();
+            let checkpoint = gc::temporary_root_checkpoint();
+            let mut elements = Vec::with_capacity(scalars.len());
+            for scalar in scalars {
+                let value = runtime::allocate(RtValue::String(Box::new(
+                    crate::value::RuntimeString::from_string(scalar),
+                )));
+                gc::push_temporary_root(value);
+                elements.push(value);
+            }
+            let snapshot = runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })));
+            gc::restore_temporary_roots(checkpoint);
+            snapshot
+        }
+        _ => runtime::trap(),
+    }
+}
+
+/// Returns the scalar or entry count for runtime values with a visible length.
+pub(crate) fn length(value: ValueRef) -> ValueRef {
+    let length = match runtime::value(value) {
+        RtValue::String(value) => value.as_str().chars().count(),
+        RtValue::List(value) => value.elements.len(),
+        RtValue::Object(value) => value.entries.len(),
+        _ => runtime::trap(),
+    };
+    list::operations::length_value(length)
 }
 
 /// Dispatches a statically named runtime member method.

@@ -68,6 +68,36 @@ fn compiles_object_syntax() {
     assert!(module.is_ok());
 }
 
+/// Compiles both loop forms and their nearest-loop control statements.
+#[test]
+fn compiles_while_for_break_and_continue_syntax() {
+    let module = compile(
+        SourceInput {
+            source_id: "loops.exs",
+            text: "fn main(input) { let value = 0; while value < 3 { value = value + 1; } for item in [1, 2] { if item == 1 { continue; } break; } ret value; }",
+        },
+        CompileOptions,
+    );
+    assert!(module.is_ok());
+}
+
+/// Rejects a loop-control statement that has no enclosing loop target.
+#[test]
+fn rejects_break_outside_a_loop() {
+    let result = compile(
+        SourceInput {
+            source_id: "break.exs",
+            text: "fn main(input) { break; ret input; }",
+        },
+        CompileOptions,
+    );
+    let error = match result {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics[0].code, "E0213");
+}
+
 /// Reports a missing statement terminator at the source level.
 #[test]
 fn reports_a_missing_statement_semicolon() {

@@ -80,6 +80,36 @@ pub enum Statement<'a> {
         /// Full statement span.
         span: SourceSpan<'a>,
     },
+    /// A conditionally repeated statement block.
+    While {
+        /// Expression evaluated before every iteration.
+        condition: Expression<'a>,
+        /// Repeated while the condition evaluates to true.
+        body: Block<'a>,
+        /// Full statement span.
+        span: SourceSpan<'a>,
+    },
+    /// A repeated statement block over one runtime iterable snapshot.
+    For {
+        /// Binding introduced for the current iteration value.
+        binding: Identifier<'a>,
+        /// Expression evaluated once before iteration begins.
+        iterable: Expression<'a>,
+        /// Repeated once for each snapshot value.
+        body: Block<'a>,
+        /// Full statement span.
+        span: SourceSpan<'a>,
+    },
+    /// Exits the nearest enclosing loop.
+    Break {
+        /// Full statement span.
+        span: SourceSpan<'a>,
+    },
+    /// Advances the nearest enclosing loop.
+    Continue {
+        /// Full statement span.
+        span: SourceSpan<'a>,
+    },
     /// An expression evaluated for side effects.
     Expression {
         /// Expression to evaluate.

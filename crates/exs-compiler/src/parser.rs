@@ -127,6 +127,47 @@ impl<'a> Parser<'a> {
                 span: start.through(end),
             });
         }
+        if self.matches(&TokenKind::While) {
+            let start = self.previous().span;
+            let condition = self.expression()?;
+            let body = self.block()?;
+            return Ok(Statement::While {
+                condition,
+                span: start.through(body.span),
+                body,
+            });
+        }
+        if self.matches(&TokenKind::For) {
+            let start = self.previous().span;
+            let binding = self.identifier("expected binding name after for")?;
+            self.expect_simple(TokenKind::In, "expected in after for-loop binding")?;
+            let iterable = self.expression()?;
+            let body = self.block()?;
+            return Ok(Statement::For {
+                binding,
+                iterable,
+                span: start.through(body.span),
+                body,
+            });
+        }
+        if self.matches(&TokenKind::Break) {
+            let start = self.previous().span;
+            let end = self
+                .expect_simple(TokenKind::Semicolon, "expected semicolon after break")?
+                .span;
+            return Ok(Statement::Break {
+                span: start.through(end),
+            });
+        }
+        if self.matches(&TokenKind::Continue) {
+            let start = self.previous().span;
+            let end = self
+                .expect_simple(TokenKind::Semicolon, "expected semicolon after continue")?
+                .span;
+            return Ok(Statement::Continue {
+                span: start.through(end),
+            });
+        }
         let expression = self.expression()?;
         if self.matches(&TokenKind::Equal) {
             let start = expression_span(&expression);

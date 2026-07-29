@@ -10,8 +10,8 @@ pub use cbor::{CborError, ExsValue};
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 5 adds compiler-rooted stop-the-world garbage collection to the runtime template.
-pub const ABI_VERSION: u32 = 5;
+/// Version 6 adds generic runtime iteration snapshots for compiled loops.
+pub const ABI_VERSION: u32 = 6;
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// The entry export invoked by runners.

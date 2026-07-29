@@ -145,7 +145,8 @@ pub(crate) mod operations {
     }
 
     /// Returns a checked ExS integer containing a collection length.
-    fn length_value(length: usize) -> ValueRef {
+    /// Allocates a checked ExS integer containing one collection length.
+    pub(crate) fn length_value(length: usize) -> ValueRef {
         let Ok(length) = i64::try_from(length) else {
             runtime::trap();
         };

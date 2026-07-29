@@ -118,6 +118,17 @@ fn collect_block_literals(block: &Block<'_>, pool: &mut LiteralPool) {
                     collect_block_literals(else_block, pool);
                 }
             }
+            Statement::While {
+                condition, body, ..
+            } => {
+                collect_expression_literals(condition, pool);
+                collect_block_literals(body, pool);
+            }
+            Statement::For { iterable, body, .. } => {
+                collect_expression_literals(iterable, pool);
+                collect_block_literals(body, pool);
+            }
+            Statement::Break { .. } | Statement::Continue { .. } => {}
         }
     }
 }

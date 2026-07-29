@@ -33,6 +33,16 @@ pub enum TokenKind {
     If,
     /// The `else` keyword.
     Else,
+    /// The while keyword.
+    While,
+    /// The for keyword.
+    For,
+    /// The in keyword.
+    In,
+    /// The break keyword.
+    Break,
+    /// The continue keyword.
+    Continue,
     /// The `true` keyword.
     True,
     /// The `false` keyword.
@@ -428,6 +438,11 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
         "ret" => TokenKind::Ret,
         "if" => TokenKind::If,
         "else" => TokenKind::Else,
+        "while" => TokenKind::While,
+        "for" => TokenKind::For,
+        "in" => TokenKind::In,
+        "break" => TokenKind::Break,
+        "continue" => TokenKind::Continue,
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         _ => TokenKind::Identifier(value.to_owned()),

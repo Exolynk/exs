@@ -22,6 +22,17 @@ pub(super) struct FunctionSignature {
     pub(super) arity: usize,
 }
 
+/// Structured Wasm targets and lexical cleanup data for one active source loop.
+#[derive(Clone, Copy)]
+struct LoopContext {
+    /// Control-stack depth of the enclosing block exited by break.
+    break_depth: u32,
+    /// Control-stack depth reached by continue.
+    continue_depth: u32,
+    /// First lexical scope whose roots must be cleared before a loop branch.
+    cleanup_scope_start: usize,
+}
+
 /// Validates declarations and assigns their final linked Wasm function indexes.
 pub(super) fn build_signatures<'a>(
     module: &Module<'a>,
@@ -93,8 +104,10 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     literals: &'module HashMap<String, u32>,
     function: Function,
     scopes: Vec<HashMap<String, u32>>,
+    loops: Vec<LoopContext>,
     next_local: u32,
     root_frame_local: u32,
+    control_depth: u32,
 }
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
@@ -146,8 +159,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             literals,
             function: Function::new([(local_count + 1, ValType::I32)]),
             scopes: vec![parameters],
+            loops: Vec::new(),
             next_local: declaration.parameters.len() as u32,
             root_frame_local,
+            control_depth: 0,
         };
         compiler.initialize_root_frame(root_slot_count)?;
         Ok(compiler)
@@ -283,15 +298,178 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.runtime_value_call("__exs_rt_condition", 1, condition_span(condition))?;
                 self.function
                     .instruction(&Instruction::If(BlockType::Empty));
+                self.enter_control()?;
                 self.compile_block(then_block, true)?;
                 if let Some(else_block) = else_block {
                     self.function.instruction(&Instruction::Else);
                     self.compile_block(else_block, true)?;
                 }
                 self.function.instruction(&Instruction::End);
+                self.exit_control()?;
             }
+            Statement::While {
+                condition,
+                body,
+                span,
+            } => self.compile_while(condition, body, *span)?,
+            Statement::For {
+                binding,
+                iterable,
+                body,
+                span,
+            } => self.compile_for(binding, iterable, body, *span)?,
+            Statement::Break { span } => self.compile_loop_branch(*span, true)?,
+            Statement::Continue { span } => self.compile_loop_branch(*span, false)?,
         }
         Ok(())
+    }
+
+    /// Lowers a while loop to one break block and one condition-checking Wasm loop.
+    fn compile_while(
+        &mut self,
+        condition: &Expression<'a>,
+        body: &Block<'a>,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
+        self.enter_control()?;
+        let break_depth = self.control_depth;
+        self.function
+            .instruction(&Instruction::Loop(BlockType::Empty));
+        self.enter_control()?;
+        let continue_depth = self.control_depth;
+
+        self.compile_expression(condition)?;
+        self.runtime_value_call("__exs_rt_condition", 1, condition_span(condition))?;
+        self.function.instruction(&Instruction::I32Eqz);
+        self.branch_if_to(break_depth, span)?;
+
+        self.loops.push(LoopContext {
+            break_depth,
+            continue_depth,
+            cleanup_scope_start: self.scopes.len(),
+        });
+        self.compile_block(body, true)?;
+        let _loop = self.loops.pop();
+        self.branch_to(continue_depth, span)?;
+
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()
+    }
+
+    /// Lowers a for loop through a runtime iterable snapshot and indexed Wasm loop.
+    fn compile_for(
+        &mut self,
+        binding: &crate::ast::Identifier<'a>,
+        iterable: &Expression<'a>,
+        body: &Block<'a>,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.compile_expression(iterable)?;
+        let iterable = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(iterable));
+        self.runtime_value_call("__exs_rt_iter_snapshot", 1, span)?;
+        let snapshot = self.store_stack_value()?;
+        self.clear_root_slot(iterable)?;
+
+        self.function.instruction(&Instruction::I64Const(0));
+        self.runtime_call("__exs_rt_int_new", span)?;
+        let index = self.store_stack_value()?;
+        let item = self.allocate_local();
+        let mut iteration_scope = HashMap::new();
+        iteration_scope.insert(binding.name.clone(), item);
+        self.scopes.push(iteration_scope);
+
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
+        self.enter_control()?;
+        let break_depth = self.control_depth;
+        self.function
+            .instruction(&Instruction::Loop(BlockType::Empty));
+        self.enter_control()?;
+        let loop_depth = self.control_depth;
+
+        self.function.instruction(&Instruction::LocalGet(snapshot));
+        self.runtime_value_call("__exs_rt_length", 1, span)?;
+        let length = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(index));
+        self.function.instruction(&Instruction::LocalGet(length));
+        self.runtime_value_call("__exs_rt_lt", 2, span)?;
+        let condition = self.allocate_local();
+        self.function.instruction(&Instruction::LocalSet(condition));
+        self.clear_root_slot(length)?;
+        self.function.instruction(&Instruction::LocalGet(condition));
+        self.runtime_value_call("__exs_rt_condition", 1, span)?;
+        self.function.instruction(&Instruction::I32Eqz);
+        self.branch_if_to(break_depth, span)?;
+
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
+        self.enter_control()?;
+        let continue_depth = self.control_depth;
+        self.loops.push(LoopContext {
+            break_depth,
+            continue_depth,
+            cleanup_scope_start: self.scopes.len(),
+        });
+
+        self.function.instruction(&Instruction::LocalGet(snapshot));
+        self.function.instruction(&Instruction::LocalGet(index));
+        self.runtime_value_call("__exs_rt_index_get", 2, span)?;
+        self.store_stack_value_in(item)?;
+        self.compile_block(body, true)?;
+        let _loop = self.loops.pop();
+
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        self.function.instruction(&Instruction::LocalGet(index));
+        self.function.instruction(&Instruction::I64Const(1));
+        self.runtime_call("__exs_rt_int_new", span)?;
+        self.runtime_value_call("__exs_rt_add", 2, span)?;
+        self.store_stack_value_in(index)?;
+        self.branch_to(loop_depth, span)?;
+
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        let Some(iteration_scope) = self.scopes.pop() else {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0999",
+                span,
+                "missing for-loop iteration scope",
+            )));
+        };
+        for local in iteration_scope.into_values() {
+            self.clear_root_slot(local)?;
+        }
+        self.clear_root_slot(snapshot)?;
+        self.clear_root_slot(index)
+    }
+
+    /// Emits break or continue after releasing roots local to the current loop body.
+    fn compile_loop_branch(
+        &mut self,
+        span: SourceSpan<'a>,
+        is_break: bool,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let Some(context) = self.loops.last().copied() else {
+            let keyword = if is_break { "break" } else { "continue" };
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0213",
+                span,
+                format!("{keyword} is only valid inside a loop"),
+            )));
+        };
+        self.clear_roots_from_scope(context.cleanup_scope_start)?;
+        if is_break {
+            self.branch_to(context.break_depth, span)
+        } else {
+            self.branch_to(context.continue_depth, span)
+        }
     }
 
     /// Compiles one source expression into a ValueRef on the Wasm stack.
@@ -584,6 +762,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.runtime_value_call("__exs_rt_condition", 1, span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.enter_control()?;
         if is_or {
             self.function.instruction(&Instruction::I32Const(1));
             self.runtime_call("__exs_rt_bool_new", span)?;
@@ -598,7 +777,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.runtime_call("__exs_rt_bool_new", span)?;
         }
         self.function.instruction(&Instruction::End);
-        Ok(())
+        self.exit_control()
     }
 
     /// Compiles an expression and verifies it is a boolean without consuming it.
@@ -651,6 +830,84 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.runtime_call(name, span)?;
         for argument in arguments {
             self.clear_root_slot(argument)?;
+        }
+        Ok(())
+    }
+
+    /// Increases the tracked structured-control nesting depth.
+    fn enter_control(&mut self) -> Result<(), CompileDiagnostics<'a>> {
+        self.control_depth = self.control_depth.checked_add(1).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                self.declaration.span,
+                "too many nested control-flow blocks in one function",
+            ))
+        })?;
+        Ok(())
+    }
+
+    /// Decreases the tracked structured-control nesting depth.
+    fn exit_control(&mut self) -> Result<(), CompileDiagnostics<'a>> {
+        self.control_depth = self.control_depth.checked_sub(1).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                self.declaration.span,
+                "unbalanced compiler control-flow bookkeeping",
+            ))
+        })?;
+        Ok(())
+    }
+
+    /// Branches to one active structured-control depth.
+    fn branch_to(
+        &mut self,
+        target_depth: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let depth = self
+            .control_depth
+            .checked_sub(target_depth)
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    span,
+                    "invalid compiler loop branch target",
+                ))
+            })?;
+        self.function.instruction(&Instruction::Br(depth));
+        Ok(())
+    }
+
+    /// Conditionally branches to one active structured-control depth.
+    fn branch_if_to(
+        &mut self,
+        target_depth: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let depth = self
+            .control_depth
+            .checked_sub(target_depth)
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    span,
+                    "invalid compiler loop branch target",
+                ))
+            })?;
+        self.function.instruction(&Instruction::BrIf(depth));
+        Ok(())
+    }
+
+    /// Clears roots introduced in lexical scopes at or below one scope-stack position.
+    fn clear_roots_from_scope(&mut self, scope_start: usize) -> Result<(), CompileDiagnostics<'a>> {
+        let locals = self
+            .scopes
+            .iter()
+            .skip(scope_start)
+            .flat_map(|scope| scope.values().copied())
+            .collect::<Vec<_>>();
+        for local in locals {
+            self.clear_root_slot(local)?;
         }
         Ok(())
     }
@@ -783,6 +1040,8 @@ fn count_lets(block: &Block<'_>) -> u32 {
                 else_block,
                 ..
             } => count_lets(then_block) + else_block.as_ref().map_or(0, count_lets),
+            Statement::While { body, .. } => count_lets(body),
+            Statement::For { body, .. } => 1 + count_lets(body),
             _ => 0,
         })
         .sum()
@@ -818,6 +1077,13 @@ fn count_expressions_statement(statement: &Statement<'_>) -> u32 {
                 + count_expressions_block(then_block)
                 + else_block.as_ref().map_or(0, count_expressions_block)
         }
+        Statement::While {
+            condition, body, ..
+        } => count_expressions(condition) + count_expressions_block(body),
+        Statement::For { iterable, body, .. } => {
+            6 + count_expressions(iterable) + count_expressions_block(body)
+        }
+        Statement::Break { .. } | Statement::Continue { .. } => 0,
     }
 }
 

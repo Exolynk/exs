@@ -536,6 +536,12 @@ A loop variable is a fresh binding for each iteration. Closures created in diffe
 
 `break;` exits the nearest loop. `continue;` advances the nearest loop. Using either outside a loop is a compile error.
 
+### Phase 4 implementation
+
+The current compiler lowers `while`, `for`, `break`, and `continue` directly to structured WebAssembly control flow. A compiled `for` evaluates its iterable once and calls generic runtime operations to create a shallow List snapshot or a List of Unicode-scalar Strings; the compiler never accesses List or String payload layouts. The iterator snapshot, index, and current binding remain in compiler root-frame slots for the loop lifetime.
+
+Until Error Values are implemented, a non-Bool `while` condition and a non-List/non-String `for` iterable trap the current Wasm execution rather than returning a recoverable `TypeError` value.
+
 ## Return
 
 ```text
@@ -1083,7 +1089,7 @@ GC MAY run at allocation safe points and scheduler checkpoints. It MUST NOT chan
 
 ### Phase 4 implementation
 
-The current runtime uses stop-the-world mark-and-sweep collection before each language-value allocation. `ValueRef` remains a 32-bit runtime-local slot reference; swept slots are reused only after compiler-generated root frames and runtime temporary roots prove the previous value unreachable. The collector marks List elements and Object property values, preserving aliases and cycles. Future heap variants MUST add their owned `ValueRef` fields to this traversal.
+The current runtime uses stop-the-world mark-and-sweep collection before each language-value allocation. `ValueRef` remains a 32-bit runtime-local slot reference; swept slots are reused only after compiler-generated root frames and runtime temporary roots prove the previous value unreachable. The collector marks List elements and Object property values, preserving aliases and cycles. Loop iteration snapshots, indexes, and bindings are compiler roots, and scalar String snapshot construction uses temporary runtime roots across its allocations. Future heap variants MUST add their owned `ValueRef` fields to this traversal.
 
 # 16 – Host ABI
 
