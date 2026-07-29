@@ -1081,6 +1081,10 @@ A runtime MAY move objects if every Value reference, runtime root, and host pin 
 
 GC MAY run at allocation safe points and scheduler checkpoints. It MUST NOT change observable language behavior except timing, runner fuel consumption, and HostResource release timing.
 
+### Phase 4 implementation
+
+The current runtime uses stop-the-world mark-and-sweep collection before each language-value allocation. `ValueRef` remains a 32-bit runtime-local slot reference; swept slots are reused only after compiler-generated root frames and runtime temporary roots prove the previous value unreachable. The collector marks List elements and Object property values, preserving aliases and cycles. Future heap variants MUST add their owned `ValueRef` fields to this traversal.
+
 # 16 – Host ABI
 
 ## Version

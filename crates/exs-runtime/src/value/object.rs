@@ -29,6 +29,7 @@ pub(crate) mod operations {
 
     use exs_value::ValueRef;
 
+    use crate::gc;
     use crate::runtime;
     use crate::value::{RtValue, RuntimeList, RuntimeObject, RuntimeString, operations};
 
@@ -105,6 +106,7 @@ pub(crate) mod operations {
 
     /// Returns a new List containing Object keys in insertion order.
     pub(crate) fn keys(receiver: ValueRef) -> ValueRef {
+        let checkpoint = gc::temporary_root_checkpoint();
         let keys = match runtime::value(receiver) {
             RtValue::Object(object) => object
                 .entries
@@ -116,10 +118,15 @@ pub(crate) mod operations {
         let elements = keys
             .into_iter()
             .map(|key| {
-                runtime::allocate(RtValue::String(Box::new(RuntimeString::from_string(key))))
+                let value =
+                    runtime::allocate(RtValue::String(Box::new(RuntimeString::from_string(key))));
+                gc::push_temporary_root(value);
+                value
             })
             .collect();
-        runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })))
+        let result = runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })));
+        gc::restore_temporary_roots(checkpoint);
+        result
     }
 
     /// Returns a new shallow List containing Object values in insertion order.

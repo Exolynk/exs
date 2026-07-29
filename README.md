@@ -61,9 +61,9 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 4: Garbage collection
 
-- [ ] Implement stop-the-world mark-and-sweep collection.
-- [ ] Add compiler-generated root frames and heap scanning.
-- [ ] Test aliasing, cycles, and allocation-triggered collection.
+- [x] Implement stop-the-world mark-and-sweep collection with reusable value-table slots.
+- [x] Add compiler-generated root frames, temporary runtime roots, and List/Object heap scanning.
+- [x] Test aliasing, cycles, and allocation-triggered collection.
 
 ### Phase 5: Closures
 

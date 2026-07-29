@@ -323,3 +323,56 @@ fn passes_object_cbor_input_to_main() {
         ]),
     );
 }
+
+/// Keeps aliased runtime Objects alive while repeated helper allocations trigger collection.
+#[test]
+fn preserves_live_aliases_across_allocation_triggered_collection() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn churn(value) {
+                let discarded = [value, { value: value }, [value, value]];
+                ret 0;
+            }
+            fn main(input) {
+                let object = { value: input };
+                let alias = object;
+                churn(1);
+                churn(2);
+                churn(3);
+                if alias == object && alias.value == input {
+                    ret object;
+                }
+                ret {};
+            }
+        "#,
+            ExsValue::Int(42),
+        ),
+        ExsValue::Object(vec![("value".to_owned(), ExsValue::Int(42))]),
+    );
+}
+
+/// Traces a self-referential List without losing its identity or looping during collection.
+#[test]
+fn traces_cycles_during_allocation_triggered_collection() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn churn(value) {
+                let discarded = [value, value, { value: value }];
+                ret 0;
+            }
+            fn main(input) {
+                let cycle = [];
+                cycle.push(cycle);
+                churn(1);
+                churn(2);
+                churn(3);
+                ret cycle[0] == cycle;
+            }
+        "#,
+            ExsValue::Null,
+        ),
+        ExsValue::Bool(true),
+    );
+}

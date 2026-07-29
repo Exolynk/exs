@@ -12,6 +12,9 @@ use crate::ast::{
 use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
+/// Extra compiler locals reserved for root-frame return and operand-spill bookkeeping.
+const ROOT_FRAME_RESERVED_LOCALS: u32 = 8;
+
 /// The linked Wasm function index and source arity of one ExS function.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct FunctionSignature {
@@ -91,6 +94,7 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     function: Function,
     scopes: Vec<HashMap<String, u32>>,
     next_local: u32,
+    root_frame_local: u32,
 }
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
@@ -101,27 +105,59 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         runtime: &'module HashMap<String, u32>,
         literals: &'module HashMap<String, u32>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
-        let local_count =
-            count_lets(&declaration.body) + count_expressions_block(&declaration.body);
+        let expression_locals = count_expressions_block(&declaration.body)
+            .checked_mul(3)
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    declaration.span,
+                    "too many expression temporaries for one function",
+                ))
+            })?;
+        let local_count = count_lets(&declaration.body)
+            .checked_add(expression_locals)
+            .and_then(|count| count.checked_add(ROOT_FRAME_RESERVED_LOCALS))
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    declaration.span,
+                    "too many locals for one function",
+                ))
+            })?;
+        let root_slot_count = u32::try_from(declaration.parameters.len())
+            .ok()
+            .and_then(|parameters| parameters.checked_add(local_count))
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    declaration.span,
+                    "too many root slots for one function",
+                ))
+            })?;
+        let root_frame_local = root_slot_count;
         let mut parameters = HashMap::new();
         for (index, parameter) in declaration.parameters.iter().enumerate() {
             parameters.insert(parameter.name.clone(), index as u32);
         }
-        Ok(Self {
+        let mut compiler = Self {
             declaration,
             signatures,
             runtime,
             literals,
-            function: Function::new([(local_count, ValType::I32)]),
+            function: Function::new([(local_count + 1, ValType::I32)]),
             scopes: vec![parameters],
             next_local: declaration.parameters.len() as u32,
-        })
+            root_frame_local,
+        };
+        compiler.initialize_root_frame(root_slot_count)?;
+        Ok(compiler)
     }
 
     /// Compiles this function body, including the implicit null return path.
     pub(super) fn compile(&mut self) -> Result<Function, CompileDiagnostics<'a>> {
         self.compile_block(&self.declaration.body, false)?;
         self.runtime_call("__exs_rt_null_new", self.declaration.span)?;
+        self.return_stack_value()?;
         self.function.instruction(&Instruction::End);
         let placeholder = Function::new([]);
         Ok(std::mem::replace(&mut self.function, placeholder))
@@ -139,8 +175,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         for statement in &block.statements {
             self.compile_statement(statement)?;
         }
-        if new_scope {
-            let _removed = self.scopes.pop();
+        if new_scope && let Some(scope) = self.scopes.pop() {
+            for local in scope.into_values() {
+                self.clear_root_slot(local)?;
+            }
         }
         Ok(())
     }
@@ -165,7 +203,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 }
                 self.compile_expression(value)?;
                 let local = self.allocate_local();
-                self.function.instruction(&Instruction::LocalSet(local));
+                self.store_stack_value_in(local)?;
                 if let Some(scope) = self.scopes.last_mut() {
                     scope.insert(name.name.clone(), local);
                 }
@@ -180,7 +218,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                         ))
                     })?;
                     self.compile_expression(value)?;
-                    self.function.instruction(&Instruction::LocalSet(local));
+                    self.store_stack_value_in(local)?;
                 }
                 AssignmentTarget::Index {
                     receiver,
@@ -188,10 +226,19 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     span,
                 } => {
                     self.compile_expression(receiver)?;
+                    let receiver = self.store_stack_value()?;
                     self.compile_expression(index)?;
+                    let index = self.store_stack_value()?;
                     self.compile_expression(value)?;
-                    self.runtime_call("__exs_rt_index_set", *span)?;
+                    let value = self.store_stack_value()?;
+                    self.function.instruction(&Instruction::LocalGet(receiver));
+                    self.function.instruction(&Instruction::LocalGet(index));
+                    self.function.instruction(&Instruction::LocalGet(value));
+                    self.runtime_value_call("__exs_rt_index_set", 3, *span)?;
                     self.function.instruction(&Instruction::Drop);
+                    self.clear_root_slot(receiver)?;
+                    self.clear_root_slot(index)?;
+                    self.clear_root_slot(value)?;
                 }
                 AssignmentTarget::Property {
                     receiver,
@@ -199,10 +246,19 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     span,
                 } => {
                     self.compile_expression(receiver)?;
+                    let receiver = self.store_stack_value()?;
                     self.compile_string(&property.name, property.span)?;
+                    let property = self.store_stack_value()?;
                     self.compile_expression(value)?;
-                    self.runtime_call("__exs_rt_index_set", *span)?;
+                    let value = self.store_stack_value()?;
+                    self.function.instruction(&Instruction::LocalGet(receiver));
+                    self.function.instruction(&Instruction::LocalGet(property));
+                    self.function.instruction(&Instruction::LocalGet(value));
+                    self.runtime_value_call("__exs_rt_index_set", 3, *span)?;
                     self.function.instruction(&Instruction::Drop);
+                    self.clear_root_slot(receiver)?;
+                    self.clear_root_slot(property)?;
+                    self.clear_root_slot(value)?;
                 }
             },
             Statement::Return { value, span } => {
@@ -211,7 +267,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 } else {
                     self.runtime_call("__exs_rt_null_new", *span)?;
                 }
-                self.function.instruction(&Instruction::Return);
+                self.return_stack_value()?;
             }
             Statement::Expression { expression, .. } => {
                 self.compile_expression(expression)?;
@@ -224,7 +280,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 ..
             } => {
                 self.compile_expression(condition)?;
-                self.runtime_call("__exs_rt_condition", condition_span(condition))?;
+                self.runtime_value_call("__exs_rt_condition", 1, condition_span(condition))?;
                 self.function
                     .instruction(&Instruction::If(BlockType::Empty));
                 self.compile_block(then_block, true)?;
@@ -307,11 +363,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     return Ok(());
                 }
                 self.compile_expression(operand)?;
-                self.runtime_call(
+                self.runtime_value_call(
                     match operator {
                         UnaryOperator::Negate => "__exs_rt_neg",
                         UnaryOperator::Not => "__exs_rt_not",
                     },
+                    1,
                     *span,
                 )?;
             }
@@ -325,8 +382,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 BinaryOperator::Or => self.compile_logical(left, right, true, *span)?,
                 _ => {
                     self.compile_expression(left)?;
+                    let left = self.store_stack_value()?;
                     self.compile_expression(right)?;
-                    self.runtime_call(runtime_operation(*operator), *span)?;
+                    let right = self.store_stack_value()?;
+                    self.function.instruction(&Instruction::LocalGet(left));
+                    self.function.instruction(&Instruction::LocalGet(right));
+                    self.runtime_value_call(runtime_operation(*operator), 2, *span)?;
+                    self.clear_root_slot(left)?;
+                    self.clear_root_slot(right)?;
                 }
             },
             Expression::Call {
@@ -353,11 +416,19 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                         ),
                     )));
                 }
+                let mut argument_locals = Vec::new();
                 for argument in arguments {
                     self.compile_expression(argument)?;
+                    argument_locals.push(self.store_stack_value()?);
+                }
+                for local in &argument_locals {
+                    self.function.instruction(&Instruction::LocalGet(*local));
                 }
                 self.function
                     .instruction(&Instruction::Call(signature.index));
+                for local in argument_locals {
+                    self.clear_root_slot(local)?;
+                }
             }
             Expression::MethodCall {
                 receiver,
@@ -366,24 +437,21 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 span,
             } => {
                 self.compile_expression(receiver)?;
-                let receiver_local = self.allocate_local();
-                self.function
-                    .instruction(&Instruction::LocalSet(receiver_local));
+                let receiver_local = self.store_stack_value()?;
                 self.compile_string(&method.name, method.span)?;
-                let method_local = self.allocate_local();
-                self.function
-                    .instruction(&Instruction::LocalSet(method_local));
+                let method_local = self.store_stack_value()?;
                 self.compile_list(arguments, *span)?;
-                let arguments_local = self.allocate_local();
-                self.function
-                    .instruction(&Instruction::LocalSet(arguments_local));
+                let arguments_local = self.store_stack_value()?;
                 self.function
                     .instruction(&Instruction::LocalGet(receiver_local));
                 self.function
                     .instruction(&Instruction::LocalGet(method_local));
                 self.function
                     .instruction(&Instruction::LocalGet(arguments_local));
-                self.runtime_call("__exs_rt_call_method", *span)?;
+                self.runtime_value_call("__exs_rt_call_method", 3, *span)?;
+                self.clear_root_slot(receiver_local)?;
+                self.clear_root_slot(method_local)?;
+                self.clear_root_slot(arguments_local)?;
             }
             Expression::Index {
                 receiver,
@@ -391,8 +459,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 span,
             } => {
                 self.compile_expression(receiver)?;
+                let receiver = self.store_stack_value()?;
                 self.compile_expression(index)?;
-                self.runtime_call("__exs_rt_index_get", *span)?;
+                let index = self.store_stack_value()?;
+                self.function.instruction(&Instruction::LocalGet(receiver));
+                self.function.instruction(&Instruction::LocalGet(index));
+                self.runtime_value_call("__exs_rt_index_get", 2, *span)?;
+                self.clear_root_slot(receiver)?;
+                self.clear_root_slot(index)?;
             }
             Expression::Property {
                 receiver,
@@ -400,8 +474,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 span,
             } => {
                 self.compile_expression(receiver)?;
+                let receiver = self.store_stack_value()?;
                 self.compile_string(&property.name, property.span)?;
-                self.runtime_call("__exs_rt_index_get", *span)?;
+                let property = self.store_stack_value()?;
+                self.function.instruction(&Instruction::LocalGet(receiver));
+                self.function.instruction(&Instruction::LocalGet(property));
+                self.runtime_value_call("__exs_rt_index_get", 2, *span)?;
+                self.clear_root_slot(receiver)?;
+                self.clear_root_slot(property)?;
             }
         }
         Ok(())
@@ -449,15 +529,16 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         self.runtime_call("__exs_rt_list_new", span)?;
-        let list_local = self.allocate_local();
-        self.function
-            .instruction(&Instruction::LocalSet(list_local));
+        let list_local = self.store_stack_value()?;
         for element in elements {
+            self.compile_expression(element)?;
+            let element = self.store_stack_value()?;
             self.function
                 .instruction(&Instruction::LocalGet(list_local));
-            self.compile_expression(element)?;
-            self.runtime_call("__exs_rt_append", span)?;
+            self.function.instruction(&Instruction::LocalGet(element));
+            self.runtime_value_call("__exs_rt_append", 2, span)?;
             self.function.instruction(&Instruction::Drop);
+            self.clear_root_slot(element)?;
         }
         self.function
             .instruction(&Instruction::LocalGet(list_local));
@@ -471,16 +552,20 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         self.runtime_call("__exs_rt_object_new", span)?;
-        let object_local = self.allocate_local();
-        self.function
-            .instruction(&Instruction::LocalSet(object_local));
+        let object_local = self.store_stack_value()?;
         for property in properties {
+            self.compile_string(&property.key, property.key_span)?;
+            let key = self.store_stack_value()?;
+            self.compile_expression(&property.value)?;
+            let value = self.store_stack_value()?;
             self.function
                 .instruction(&Instruction::LocalGet(object_local));
-            self.compile_string(&property.key, property.key_span)?;
-            self.compile_expression(&property.value)?;
-            self.runtime_call("__exs_rt_index_set", property.span)?;
+            self.function.instruction(&Instruction::LocalGet(key));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.runtime_value_call("__exs_rt_index_set", 3, property.span)?;
             self.function.instruction(&Instruction::Drop);
+            self.clear_root_slot(key)?;
+            self.clear_root_slot(value)?;
         }
         self.function
             .instruction(&Instruction::LocalGet(object_local));
@@ -496,7 +581,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         self.compile_expression(left)?;
-        self.runtime_call("__exs_rt_condition", span)?;
+        self.runtime_value_call("__exs_rt_condition", 1, span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
         if is_or {
@@ -522,11 +607,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         expression: &Expression<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         self.compile_expression(expression)?;
-        let temporary = self.allocate_local();
-        self.function.instruction(&Instruction::LocalTee(temporary));
-        self.runtime_call("__exs_rt_condition", condition_span(expression))?;
+        let temporary = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(temporary));
+        self.runtime_value_call("__exs_rt_condition", 1, condition_span(expression))?;
         self.function.instruction(&Instruction::Drop);
         self.function.instruction(&Instruction::LocalGet(temporary));
+        self.clear_root_slot(temporary)?;
         Ok(())
     }
 
@@ -544,6 +630,112 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             ))
         })?;
         self.function.instruction(&Instruction::Call(index));
+        Ok(())
+    }
+
+    /// Calls a runtime operation after spilling every ValueRef argument into rooted locals.
+    fn runtime_value_call(
+        &mut self,
+        name: &str,
+        argument_count: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let mut arguments = Vec::new();
+        for _ in 0..argument_count {
+            arguments.push(self.store_stack_value()?);
+        }
+        arguments.reverse();
+        for argument in &arguments {
+            self.function.instruction(&Instruction::LocalGet(*argument));
+        }
+        self.runtime_call(name, span)?;
+        for argument in arguments {
+            self.clear_root_slot(argument)?;
+        }
+        Ok(())
+    }
+
+    /// Creates this invocation's root frame and registers its parameters.
+    fn initialize_root_frame(
+        &mut self,
+        root_slot_count: u32,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let slot_count = i32::try_from(root_slot_count).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                self.declaration.span,
+                "too many root slots for the Wasm i32 ABI",
+            ))
+        })?;
+        self.function
+            .instruction(&Instruction::I32Const(slot_count));
+        self.runtime_call("__exs_rt_root_push", self.declaration.span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.root_frame_local));
+        for parameter in 0..self.declaration.parameters.len() {
+            self.set_root_slot(u32::try_from(parameter).map_err(|_| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    self.declaration.span,
+                    "too many parameters for one function",
+                ))
+            })?)?;
+        }
+        Ok(())
+    }
+
+    /// Stores the stack's ValueRef in a fresh compiler local and roots it.
+    fn store_stack_value(&mut self) -> Result<u32, CompileDiagnostics<'a>> {
+        let local = self.allocate_local();
+        self.store_stack_value_in(local)?;
+        Ok(local)
+    }
+
+    /// Stores the stack's ValueRef in one compiler local and updates its root slot.
+    fn store_stack_value_in(&mut self, local: u32) -> Result<(), CompileDiagnostics<'a>> {
+        self.function.instruction(&Instruction::LocalSet(local));
+        self.set_root_slot(local)
+    }
+
+    /// Registers one compiler local in the active root frame.
+    fn set_root_slot(&mut self, local: u32) -> Result<(), CompileDiagnostics<'a>> {
+        let slot = i32::try_from(local).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                self.declaration.span,
+                "root slot exceeds the Wasm i32 ABI",
+            ))
+        })?;
+        self.function
+            .instruction(&Instruction::LocalGet(self.root_frame_local));
+        self.function.instruction(&Instruction::I32Const(slot));
+        self.function.instruction(&Instruction::LocalGet(local));
+        self.runtime_call("__exs_rt_root_set", self.declaration.span)
+    }
+
+    /// Removes one compiler local from the active root frame.
+    fn clear_root_slot(&mut self, local: u32) -> Result<(), CompileDiagnostics<'a>> {
+        let slot = i32::try_from(local).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                self.declaration.span,
+                "root slot exceeds the Wasm i32 ABI",
+            ))
+        })?;
+        self.function
+            .instruction(&Instruction::LocalGet(self.root_frame_local));
+        self.function.instruction(&Instruction::I32Const(slot));
+        self.runtime_call("__exs_rt_root_clear", self.declaration.span)
+    }
+
+    /// Returns the ValueRef on the stack after safely removing this function's root frame.
+    fn return_stack_value(&mut self) -> Result<(), CompileDiagnostics<'a>> {
+        let result = self.store_stack_value()?;
+        self.function
+            .instruction(&Instruction::LocalGet(self.root_frame_local));
+        self.runtime_call("__exs_rt_root_pop", self.declaration.span)?;
+        self.function.instruction(&Instruction::LocalGet(result));
+        self.function.instruction(&Instruction::Return);
         Ok(())
     }
 

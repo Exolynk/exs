@@ -7,12 +7,32 @@ use core::num::NonZeroU32;
 use exs_abi::ExsValue;
 use exs_value::{ValueRef, is_valid_int};
 
-use crate::state::runtime;
+use crate::gc;
+use crate::state::{HeapSlot, runtime};
 use crate::value::{RtValue, RuntimeList, RuntimeObject, RuntimeString};
 
 /// Appends one runtime value and returns its one-based table index.
 pub(crate) fn allocate(value: RtValue) -> ValueRef {
+    gc::collect();
     let state = unsafe { runtime() };
+    if let Some(index) = state.free_slots.pop() {
+        let index = index as usize;
+        let Some(slot) = state.values.get_mut(index) else {
+            trap();
+        };
+        if slot.is_some() {
+            trap();
+        }
+        *slot = Some(HeapSlot::new(value));
+        let Some(index) = u32::try_from(index)
+            .ok()
+            .and_then(|index| index.checked_add(1))
+            .and_then(NonZeroU32::new)
+        else {
+            trap();
+        };
+        return unsafe { ValueRef::from_runtime_index(index) };
+    }
     let Some(next_index) = state.values.len().checked_add(1) else {
         trap();
     };
@@ -22,15 +42,15 @@ pub(crate) fn allocate(value: RtValue) -> ValueRef {
     let Some(next_index) = NonZeroU32::new(next_index) else {
         trap();
     };
-    state.values.push(value);
+    state.values.push(Some(HeapSlot::new(value)));
     unsafe { ValueRef::from_runtime_index(next_index) }
 }
 
 /// Returns the runtime payload stored at one value-table index.
 pub(crate) fn value(reference: ValueRef) -> &'static RtValue {
     let index = reference.runtime_index() as usize - 1;
-    match unsafe { runtime().values.get(index) } {
-        Some(value) => value,
+    match unsafe { runtime().values.get(index).and_then(Option::as_ref) } {
+        Some(value) => &value.value,
         None => trap(),
     }
 }
@@ -38,8 +58,8 @@ pub(crate) fn value(reference: ValueRef) -> &'static RtValue {
 /// Returns mutable access to the runtime payload stored at one value-table index.
 pub(crate) fn value_mut(reference: ValueRef) -> &'static mut RtValue {
     let index = reference.runtime_index() as usize - 1;
-    match unsafe { runtime().values.get_mut(index) } {
-        Some(value) => value,
+    match unsafe { runtime().values.get_mut(index).and_then(Option::as_mut) } {
+        Some(value) => &mut value.value,
         None => trap(),
     }
 }
@@ -83,7 +103,10 @@ pub(crate) fn input_alloc(length: i32) -> i32 {
 
 /// Decodes the runner-provided CBOR input into one runtime value.
 pub(crate) fn decode_input_value(pointer_value: i32, length: i32) -> ValueRef {
-    exs_value_to_runtime(decode_input(pointer_value, length))
+    let checkpoint = gc::temporary_root_checkpoint();
+    let value = exs_value_to_runtime(decode_input(pointer_value, length));
+    gc::restore_temporary_roots(checkpoint);
+    value
 }
 
 /// Encodes a completed program result into the runtime-owned CBOR result buffer.
@@ -181,7 +204,9 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
                 .collect(),
         })),
     };
-    allocate(value)
+    let reference = allocate(value);
+    gc::push_temporary_root(reference);
+    reference
 }
 
 /// Decodes one runtime-owned input buffer after validating the runner-provided range.

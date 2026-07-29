@@ -4,6 +4,7 @@ use core::panic::PanicInfo;
 
 use exs_value::{ValueRef, is_valid_int};
 
+use crate::gc;
 use crate::runtime;
 use crate::value::{self, RtValue};
 
@@ -108,6 +109,36 @@ pub extern "C" fn __exs_rt_not(value: ValueRef) -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_condition(value: ValueRef) -> i32 {
     value::numeric::condition(value)
+}
+
+/// Creates one compiler-generated root frame with the requested local slot count.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_root_push(slot_count: i32) -> i32 {
+    gc::push_root_frame(slot_count)
+}
+
+/// Stores one compiler-local value in the current root frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_root_set(frame: i32, slot: i32, value: ValueRef) {
+    gc::set_root_frame_slot(frame, slot, value);
+}
+
+/// Clears one compiler-local value from the current root frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_root_clear(frame: i32, slot: i32) {
+    gc::clear_root_frame_slot(frame, slot);
+}
+
+/// Removes the current compiler-generated root frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_root_pop(frame: i32) {
+    gc::pop_root_frame(frame);
+}
+
+/// Immediately performs one stop-the-world mark-and-sweep collection.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_gc_collect() {
+    gc::collect();
 }
 
 /// Allocates a runtime-owned buffer for one compiler literal data segment.

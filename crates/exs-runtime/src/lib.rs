@@ -9,6 +9,9 @@ extern crate alloc;
 mod value;
 
 #[cfg(target_arch = "wasm32")]
+mod gc;
+
+#[cfg(target_arch = "wasm32")]
 mod runtime;
 
 #[cfg(target_arch = "wasm32")]
