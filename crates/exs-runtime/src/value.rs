@@ -2,7 +2,10 @@
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec::Vec;
+
 use core::str::Utf8Error;
+use exs_value::ValueRef;
 
 /// An immutable UTF-8 string owned by the ExS runtime.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -33,6 +36,23 @@ impl RuntimeString {
     }
 }
 
+/// A mutable ordered sequence of runtime value references.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub struct RuntimeList {
+    /// Elements in source-visible order.
+    pub(crate) elements: Vec<ValueRef>,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl RuntimeList {
+    /// Creates an empty runtime list.
+    pub(crate) const fn new() -> Self {
+        Self {
+            elements: Vec::new(),
+        }
+    }
+}
+
 /// The allocated payload of one ExS value.
 ///
 /// Primitive values remain inline. Complex runtime values must use boxed payloads so adding them
@@ -49,9 +69,11 @@ pub enum RtValue {
     Float(f64),
     /// An immutable UTF-8 string.
     String(Box<RuntimeString>),
+    /// A mutable ordered sequence.
+    List(Box<RuntimeList>),
     /// Reserved shape for future complex runtime values.
     ///
-    /// Concrete String, List, Object, and other complex variants must follow this boxed form.
+    /// Concrete Object and other complex variants must follow this boxed form.
     #[doc(hidden)]
     BoxedFutureValue(Box<()>),
 }

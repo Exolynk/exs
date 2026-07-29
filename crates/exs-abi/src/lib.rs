@@ -9,7 +9,9 @@ pub mod cbor;
 pub use cbor::{CborError, ExsValue};
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
-pub const ABI_VERSION: u32 = 2;
+///
+/// Version 3 adds recursive List transport values to the Wasm-host CBOR boundary.
+pub const ABI_VERSION: u32 = 3;
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// The entry export invoked by runners.

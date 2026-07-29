@@ -1,6 +1,7 @@
 //! Rust implementations exported by the Wasm-target runtime.
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::num::NonZeroU32;
 use core::panic::PanicInfo;
 
@@ -8,7 +9,7 @@ use exs_abi::ExsValue;
 use exs_value::{ValueRef, is_valid_int};
 
 use crate::state::runtime;
-use crate::{RtValue, RuntimeString};
+use crate::{RtValue, RuntimeList, RuntimeString};
 
 /// Allocates and returns the singular null value.
 #[unsafe(no_mangle)]
@@ -80,6 +81,7 @@ pub extern "C" fn __exs_rt_eq(left: ValueRef, right: ValueRef) -> ValueRef {
             numbers_equal(number_of(left), number_of(right))
         }
         (RtValue::String(left), RtValue::String(right)) => left.as_str() == right.as_str(),
+        (RtValue::List(_), RtValue::List(_)) => left == right,
         _ => false,
     };
     allocate(RtValue::Bool(equal))
@@ -154,6 +156,73 @@ pub extern "C" fn __exs_rt_string_new(pointer: i32, length: i32) -> ValueRef {
     allocate(RtValue::String(Box::new(value)))
 }
 
+/// Allocates an empty mutable runtime list.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_list_new() -> ValueRef {
+    allocate(RtValue::List(Box::new(RuntimeList::new())))
+}
+
+/// Appends a value through the receiver's runtime collection dispatch.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_append(receiver: ValueRef, item: ValueRef) -> ValueRef {
+    let length = match value_mut(receiver) {
+        RtValue::List(list) => {
+            list.elements.push(item);
+            list.elements.len()
+        }
+        _ => trap(),
+    };
+    length_value(length)
+}
+
+/// Reads one element through the receiver's runtime indexing dispatch.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_index_get(receiver: ValueRef, index: ValueRef) -> ValueRef {
+    let index = list_index(index);
+    match value(receiver) {
+        RtValue::List(list) => match list.elements.get(index) {
+            Some(value) => *value,
+            None => trap(),
+        },
+        _ => trap(),
+    }
+}
+
+/// Replaces one element through the receiver's runtime indexing dispatch.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_index_set(
+    receiver: ValueRef,
+    index: ValueRef,
+    replacement: ValueRef,
+) -> ValueRef {
+    let index = list_index(index);
+    match value_mut(receiver) {
+        RtValue::List(list) => match list.elements.get_mut(index) {
+            Some(value) => {
+                *value = replacement;
+                replacement
+            }
+            None => trap(),
+        },
+        _ => trap(),
+    }
+}
+
+/// Calls one statically named member method through runtime receiver dispatch.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_call_method(
+    receiver: ValueRef,
+    method: ValueRef,
+    arguments: ValueRef,
+) -> ValueRef {
+    let is_push = matches!(value(method), RtValue::String(name) if name.as_str() == "push");
+    if !is_push {
+        trap();
+    }
+    let item = single_argument(arguments);
+    __exs_rt_append(receiver, item)
+}
+
 /// Allocates a runtime-owned linear-memory buffer for one CBOR input value.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_input_alloc(length: i32) -> i32 {
@@ -170,7 +239,7 @@ pub extern "C" fn __exs_input_alloc(length: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_decode_input(pointer: i32, length: i32) -> ValueRef {
     let input = decode_input(pointer, length);
-    allocate(exs_value_to_runtime(input))
+    exs_value_to_runtime(input)
 }
 
 /// Encodes a completed program result into the runtime-owned CBOR result buffer.
@@ -242,28 +311,61 @@ fn value(reference: ValueRef) -> &'static RtValue {
     }
 }
 
+/// Returns mutable access to the runtime payload stored at one value-table index.
+fn value_mut(reference: ValueRef) -> &'static mut RtValue {
+    let index = reference.runtime_index() as usize - 1;
+    match unsafe { runtime().values.get_mut(index) } {
+        Some(value) => value,
+        None => trap(),
+    }
+}
+
 /// Converts one runtime Phase-3 value into its host-safe ABI value.
 fn runtime_to_exs_value(reference: ValueRef) -> ExsValue {
+    let mut active_lists = Vec::new();
+    runtime_to_exs_value_inner(reference, &mut active_lists)
+}
+
+/// Converts one runtime value into a host-safe value while rejecting CBOR-inexpressible cycles.
+fn runtime_to_exs_value_inner(reference: ValueRef, active_lists: &mut Vec<ValueRef>) -> ExsValue {
     match value(reference) {
         RtValue::Null => ExsValue::Null,
         RtValue::Bool(value) => ExsValue::Bool(*value),
         RtValue::Int(value) => ExsValue::Int(*value),
         RtValue::Float(value) => ExsValue::Float(*value),
         RtValue::String(value) => ExsValue::String(value.as_str().into()),
+        RtValue::List(list) => {
+            if active_lists.contains(&reference) {
+                trap();
+            }
+            active_lists.push(reference);
+            let elements = list
+                .elements
+                .iter()
+                .copied()
+                .map(|element| runtime_to_exs_value_inner(element, active_lists))
+                .collect();
+            let _removed = active_lists.pop();
+            ExsValue::List(elements)
+        }
         RtValue::BoxedFutureValue(_) => trap(),
     }
 }
 
-/// Converts a host-safe ABI primitive into a runtime payload.
-fn exs_value_to_runtime(value: ExsValue) -> RtValue {
-    match value {
+/// Converts a host-safe ABI value into a runtime value table entry.
+fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
+    let value = match value {
         ExsValue::Null => RtValue::Null,
         ExsValue::Bool(value) => RtValue::Bool(value),
         ExsValue::Int(value) if is_valid_int(value) => RtValue::Int(value),
         ExsValue::Int(_) => trap(),
         ExsValue::Float(value) => RtValue::Float(value),
         ExsValue::String(value) => RtValue::String(Box::new(RuntimeString::from_string(value))),
-    }
+        ExsValue::List(elements) => RtValue::List(Box::new(RuntimeList {
+            elements: elements.into_iter().map(exs_value_to_runtime).collect(),
+        })),
+    };
+    allocate(value)
 }
 
 /// Decodes one runtime-owned input buffer after validating the runner-provided range.
@@ -302,7 +404,9 @@ fn number_of(value: &RtValue) -> Number {
         RtValue::Bool(true) => Number::Int(1),
         RtValue::Int(value) => Number::Int(*value),
         RtValue::Float(value) => Number::Float(*value),
-        RtValue::Null | RtValue::String(_) | RtValue::BoxedFutureValue(_) => trap(),
+        RtValue::Null | RtValue::String(_) | RtValue::List(_) | RtValue::BoxedFutureValue(_) => {
+            trap()
+        }
     }
 }
 
@@ -364,6 +468,36 @@ fn as_float(value: Number) -> f64 {
 fn boolean(reference: ValueRef) -> bool {
     match value(reference) {
         RtValue::Bool(result) => *result,
+        _ => trap(),
+    }
+}
+
+/// Reads one non-negative runtime integer as a list index.
+fn list_index(reference: ValueRef) -> usize {
+    match value(reference) {
+        RtValue::Int(index) if *index >= 0 => match usize::try_from(*index) {
+            Ok(index) => index,
+            Err(_) => trap(),
+        },
+        _ => trap(),
+    }
+}
+
+/// Returns a checked ExS integer containing a collection length.
+fn length_value(length: usize) -> ValueRef {
+    let Ok(length) = i64::try_from(length) else {
+        trap();
+    };
+    if !is_valid_int(length) {
+        trap();
+    }
+    allocate(RtValue::Int(length))
+}
+
+/// Reads the sole value in one runtime-provided argument list.
+fn single_argument(arguments: ValueRef) -> ValueRef {
+    match value(arguments) {
+        RtValue::List(list) if list.elements.len() == 1 => list.elements[0],
         _ => trap(),
     }
 }

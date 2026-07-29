@@ -55,8 +55,9 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 ### Phase 3: Heap values
 
 - [x] Add immutable UTF-8 Strings as boxed `RtValue` variants with literal, CBOR, and content-equality support.
-- [ ] Add Lists, Objects, and property access as boxed `RtValue` variants.
-- [ ] Add named List and Object runtime operations.
+- [x] Add mutable boxed Lists with literals, dynamic indexing, index assignment, generic member dispatch for `list.push(value)`, and recursive CBOR input/output.
+- [ ] Add Objects and generic property access as boxed `RtValue` variants.
+- [ ] Extend generic runtime dispatch with the remaining List and Object operations.
 
 ### Phase 4: Garbage collection
 

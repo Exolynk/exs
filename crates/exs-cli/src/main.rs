@@ -71,15 +71,28 @@ fn run_program(path: &str) -> Result<(), String> {
 
 /// Prints a completed Phase-1 program result in ExS source notation.
 fn print_result(result: exs_runner::ExsValue) {
+    println!("{}", format_result(&result));
+}
+
+/// Formats one host-safe ExS value using source-like syntax.
+fn format_result(result: &exs_runner::ExsValue) -> String {
     match result {
-        exs_runner::ExsValue::Null => println!("null"),
-        exs_runner::ExsValue::Bool(value) => println!("{value}"),
-        exs_runner::ExsValue::Int(value) => println!("{value}"),
+        exs_runner::ExsValue::Null => "null".to_owned(),
+        exs_runner::ExsValue::Bool(value) => value.to_string(),
+        exs_runner::ExsValue::Int(value) => value.to_string(),
         exs_runner::ExsValue::Float(value) if value.is_finite() && value.fract() == 0.0 => {
-            println!("{value:.1}")
+            format!("{value:.1}")
         }
-        exs_runner::ExsValue::Float(value) => println!("{value}"),
-        exs_runner::ExsValue::String(value) => println!("{value:?}"),
+        exs_runner::ExsValue::Float(value) => value.to_string(),
+        exs_runner::ExsValue::String(value) => format!("{value:?}"),
+        exs_runner::ExsValue::List(values) => {
+            let values = values
+                .iter()
+                .map(format_result)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{values}]")
+        }
     }
 }
 

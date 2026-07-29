@@ -42,6 +42,19 @@ fn compiles_utf8_string_literals() {
     assert!(module.is_ok());
 }
 
+/// Compiles list literals, dynamic index expressions, and a member call.
+#[test]
+fn compiles_list_syntax() {
+    let module = compile(
+        SourceInput {
+            source_id: "list.exs",
+            text: "fn main(input) { let values = [input, 2]; values.push(3); values[1] = 4; ret values[0]; }",
+        },
+        CompileOptions,
+    );
+    assert!(module.is_ok());
+}
+
 /// Reports a missing statement terminator at the source level.
 #[test]
 fn reports_a_missing_statement_semicolon() {

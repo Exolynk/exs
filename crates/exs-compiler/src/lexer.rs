@@ -45,6 +45,12 @@ pub enum TokenKind {
     LeftBrace,
     /// `}`.
     RightBrace,
+    /// `[`.
+    LeftBracket,
+    /// `]`.
+    RightBracket,
+    /// `.`.
+    Dot,
     /// `,`.
     Comma,
     /// `;`.
@@ -211,6 +217,9 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                     b')' => TokenKind::RightParen,
                     b'{' => TokenKind::LeftBrace,
                     b'}' => TokenKind::RightBrace,
+                    b'[' => TokenKind::LeftBracket,
+                    b']' => TokenKind::RightBracket,
+                    b'.' => TokenKind::Dot,
                     b',' => TokenKind::Comma,
                     b';' => TokenKind::Semicolon,
                     b'+' => TokenKind::Plus,

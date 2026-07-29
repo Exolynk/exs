@@ -2,7 +2,7 @@
 
 use exs_abi::{CborError, ExsValue};
 
-/// Round-trips every Phase-1 ABI primitive through the shared codec.
+/// Round-trips primitive and nested list values through the shared codec.
 #[test]
 fn round_trips_phase_one_values() {
     for value in [
@@ -14,6 +14,11 @@ fn round_trips_phase_one_values() {
         ExsValue::Float(-1.5),
         ExsValue::Float(0.0),
         ExsValue::String("Ada\\nLovelace".to_owned()),
+        ExsValue::List(vec![
+            ExsValue::Int(1),
+            ExsValue::String("Ada".to_owned()),
+            ExsValue::List(vec![ExsValue::Bool(true)]),
+        ]),
     ] {
         let encoded = match value.to_cbor() {
             Ok(encoded) => encoded,
@@ -36,11 +41,11 @@ fn rejects_trailing_cbor_data() {
     );
 }
 
-/// Rejects CBOR types not yet represented by the Phase-1 ABI value.
+/// Rejects CBOR maps, which are not yet represented by the ABI value.
 #[test]
 fn rejects_unsupported_cbor_values() {
     assert_eq!(
-        ExsValue::from_cbor(&[0x80]),
+        ExsValue::from_cbor(&[0xa0]),
         Err(CborError::UnsupportedType)
     );
 }

@@ -55,8 +55,8 @@ pub enum Statement<'a> {
     },
     /// A local binding assignment.
     Assign {
-        /// Assigned name.
-        name: Identifier<'a>,
+        /// Assigned storage location.
+        target: AssignmentTarget<'a>,
         /// Assigned expression.
         value: Expression<'a>,
         /// Full statement span.
@@ -89,6 +89,22 @@ pub enum Statement<'a> {
     },
 }
 
+/// A source location that can receive an assignment.
+#[derive(Debug)]
+pub enum AssignmentTarget<'a> {
+    /// A local binding.
+    Variable(Identifier<'a>),
+    /// A dynamically indexed runtime value.
+    Index {
+        /// The value to mutate.
+        receiver: Box<Expression<'a>>,
+        /// The runtime index or key.
+        index: Box<Expression<'a>>,
+        /// Full target span.
+        span: SourceSpan<'a>,
+    },
+}
+
 /// A Phase-1 expression.
 #[derive(Debug)]
 pub enum Expression<'a> {
@@ -100,6 +116,13 @@ pub enum Expression<'a> {
     String(String, SourceSpan<'a>),
     /// A boolean literal.
     Bool(bool, SourceSpan<'a>),
+    /// A mutable list literal.
+    List {
+        /// Elements evaluated from left to right.
+        elements: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
     /// A local variable lookup.
     Variable(Identifier<'a>),
     /// A unary operation.
@@ -128,6 +151,26 @@ pub enum Expression<'a> {
         callee: Identifier<'a>,
         /// Positional arguments.
         arguments: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// A dynamically dispatched member call.
+    MethodCall {
+        /// Receiver evaluated before arguments.
+        receiver: Box<Expression<'a>>,
+        /// Statically written method name.
+        method: Identifier<'a>,
+        /// Positional arguments evaluated from left to right.
+        arguments: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// A dynamically dispatched index lookup.
+    Index {
+        /// Indexed runtime value.
+        receiver: Box<Expression<'a>>,
+        /// Runtime index or key.
+        index: Box<Expression<'a>>,
         /// Full expression span.
         span: SourceSpan<'a>,
     },

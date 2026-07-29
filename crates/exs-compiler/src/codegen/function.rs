@@ -6,7 +6,8 @@ use exs_value::is_valid_int;
 use wasm_encoder::{BlockType, Function, Instruction, TypeSection, ValType};
 
 use crate::ast::{
-    BinaryOperator, Block, Expression, FunctionDeclaration, Module, Statement, UnaryOperator,
+    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Module, Statement,
+    UnaryOperator,
 };
 use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -169,17 +170,30 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     scope.insert(name.name.clone(), local);
                 }
             }
-            Statement::Assign { name, value, .. } => {
-                let local = self.lookup(&name.name).ok_or_else(|| {
-                    diagnostics(CompileDiagnostic::new(
-                        "E0205",
-                        name.span,
-                        format!("unknown binding `{}`", name.name),
-                    ))
-                })?;
-                self.compile_expression(value)?;
-                self.function.instruction(&Instruction::LocalSet(local));
-            }
+            Statement::Assign { target, value, .. } => match target {
+                AssignmentTarget::Variable(name) => {
+                    let local = self.lookup(&name.name).ok_or_else(|| {
+                        diagnostics(CompileDiagnostic::new(
+                            "E0205",
+                            name.span,
+                            format!("unknown binding `{}`", name.name),
+                        ))
+                    })?;
+                    self.compile_expression(value)?;
+                    self.function.instruction(&Instruction::LocalSet(local));
+                }
+                AssignmentTarget::Index {
+                    receiver,
+                    index,
+                    span,
+                } => {
+                    self.compile_expression(receiver)?;
+                    self.compile_expression(index)?;
+                    self.compile_expression(value)?;
+                    self.runtime_call("__exs_rt_index_set", *span)?;
+                    self.function.instruction(&Instruction::Drop);
+                }
+            },
             Statement::Return { value, span } => {
                 if let Some(value) = value {
                     self.compile_expression(value)?;
@@ -236,33 +250,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.runtime_call("__exs_rt_float_new", *span)?;
             }
             Expression::String(value, span) => {
-                let data_index = self.literals.get(value).copied().ok_or_else(|| {
-                    diagnostics(CompileDiagnostic::new(
-                        "E0211",
-                        *span,
-                        "missing compiler string literal data segment",
-                    ))
-                })?;
-                let length = i32::try_from(value.len()).map_err(|_| {
-                    diagnostics(CompileDiagnostic::new(
-                        "E0211",
-                        *span,
-                        "string literal is too large for Wasm linear memory",
-                    ))
-                })?;
-                self.function.instruction(&Instruction::I32Const(length));
-                self.runtime_call("__exs_rt_literal_buffer_alloc", *span)?;
-                let buffer_pointer = self.allocate_local();
-                self.function
-                    .instruction(&Instruction::LocalTee(buffer_pointer));
-                self.function.instruction(&Instruction::I32Const(0));
-                self.function.instruction(&Instruction::I32Const(length));
-                self.function
-                    .instruction(&Instruction::MemoryInit { mem: 0, data_index });
-                self.function
-                    .instruction(&Instruction::LocalGet(buffer_pointer));
-                self.function.instruction(&Instruction::I32Const(length));
-                self.runtime_call("__exs_rt_string_new", *span)?;
+                self.compile_string(value, *span)?;
             }
             Expression::Bool(value, span) => {
                 self.function
@@ -278,6 +266,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     ))
                 })?;
                 self.function.instruction(&Instruction::LocalGet(local));
+            }
+            Expression::List { elements, span } => {
+                self.compile_list(elements, *span)?;
             }
             Expression::Unary {
                 operator,
@@ -354,7 +345,99 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.function
                     .instruction(&Instruction::Call(signature.index));
             }
+            Expression::MethodCall {
+                receiver,
+                method,
+                arguments,
+                span,
+            } => {
+                self.compile_expression(receiver)?;
+                let receiver_local = self.allocate_local();
+                self.function
+                    .instruction(&Instruction::LocalSet(receiver_local));
+                self.compile_string(&method.name, method.span)?;
+                let method_local = self.allocate_local();
+                self.function
+                    .instruction(&Instruction::LocalSet(method_local));
+                self.compile_list(arguments, *span)?;
+                let arguments_local = self.allocate_local();
+                self.function
+                    .instruction(&Instruction::LocalSet(arguments_local));
+                self.function
+                    .instruction(&Instruction::LocalGet(receiver_local));
+                self.function
+                    .instruction(&Instruction::LocalGet(method_local));
+                self.function
+                    .instruction(&Instruction::LocalGet(arguments_local));
+                self.runtime_call("__exs_rt_call_method", *span)?;
+            }
+            Expression::Index {
+                receiver,
+                index,
+                span,
+            } => {
+                self.compile_expression(receiver)?;
+                self.compile_expression(index)?;
+                self.runtime_call("__exs_rt_index_get", *span)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Compiles one static source string through the compiler-owned literal pool.
+    fn compile_string(
+        &mut self,
+        value: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let data_index = self.literals.get(value).copied().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0211",
+                span,
+                "missing compiler string literal data segment",
+            ))
+        })?;
+        let length = i32::try_from(value.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0211",
+                span,
+                "string literal is too large for Wasm linear memory",
+            ))
+        })?;
+        self.function.instruction(&Instruction::I32Const(length));
+        self.runtime_call("__exs_rt_literal_buffer_alloc", span)?;
+        let buffer_pointer = self.allocate_local();
+        self.function
+            .instruction(&Instruction::LocalTee(buffer_pointer));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::I32Const(length));
+        self.function
+            .instruction(&Instruction::MemoryInit { mem: 0, data_index });
+        self.function
+            .instruction(&Instruction::LocalGet(buffer_pointer));
+        self.function.instruction(&Instruction::I32Const(length));
+        self.runtime_call("__exs_rt_string_new", span)
+    }
+
+    /// Constructs a runtime list while evaluating every element in source order.
+    fn compile_list(
+        &mut self,
+        elements: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.runtime_call("__exs_rt_list_new", span)?;
+        let list_local = self.allocate_local();
+        self.function
+            .instruction(&Instruction::LocalSet(list_local));
+        for element in elements {
+            self.function
+                .instruction(&Instruction::LocalGet(list_local));
+            self.compile_expression(element)?;
+            self.runtime_call("__exs_rt_append", span)?;
+            self.function.instruction(&Instruction::Drop);
+        }
+        self.function
+            .instruction(&Instruction::LocalGet(list_local));
         Ok(())
     }
 
@@ -480,10 +563,12 @@ fn count_expressions_block(block: &Block<'_>) -> u32 {
 fn count_expressions_statement(statement: &Statement<'_>) -> u32 {
     match statement {
         Statement::Let { value, .. }
-        | Statement::Assign { value, .. }
         | Statement::Expression {
             expression: value, ..
         } => count_expressions(value),
+        Statement::Assign { target, value, .. } => {
+            count_assignment_target_expressions(target) + count_expressions(value)
+        }
         Statement::Return { value, .. } => value.as_ref().map_or(0, count_expressions),
         Statement::If {
             condition,
@@ -495,6 +580,16 @@ fn count_expressions_statement(statement: &Statement<'_>) -> u32 {
                 + count_expressions_block(then_block)
                 + else_block.as_ref().map_or(0, count_expressions_block)
         }
+    }
+}
+
+/// Counts scratch-local requirements needed to evaluate one assignment target.
+fn count_assignment_target_expressions(target: &AssignmentTarget<'_>) -> u32 {
+    match target {
+        AssignmentTarget::Variable(_) => 0,
+        AssignmentTarget::Index {
+            receiver, index, ..
+        } => count_expressions(receiver) + count_expressions(index),
     }
 }
 
@@ -513,6 +608,17 @@ fn count_expressions(expression: &Expression<'_>) -> u32 {
         Expression::Call { arguments, .. } => {
             1 + arguments.iter().map(count_expressions).sum::<u32>()
         }
+        Expression::List { elements, .. } => {
+            1 + elements.iter().map(count_expressions).sum::<u32>()
+        }
+        Expression::MethodCall {
+            receiver,
+            arguments,
+            ..
+        } => 5 + count_expressions(receiver) + arguments.iter().map(count_expressions).sum::<u32>(),
+        Expression::Index {
+            receiver, index, ..
+        } => 1 + count_expressions(receiver) + count_expressions(index),
     }
 }
 
@@ -523,9 +629,12 @@ fn condition_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::Float(_, span)
         | Expression::String(_, span)
         | Expression::Bool(_, span) => *span,
+        Expression::List { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::Binary { span, .. }
-        | Expression::Call { span, .. } => *span,
+        | Expression::Call { span, .. }
+        | Expression::MethodCall { span, .. }
+        | Expression::Index { span, .. } => *span,
     }
 }

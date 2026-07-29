@@ -139,3 +139,61 @@ fn executes_string_literals_and_content_equality() {
         ExsValue::String("Ada\nLovelace 🙂".to_owned())
     );
 }
+
+/// Preserves list reference semantics through dynamic index and member dispatch.
+#[test]
+fn executes_list_literals_index_assignment_and_push() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) {
+                let first = [input, 2];
+                let second = first;
+                second.push(3);
+                first[1] = first[1] + 40;
+                ret first;
+            }
+        "#,
+            ExsValue::Int(1),
+        ),
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(42), ExsValue::Int(3)]),
+    );
+}
+
+/// Uses identity equality for Lists and exposes the new length from `push`.
+#[test]
+fn preserves_list_identity_and_returns_push_length() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) {
+                let first = [1];
+                let alias = first;
+                let length = alias.push(2);
+                if first == alias && first != [1, 2] {
+                    ret length;
+                }
+                ret 0;
+            }
+        "#,
+            ExsValue::Null,
+        ),
+        ExsValue::Int(2),
+    );
+}
+
+/// Decodes a host list for the root input and returns a nested list result.
+#[test]
+fn passes_list_cbor_input_to_main() {
+    assert_eq!(
+        execute_source(
+            "fn main(input) { input.push([3]); ret input; }",
+            ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)]),
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(1),
+            ExsValue::Int(2),
+            ExsValue::List(vec![ExsValue::Int(3)]),
+        ]),
+    );
+}

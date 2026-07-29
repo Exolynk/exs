@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use exs_runtime::WASM_TEMPLATE;
 use wasmparser::{Parser as WasmParser, Payload};
 
-use crate::ast::{Block, Expression, Module, Statement};
+use crate::ast::{AssignmentTarget, Block, Expression, Module, Statement};
 use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
 
@@ -94,10 +94,13 @@ fn collect_block_literals(block: &Block<'_>, pool: &mut LiteralPool) {
     for statement in &block.statements {
         match statement {
             Statement::Let { value, .. }
-            | Statement::Assign { value, .. }
             | Statement::Expression {
                 expression: value, ..
             } => collect_expression_literals(value, pool),
+            Statement::Assign { target, value, .. } => {
+                collect_assignment_target_literals(target, pool);
+                collect_expression_literals(value, pool);
+            }
             Statement::Return { value, .. } => {
                 if let Some(value) = value {
                     collect_expression_literals(value, pool);
@@ -119,6 +122,17 @@ fn collect_block_literals(block: &Block<'_>, pool: &mut LiteralPool) {
     }
 }
 
+/// Collects literal-bearing expressions contained in one assignment target.
+fn collect_assignment_target_literals(target: &AssignmentTarget<'_>, pool: &mut LiteralPool) {
+    if let AssignmentTarget::Index {
+        receiver, index, ..
+    } = target
+    {
+        collect_expression_literals(receiver, pool);
+        collect_expression_literals(index, pool);
+    }
+}
+
 /// Collects literals recursively from one expression.
 fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPool) {
     match expression {
@@ -132,6 +146,29 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
             for argument in arguments {
                 collect_expression_literals(argument, pool);
             }
+        }
+        Expression::List { elements, .. } => {
+            for element in elements {
+                collect_expression_literals(element, pool);
+            }
+        }
+        Expression::MethodCall {
+            receiver,
+            method,
+            arguments,
+            ..
+        } => {
+            collect_expression_literals(receiver, pool);
+            pool.insert(&method.name);
+            for argument in arguments {
+                collect_expression_literals(argument, pool);
+            }
+        }
+        Expression::Index {
+            receiver, index, ..
+        } => {
+            collect_expression_literals(receiver, pool);
+            collect_expression_literals(index, pool);
         }
         Expression::Integer(_, _)
         | Expression::Float(_, _)

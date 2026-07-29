@@ -8,8 +8,8 @@ use minicbor::{Decoder, Encoder, data::Type};
 
 /// A host-safe ExS value represented independently of the runtime heap.
 ///
-/// Phase 1 supports only primitive values. Future language values are added here when their CBOR
-/// representation and host-facing semantics are defined.
+/// This representation contains only values that can safely cross the Wasm-host boundary. Runtime
+/// references, object identities, and cycles are never exposed through this type.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExsValue {
     /// The singular ExS null value.
@@ -22,6 +22,8 @@ pub enum ExsValue {
     Float(f64),
     /// An immutable UTF-8 ExS string.
     String(String),
+    /// An ordered sequence of host-safe ExS values.
+    List(Vec<ExsValue>),
 }
 
 /// A malformed or unsupported ExS CBOR value.
@@ -56,14 +58,7 @@ impl ExsValue {
     /// Returns an error only if writing to the owned output buffer unexpectedly fails.
     pub fn to_cbor(&self) -> Result<Vec<u8>, CborError> {
         let mut encoder = Encoder::new(Vec::new());
-        let encoded = match self {
-            Self::Null => encoder.null(),
-            Self::Bool(value) => encoder.bool(*value),
-            Self::Int(value) => encoder.i64(*value),
-            Self::Float(value) => encoder.f64(*value),
-            Self::String(value) => encoder.str(value),
-        };
-        encoded.map_err(|_| CborError::Encode)?;
+        encode_value(self, &mut encoder)?;
         Ok(encoder.into_writer())
     }
 
@@ -74,30 +69,84 @@ impl ExsValue {
     /// Returns an error if the input is malformed, unsupported, or contains trailing data.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, CborError> {
         let mut decoder = Decoder::new(bytes);
-        let value = match decoder.datatype().map_err(|_| CborError::Malformed)? {
-            Type::Null => {
-                decoder.null().map_err(|_| CborError::Malformed)?;
-                Self::Null
-            }
-            Type::Bool => Self::Bool(decoder.bool().map_err(|_| CborError::Malformed)?),
-            Type::U8
-            | Type::U16
-            | Type::U32
-            | Type::U64
-            | Type::I8
-            | Type::I16
-            | Type::I32
-            | Type::I64
-            | Type::Int => Self::Int(decoder.i64().map_err(|_| CborError::Malformed)?),
-            Type::F16 | Type::F32 | Type::F64 => {
-                Self::Float(decoder.f64().map_err(|_| CborError::Malformed)?)
-            }
-            Type::String => Self::String(decoder.str().map_err(|_| CborError::Malformed)?.into()),
-            _ => return Err(CborError::UnsupportedType),
-        };
+        let value = decode_value(&mut decoder)?;
         if decoder.position() != bytes.len() {
             return Err(CborError::TrailingData);
         }
         Ok(value)
+    }
+}
+
+/// Encodes one host-safe ExS value into the current CBOR item position.
+fn encode_value(value: &ExsValue, encoder: &mut Encoder<Vec<u8>>) -> Result<(), CborError> {
+    match value {
+        ExsValue::Null => encoder.null().map(|_| ()).map_err(|_| CborError::Encode),
+        ExsValue::Bool(value) => encoder
+            .bool(*value)
+            .map(|_| ())
+            .map_err(|_| CborError::Encode),
+        ExsValue::Int(value) => encoder
+            .i64(*value)
+            .map(|_| ())
+            .map_err(|_| CborError::Encode),
+        ExsValue::Float(value) => encoder
+            .f64(*value)
+            .map(|_| ())
+            .map_err(|_| CborError::Encode),
+        ExsValue::String(value) => encoder
+            .str(value)
+            .map(|_| ())
+            .map_err(|_| CborError::Encode),
+        ExsValue::List(values) => {
+            let length = u64::try_from(values.len()).map_err(|_| CborError::Encode)?;
+            encoder.array(length).map_err(|_| CborError::Encode)?;
+            for value in values {
+                encode_value(value, encoder)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Decodes one host-safe ExS value from the current CBOR item position.
+fn decode_value(decoder: &mut Decoder<'_>) -> Result<ExsValue, CborError> {
+    match decoder.datatype().map_err(|_| CborError::Malformed)? {
+        Type::Null => {
+            decoder.null().map_err(|_| CborError::Malformed)?;
+            Ok(ExsValue::Null)
+        }
+        Type::Bool => Ok(ExsValue::Bool(
+            decoder.bool().map_err(|_| CborError::Malformed)?,
+        )),
+        Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::I8
+        | Type::I16
+        | Type::I32
+        | Type::I64
+        | Type::Int => Ok(ExsValue::Int(
+            decoder.i64().map_err(|_| CborError::Malformed)?,
+        )),
+        Type::F16 | Type::F32 | Type::F64 => Ok(ExsValue::Float(
+            decoder.f64().map_err(|_| CborError::Malformed)?,
+        )),
+        Type::String => Ok(ExsValue::String(
+            decoder.str().map_err(|_| CborError::Malformed)?.into(),
+        )),
+        Type::Array => {
+            let length = decoder
+                .array()
+                .map_err(|_| CborError::Malformed)?
+                .ok_or(CborError::UnsupportedType)?;
+            let capacity = usize::try_from(length).map_err(|_| CborError::Malformed)?;
+            let mut values = Vec::with_capacity(capacity);
+            for _ in 0..length {
+                values.push(decode_value(decoder)?);
+            }
+            Ok(ExsValue::List(values))
+        }
+        _ => Err(CborError::UnsupportedType),
     }
 }

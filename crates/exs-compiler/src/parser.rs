@@ -1,8 +1,8 @@
 //! Recursive-descent parser for the Phase-1 `ExS` grammar.
 
 use crate::ast::{
-    BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module, Statement,
-    UnaryOperator,
+    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module,
+    Statement, UnaryOperator,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{Token, TokenKind};
@@ -127,23 +127,20 @@ impl<'a> Parser<'a> {
                 span: start.through(end),
             });
         }
-        if matches!(self.peek().kind, TokenKind::Identifier(_))
-            && matches!(self.peek_next().kind, TokenKind::Equal)
-        {
-            let name = self.identifier("expected assignment target")?;
-            let start = name.span;
-            self.advance();
+        let expression = self.expression()?;
+        if self.matches(&TokenKind::Equal) {
+            let start = expression_span(&expression);
+            let target = self.assignment_target(expression)?;
             let value = self.expression()?;
             let end = self
                 .expect_simple(TokenKind::Semicolon, "expected `;` after assignment")?
                 .span;
             return Ok(Statement::Assign {
-                name,
+                target,
                 value,
                 span: start.through(end),
             });
         }
-        let expression = self.expression()?;
         let start = expression_span(&expression);
         let end = self
             .expect_simple(TokenKind::Semicolon, "expected `;` after expression")?
@@ -247,38 +244,56 @@ impl<'a> Parser<'a> {
 
     fn call(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
         let mut expression = self.primary()?;
-        while self.matches(&TokenKind::LeftParen) {
-            let open = self.previous().span;
-            let callee = match expression {
-                Expression::Variable(identifier) => identifier,
-                _ => {
-                    return Err(self.error(
-                        open,
-                        "E0110",
-                        "only named function calls are supported in Phase 1",
-                    ));
-                }
-            };
-            let mut arguments = Vec::new();
-            if !self.check(&TokenKind::RightParen) {
-                loop {
-                    arguments.push(self.expression()?);
-                    if !self.matches(&TokenKind::Comma) {
-                        break;
+        loop {
+            if self.matches(&TokenKind::LeftParen) {
+                let open = self.previous().span;
+                let callee = match expression {
+                    Expression::Variable(identifier) => identifier,
+                    _ => {
+                        return Err(self.error(
+                            open,
+                            "E0110",
+                            "only named function calls are supported in Phase 1",
+                        ));
                     }
-                    if self.check(&TokenKind::RightParen) {
-                        break;
-                    }
-                }
+                };
+                let arguments = self.arguments(TokenKind::RightParen)?;
+                let close = self
+                    .expect_simple(TokenKind::RightParen, "expected `)` after arguments")?
+                    .span;
+                expression = Expression::Call {
+                    callee,
+                    arguments,
+                    span: open.through(close),
+                };
+            } else if self.matches(&TokenKind::LeftBracket) {
+                let index = self.expression()?;
+                let close = self
+                    .expect_simple(TokenKind::RightBracket, "expected `]` after index")?
+                    .span;
+                let span = expression_span(&expression).through(close);
+                expression = Expression::Index {
+                    receiver: Box::new(expression),
+                    index: Box::new(index),
+                    span,
+                };
+            } else if self.matches(&TokenKind::Dot) {
+                let method = self.identifier("expected method name after `.`")?;
+                self.expect_simple(TokenKind::LeftParen, "expected `(` after method name")?;
+                let arguments = self.arguments(TokenKind::RightParen)?;
+                let close = self
+                    .expect_simple(TokenKind::RightParen, "expected `)` after arguments")?
+                    .span;
+                let span = expression_span(&expression).through(close);
+                expression = Expression::MethodCall {
+                    receiver: Box::new(expression),
+                    method,
+                    arguments,
+                    span,
+                };
+            } else {
+                break;
             }
-            let close = self
-                .expect_simple(TokenKind::RightParen, "expected `)` after arguments")?
-                .span;
-            expression = Expression::Call {
-                callee,
-                arguments,
-                span: open.through(close),
-            };
         }
         Ok(expression)
     }
@@ -291,6 +306,16 @@ impl<'a> Parser<'a> {
             TokenKind::String(value) => Ok(Expression::String(value, token.span)),
             TokenKind::True => Ok(Expression::Bool(true, token.span)),
             TokenKind::False => Ok(Expression::Bool(false, token.span)),
+            TokenKind::LeftBracket => {
+                let elements = self.arguments(TokenKind::RightBracket)?;
+                let end = self
+                    .expect_simple(TokenKind::RightBracket, "expected `]` after list elements")?
+                    .span;
+                Ok(Expression::List {
+                    elements,
+                    span: token.span.through(end),
+                })
+            }
             TokenKind::Identifier(name) => Ok(Expression::Variable(Identifier {
                 name,
                 span: token.span,
@@ -301,6 +326,47 @@ impl<'a> Parser<'a> {
                 Ok(expression)
             }
             _ => Err(self.error(token.span, "E0101", "expected expression")),
+        }
+    }
+
+    /// Parses a comma-separated expression sequence ending at `terminator`.
+    fn arguments(
+        &mut self,
+        terminator: TokenKind,
+    ) -> Result<Vec<Expression<'a>>, CompileDiagnostic<'a>> {
+        let mut arguments = Vec::new();
+        if !self.check(&terminator) {
+            loop {
+                arguments.push(self.expression()?);
+                if !self.matches(&TokenKind::Comma) || self.check(&terminator) {
+                    break;
+                }
+            }
+        }
+        Ok(arguments)
+    }
+
+    /// Converts a parsed expression into a permitted statement assignment location.
+    fn assignment_target(
+        &self,
+        expression: Expression<'a>,
+    ) -> Result<AssignmentTarget<'a>, CompileDiagnostic<'a>> {
+        match expression {
+            Expression::Variable(identifier) => Ok(AssignmentTarget::Variable(identifier)),
+            Expression::Index {
+                receiver,
+                index,
+                span,
+            } => Ok(AssignmentTarget::Index {
+                receiver,
+                index,
+                span,
+            }),
+            expression => Err(self.error(
+                expression_span(&expression),
+                "E0111",
+                "assignment target must be a binding or index access",
+            )),
         }
     }
 
@@ -356,10 +422,6 @@ impl<'a> Parser<'a> {
         &self.tokens[self.current]
     }
 
-    fn peek_next(&self) -> &Token<'a> {
-        self.tokens.get(self.current + 1).unwrap_or(self.peek())
-    }
-
     fn previous(&self) -> &Token<'a> {
         &self.tokens[self.current - 1]
     }
@@ -380,9 +442,12 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::Float(_, span)
         | Expression::String(_, span)
         | Expression::Bool(_, span) => *span,
+        Expression::List { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::Binary { span, .. }
-        | Expression::Call { span, .. } => *span,
+        | Expression::Call { span, .. }
+        | Expression::MethodCall { span, .. }
+        | Expression::Index { span, .. } => *span,
     }
 }
