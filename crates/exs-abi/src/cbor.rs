@@ -24,6 +24,8 @@ pub enum ExsValue {
     String(String),
     /// An ordered sequence of host-safe ExS values.
     List(Vec<ExsValue>),
+    /// An insertion-ordered mapping from string keys to host-safe ExS values.
+    Object(Vec<(String, ExsValue)>),
 }
 
 /// A malformed or unsupported ExS CBOR value.
@@ -105,6 +107,15 @@ fn encode_value(value: &ExsValue, encoder: &mut Encoder<Vec<u8>>) -> Result<(), 
             }
             Ok(())
         }
+        ExsValue::Object(entries) => {
+            let length = u64::try_from(entries.len()).map_err(|_| CborError::Encode)?;
+            encoder.map(length).map_err(|_| CborError::Encode)?;
+            for (key, value) in entries {
+                encoder.str(key).map_err(|_| CborError::Encode)?;
+                encode_value(value, encoder)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -146,6 +157,26 @@ fn decode_value(decoder: &mut Decoder<'_>) -> Result<ExsValue, CborError> {
                 values.push(decode_value(decoder)?);
             }
             Ok(ExsValue::List(values))
+        }
+        Type::Map => {
+            let length = decoder
+                .map()
+                .map_err(|_| CborError::Malformed)?
+                .ok_or(CborError::UnsupportedType)?;
+            let capacity = usize::try_from(length).map_err(|_| CborError::Malformed)?;
+            let mut entries = Vec::with_capacity(capacity);
+            for _ in 0..length {
+                let key = match decoder.datatype().map_err(|_| CborError::Malformed)? {
+                    Type::String => decoder.str().map_err(|_| CborError::Malformed)?.into(),
+                    _ => return Err(CborError::UnsupportedType),
+                };
+                let value = decode_value(decoder)?;
+                if entries.iter().any(|(entry_key, _)| entry_key == &key) {
+                    return Err(CborError::Malformed);
+                }
+                entries.push((key, value));
+            }
+            Ok(ExsValue::Object(entries))
         }
         _ => Err(CborError::UnsupportedType),
     }

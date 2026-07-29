@@ -103,6 +103,28 @@ pub enum AssignmentTarget<'a> {
         /// Full target span.
         span: SourceSpan<'a>,
     },
+    /// A statically named runtime property.
+    Property {
+        /// The value to mutate.
+        receiver: Box<Expression<'a>>,
+        /// The property name.
+        property: Identifier<'a>,
+        /// Full target span.
+        span: SourceSpan<'a>,
+    },
+}
+
+/// One statically named property in an object literal.
+#[derive(Debug)]
+pub struct ObjectProperty<'a> {
+    /// Decoded property key.
+    pub key: String,
+    /// Property-key source span.
+    pub key_span: SourceSpan<'a>,
+    /// Property value expression.
+    pub value: Expression<'a>,
+    /// Full property span.
+    pub span: SourceSpan<'a>,
 }
 
 /// A Phase-1 expression.
@@ -120,6 +142,13 @@ pub enum Expression<'a> {
     List {
         /// Elements evaluated from left to right.
         elements: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// A mutable object literal with statically named properties.
+    Object {
+        /// Properties evaluated from left to right.
+        properties: Vec<ObjectProperty<'a>>,
         /// Full expression span.
         span: SourceSpan<'a>,
     },
@@ -171,6 +200,15 @@ pub enum Expression<'a> {
         receiver: Box<Expression<'a>>,
         /// Runtime index or key.
         index: Box<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// A statically named runtime property lookup.
+    Property {
+        /// Value that owns the property.
+        receiver: Box<Expression<'a>>,
+        /// Property name.
+        property: Identifier<'a>,
         /// Full expression span.
         span: SourceSpan<'a>,
     },

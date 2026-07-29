@@ -231,7 +231,7 @@ pub struct ValueRef(NonZeroU32);
 
 `ValueRef` is a nonzero, one-based index into the runtime-owned value table. It has no tag or payload and MUST NOT cross the Wasm-host boundary. The compiler only uses stable runtime ABI operations to create, pass, and operate on values; it MUST NOT inspect the value table or runtime-object layouts.
 
-`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports Null, Bool, Int, Float, String, and recursively nested List transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
+`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports Null, Bool, Int, Float, String, and recursively nested List and Object transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
 
 The runtime stores the actual payload in `RtValue`. Primitive payloads are inline. Every complex variant MUST be boxed so adding it cannot increase the allocation size of primitive values:
 
@@ -298,6 +298,10 @@ Nested acyclic Lists cross the current CBOR boundary as arrays. The runtime can 
 ## Object
 
 An `Object` is a mutable mapping from String keys to `Value` references. Key iteration order is insertion order. Replacing an existing key does not change its position.
+
+The current implementation stores Objects as boxed insertion-ordered entries. It supports `{ key: value, "key": value }` literals, dynamic `object[key]` reads and writes, dot-property reads and writes, and identity equality. Missing Object reads return `null`; writes create or replace a property. `has(key)`, `delete(key)`, `keys()`, and `values()` are dispatched by `__exs_rt_call_method`; `keys()` and `values()` return new Lists in insertion order. Unsupported receivers, non-String keys, and unknown methods trap until Error Values are implemented.
+
+Nested acyclic Objects cross the current CBOR boundary as text-keyed maps in their insertion order. The runtime currently traps when serializing a container cycle; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
 
 ## Function and Closure
 
@@ -762,7 +766,7 @@ Top-level executable statements are not permitted. A future top-level-code featu
 
 ## Phase-1 modules and entry point
 
-Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the runner exposes Null, Bool, Int, Float, String, and nested acyclic List results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies Null input and prints the result in ExS source notation.
+Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the runner exposes Null, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies Null input and prints the result in ExS source notation.
 
 ```text
 fn main(input) {
@@ -1304,11 +1308,11 @@ The Phase-1 entry point is `fn main(input)`. Before execution, the runner serial
 
 ## Phase-1 result buffer
 
-After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one Null, Bool, Int, Float, String, or recursively nested acyclic List CBOR item. The internal `ValueRef` never crosses this boundary.
+After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one Null, Bool, Int, Float, String, or recursively nested acyclic List or Object CBOR item. The internal `ValueRef` never crosses this boundary.
 
 ## Runtime intrinsics
 
-Compiler-generated code MAY call linked runtime intrinsics whose names begin with `__exs_rt_`, such as `__exs_rt_list_new`, `__exs_rt_append`, `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_call_method`, `__exs_rt_cell_new`, `__exs_rt_value_is_error`, `__exs_rt_clone`, `__exs_rt_task_create`, and `__exs_rt_cbor_encode`. Except for construction intrinsics such as `__exs_rt_list_new`, operations dispatch from the runtime value rather than a compiler-proven receiver type. The compiler resolves intrinsic names from the `crates/exs-runtime/exs-runtime.wasm` export section at link time.
+Compiler-generated code MAY call linked runtime intrinsics whose names begin with `__exs_rt_`, such as `__exs_rt_list_new`, `__exs_rt_object_new`, `__exs_rt_append`, `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_call_method`, `__exs_rt_cell_new`, `__exs_rt_value_is_error`, `__exs_rt_clone`, `__exs_rt_task_create`, and `__exs_rt_cbor_encode`. Except for construction intrinsics such as `__exs_rt_list_new` and `__exs_rt_object_new`, operations dispatch from the runtime value rather than a compiler-proven receiver type. The compiler resolves intrinsic names from the `crates/exs-runtime/exs-runtime.wasm` export section at link time.
 
 The compiler resolves runtime functions by these export names, never fixed Wasm indices. Source programs cannot import, export, or reference intrinsic names.
 

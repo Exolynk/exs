@@ -131,6 +131,13 @@ fn collect_assignment_target_literals(target: &AssignmentTarget<'_>, pool: &mut 
         collect_expression_literals(receiver, pool);
         collect_expression_literals(index, pool);
     }
+    if let AssignmentTarget::Property {
+        receiver, property, ..
+    } = target
+    {
+        collect_expression_literals(receiver, pool);
+        pool.insert(&property.name);
+    }
 }
 
 /// Collects literals recursively from one expression.
@@ -152,6 +159,12 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
                 collect_expression_literals(element, pool);
             }
         }
+        Expression::Object { properties, .. } => {
+            for property in properties {
+                pool.insert(&property.key);
+                collect_expression_literals(&property.value, pool);
+            }
+        }
         Expression::MethodCall {
             receiver,
             method,
@@ -169,6 +182,12 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
         } => {
             collect_expression_literals(receiver, pool);
             collect_expression_literals(index, pool);
+        }
+        Expression::Property {
+            receiver, property, ..
+        } => {
+            collect_expression_literals(receiver, pool);
+            pool.insert(&property.name);
         }
         Expression::Integer(_, _)
         | Expression::Float(_, _)

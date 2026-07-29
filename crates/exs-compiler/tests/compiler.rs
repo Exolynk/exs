@@ -55,6 +55,19 @@ fn compiles_list_syntax() {
     assert!(module.is_ok());
 }
 
+/// Compiles object literals, dot properties, dynamic keys, and member calls.
+#[test]
+fn compiles_object_syntax() {
+    let module = compile(
+        SourceInput {
+            source_id: "object.exs",
+            text: "fn main(input) { let key = \"name\"; let value = { name: input, \"role\": \"admin\" }; value[key] = \"Ada\"; value.score = 42; ret value.has(\"score\"); }",
+        },
+        CompileOptions,
+    );
+    assert!(module.is_ok());
+}
+
 /// Reports a missing statement terminator at the source level.
 #[test]
 fn reports_a_missing_statement_semicolon() {

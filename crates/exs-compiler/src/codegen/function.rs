@@ -6,8 +6,8 @@ use exs_value::is_valid_int;
 use wasm_encoder::{BlockType, Function, Instruction, TypeSection, ValType};
 
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Module, Statement,
-    UnaryOperator,
+    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Module,
+    ObjectProperty, Statement, UnaryOperator,
 };
 use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -193,6 +193,17 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.runtime_call("__exs_rt_index_set", *span)?;
                     self.function.instruction(&Instruction::Drop);
                 }
+                AssignmentTarget::Property {
+                    receiver,
+                    property,
+                    span,
+                } => {
+                    self.compile_expression(receiver)?;
+                    self.compile_string(&property.name, property.span)?;
+                    self.compile_expression(value)?;
+                    self.runtime_call("__exs_rt_index_set", *span)?;
+                    self.function.instruction(&Instruction::Drop);
+                }
             },
             Statement::Return { value, span } => {
                 if let Some(value) = value {
@@ -269,6 +280,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             }
             Expression::List { elements, span } => {
                 self.compile_list(elements, *span)?;
+            }
+            Expression::Object { properties, span } => {
+                self.compile_object(properties, *span)?;
             }
             Expression::Unary {
                 operator,
@@ -380,6 +394,15 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.compile_expression(index)?;
                 self.runtime_call("__exs_rt_index_get", *span)?;
             }
+            Expression::Property {
+                receiver,
+                property,
+                span,
+            } => {
+                self.compile_expression(receiver)?;
+                self.compile_string(&property.name, property.span)?;
+                self.runtime_call("__exs_rt_index_get", *span)?;
+            }
         }
         Ok(())
     }
@@ -438,6 +461,29 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         }
         self.function
             .instruction(&Instruction::LocalGet(list_local));
+        Ok(())
+    }
+
+    /// Constructs a runtime object while evaluating property values in source order.
+    fn compile_object(
+        &mut self,
+        properties: &[ObjectProperty<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.runtime_call("__exs_rt_object_new", span)?;
+        let object_local = self.allocate_local();
+        self.function
+            .instruction(&Instruction::LocalSet(object_local));
+        for property in properties {
+            self.function
+                .instruction(&Instruction::LocalGet(object_local));
+            self.compile_string(&property.key, property.key_span)?;
+            self.compile_expression(&property.value)?;
+            self.runtime_call("__exs_rt_index_set", property.span)?;
+            self.function.instruction(&Instruction::Drop);
+        }
+        self.function
+            .instruction(&Instruction::LocalGet(object_local));
         Ok(())
     }
 
@@ -590,6 +636,7 @@ fn count_assignment_target_expressions(target: &AssignmentTarget<'_>) -> u32 {
         AssignmentTarget::Index {
             receiver, index, ..
         } => count_expressions(receiver) + count_expressions(index),
+        AssignmentTarget::Property { receiver, .. } => 1 + count_expressions(receiver),
     }
 }
 
@@ -611,6 +658,12 @@ fn count_expressions(expression: &Expression<'_>) -> u32 {
         Expression::List { elements, .. } => {
             1 + elements.iter().map(count_expressions).sum::<u32>()
         }
+        Expression::Object { properties, .. } => {
+            1 + properties
+                .iter()
+                .map(|property| 1 + count_expressions(&property.value))
+                .sum::<u32>()
+        }
         Expression::MethodCall {
             receiver,
             arguments,
@@ -619,6 +672,7 @@ fn count_expressions(expression: &Expression<'_>) -> u32 {
         Expression::Index {
             receiver, index, ..
         } => 1 + count_expressions(receiver) + count_expressions(index),
+        Expression::Property { receiver, .. } => 1 + count_expressions(receiver),
     }
 }
 
@@ -630,11 +684,13 @@ fn condition_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::String(_, span)
         | Expression::Bool(_, span) => *span,
         Expression::List { span, .. } => *span,
+        Expression::Object { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
         | Expression::MethodCall { span, .. }
-        | Expression::Index { span, .. } => *span,
+        | Expression::Index { span, .. }
+        | Expression::Property { span, .. } => *span,
     }
 }

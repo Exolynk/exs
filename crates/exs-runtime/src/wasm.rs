@@ -1,6 +1,7 @@
 //! Rust implementations exported by the Wasm-target runtime.
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 use core::panic::PanicInfo;
@@ -9,7 +10,7 @@ use exs_abi::ExsValue;
 use exs_value::{ValueRef, is_valid_int};
 
 use crate::state::runtime;
-use crate::{RtValue, RuntimeList, RuntimeString};
+use crate::{RtValue, RuntimeList, RuntimeObject, RuntimeString};
 
 /// Allocates and returns the singular null value.
 #[unsafe(no_mangle)]
@@ -82,6 +83,7 @@ pub extern "C" fn __exs_rt_eq(left: ValueRef, right: ValueRef) -> ValueRef {
         }
         (RtValue::String(left), RtValue::String(right)) => left.as_str() == right.as_str(),
         (RtValue::List(_), RtValue::List(_)) => left == right,
+        (RtValue::Object(_), RtValue::Object(_)) => left == right,
         _ => false,
     };
     allocate(RtValue::Bool(equal))
@@ -162,6 +164,12 @@ pub extern "C" fn __exs_rt_list_new() -> ValueRef {
     allocate(RtValue::List(Box::new(RuntimeList::new())))
 }
 
+/// Allocates an empty mutable runtime object.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_object_new() -> ValueRef {
+    allocate(RtValue::Object(Box::new(RuntimeObject::new())))
+}
+
 /// Appends a value through the receiver's runtime collection dispatch.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_append(receiver: ValueRef, item: ValueRef) -> ValueRef {
@@ -178,13 +186,27 @@ pub extern "C" fn __exs_rt_append(receiver: ValueRef, item: ValueRef) -> ValueRe
 /// Reads one element through the receiver's runtime indexing dispatch.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_index_get(receiver: ValueRef, index: ValueRef) -> ValueRef {
-    let index = list_index(index);
-    match value(receiver) {
-        RtValue::List(list) => match list.elements.get(index) {
-            Some(value) => *value,
-            None => trap(),
+    match index_key(receiver, index) {
+        IndexKey::List(index) => match value(receiver) {
+            RtValue::List(list) => match list.elements.get(index) {
+                Some(value) => *value,
+                None => trap(),
+            },
+            _ => trap(),
         },
-        _ => trap(),
+        IndexKey::Object(key) => {
+            let result = match value(receiver) {
+                RtValue::Object(object) => object
+                    .entries
+                    .iter()
+                    .find_map(|(entry_key, value)| (entry_key.as_ref() == key).then_some(*value)),
+                _ => trap(),
+            };
+            match result {
+                Some(value) => value,
+                None => allocate(RtValue::Null),
+            }
+        }
     }
 }
 
@@ -195,16 +217,32 @@ pub extern "C" fn __exs_rt_index_set(
     index: ValueRef,
     replacement: ValueRef,
 ) -> ValueRef {
-    let index = list_index(index);
-    match value_mut(receiver) {
-        RtValue::List(list) => match list.elements.get_mut(index) {
-            Some(value) => {
-                *value = replacement;
+    match index_key(receiver, index) {
+        IndexKey::List(index) => match value_mut(receiver) {
+            RtValue::List(list) => match list.elements.get_mut(index) {
+                Some(value) => {
+                    *value = replacement;
+                    replacement
+                }
+                None => trap(),
+            },
+            _ => trap(),
+        },
+        IndexKey::Object(key) => match value_mut(receiver) {
+            RtValue::Object(object) => {
+                if let Some((_, value)) = object
+                    .entries
+                    .iter_mut()
+                    .find(|(entry_key, _)| entry_key.as_ref() == key)
+                {
+                    *value = replacement;
+                } else {
+                    object.entries.push((key.into_boxed_str(), replacement));
+                }
                 replacement
             }
-            None => trap(),
+            _ => trap(),
         },
-        _ => trap(),
     }
 }
 
@@ -215,12 +253,21 @@ pub extern "C" fn __exs_rt_call_method(
     method: ValueRef,
     arguments: ValueRef,
 ) -> ValueRef {
-    let is_push = matches!(value(method), RtValue::String(name) if name.as_str() == "push");
-    if !is_push {
-        trap();
+    let method = string_value(method);
+    match method.as_str() {
+        "push" => __exs_rt_append(receiver, single_argument(arguments)),
+        "has" => object_has(receiver, single_argument(arguments)),
+        "delete" => object_delete(receiver, single_argument(arguments)),
+        "keys" => {
+            require_no_arguments(arguments);
+            object_keys(receiver)
+        }
+        "values" => {
+            require_no_arguments(arguments);
+            object_values(receiver)
+        }
+        _ => trap(),
     }
-    let item = single_argument(arguments);
-    __exs_rt_append(receiver, item)
 }
 
 /// Allocates a runtime-owned linear-memory buffer for one CBOR input value.
@@ -286,6 +333,14 @@ enum Ordering {
     GreaterOrEqual,
 }
 
+/// A validated runtime index representation selected from the receiver's value kind.
+enum IndexKey {
+    /// A zero-based list position.
+    List(usize),
+    /// An owned object property key.
+    Object(String),
+}
+
 /// Appends one runtime value and returns its one-based table index.
 fn allocate(value: RtValue) -> ValueRef {
     let state = unsafe { runtime() };
@@ -322,12 +377,15 @@ fn value_mut(reference: ValueRef) -> &'static mut RtValue {
 
 /// Converts one runtime Phase-3 value into its host-safe ABI value.
 fn runtime_to_exs_value(reference: ValueRef) -> ExsValue {
-    let mut active_lists = Vec::new();
-    runtime_to_exs_value_inner(reference, &mut active_lists)
+    let mut active_containers = Vec::new();
+    runtime_to_exs_value_inner(reference, &mut active_containers)
 }
 
 /// Converts one runtime value into a host-safe value while rejecting CBOR-inexpressible cycles.
-fn runtime_to_exs_value_inner(reference: ValueRef, active_lists: &mut Vec<ValueRef>) -> ExsValue {
+fn runtime_to_exs_value_inner(
+    reference: ValueRef,
+    active_containers: &mut Vec<ValueRef>,
+) -> ExsValue {
     match value(reference) {
         RtValue::Null => ExsValue::Null,
         RtValue::Bool(value) => ExsValue::Bool(*value),
@@ -335,18 +393,36 @@ fn runtime_to_exs_value_inner(reference: ValueRef, active_lists: &mut Vec<ValueR
         RtValue::Float(value) => ExsValue::Float(*value),
         RtValue::String(value) => ExsValue::String(value.as_str().into()),
         RtValue::List(list) => {
-            if active_lists.contains(&reference) {
+            if active_containers.contains(&reference) {
                 trap();
             }
-            active_lists.push(reference);
+            active_containers.push(reference);
             let elements = list
                 .elements
                 .iter()
                 .copied()
-                .map(|element| runtime_to_exs_value_inner(element, active_lists))
+                .map(|element| runtime_to_exs_value_inner(element, active_containers))
                 .collect();
-            let _removed = active_lists.pop();
+            let _removed = active_containers.pop();
             ExsValue::List(elements)
+        }
+        RtValue::Object(object) => {
+            if active_containers.contains(&reference) {
+                trap();
+            }
+            active_containers.push(reference);
+            let entries = object
+                .entries
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.as_ref().into(),
+                        runtime_to_exs_value_inner(*value, active_containers),
+                    )
+                })
+                .collect();
+            let _removed = active_containers.pop();
+            ExsValue::Object(entries)
         }
         RtValue::BoxedFutureValue(_) => trap(),
     }
@@ -363,6 +439,12 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
         ExsValue::String(value) => RtValue::String(Box::new(RuntimeString::from_string(value))),
         ExsValue::List(elements) => RtValue::List(Box::new(RuntimeList {
             elements: elements.into_iter().map(exs_value_to_runtime).collect(),
+        })),
+        ExsValue::Object(entries) => RtValue::Object(Box::new(RuntimeObject {
+            entries: entries
+                .into_iter()
+                .map(|(key, value)| (key.into_boxed_str(), exs_value_to_runtime(value)))
+                .collect(),
         })),
     };
     allocate(value)
@@ -404,9 +486,11 @@ fn number_of(value: &RtValue) -> Number {
         RtValue::Bool(true) => Number::Int(1),
         RtValue::Int(value) => Number::Int(*value),
         RtValue::Float(value) => Number::Float(*value),
-        RtValue::Null | RtValue::String(_) | RtValue::List(_) | RtValue::BoxedFutureValue(_) => {
-            trap()
-        }
+        RtValue::Null
+        | RtValue::String(_)
+        | RtValue::List(_)
+        | RtValue::Object(_)
+        | RtValue::BoxedFutureValue(_) => trap(),
     }
 }
 
@@ -500,6 +584,87 @@ fn single_argument(arguments: ValueRef) -> ValueRef {
         RtValue::List(list) if list.elements.len() == 1 => list.elements[0],
         _ => trap(),
     }
+}
+
+/// Verifies that one runtime-provided argument list is empty.
+fn require_no_arguments(arguments: ValueRef) {
+    match value(arguments) {
+        RtValue::List(list) if list.elements.is_empty() => {}
+        _ => trap(),
+    }
+}
+
+/// Classifies a dynamic index according to the runtime receiver value.
+fn index_key(receiver: ValueRef, index: ValueRef) -> IndexKey {
+    match value(receiver) {
+        RtValue::List(_) => IndexKey::List(list_index(index)),
+        RtValue::Object(_) => IndexKey::Object(string_value(index)),
+        _ => trap(),
+    }
+}
+
+/// Copies a runtime String value for use as an object key or method name.
+fn string_value(reference: ValueRef) -> String {
+    match value(reference) {
+        RtValue::String(value) => value.as_str().into(),
+        _ => trap(),
+    }
+}
+
+/// Tests whether an Object contains one string key.
+fn object_has(receiver: ValueRef, key: ValueRef) -> ValueRef {
+    let key = string_value(key);
+    let contains = match value(receiver) {
+        RtValue::Object(object) => object
+            .entries
+            .iter()
+            .any(|(entry_key, _)| entry_key.as_ref() == key),
+        _ => trap(),
+    };
+    allocate(RtValue::Bool(contains))
+}
+
+/// Removes one object property and returns its previous value or Null.
+fn object_delete(receiver: ValueRef, key: ValueRef) -> ValueRef {
+    let key = string_value(key);
+    let removed = match value_mut(receiver) {
+        RtValue::Object(object) => object
+            .entries
+            .iter()
+            .position(|(entry_key, _)| entry_key.as_ref() == key)
+            .map(|index| object.entries.remove(index).1),
+        _ => trap(),
+    };
+    match removed {
+        Some(value) => value,
+        None => allocate(RtValue::Null),
+    }
+}
+
+/// Returns a new List containing object keys in insertion order.
+fn object_keys(receiver: ValueRef) -> ValueRef {
+    let keys = match value(receiver) {
+        RtValue::Object(object) => object
+            .entries
+            .iter()
+            .map(|(key, _)| String::from(key.as_ref()))
+            .collect::<Vec<_>>(),
+        _ => trap(),
+    };
+    let elements = keys
+        .into_iter()
+        .map(|key| allocate(RtValue::String(Box::new(RuntimeString::from_string(key)))))
+        .collect();
+    allocate(RtValue::List(Box::new(RuntimeList { elements })))
+}
+
+/// Returns a new shallow List containing object values in insertion order.
+fn object_values(receiver: ValueRef) -> ValueRef {
+    let elements = match value(receiver) {
+        RtValue::Object(object) => object.entries.iter().map(|(_, value)| *value).collect(),
+        _ => trap(),
+    };
+    allocate(RtValue::List(Box::new(RuntimeList { elements })))
 }
 
 /// Converts one linear-memory pointer to the signed Wasm ABI representation.

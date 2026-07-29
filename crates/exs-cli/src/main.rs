@@ -93,6 +93,14 @@ fn format_result(result: &exs_runner::ExsValue) -> String {
                 .join(", ");
             format!("[{values}]")
         }
+        exs_runner::ExsValue::Object(entries) => {
+            let entries = entries
+                .iter()
+                .map(|(key, value)| format!("{key:?}: {}", format_result(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{entries}}}")
+        }
     }
 }
 

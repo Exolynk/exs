@@ -53,6 +53,23 @@ impl RuntimeList {
     }
 }
 
+/// A mutable insertion-ordered mapping from string keys to runtime values.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub struct RuntimeObject {
+    /// Key-value entries in insertion order.
+    pub(crate) entries: Vec<(Box<str>, ValueRef)>,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl RuntimeObject {
+    /// Creates an empty runtime object.
+    pub(crate) const fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+}
+
 /// The allocated payload of one ExS value.
 ///
 /// Primitive values remain inline. Complex runtime values must use boxed payloads so adding them
@@ -71,9 +88,11 @@ pub enum RtValue {
     String(Box<RuntimeString>),
     /// A mutable ordered sequence.
     List(Box<RuntimeList>),
+    /// A mutable insertion-ordered string-keyed mapping.
+    Object(Box<RuntimeObject>),
     /// Reserved shape for future complex runtime values.
     ///
-    /// Concrete Object and other complex variants must follow this boxed form.
+    /// Concrete future complex variants must follow this boxed form.
     #[doc(hidden)]
     BoxedFutureValue(Box<()>),
 }

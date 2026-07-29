@@ -197,3 +197,74 @@ fn passes_list_cbor_input_to_main() {
         ]),
     );
 }
+
+/// Preserves object insertion order through literal construction and mutations.
+#[test]
+fn executes_object_literals_properties_dynamic_keys_and_methods() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) {
+                let key = "name";
+                let profile = { name: input, "role": "admin" };
+                let alias = profile;
+                alias.score = 42;
+                profile[key] = "Ada";
+                let keys = profile.keys();
+                let values = profile.values();
+                if profile.has("score") && keys[0] == "name" && keys[1] == "role" && keys[2] == "score" && values[2] == 42 {
+                    ret profile;
+                }
+                ret {};
+            }
+        "#,
+            ExsValue::Int(1),
+        ),
+        ExsValue::Object(vec![
+            ("name".to_owned(), ExsValue::String("Ada".to_owned())),
+            ("role".to_owned(), ExsValue::String("admin".to_owned())),
+            ("score".to_owned(), ExsValue::Int(42)),
+        ]),
+    );
+}
+
+/// Uses identity equality and deletion semantics for Objects.
+#[test]
+fn preserves_object_identity_and_deletion_behavior() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) {
+                let first = { value: input };
+                let alias = first;
+                let fresh = { value: input };
+                let removed = alias.delete("value");
+                if first == alias && first != fresh && removed == input && !first.has("value") {
+                    ret first;
+                }
+                ret fresh;
+            }
+        "#,
+            ExsValue::Int(42),
+        ),
+        ExsValue::Object(vec![]),
+    );
+}
+
+/// Decodes a host object for the root input and returns it as an ordered CBOR map.
+#[test]
+fn passes_object_cbor_input_to_main() {
+    assert_eq!(
+        execute_source(
+            "fn main(input) { input.updated = true; ret input; }",
+            ExsValue::Object(vec![(
+                "name".to_owned(),
+                ExsValue::String("Ada".to_owned())
+            )]),
+        ),
+        ExsValue::Object(vec![
+            ("name".to_owned(), ExsValue::String("Ada".to_owned())),
+            ("updated".to_owned(), ExsValue::Bool(true)),
+        ]),
+    );
+}

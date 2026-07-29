@@ -10,8 +10,8 @@ pub use cbor::{CborError, ExsValue};
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 3 adds recursive List transport values to the Wasm-host CBOR boundary.
-pub const ABI_VERSION: u32 = 3;
+/// Version 4 adds insertion-ordered Object transport values to the Wasm-host CBOR boundary.
+pub const ABI_VERSION: u32 = 4;
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// The entry export invoked by runners.

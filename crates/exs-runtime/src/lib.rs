@@ -6,7 +6,7 @@ extern crate alloc;
 
 pub mod value;
 
-pub use value::{RtValue, RuntimeList, RuntimeString};
+pub use value::{RtValue, RuntimeList, RuntimeObject, RuntimeString};
 
 #[cfg(target_arch = "wasm32")]
 mod state;

@@ -2,7 +2,7 @@
 
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module,
-    Statement, UnaryOperator,
+    ObjectProperty, Statement, UnaryOperator,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{Token, TokenKind};
@@ -278,19 +278,27 @@ impl<'a> Parser<'a> {
                     span,
                 };
             } else if self.matches(&TokenKind::Dot) {
-                let method = self.identifier("expected method name after `.`")?;
-                self.expect_simple(TokenKind::LeftParen, "expected `(` after method name")?;
-                let arguments = self.arguments(TokenKind::RightParen)?;
-                let close = self
-                    .expect_simple(TokenKind::RightParen, "expected `)` after arguments")?
-                    .span;
-                let span = expression_span(&expression).through(close);
-                expression = Expression::MethodCall {
-                    receiver: Box::new(expression),
-                    method,
-                    arguments,
-                    span,
-                };
+                let property = self.identifier("expected property name after `.`")?;
+                if self.matches(&TokenKind::LeftParen) {
+                    let arguments = self.arguments(TokenKind::RightParen)?;
+                    let close = self
+                        .expect_simple(TokenKind::RightParen, "expected `)` after arguments")?
+                        .span;
+                    let span = expression_span(&expression).through(close);
+                    expression = Expression::MethodCall {
+                        receiver: Box::new(expression),
+                        method: property,
+                        arguments,
+                        span,
+                    };
+                } else {
+                    let span = expression_span(&expression).through(property.span);
+                    expression = Expression::Property {
+                        receiver: Box::new(expression),
+                        property,
+                        span,
+                    };
+                }
             } else {
                 break;
             }
@@ -313,6 +321,36 @@ impl<'a> Parser<'a> {
                     .span;
                 Ok(Expression::List {
                     elements,
+                    span: token.span.through(end),
+                })
+            }
+            TokenKind::LeftBrace => {
+                let mut properties = Vec::new();
+                if !self.check(&TokenKind::RightBrace) {
+                    loop {
+                        let (key, key_span) = self.object_key()?;
+                        self.expect_simple(TokenKind::Colon, "expected `:` after object property")?;
+                        let value = self.expression()?;
+                        let property_span = key_span.through(expression_span(&value));
+                        properties.push(ObjectProperty {
+                            key,
+                            key_span,
+                            value,
+                            span: property_span,
+                        });
+                        if !self.matches(&TokenKind::Comma) || self.check(&TokenKind::RightBrace) {
+                            break;
+                        }
+                    }
+                }
+                let end = self
+                    .expect_simple(
+                        TokenKind::RightBrace,
+                        "expected `}` after object properties",
+                    )?
+                    .span;
+                Ok(Expression::Object {
+                    properties,
                     span: token.span.through(end),
                 })
             }
@@ -362,6 +400,15 @@ impl<'a> Parser<'a> {
                 index,
                 span,
             }),
+            Expression::Property {
+                receiver,
+                property,
+                span,
+            } => Ok(AssignmentTarget::Property {
+                receiver,
+                property,
+                span,
+            }),
             expression => Err(self.error(
                 expression_span(&expression),
                 "E0111",
@@ -379,6 +426,19 @@ impl<'a> Parser<'a> {
             })
         } else {
             Err(self.error(token.span, "E0102", message))
+        }
+    }
+
+    /// Parses an identifier or string object property key.
+    fn object_key(&mut self) -> Result<(String, SourceSpan<'a>), CompileDiagnostic<'a>> {
+        let token = self.advance().clone();
+        match token.kind {
+            TokenKind::Identifier(key) | TokenKind::String(key) => Ok((key, token.span)),
+            _ => Err(self.error(
+                token.span,
+                "E0112",
+                "expected identifier or string object property key",
+            )),
         }
     }
 
@@ -443,11 +503,13 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::String(_, span)
         | Expression::Bool(_, span) => *span,
         Expression::List { span, .. } => *span,
+        Expression::Object { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
         | Expression::MethodCall { span, .. }
-        | Expression::Index { span, .. } => *span,
+        | Expression::Index { span, .. }
+        | Expression::Property { span, .. } => *span,
     }
 }

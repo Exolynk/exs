@@ -19,6 +19,13 @@ fn round_trips_phase_one_values() {
             ExsValue::String("Ada".to_owned()),
             ExsValue::List(vec![ExsValue::Bool(true)]),
         ]),
+        ExsValue::Object(vec![
+            ("name".to_owned(), ExsValue::String("Ada".to_owned())),
+            (
+                "values".to_owned(),
+                ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)]),
+            ),
+        ]),
     ] {
         let encoded = match value.to_cbor() {
             Ok(encoded) => encoded,
@@ -41,11 +48,11 @@ fn rejects_trailing_cbor_data() {
     );
 }
 
-/// Rejects CBOR maps, which are not yet represented by the ABI value.
+/// Rejects CBOR byte strings, which are not represented by the ABI value.
 #[test]
 fn rejects_unsupported_cbor_values() {
     assert_eq!(
-        ExsValue::from_cbor(&[0xa0]),
+        ExsValue::from_cbor(&[0x40]),
         Err(CborError::UnsupportedType)
     );
 }
