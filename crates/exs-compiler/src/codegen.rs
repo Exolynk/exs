@@ -3,14 +3,13 @@
 use std::collections::HashMap;
 
 use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, MODULE_METADATA_SECTION, RESULT_KIND_EXPORT,
-    RESULT_VALUE_EXPORT, START_EXPORT, STATUS_COMPLETE,
+    ABI_VERSION, ABI_VERSION_EXPORT, MODULE_METADATA_SECTION, START_EXPORT, STATUS_COMPLETE,
 };
 use exs_runtime::WASM_TEMPLATE;
-use exs_value::Value;
+use exs_value::is_valid_int;
 use wasm_encoder::{
     BlockType, CodeSection, CustomSection, ExportKind, ExportSection, Function, FunctionSection,
-    GlobalSection, GlobalType, Instruction, Module as WasmModule, TypeSection, ValType,
+    GlobalSection, Instruction, Module as WasmModule, TypeSection, ValType,
     reencode::{self, Reencode},
 };
 use wasmparser::{ExternalKind, Parser as WasmParser};
@@ -50,12 +49,8 @@ struct TemplateLinker<'source, 'module> {
     runtime_functions: HashMap<String, u32>,
     start_type: Option<u32>,
     abi_version_type: Option<u32>,
-    result_value_type: Option<u32>,
     start_index: Option<u32>,
     abi_version_index: Option<u32>,
-    result_kind_index: Option<u32>,
-    result_value_index: Option<u32>,
-    result_global: Option<u32>,
 }
 
 impl<'source, 'module> TemplateLinker<'source, 'module> {
@@ -68,12 +63,8 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             runtime_functions: HashMap::new(),
             start_type: None,
             abi_version_type: None,
-            result_value_type: None,
             start_index: None,
             abi_version_index: None,
-            result_kind_index: None,
-            result_value_index: None,
-            result_global: None,
         }
     }
 
@@ -98,14 +89,13 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         reencode::utils::parse_type_section(self, types, section)?;
         self.program_types = add_program_types(self.module, types);
         let start_type = types.len();
-        types.ty().function([], [ValType::I32]);
+        types
+            .ty()
+            .function([ValType::I32, ValType::I32], [ValType::I32]);
         let abi_version_type = types.len();
         types.ty().function([], [ValType::I32]);
-        let result_value_type = types.len();
-        types.ty().function([], [ValType::I64]);
         self.start_type = Some(start_type);
         self.abi_version_type = Some(abi_version_type);
-        self.result_value_type = Some(result_value_type);
         Ok(())
     }
 
@@ -124,8 +114,6 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         let start_index = program_base + self.module.functions.len() as u32;
         self.start_index = Some(start_index);
         self.abi_version_index = Some(start_index + 1);
-        self.result_kind_index = Some(start_index + 2);
-        self.result_value_index = Some(start_index + 3);
         functions.function(
             self.start_type
                 .ok_or_else(|| self.state_error("missing start type"))?,
@@ -133,14 +121,6 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         functions.function(
             self.abi_version_type
                 .ok_or_else(|| self.state_error("missing ABI version type"))?,
-        );
-        functions.function(
-            self.abi_version_type
-                .ok_or_else(|| self.state_error("missing ABI version type"))?,
-        );
-        functions.function(
-            self.result_value_type
-                .ok_or_else(|| self.state_error("missing result-value type"))?,
         );
         Ok(())
     }
@@ -150,17 +130,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         globals: &mut GlobalSection,
         section: wasmparser::GlobalSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
-        reencode::utils::parse_global_section(self, globals, section)?;
-        self.result_global = Some(globals.len());
-        globals.global(
-            GlobalType {
-                val_type: ValType::I64,
-                mutable: true,
-                shared: false,
-            },
-            &wasm_encoder::ConstExpr::i64_const(0),
-        );
-        Ok(())
+        reencode::utils::parse_global_section(self, globals, section)
     }
 
     fn parse_export_section(
@@ -194,18 +164,6 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             self.abi_version_index
                 .ok_or_else(|| self.state_error("missing ABI version function index"))?,
         );
-        exports.export(
-            RESULT_KIND_EXPORT,
-            ExportKind::Func,
-            self.result_kind_index
-                .ok_or_else(|| self.state_error("missing result-kind function index"))?,
-        );
-        exports.export(
-            RESULT_VALUE_EXPORT,
-            ExportKind::Func,
-            self.result_value_index
-                .ok_or_else(|| self.state_error("missing result-value function index"))?,
-        );
         Ok(())
     }
 
@@ -231,11 +189,26 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 "missing fn main()",
             )))
         })?;
+        let decode_input = self
+            .runtime_functions
+            .get("__exs_rt_decode_input")
+            .copied()
+            .ok_or_else(|| {
+                self.state_error("runtime template does not export __exs_rt_decode_input")
+            })?;
         let mut start = Function::new([]);
+        start.instruction(&Instruction::LocalGet(0));
+        start.instruction(&Instruction::LocalGet(1));
+        start.instruction(&Instruction::Call(decode_input));
         start.instruction(&Instruction::Call(main.index));
-        start.instruction(&Instruction::GlobalSet(self.result_global.ok_or_else(
-            || self.state_error("runtime template has no global section"),
-        )?));
+        let set_result = self
+            .runtime_functions
+            .get("__exs_rt_set_result")
+            .copied()
+            .ok_or_else(|| {
+                self.state_error("runtime template does not export __exs_rt_set_result")
+            })?;
+        start.instruction(&Instruction::Call(set_result));
         start.instruction(&Instruction::I32Const(STATUS_COMPLETE));
         start.instruction(&Instruction::End);
         codes.function(&start);
@@ -245,18 +218,6 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         abi_version.instruction(&Instruction::End);
         codes.function(&abi_version);
 
-        let mut result_kind = Function::new([]);
-        result_kind.instruction(&Instruction::I32Const(0));
-        result_kind.instruction(&Instruction::End);
-        codes.function(&result_kind);
-
-        let mut result_value = Function::new([]);
-        result_value
-            .instruction(&Instruction::GlobalGet(self.result_global.ok_or_else(
-                || self.state_error("runtime template has no global section"),
-            )?));
-        result_value.instruction(&Instruction::End);
-        codes.function(&result_value);
         Ok(())
     }
 }
@@ -299,11 +260,11 @@ fn build_signatures<'a>(
         );
     }
     match signatures.get("main") {
-        Some(signature) if signature.arity == 0 => Ok(signatures),
+        Some(signature) if signature.arity == 1 => Ok(signatures),
         Some(_) => Err(diagnostics(CompileDiagnostic::new(
             "E0203",
             module_span(module),
-            "Phase 1 requires zero-argument fn main()",
+            "Phase 1 requires fn main(input) with exactly one parameter",
         ))),
         None => Err(diagnostics(CompileDiagnostic::new(
             "E0200",
@@ -320,8 +281,8 @@ fn add_program_types(module: &Module<'_>, types: &mut TypeSection) -> Vec<u32> {
         .map(|function| {
             let index = types.len();
             types.ty().function(
-                std::iter::repeat_n(ValType::I64, function.parameters.len()),
-                [ValType::I64],
+                std::iter::repeat_n(ValType::I32, function.parameters.len()),
+                [ValType::I32],
             );
             index
         })
@@ -353,7 +314,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             declaration,
             signatures,
             runtime,
-            function: Function::new([(local_count, ValType::I64)]),
+            function: Function::new([(local_count, ValType::I32)]),
             scopes: vec![parameters],
             next_local: declaration.parameters.len() as u32,
         })
@@ -361,7 +322,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
 
     fn compile(&mut self) -> Result<Function, CompileDiagnostics<'a>> {
         self.compile_block(&self.declaration.body, false)?;
-        self.function.instruction(&Instruction::I64Const(0));
+        self.runtime_call("__exs_rt_null_new", self.declaration.span)?;
         self.function.instruction(&Instruction::End);
         let placeholder = Function::new([]);
         Ok(std::mem::replace(&mut self.function, placeholder))
@@ -419,11 +380,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.compile_expression(value)?;
                 self.function.instruction(&Instruction::LocalSet(local));
             }
-            Statement::Return { value, .. } => {
+            Statement::Return { value, span } => {
                 if let Some(value) = value {
                     self.compile_expression(value)?;
                 } else {
-                    self.function.instruction(&Instruction::I64Const(0));
+                    self.runtime_call("__exs_rt_null_new", *span)?;
                 }
                 self.function.instruction(&Instruction::Return);
             }
@@ -458,19 +419,25 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         match expression {
             Expression::Integer(value, span) => {
-                let encoded = Value::int(*value).ok_or_else(|| {
-                    diagnostics(CompileDiagnostic::new(
+                if !is_valid_int(*value) {
+                    return Err(diagnostics(CompileDiagnostic::new(
                         "E0206",
                         *span,
                         "integer literal is outside the ExS 56-bit range",
-                    ))
-                })?;
-                self.function
-                    .instruction(&Instruction::I64Const(encoded.bits() as i64));
+                    )));
+                }
+                self.function.instruction(&Instruction::I64Const(*value));
+                self.runtime_call("__exs_rt_int_new", *span)?;
             }
-            Expression::Bool(value, _) => {
+            Expression::Float(value, span) => {
                 self.function
-                    .instruction(&Instruction::I64Const(Value::bool(*value).bits() as i64));
+                    .instruction(&Instruction::F64Const((*value).into()));
+                self.runtime_call("__exs_rt_float_new", *span)?;
+            }
+            Expression::Bool(value, span) => {
+                self.function
+                    .instruction(&Instruction::I32Const(i32::from(*value)));
+                self.runtime_call("__exs_rt_bool_new", *span)?;
             }
             Expression::Variable(identifier) => {
                 let local = self.lookup(&identifier.name).ok_or_else(|| {
@@ -490,15 +457,18 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 if matches!(operator, UnaryOperator::Negate)
                     && let Expression::Integer(value, operand_span) = operand.as_ref()
                 {
-                    let negative = value.checked_neg().and_then(Value::int).ok_or_else(|| {
-                        diagnostics(CompileDiagnostic::new(
-                            "E0206",
-                            *operand_span,
-                            "integer literal is outside the ExS 56-bit range",
-                        ))
-                    })?;
-                    self.function
-                        .instruction(&Instruction::I64Const(negative.bits() as i64));
+                    let negative = value
+                        .checked_neg()
+                        .filter(|value| is_valid_int(*value))
+                        .ok_or_else(|| {
+                            diagnostics(CompileDiagnostic::new(
+                                "E0206",
+                                *operand_span,
+                                "integer literal is outside the ExS 56-bit range",
+                            ))
+                        })?;
+                    self.function.instruction(&Instruction::I64Const(negative));
+                    self.runtime_call("__exs_rt_int_new", *operand_span)?;
                     return Ok(());
                 }
                 self.compile_expression(operand)?;
@@ -568,10 +538,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.compile_expression(left)?;
         self.runtime_call("__exs_rt_condition", span)?;
         self.function
-            .instruction(&Instruction::If(BlockType::Result(ValType::I64)));
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
         if is_or {
-            self.function
-                .instruction(&Instruction::I64Const(Value::bool(true).bits() as i64));
+            self.function.instruction(&Instruction::I32Const(1));
+            self.runtime_call("__exs_rt_bool_new", span)?;
         } else {
             self.checked_boolean_expression(right)?;
         }
@@ -579,8 +549,8 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         if is_or {
             self.checked_boolean_expression(right)?;
         } else {
-            self.function
-                .instruction(&Instruction::I64Const(Value::bool(false).bits() as i64));
+            self.function.instruction(&Instruction::I32Const(0));
+            self.runtime_call("__exs_rt_bool_new", span)?;
         }
         self.function.instruction(&Instruction::End);
         Ok(())
@@ -691,7 +661,10 @@ fn count_expressions_statement(statement: &Statement<'_>) -> u32 {
 
 fn count_expressions(expression: &Expression<'_>) -> u32 {
     match expression {
-        Expression::Integer(_, _) | Expression::Bool(_, _) | Expression::Variable(_) => 1,
+        Expression::Integer(_, _)
+        | Expression::Float(_, _)
+        | Expression::Bool(_, _)
+        | Expression::Variable(_) => 1,
         Expression::Unary { operand, .. } => 1 + count_expressions(operand),
         Expression::Binary { left, right, .. } => {
             1 + count_expressions(left) + count_expressions(right)
@@ -704,7 +677,9 @@ fn count_expressions(expression: &Expression<'_>) -> u32 {
 
 fn condition_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
     match expression {
-        Expression::Integer(_, span) | Expression::Bool(_, span) => *span,
+        Expression::Integer(_, span) | Expression::Float(_, span) | Expression::Bool(_, span) => {
+            *span
+        }
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::Binary { span, .. }

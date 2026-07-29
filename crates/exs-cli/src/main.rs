@@ -63,22 +63,23 @@ fn run_program(path: &str) -> Result<(), String> {
     } else {
         compile_source(path)?.wasm
     };
-    let result = exs_runner::execute(&wasm).map_err(|error| error.to_string())?;
-    print_result(result)?;
+    let result = exs_runner::execute(&wasm, exs_runner::ExsValue::Null)
+        .map_err(|error| error.to_string())?;
+    print_result(result);
     Ok(())
 }
 
 /// Prints a completed Phase-1 program result in ExS source notation.
-fn print_result(result: exs_value::Value) -> Result<(), String> {
-    if let Some(value) = result.as_int() {
-        println!("{value}");
-        return Ok(());
+fn print_result(result: exs_runner::ExsValue) {
+    match result {
+        exs_runner::ExsValue::Null => println!("null"),
+        exs_runner::ExsValue::Bool(value) => println!("{value}"),
+        exs_runner::ExsValue::Int(value) => println!("{value}"),
+        exs_runner::ExsValue::Float(value) if value.is_finite() && value.fract() == 0.0 => {
+            println!("{value:.1}")
+        }
+        exs_runner::ExsValue::Float(value) => println!("{value}"),
     }
-    if let Some(value) = result.as_bool() {
-        println!("{value}");
-        return Ok(());
-    }
-    Err("cannot display this ExS value in Phase 1".to_owned())
 }
 
 /// Returns CLI usage text.

@@ -3,11 +3,11 @@
 use std::fs;
 use std::process::Command;
 
-/// Prints the completed `main` result for a source program.
+/// Prints the completed floating-point `main` result for a source program.
 #[test]
 fn prints_the_main_result() {
     let path = std::env::temp_dir().join(format!("exs-cli-{}.exs", std::process::id()));
-    if let Err(error) = fs::write(&path, "fn main() { ret 42; }") {
+    if let Err(error) = fs::write(&path, "fn main(input) { ret 1.0; }") {
         panic!("could not create source fixture: {error}");
     }
     let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
@@ -26,5 +26,5 @@ fn prints_the_main_result() {
         Ok(stdout) => stdout,
         Err(error) => panic!("CLI output was not UTF-8: {error}"),
     };
-    assert_eq!(stdout, "42\n");
+    assert_eq!(stdout, "1.0\n");
 }

@@ -21,8 +21,8 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 ```text
 .
 ├── crates/
-│   ├── exs-value/       # shared non-observable Value(u64) carrier
-│   ├── exs-abi/         # ABI versions, stable names, and status codes
+│   ├── exs-value/       # shared opaque ValueRef(NonZeroU32) carrier
+│   ├── exs-abi/         # ABI versions, stable names, and ExsValue CBOR transport
 │   ├── exs-runtime/     # Rust runtime source and committed Wasm template
 │   ├── exs-compiler/    # source to linked Wasm compiler library
 │   ├── exs-runner/      # Wasmtime-based server runner
@@ -37,26 +37,25 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 ### Phase 1: Minimal compiler
 
 - [x] Create the final Rust workspace and shared `exs-value` and `exs-abi` crates.
-- [x] Define `#[repr(transparent)] Value(u64)` with integer and boolean tags.
+- [x] Define `#[repr(transparent)] ValueRef(NonZeroU32)` for runtime-allocated values.
 - [x] Compile and commit `crates/exs-runtime/exs-runtime.wasm` for compiler linking.
 - [x] Implement source loading, lexer, parser, `Module` AST, source spans, and diagnostics.
-- [x] Support a function-only module root with exactly one zero-argument `fn main()`.
-- [x] Support local `let`, reassignment, `ret`, semicolon validation, integers, booleans, arithmetic, comparisons, logical expressions, calls, and `if`/`else`.
+- [x] Support a function-only module root with exactly one-parameter `fn main(input)`.
+- [x] Support local `let`, reassignment, `ret`, semicolon validation, integers, floats, booleans, mixed numeric arithmetic/comparisons, logical expressions, calls, and `if`/`else`.
 - [x] Lower direct functions to Wasm and link them with the runtime template into one `.wasm` output.
-- [x] Implement a minimal Wasmtime runner that starts `fn main()` without external input or output.
+- [x] Implement a minimal Wasmtime runner that passes an `ExsValue` CBOR input to `fn main(input)` and returns an `ExsValue` result without exposing internal references.
 - [x] Add lexer, parser, compiler, and end-to-end Wasm execution tests.
 
 ### Phase 2: Dynamic values and runtime ABI
 
-- [ ] Complete primitive tags and checked operations through named `__exs_rt_*` exports.
-- [ ] Add result-buffer handling and runner ABI validation.
-- [ ] Ensure the compiler never depends on heap layout or Wasm function indices.
+- [x] Add runtime-allocated primitive values and checked operations through named `__exs_rt_*` exports.
+- [x] Add shared `ExsValue` CBOR input/output buffers and runner ABI validation.
+- [x] Resolve named runtime exports from the committed Wasm template without depending on heap layouts or fixed Wasm function indices.
 
 ### Phase 3: Heap values
 
-- [ ] Add generational handles, Strings, Lists, Objects, and property access.
+- [ ] Add Strings, Lists, Objects, and property access as boxed `RtValue` variants.
 - [ ] Add named List and Object runtime operations.
-- [ ] Add CBOR serialization for supported values.
 
 ### Phase 4: Garbage collection
 

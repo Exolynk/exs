@@ -12,4 +12,6 @@ workspace = true
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+dlmalloc.workspace = true
+exs-abi = { path = "../exs-abi" }
 exs-value = { path = "../exs-value" }

@@ -15,4 +15,3 @@ path = "src/main.rs"
 [dependencies]
 exs-compiler = { path = "../exs-compiler" }
 exs-runner = { path = "../exs-runner" }
-exs-value = { path = "../exs-value" }

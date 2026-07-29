@@ -5,7 +5,7 @@ use exs_compiler::{CompileOptions, SourceInput, compile};
 /// Compiles the required minimal entry point.
 #[test]
 fn compiles_a_minimal_main_function() {
-    let source = "fn main() { ret 42; }";
+    let source = "fn main(input) { ret 42; }";
     let module = compile(
         SourceInput {
             source_id: "test.exs",
@@ -16,10 +16,23 @@ fn compiles_a_minimal_main_function() {
     assert!(module.is_ok());
 }
 
+/// Compiles decimal and exponent floating-point literals.
+#[test]
+fn compiles_floating_point_literals() {
+    let module = compile(
+        SourceInput {
+            source_id: "float.exs",
+            text: "fn main(input) { ret 1.0 + 0.25 + 1e2 + 2.5e-3; }",
+        },
+        CompileOptions,
+    );
+    assert!(module.is_ok());
+}
+
 /// Reports a missing statement terminator at the source level.
 #[test]
 fn reports_a_missing_statement_semicolon() {
-    let source = "fn main() { let value = 1 ret value; }";
+    let source = "fn main(input) { let value = 1 ret value; }";
     let result = compile(
         SourceInput {
             source_id: "test.exs",
@@ -32,4 +45,21 @@ fn reports_a_missing_statement_semicolon() {
         Err(error) => error,
     };
     assert_eq!(error.diagnostics[0].code, "E0103");
+}
+
+/// Rejects the obsolete zero-parameter Phase-1 entry point.
+#[test]
+fn requires_one_main_parameter() {
+    let result = compile(
+        SourceInput {
+            source_id: "entry.exs",
+            text: "fn main() { ret 42; }",
+        },
+        CompileOptions,
+    );
+    let error = match result {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics[0].code, "E0203");
 }

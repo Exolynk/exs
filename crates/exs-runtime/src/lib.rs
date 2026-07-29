@@ -2,6 +2,15 @@
 
 //! `ExS` runtime code and its committed WebAssembly template.
 
+extern crate alloc;
+
+pub mod value;
+
+pub use value::RtValue;
+
+#[cfg(target_arch = "wasm32")]
+mod state;
+
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 

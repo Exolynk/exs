@@ -287,6 +287,7 @@ impl<'a> Parser<'a> {
         let token = self.advance().clone();
         match token.kind {
             TokenKind::Integer(value) => Ok(Expression::Integer(value, token.span)),
+            TokenKind::Float(value) => Ok(Expression::Float(value, token.span)),
             TokenKind::True => Ok(Expression::Bool(true, token.span)),
             TokenKind::False => Ok(Expression::Bool(false, token.span)),
             TokenKind::Identifier(name) => Ok(Expression::Variable(Identifier {
@@ -374,7 +375,9 @@ impl<'a> Parser<'a> {
 
 fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
     match expression {
-        Expression::Integer(_, span) | Expression::Bool(_, span) => *span,
+        Expression::Integer(_, span) | Expression::Float(_, span) | Expression::Bool(_, span) => {
+            *span
+        }
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::Binary { span, .. }

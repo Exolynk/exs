@@ -209,10 +209,10 @@ ExS is dynamically typed. Types belong to runtime values, not variable bindings.
 
 | Type           |                Mutable | Heap allocated |
 | -------------- | ---------------------: | -------------: |
-| `Null`         |                     No |             No |
-| `Bool`         |                     No |             No |
-| `Int`          |                     No |             No |
-| `Float`        |                     No |             No |
+| `Null`         |                     No |            Yes |
+| `Bool`         |                     No |            Yes |
+| `Int`          |                     No |            Yes |
+| `Float`        |                     No |            Yes |
 | `String`       |                     No |            Yes |
 | `List`         |                    Yes |            Yes |
 | `Object`       |                    Yes |            Yes |
@@ -226,10 +226,28 @@ The shared Rust `value` crate defines the non-observable runtime carrier as:
 
 ```rust
 #[repr(transparent)]
-pub struct Value(u64);
+pub struct ValueRef(NonZeroU32);
 ```
 
-The `u64` contains a runtime versioned tag and payload. Immediate values include `null`, Bool, Int, Float, and small internal IDs. Heap values contain generational handles. The exact tag assignment and heap layout are private to `exs-runtime` and MUST NOT be observable by ExS programs. The compiler only uses stable runtime ABI operations; it MUST NOT inspect heap-object layouts.
+`ValueRef` is a nonzero, one-based index into the runtime-owned value table. It has no tag or payload and MUST NOT cross the Wasm-host boundary. The compiler only uses stable runtime ABI operations to create, pass, and operate on values; it MUST NOT inspect the value table or runtime-object layouts.
+
+`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. Phase 1 supports Null, Bool, Int, and Float transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
+
+The runtime stores the actual payload in `RtValue`. Primitive payloads are inline. Every complex variant MUST be boxed so adding it cannot increase the allocation size of primitive values:
+
+```rust
+#[repr(u8)]
+pub enum RtValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(Box<RuntimeString>),
+    List(Box<RuntimeList>),
+    Object(Box<RuntimeObject>),
+    // Other complex runtime values are boxed in the same manner.
+}
+```
 
 ## Null
 
@@ -237,7 +255,7 @@ The `u64` contains a runtime versioned tag and payload. Immediate values include
 
 ## Bool
 
-`true` and `false` are the only `Bool` values. ExS does not define implicit truthiness. Conditions MUST evaluate to `Bool`.
+`true` and `false` are the only `Bool` values. ExS does not define implicit truthiness. Conditions MUST evaluate to `Bool`. In numeric arithmetic, equality, and ordering operations, `false` converts to `0` and `true` converts to `1`.
 
 ## Int
 
@@ -255,7 +273,7 @@ An integer literal outside this range is a compile error. Integer arithmetic tha
 
 `Float` uses IEEE 754 binary64 semantics. Implementations MUST preserve all finite binary64 values, infinities, signed zero, and NaN.
 
-Mixed `Int`/`Float` arithmetic converts the `Int` operand to binary64 before applying the operation.
+Mixed Bool/Int/Float arithmetic converts Bool to Int first. Any operation with a Float converts the other numeric operand to binary64 before applying the operation.
 
 ## String
 
@@ -387,12 +405,12 @@ Calling a non-callable value produces `TypeError`. Arity is checked at runtime. 
 | Operator | Accepted type | Result                      |
 | -------- | ------------- | --------------------------- |
 | `!`      | `Bool`        | `Bool`                      |
-| `-`      | `Int`         | `Int` or `IntOverflowError` |
+| `-`      | `Bool` or `Int` | `Int` or `IntOverflowError` |
 | `-`      | `Float`       | `Float`                     |
 
 ## Arithmetic
 
-`+`, `-`, and `*` accept numeric operands. Two `Int` operands produce `Int` or `IntOverflowError`. If either operand is `Float`, the result is `Float`.
+`+`, `-`, and `*` accept Bool, Int, and Float operands. Bool converts to Int (`false` is `0`, `true` is `1`). Integer-only operations produce Int or `IntOverflowError`. If either operand is Float, the result is Float.
 
 `/` accepts numeric operands and always produces `Float`. Division by zero follows IEEE 754 behavior after conversion.
 
@@ -402,17 +420,14 @@ Calling a non-callable value produces `TypeError`. Arity is checked at runtime. 
 
 ## Comparison
 
-`<`, `<=`, `>`, and `>=` accept two numeric values or two Strings. Numeric mixed comparison converts `Int` to `Float`. String comparison is lexicographic by Unicode scalar value.
+`<`, `<=`, `>`, and `>=` accept two Bool/Int/Float numeric values or two Strings. Bool converts to Int; numeric mixed comparison converts the non-Float operand to Float. String comparison is lexicographic by Unicode scalar value.
 
 ## Equality
 
 `==` and `!=` never produce an Error.
 
 - `null` equals only `null`.
-- Bools compare by value.
-- Ints compare by value.
-- Floats compare using IEEE 754 equality.
-- An Int and Float compare after Int-to-Float conversion.
+- Bool, Int, and Float compare numerically. Bool converts to Int; if either operand is Float, the other numeric operand converts to Float. Float equality uses IEEE 754 equality.
 - Strings compare by scalar sequence.
 - Lists, Objects, Functions, Closures, Cells, Errors, and HostResources compare by identity.
 
@@ -739,16 +754,15 @@ Top-level executable statements are not permitted. A future top-level-code featu
 
 ## Phase-1 modules and entry point
 
-Phase 1 accepts only `Function` items. The required entry point is a zero-argument `fn main()` function. It returns one ExS `Value` with `ret`; the phase-1 runner exposes that value to its caller. The `exs run` CLI prints supported Phase-1 results in ExS source notation, including integers and booleans. The phase-1 runner has no external input contract.
+Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the phase-1 runner exposes Null, Bool, Int, and Float results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies Null input and prints the result in ExS source notation.
 
 ```text
-fn main() {
-    let value = 40 + 2;
-    ret value;
+fn main(input) {
+    ret input + 1;
 }
 ```
 
-The module root, function-only top level, and `main` entry remain mandatory even while the runner input/output ABI is intentionally deferred.
+The module root, function-only top level, and single-parameter `main` entry remain mandatory.
 
 ## Future module resolution
 
@@ -904,19 +918,23 @@ The runtime owns:
 
 `exs-runtime` is compiled as the committed `exs-runtime.wasm` template. It exports its supported stable runtime ABI names. The compiler resolves these names from the Wasm export section and links this template into every final module.
 
-All GC-managed values have this runtime root enum:
+All allocated runtime values use this root enum. Complex payloads are boxed:
 
 ```rust
-pub enum HeapObject {
-    String(RuntimeString),
-    List(RuntimeList),
-    Object(RuntimeObject),
-    Closure(RuntimeClosure),
-    Cell(RuntimeCell),
-    Error(RuntimeError),
-    Task(RuntimeTask),
-    Stream(RuntimeStream),
-    HostResource(RuntimeHostResource),
+pub enum RtValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(Box<RuntimeString>),
+    List(Box<RuntimeList>),
+    Object(Box<RuntimeObject>),
+    Closure(Box<RuntimeClosure>),
+    Cell(Box<RuntimeCell>),
+    Error(Box<RuntimeError>),
+    Task(Box<RuntimeTask>),
+    Stream(Box<RuntimeStream>),
+    HostResource(Box<RuntimeHostResource>),
 }
 ```
 
@@ -1236,26 +1254,21 @@ The runner MUST NOT expose raw WebAssembly memory addresses or runtime heap iden
 
 ## Version
 
-This chapter defines compiler/runtime ABI `0.1`.
+This chapter defines compiler/runtime ABI `0.2`.
 
-## Required exports
+## Phase-1 required exports
 
-The linked module MUST export:
+The Phase-1 linked module MUST export:
 
 ```text
-memory
 __exs_abi_version() -> i32
-__exs_initialize(config_ptr: i32, config_len: i32) -> i32
+__exs_input_alloc(length: i32) -> i32
 __exs_start(input_ptr: i32, input_len: i32) -> i32
-__exs_run() -> i32
-__exs_resume_host(call_id: i64, kind: i32, ptr: i32, len: i32) -> i32
-__exs_cancel(reason_ptr: i32, reason_len: i32) -> i32
-__exs_result_kind() -> i32
 __exs_result_ptr() -> i32
 __exs_result_len() -> i32
-__exs_alloc_abi(size: i32) -> i32
-__exs_free_abi(ptr: i32, size: i32) -> void
 ```
+
+The runtime owns both input and result buffers in linear memory. The runner calls `__exs_input_alloc`, copies one `ExsValue` CBOR item into the returned buffer, and passes that pointer-length pair to `__exs_start`. The completed result is another CBOR item in the byte range returned by `__exs_result_ptr` and `__exs_result_len`. Later hostcall phases extend this export set with initialization, resume, and cancellation operations.
 
 ## ABI version value
 
@@ -1265,51 +1278,29 @@ __exs_free_abi(ptr: i32, size: i32) -> void
 (major << 16) | minor
 ```
 
-For this specification the value is `0x00000001`.
+For this specification the value is `0x00000002`.
 
 ## Run status
 
-`__exs_start`, `__exs_run`, and `__exs_resume_host` return:
+Phase-1 `__exs_start(input_ptr, input_len)` returns:
 
 ```text
-0 READY
-1 SUSPENDED
 2 COMPLETE
-3 CANCELLED
--1 INVALID_ARGUMENT
--2 INVALID_STATE
--3 INTERNAL_FAILURE
 ```
 
-`READY` means runnable work remains and the runner SHOULD call `__exs_run` again.
-
-`SUSPENDED` means no task is currently runnable and at least one hostcall is outstanding.
-
-`COMPLETE` means result accessors are valid.
+`COMPLETE` means the result buffer exports are valid.
 
 ## Invocation
 
-The input is canonical CBOR. The phase-1 entry point is `fn main()` and the runner invokes `__exs_start(0, 0)`; non-empty external input is deferred until a later phase introduces an entry signature that consumes it.
+The Phase-1 entry point is `fn main(input)`. Before execution, the runner serializes one `ExsValue`, calls `__exs_input_alloc`, copies the resulting CBOR bytes to the returned linear-memory range, and invokes `__exs_start(input_ptr, input_len)`. The runtime validates that pair against its owned input buffer, decodes exactly one CBOR item, converts it to `RtValue`, and passes it to `main`.
 
-The runner MUST call `__exs_initialize` once before the first invocation.
+## Phase-1 result buffer
 
-`__exs_start` is legal only when the instance is initialized and idle.
-
-## Result buffer
-
-After COMPLETE, `__exs_result_kind` returns:
-
-```text
-0 success value
-1 language Error
-2 runtime failure details
-```
-
-The result buffer remains valid until the next ABI call that mutates runtime state or until explicitly freed according to runtime documentation.
+After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. Phase 1 supports exactly one Null, Bool, Int, or Float CBOR item. The internal `ValueRef` never crosses this boundary.
 
 ## Runtime intrinsics
 
-Compiler-generated code MAY call linked runtime intrinsics whose names begin with `__exs_rt_`, such as `__exs_rt_list_new`, `__exs_rt_list_get`, `__exs_rt_object_get`, `__exs_rt_cell_new`, `__exs_rt_value_is_error`, `__exs_rt_clone`, `__exs_rt_task_create`, and `__exs_rt_cbor_encode`. The intrinsic names are shared Rust ABI constants and the compiler resolves them from the `crates/exs-runtime/exs-runtime.wasm` export section at link time.
+Compiler-generated code MAY call linked runtime intrinsics whose names begin with `__exs_rt_`, such as `__exs_rt_list_new`, `__exs_rt_list_get`, `__exs_rt_object_get`, `__exs_rt_cell_new`, `__exs_rt_value_is_error`, `__exs_rt_clone`, `__exs_rt_task_create`, and `__exs_rt_cbor_encode`. The compiler resolves intrinsic names from the `crates/exs-runtime/exs-runtime.wasm` export section at link time.
 
 The compiler resolves runtime functions by these export names, never fixed Wasm indices. Source programs cannot import, export, or reference intrinsic names.
 
@@ -1377,7 +1368,7 @@ objectItem      = ( identifier | string ) ":" expression ;
 
 Assignment targets MUST be identifiers, property accesses, or index accesses.
 
-Top-level `statement` and `letDecl` occurrences are invalid. Phase 1 accepts only `functionDecl` items and requires exactly one `fn main()` declaration with no parameters.
+Top-level `statement` and `letDecl` occurrences are invalid. Phase 1 accepts only `functionDecl` items and requires exactly one `fn main(input)` declaration with one parameter.
 
 # 20 – Conformance and Security
 

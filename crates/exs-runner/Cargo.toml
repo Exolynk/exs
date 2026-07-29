@@ -10,9 +10,9 @@ workspace = true
 
 [dependencies]
 exs-abi = { path = "../exs-abi" }
-exs-value = { path = "../exs-value" }
 wasmtime.workspace = true
 
 [dev-dependencies]
 exs-runtime = { path = "../exs-runtime" }
 exs-compiler = { path = "../exs-compiler" }
+exs-value = { path = "../exs-value" }

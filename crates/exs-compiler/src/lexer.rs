@@ -13,12 +13,14 @@ pub struct Token<'a> {
 }
 
 /// Tokens recognized by the Phase-1 lexer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     /// An identifier spelling.
     Identifier(String),
     /// A parsed decimal integer.
     Integer(i64),
+    /// A parsed binary64 floating-point literal.
+    Float(f64),
     /// The `fn` keyword.
     Fn,
     /// The `let` keyword.
@@ -115,31 +117,75 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
 
         let start = index;
         let token = if byte.is_ascii_digit() {
-            index += 1;
-            while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
-                index += 1;
-            }
-            let literal = &source.text[start..index];
-            if literal.starts_with('_') || literal.ends_with('_') || literal.contains("__") {
+            let integer_start = index;
+            index = consume_digits(bytes, index);
+            if !valid_digit_segment(&source.text[integer_start..index]) {
                 return Err(diagnostic(
                     source,
                     start,
                     index,
                     "E0003",
-                    "invalid integer separator",
+                    "invalid numeric separator",
                 ));
             }
-            let numeric = literal.replace('_', "");
-            let value = numeric.parse::<i64>().map_err(|_| {
-                diagnostic(
-                    source,
-                    start,
-                    index,
-                    "E0004",
-                    "integer literal is outside i64 range",
-                )
-            })?;
-            TokenKind::Integer(value)
+            let mut is_float = false;
+            if bytes.get(index) == Some(&b'.') {
+                is_float = true;
+                index += 1;
+                let fraction_start = index;
+                index = consume_digits(bytes, index);
+                if !valid_digit_segment(&source.text[fraction_start..index]) {
+                    return Err(diagnostic(
+                        source,
+                        start,
+                        index,
+                        "E0003",
+                        "invalid floating-point fraction",
+                    ));
+                }
+            }
+            if matches!(bytes.get(index), Some(b'e' | b'E')) {
+                is_float = true;
+                index += 1;
+                if matches!(bytes.get(index), Some(b'+' | b'-')) {
+                    index += 1;
+                }
+                let exponent_start = index;
+                index = consume_digits(bytes, index);
+                if !valid_digit_segment(&source.text[exponent_start..index]) {
+                    return Err(diagnostic(
+                        source,
+                        start,
+                        index,
+                        "E0003",
+                        "invalid floating-point exponent",
+                    ));
+                }
+            }
+            let numeric = source.text[start..index].replace('_', "");
+            if is_float {
+                let value = numeric.parse::<f64>().map_err(|_| {
+                    diagnostic(
+                        source,
+                        start,
+                        index,
+                        "E0005",
+                        "invalid floating-point literal",
+                    )
+                })?;
+                TokenKind::Float(value)
+            } else {
+                let value = numeric.parse::<i64>().map_err(|_| {
+                    diagnostic(
+                        source,
+                        start,
+                        index,
+                        "E0004",
+                        "integer literal is outside i64 range",
+                    )
+                })?;
+                TokenKind::Integer(value)
+            }
         } else if let Some(character) = source.text[index..].chars().next() {
             if character == '_' || character.is_alphabetic() {
                 index += character.len_utf8();
@@ -219,6 +265,22 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
         span: span(source, bytes.len(), bytes.len()),
     });
     Ok(tokens)
+}
+
+/// Consumes one sequence of decimal digits and separators.
+fn consume_digits(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+        index += 1;
+    }
+    index
+}
+
+/// Validates a nonempty decimal digit sequence with optional separators.
+fn valid_digit_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && !segment.starts_with('_')
+        && !segment.ends_with('_')
+        && !segment.contains("__")
 }
 
 fn keyword_or_identifier(value: &str) -> TokenKind {

@@ -3,10 +3,12 @@
 use std::fmt;
 
 use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, RESULT_VALUE_EXPORT, START_EXPORT, STATUS_COMPLETE,
+    ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, RESULT_LENGTH_EXPORT,
+    RESULT_POINTER_EXPORT, START_EXPORT, STATUS_COMPLETE,
 };
-use exs_value::Value;
 use wasmtime::{Engine, Instance, Module, Store};
+
+pub use exs_abi::ExsValue;
 
 /// A technical error from Wasm loading or execution.
 #[derive(Debug)]
@@ -36,7 +38,7 @@ impl std::error::Error for RunnerError {}
 /// # Errors
 ///
 /// Returns an error when the module cannot be instantiated, violates the ABI, traps, or does not complete.
-pub fn execute(wasm: &[u8]) -> Result<Value, RunnerError> {
+pub fn execute(wasm: &[u8], input: ExsValue) -> Result<ExsValue, RunnerError> {
     let engine = Engine::default();
     let module =
         Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
@@ -44,21 +46,85 @@ pub fn execute(wasm: &[u8]) -> Result<Value, RunnerError> {
     let instance = Instance::new(&mut store, &module, &[])
         .map_err(|error| RunnerError::Wasm(error.to_string()))?;
     check_abi(&mut store, &instance)?;
+    let (input_pointer, input_length) = write_input(&mut store, &instance, input)?;
     let start = instance
-        .get_typed_func::<(), i32>(&mut store, START_EXPORT)
+        .get_typed_func::<(i32, i32), i32>(&mut store, START_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;
     let status = start
-        .call(&mut store, ())
+        .call(&mut store, (input_pointer, input_length))
         .map_err(|error| RunnerError::Wasm(error.to_string()))?;
     if status != STATUS_COMPLETE {
         return Err(RunnerError::Status(status));
     }
-    let result = instance
-        .get_typed_func::<(), i64>(&mut store, RESULT_VALUE_EXPORT)
-        .map_err(|error| RunnerError::Abi(error.to_string()))?
-        .call(&mut store, ())
+    result(&mut store, &instance)
+}
+
+/// Decodes the runtime-owned completed result without exposing its `ValueRef` to the host.
+fn result(store: &mut Store<()>, instance: &Instance) -> Result<ExsValue, RunnerError> {
+    let pointer = call_result_accessor::<i32>(store, instance, RESULT_POINTER_EXPORT)?;
+    let length = call_result_accessor::<i32>(store, instance, RESULT_LENGTH_EXPORT)?;
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| RunnerError::Abi("missing exported linear memory".to_owned()))?;
+    let pointer = usize::try_from(pointer)
+        .map_err(|_| RunnerError::Abi("negative result pointer".to_owned()))?;
+    let length = usize::try_from(length)
+        .map_err(|_| RunnerError::Abi("negative result length".to_owned()))?;
+    let end = pointer
+        .checked_add(length)
+        .ok_or_else(|| RunnerError::Abi("result buffer range overflow".to_owned()))?;
+    let bytes = memory
+        .data(&*store)
+        .get(pointer..end)
+        .ok_or_else(|| RunnerError::Abi("result buffer lies outside linear memory".to_owned()))?;
+    ExsValue::from_cbor(bytes)
+        .map_err(|error| RunnerError::Abi(format!("invalid result CBOR: {error}")))
+}
+
+/// Encodes input and writes it to the runtime-owned linear-memory input buffer.
+fn write_input(
+    store: &mut Store<()>,
+    instance: &Instance,
+    input: ExsValue,
+) -> Result<(i32, i32), RunnerError> {
+    let bytes = input
+        .to_cbor()
+        .map_err(|error| RunnerError::Abi(format!("could not encode input CBOR: {error}")))?;
+    let length = i32::try_from(bytes.len())
+        .map_err(|_| RunnerError::Abi("input CBOR exceeds Wasm i32 length".to_owned()))?;
+    let allocate = instance
+        .get_typed_func::<i32, i32>(&mut *store, INPUT_ALLOC_EXPORT)
+        .map_err(|error| RunnerError::Abi(error.to_string()))?;
+    let pointer = allocate
+        .call(&mut *store, length)
         .map_err(|error| RunnerError::Wasm(error.to_string()))?;
-    Ok(Value::from_bits(result.cast_unsigned()))
+    let pointer = usize::try_from(pointer)
+        .map_err(|_| RunnerError::Abi("negative input pointer".to_owned()))?;
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| RunnerError::Abi("missing exported linear memory".to_owned()))?;
+    memory
+        .write(&mut *store, pointer, &bytes)
+        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+    let pointer = i32::try_from(pointer)
+        .map_err(|_| RunnerError::Abi("input pointer exceeds Wasm i32 range".to_owned()))?;
+    Ok((pointer, length))
+}
+
+/// Calls one zero-argument runtime result accessor.
+fn call_result_accessor<Return>(
+    store: &mut Store<()>,
+    instance: &Instance,
+    name: &str,
+) -> Result<Return, RunnerError>
+where
+    Return: wasmtime::WasmResults,
+{
+    instance
+        .get_typed_func::<(), Return>(&mut *store, name)
+        .map_err(|error| RunnerError::Abi(error.to_string()))?
+        .call(&mut *store, ())
+        .map_err(|error| RunnerError::Wasm(error.to_string()))
 }
 
 /// Checks the versioned ABI before starting program code.

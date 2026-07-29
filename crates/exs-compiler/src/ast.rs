@@ -94,6 +94,8 @@ pub enum Statement<'a> {
 pub enum Expression<'a> {
     /// An integer literal.
     Integer(i64, SourceSpan<'a>),
+    /// A binary64 floating-point literal.
+    Float(f64, SourceSpan<'a>),
     /// A boolean literal.
     Bool(bool, SourceSpan<'a>),
     /// A local variable lookup.
@@ -132,7 +134,7 @@ pub enum Expression<'a> {
 /// A unary operator supported in Phase 1.
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOperator {
-    /// Integer negation.
+    /// Numeric negation.
     Negate,
     /// Boolean negation.
     Not,
@@ -141,23 +143,23 @@ pub enum UnaryOperator {
 /// A binary operator supported in Phase 1.
 #[derive(Debug, Clone, Copy)]
 pub enum BinaryOperator {
-    /// Integer addition.
+    /// Numeric addition.
     Add,
-    /// Integer subtraction.
+    /// Numeric subtraction.
     Subtract,
-    /// Integer multiplication.
+    /// Numeric multiplication.
     Multiply,
     /// Equality.
     Equal,
     /// Inequality.
     NotEqual,
-    /// Integer less-than comparison.
+    /// Numeric less-than comparison.
     LessThan,
-    /// Integer less-or-equal comparison.
+    /// Numeric less-or-equal comparison.
     LessOrEqual,
-    /// Integer greater-than comparison.
+    /// Numeric greater-than comparison.
     GreaterThan,
-    /// Integer greater-or-equal comparison.
+    /// Numeric greater-or-equal comparison.
     GreaterOrEqual,
     /// Short-circuiting boolean conjunction.
     And,
