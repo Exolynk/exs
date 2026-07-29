@@ -231,7 +231,7 @@ pub struct ValueRef(NonZeroU32);
 
 `ValueRef` is a nonzero, one-based index into the runtime-owned value table. It has no tag or payload and MUST NOT cross the Wasm-host boundary. The compiler only uses stable runtime ABI operations to create, pass, and operate on values; it MUST NOT inspect the value table or runtime-object layouts.
 
-`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. Phase 1 supports Null, Bool, Int, and Float transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
+`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports Null, Bool, Int, Float, and String transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
 
 The runtime stores the actual payload in `RtValue`. Primitive payloads are inline. Every complex variant MUST be boxed so adding it cannot increase the allocation size of primitive values:
 
@@ -280,6 +280,10 @@ Mixed Bool/Int/Float arithmetic converts Bool to Int first. Any operation with a
 A `String` is an immutable sequence of Unicode scalar values. Indexing is by scalar index, not UTF-8 byte offset.
 
 String indexing returns a one-scalar String. An invalid index produces `IndexError`.
+
+The current implementation supports double-quoted literals and the required escapes, boxed immutable runtime strings, CBOR String input and output, and content equality. The compiler emits each unique literal as a passive Wasm data segment. At evaluation, generated code copies the segment to a runtime-owned temporary buffer with `memory.init`; `__exs_rt_string_new` validates the complete UTF-8 sequence and copies it into `RuntimeString`. Literal data is therefore never placed in an address range that can overlap the runtime allocator.
+
+String indexing and other String operations are deferred beyond the current implementation slice.
 
 ## List
 
@@ -754,7 +758,7 @@ Top-level executable statements are not permitted. A future top-level-code featu
 
 ## Phase-1 modules and entry point
 
-Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the phase-1 runner exposes Null, Bool, Int, and Float results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies Null input and prints the result in ExS source notation.
+Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the runner exposes Null, Bool, Int, Float, and String results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies Null input and prints the result in ExS source notation.
 
 ```text
 fn main(input) {
@@ -1296,7 +1300,7 @@ The Phase-1 entry point is `fn main(input)`. Before execution, the runner serial
 
 ## Phase-1 result buffer
 
-After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. Phase 1 supports exactly one Null, Bool, Int, or Float CBOR item. The internal `ValueRef` never crosses this boundary.
+After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one Null, Bool, Int, Float, or String CBOR item. The internal `ValueRef` never crosses this boundary.
 
 ## Runtime intrinsics
 

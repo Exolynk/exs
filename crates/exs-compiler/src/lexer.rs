@@ -21,6 +21,8 @@ pub enum TokenKind {
     Integer(i64),
     /// A parsed binary64 floating-point literal.
     Float(f64),
+    /// A decoded UTF-8 string literal.
+    String(String),
     /// The `fn` keyword.
     Fn,
     /// The `let` keyword.
@@ -186,6 +188,8 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                 })?;
                 TokenKind::Integer(value)
             }
+        } else if byte == b'"' {
+            string_literal(source, &mut index, start)?
         } else if let Some(character) = source.text[index..].chars().next() {
             if character == '_' || character.is_alphabetic() {
                 index += character.len_utf8();
@@ -265,6 +269,128 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
         span: span(source, bytes.len(), bytes.len()),
     });
     Ok(tokens)
+}
+
+/// Reads one double-quoted string literal and decodes its supported escapes.
+fn string_literal<'a>(
+    source: SourceInput<'a>,
+    index: &mut usize,
+    start: usize,
+) -> Result<TokenKind, CompileDiagnostic<'a>> {
+    let bytes = source.text.as_bytes();
+    *index += 1;
+    let mut value = String::new();
+    while *index < bytes.len() {
+        match bytes[*index] {
+            b'"' => {
+                *index += 1;
+                return Ok(TokenKind::String(value));
+            }
+            b'\\' => {
+                *index += 1;
+                let Some(escape) = bytes.get(*index).copied() else {
+                    break;
+                };
+                *index += 1;
+                match escape {
+                    b'"' => value.push('"'),
+                    b'\\' => value.push('\\'),
+                    b'n' => value.push('\n'),
+                    b'r' => value.push('\r'),
+                    b't' => value.push('\t'),
+                    b'0' => value.push('\0'),
+                    b'u' => decode_unicode_escape(source, index, start, &mut value)?,
+                    _ => {
+                        return Err(diagnostic(
+                            source,
+                            start,
+                            *index,
+                            "E0006",
+                            "invalid string escape",
+                        ));
+                    }
+                }
+            }
+            b'\n' | b'\r' => {
+                return Err(diagnostic(
+                    source,
+                    start,
+                    *index,
+                    "E0007",
+                    "unterminated string literal",
+                ));
+            }
+            _ => {
+                let Some(character) = source.text[*index..].chars().next() else {
+                    break;
+                };
+                value.push(character);
+                *index += character.len_utf8();
+            }
+        }
+    }
+    Err(diagnostic(
+        source,
+        start,
+        bytes.len(),
+        "E0007",
+        "unterminated string literal",
+    ))
+}
+
+/// Decodes a `\\u{HEX}` escape into one Unicode scalar value.
+fn decode_unicode_escape<'a>(
+    source: SourceInput<'a>,
+    index: &mut usize,
+    start: usize,
+    value: &mut String,
+) -> Result<(), CompileDiagnostic<'a>> {
+    let bytes = source.text.as_bytes();
+    if bytes.get(*index) != Some(&b'{') {
+        return Err(diagnostic(
+            source,
+            start,
+            *index,
+            "E0006",
+            "expected `{` after `\\u`",
+        ));
+    }
+    *index += 1;
+    let digits_start = *index;
+    while bytes.get(*index).is_some_and(u8::is_ascii_hexdigit) {
+        *index += 1;
+    }
+    if digits_start == *index || bytes.get(*index) != Some(&b'}') {
+        return Err(diagnostic(
+            source,
+            start,
+            *index,
+            "E0006",
+            "invalid Unicode string escape",
+        ));
+    }
+    let digits = &source.text[digits_start..*index];
+    *index += 1;
+    let scalar = u32::from_str_radix(digits, 16).map_err(|_| {
+        diagnostic(
+            source,
+            start,
+            *index,
+            "E0006",
+            "invalid Unicode string escape",
+        )
+    })?;
+    let Some(character) = char::from_u32(scalar) else {
+        return Err(diagnostic(
+            source,
+            start,
+            *index,
+            "E0006",
+            "Unicode string escape is not a scalar value",
+        ));
+    };
+    value.push(character);
+    Ok(())
 }
 
 /// Consumes one sequence of decimal digits and separators.

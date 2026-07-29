@@ -79,6 +79,7 @@ fn print_result(result: exs_runner::ExsValue) {
             println!("{value:.1}")
         }
         exs_runner::ExsValue::Float(value) => println!("{value}"),
+        exs_runner::ExsValue::String(value) => println!("{value:?}"),
     }
 }
 

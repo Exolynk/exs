@@ -1,13 +1,14 @@
 //! Rust implementations exported by the Wasm-target runtime.
 
+use alloc::boxed::Box;
 use core::num::NonZeroU32;
 use core::panic::PanicInfo;
 
 use exs_abi::ExsValue;
 use exs_value::{ValueRef, is_valid_int};
 
-use crate::RtValue;
 use crate::state::runtime;
+use crate::{RtValue, RuntimeString};
 
 /// Allocates and returns the singular null value.
 #[unsafe(no_mangle)]
@@ -78,6 +79,7 @@ pub extern "C" fn __exs_rt_eq(left: ValueRef, right: ValueRef) -> ValueRef {
         (left, right) if is_numeric(left) && is_numeric(right) => {
             numbers_equal(number_of(left), number_of(right))
         }
+        (RtValue::String(left), RtValue::String(right)) => left.as_str() == right.as_str(),
         _ => false,
     };
     allocate(RtValue::Bool(equal))
@@ -126,6 +128,32 @@ pub extern "C" fn __exs_rt_condition(value: ValueRef) -> i32 {
     i32::from(boolean(value))
 }
 
+/// Allocates a runtime-owned buffer for one compiler literal data segment.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_literal_buffer_alloc(length: i32) -> i32 {
+    let Ok(length) = usize::try_from(length) else {
+        trap();
+    };
+    let buffer = &mut unsafe { runtime() }.literal_buffer;
+    buffer.clear();
+    buffer.resize(length, 0);
+    pointer(buffer.as_ptr())
+}
+
+/// Creates an immutable runtime string from the compiler-populated literal buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_string_new(pointer: i32, length: i32) -> ValueRef {
+    let Ok(length) = usize::try_from(length) else {
+        trap();
+    };
+    let buffer = &unsafe { runtime() }.literal_buffer;
+    if usize::try_from(pointer).ok() != Some(buffer.as_ptr() as usize) || length != buffer.len() {
+        trap();
+    }
+    let value = RuntimeString::from_utf8(buffer).unwrap_or_else(|_| trap());
+    allocate(RtValue::String(Box::new(value)))
+}
+
 /// Allocates a runtime-owned linear-memory buffer for one CBOR input value.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_input_alloc(length: i32) -> i32 {
@@ -135,11 +163,7 @@ pub extern "C" fn __exs_input_alloc(length: i32) -> i32 {
     let buffer = &mut unsafe { runtime() }.input_buffer;
     buffer.clear();
     buffer.resize(length, 0);
-    let pointer = buffer.as_ptr() as usize;
-    match i32::try_from(pointer) {
-        Ok(pointer) => pointer,
-        Err(_) => trap(),
-    }
+    pointer(buffer.as_ptr())
 }
 
 /// Decodes the runner-provided CBOR input into one runtime value.
@@ -162,11 +186,7 @@ pub extern "C" fn __exs_rt_set_result(value: ValueRef) {
 /// Returns the linear-memory pointer of the CBOR result buffer.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_result_ptr() -> i32 {
-    let pointer = unsafe { runtime().result_buffer.as_ptr() } as usize;
-    match i32::try_from(pointer) {
-        Ok(pointer) => pointer,
-        Err(_) => trap(),
-    }
+    pointer(unsafe { runtime().result_buffer.as_ptr() })
 }
 
 /// Returns the length of the CBOR result buffer.
@@ -222,13 +242,14 @@ fn value(reference: ValueRef) -> &'static RtValue {
     }
 }
 
-/// Converts one runtime primitive into its host-safe ABI value.
+/// Converts one runtime Phase-3 value into its host-safe ABI value.
 fn runtime_to_exs_value(reference: ValueRef) -> ExsValue {
     match value(reference) {
         RtValue::Null => ExsValue::Null,
         RtValue::Bool(value) => ExsValue::Bool(*value),
         RtValue::Int(value) => ExsValue::Int(*value),
         RtValue::Float(value) => ExsValue::Float(*value),
+        RtValue::String(value) => ExsValue::String(value.as_str().into()),
         RtValue::BoxedFutureValue(_) => trap(),
     }
 }
@@ -241,6 +262,7 @@ fn exs_value_to_runtime(value: ExsValue) -> RtValue {
         ExsValue::Int(value) if is_valid_int(value) => RtValue::Int(value),
         ExsValue::Int(_) => trap(),
         ExsValue::Float(value) => RtValue::Float(value),
+        ExsValue::String(value) => RtValue::String(Box::new(RuntimeString::from_string(value))),
     }
 }
 
@@ -280,7 +302,7 @@ fn number_of(value: &RtValue) -> Number {
         RtValue::Bool(true) => Number::Int(1),
         RtValue::Int(value) => Number::Int(*value),
         RtValue::Float(value) => Number::Float(*value),
-        RtValue::Null | RtValue::BoxedFutureValue(_) => trap(),
+        RtValue::Null | RtValue::String(_) | RtValue::BoxedFutureValue(_) => trap(),
     }
 }
 
@@ -343,6 +365,14 @@ fn boolean(reference: ValueRef) -> bool {
     match value(reference) {
         RtValue::Bool(result) => *result,
         _ => trap(),
+    }
+}
+
+/// Converts one linear-memory pointer to the signed Wasm ABI representation.
+fn pointer(value: *const u8) -> i32 {
+    match i32::try_from(value as usize) {
+        Ok(value) => value,
+        Err(_) => trap(),
     }
 }
 

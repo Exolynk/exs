@@ -29,6 +29,19 @@ fn compiles_floating_point_literals() {
     assert!(module.is_ok());
 }
 
+/// Compiles decoded string escapes into compiler-owned passive data segments.
+#[test]
+fn compiles_utf8_string_literals() {
+    let module = compile(
+        SourceInput {
+            source_id: "string.exs",
+            text: r#"fn main(input) { ret "Hi \u{1f642}\n"; }"#,
+        },
+        CompileOptions,
+    );
+    assert!(module.is_ok());
+}
+
 /// Reports a missing statement terminator at the source level.
 #[test]
 fn reports_a_missing_statement_semicolon() {

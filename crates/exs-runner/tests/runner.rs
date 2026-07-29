@@ -118,3 +118,24 @@ fn passes_cbor_input_to_main() {
         ExsValue::Int(42)
     );
 }
+
+/// Constructs a UTF-8 literal from a passive Wasm data segment and compares its contents.
+#[test]
+fn executes_string_literals_and_content_equality() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) {
+                let name = "Ada\nLovelace \u{1f642}";
+                if name == input {
+                    ret name;
+                } else {
+                    ret "unexpected";
+                }
+            }
+        "#,
+            ExsValue::String("Ada\nLovelace 🙂".to_owned()),
+        ),
+        ExsValue::String("Ada\nLovelace 🙂".to_owned())
+    );
+}

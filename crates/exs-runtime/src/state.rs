@@ -16,6 +16,8 @@ pub(crate) struct RuntimeState {
     pub(crate) values: Vec<RtValue>,
     /// CBOR bytes supplied by the runner for the next root execution.
     pub(crate) input_buffer: Vec<u8>,
+    /// Bytes copied from one compiler-owned passive literal data segment.
+    pub(crate) literal_buffer: Vec<u8>,
     /// CBOR bytes holding the completed root result.
     pub(crate) result_buffer: Vec<u8>,
 }
@@ -26,6 +28,7 @@ impl RuntimeState {
         Self {
             values: Vec::new(),
             input_buffer: Vec::new(),
+            literal_buffer: Vec::new(),
             result_buffer: Vec::new(),
         }
     }

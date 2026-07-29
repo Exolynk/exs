@@ -1,5 +1,6 @@
 //! CBOR encoding for values that may cross the ExS Wasm-host ABI boundary.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -19,6 +20,8 @@ pub enum ExsValue {
     Int(i64),
     /// An ExS IEEE 754 binary64 floating-point number.
     Float(f64),
+    /// An immutable UTF-8 ExS string.
+    String(String),
 }
 
 /// A malformed or unsupported ExS CBOR value.
@@ -58,6 +61,7 @@ impl ExsValue {
             Self::Bool(value) => encoder.bool(*value),
             Self::Int(value) => encoder.i64(*value),
             Self::Float(value) => encoder.f64(*value),
+            Self::String(value) => encoder.str(value),
         };
         encoded.map_err(|_| CborError::Encode)?;
         Ok(encoder.into_writer())
@@ -88,6 +92,7 @@ impl ExsValue {
             Type::F16 | Type::F32 | Type::F64 => {
                 Self::Float(decoder.f64().map_err(|_| CborError::Malformed)?)
             }
+            Type::String => Self::String(decoder.str().map_err(|_| CborError::Malformed)?.into()),
             _ => return Err(CborError::UnsupportedType),
         };
         if decoder.position() != bytes.len() {

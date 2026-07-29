@@ -13,6 +13,7 @@ fn round_trips_phase_one_values() {
         ExsValue::Int(42),
         ExsValue::Float(-1.5),
         ExsValue::Float(0.0),
+        ExsValue::String("Ada\\nLovelace".to_owned()),
     ] {
         let encoded = match value.to_cbor() {
             Ok(encoded) => encoded,
@@ -39,7 +40,7 @@ fn rejects_trailing_cbor_data() {
 #[test]
 fn rejects_unsupported_cbor_values() {
     assert_eq!(
-        ExsValue::from_cbor(&[0x60]),
+        ExsValue::from_cbor(&[0x80]),
         Err(CborError::UnsupportedType)
     );
 }

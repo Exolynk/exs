@@ -1,234 +1,25 @@
-//! Validation and WebAssembly code generation for the Phase-1 language subset.
+//! Direct lowering of ExS function bodies to WebAssembly functions.
 
 use std::collections::HashMap;
 
-use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, MODULE_METADATA_SECTION, START_EXPORT, STATUS_COMPLETE,
-};
-use exs_runtime::WASM_TEMPLATE;
 use exs_value::is_valid_int;
-use wasm_encoder::{
-    BlockType, CodeSection, CustomSection, ExportKind, ExportSection, Function, FunctionSection,
-    GlobalSection, Instruction, Module as WasmModule, TypeSection, ValType,
-    reencode::{self, Reencode},
-};
-use wasmparser::{ExternalKind, Parser as WasmParser};
+use wasm_encoder::{BlockType, Function, Instruction, TypeSection, ValType};
 
 use crate::ast::{
     BinaryOperator, Block, Expression, FunctionDeclaration, Module, Statement, UnaryOperator,
 };
+use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
-/// Compiles a parsed module into a complete linked Wasm module.
-pub fn compile_module<'a>(module: &Module<'a>) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
-    let mut linker = TemplateLinker::new(module);
-    let mut wasm = WasmModule::new();
-    reencode::utils::parse_core_module(&mut linker, &mut wasm, WasmParser::new(0), WASM_TEMPLATE)
-        .map_err(|error| match error {
-        reencode::Error::UserError(diagnostics) => diagnostics,
-        error => diagnostics(CompileDiagnostic::new(
-            "E1001",
-            module_span(module),
-            format!("could not link runtime template: {error}"),
-        )),
-    })?;
-    wasm.section(&CustomSection {
-        name: MODULE_METADATA_SECTION.into(),
-        data: format!("abi={ABI_VERSION}\nentry=main\n")
-            .into_bytes()
-            .into(),
-    });
-    Ok(wasm.finish())
-}
-
-/// Reencodes the runtime template while appending generated program sections.
-struct TemplateLinker<'source, 'module> {
-    module: &'module Module<'source>,
-    program_types: Vec<u32>,
-    signatures: Option<HashMap<String, FunctionSignature>>,
-    runtime_functions: HashMap<String, u32>,
-    start_type: Option<u32>,
-    abi_version_type: Option<u32>,
-    start_index: Option<u32>,
-    abi_version_index: Option<u32>,
-}
-
-impl<'source, 'module> TemplateLinker<'source, 'module> {
-    /// Creates a linker for one parsed source module.
-    fn new(module: &'module Module<'source>) -> Self {
-        Self {
-            module,
-            program_types: Vec::new(),
-            signatures: None,
-            runtime_functions: HashMap::new(),
-            start_type: None,
-            abi_version_type: None,
-            start_index: None,
-            abi_version_index: None,
-        }
-    }
-
-    /// Converts an internal linker-state failure into a compiler diagnostic.
-    fn state_error(&self, message: &str) -> reencode::Error<CompileDiagnostics<'source>> {
-        reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-            "E0999",
-            module_span(self.module),
-            message,
-        )))
-    }
-}
-
-impl<'source> Reencode for TemplateLinker<'source, '_> {
-    type Error = CompileDiagnostics<'source>;
-
-    fn parse_type_section(
-        &mut self,
-        types: &mut TypeSection,
-        section: wasmparser::TypeSectionReader<'_>,
-    ) -> Result<(), reencode::Error<Self::Error>> {
-        reencode::utils::parse_type_section(self, types, section)?;
-        self.program_types = add_program_types(self.module, types);
-        let start_type = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I32], [ValType::I32]);
-        let abi_version_type = types.len();
-        types.ty().function([], [ValType::I32]);
-        self.start_type = Some(start_type);
-        self.abi_version_type = Some(abi_version_type);
-        Ok(())
-    }
-
-    fn parse_function_section(
-        &mut self,
-        functions: &mut FunctionSection,
-        section: wasmparser::FunctionSectionReader<'_>,
-    ) -> Result<(), reencode::Error<Self::Error>> {
-        reencode::utils::parse_function_section(self, functions, section)?;
-        let program_base = functions.len();
-        self.signatures =
-            Some(build_signatures(self.module, program_base).map_err(reencode::Error::UserError)?);
-        for type_index in &self.program_types {
-            functions.function(*type_index);
-        }
-        let start_index = program_base + self.module.functions.len() as u32;
-        self.start_index = Some(start_index);
-        self.abi_version_index = Some(start_index + 1);
-        functions.function(
-            self.start_type
-                .ok_or_else(|| self.state_error("missing start type"))?,
-        );
-        functions.function(
-            self.abi_version_type
-                .ok_or_else(|| self.state_error("missing ABI version type"))?,
-        );
-        Ok(())
-    }
-
-    fn parse_global_section(
-        &mut self,
-        globals: &mut GlobalSection,
-        section: wasmparser::GlobalSectionReader<'_>,
-    ) -> Result<(), reencode::Error<Self::Error>> {
-        reencode::utils::parse_global_section(self, globals, section)
-    }
-
-    fn parse_export_section(
-        &mut self,
-        exports: &mut ExportSection,
-        section: wasmparser::ExportSectionReader<'_>,
-    ) -> Result<(), reencode::Error<Self::Error>> {
-        for export in section.clone() {
-            let export = export.map_err(|error| {
-                reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                    "E1001",
-                    module_span(self.module),
-                    error.to_string(),
-                )))
-            })?;
-            if export.kind == ExternalKind::Func {
-                self.runtime_functions
-                    .insert(export.name.to_owned(), export.index);
-            }
-        }
-        reencode::utils::parse_export_section(self, exports, section)?;
-        exports.export(
-            START_EXPORT,
-            ExportKind::Func,
-            self.start_index
-                .ok_or_else(|| self.state_error("missing start function index"))?,
-        );
-        exports.export(
-            ABI_VERSION_EXPORT,
-            ExportKind::Func,
-            self.abi_version_index
-                .ok_or_else(|| self.state_error("missing ABI version function index"))?,
-        );
-        Ok(())
-    }
-
-    fn parse_code_section(
-        &mut self,
-        codes: &mut CodeSection,
-        section: wasmparser::CodeSectionReader<'_>,
-    ) -> Result<(), reencode::Error<Self::Error>> {
-        reencode::utils::parse_code_section(self, codes, section)?;
-        let signatures = self
-            .signatures
-            .as_ref()
-            .ok_or_else(|| self.state_error("missing program signatures"))?;
-        for function in &self.module.functions {
-            let mut compiler = FunctionCompiler::new(function, signatures, &self.runtime_functions)
-                .map_err(reencode::Error::UserError)?;
-            codes.function(&compiler.compile().map_err(reencode::Error::UserError)?);
-        }
-        let main = signatures.get("main").ok_or_else(|| {
-            reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                "E0200",
-                module_span(self.module),
-                "missing fn main()",
-            )))
-        })?;
-        let decode_input = self
-            .runtime_functions
-            .get("__exs_rt_decode_input")
-            .copied()
-            .ok_or_else(|| {
-                self.state_error("runtime template does not export __exs_rt_decode_input")
-            })?;
-        let mut start = Function::new([]);
-        start.instruction(&Instruction::LocalGet(0));
-        start.instruction(&Instruction::LocalGet(1));
-        start.instruction(&Instruction::Call(decode_input));
-        start.instruction(&Instruction::Call(main.index));
-        let set_result = self
-            .runtime_functions
-            .get("__exs_rt_set_result")
-            .copied()
-            .ok_or_else(|| {
-                self.state_error("runtime template does not export __exs_rt_set_result")
-            })?;
-        start.instruction(&Instruction::Call(set_result));
-        start.instruction(&Instruction::I32Const(STATUS_COMPLETE));
-        start.instruction(&Instruction::End);
-        codes.function(&start);
-
-        let mut abi_version = Function::new([]);
-        abi_version.instruction(&Instruction::I32Const(ABI_VERSION.cast_signed()));
-        abi_version.instruction(&Instruction::End);
-        codes.function(&abi_version);
-
-        Ok(())
-    }
-}
-
+/// The linked Wasm function index and source arity of one ExS function.
 #[derive(Debug, Clone, Copy)]
-struct FunctionSignature {
-    index: u32,
-    arity: usize,
+pub(super) struct FunctionSignature {
+    pub(super) index: u32,
+    pub(super) arity: usize,
 }
 
-fn build_signatures<'a>(
+/// Validates declarations and assigns their final linked Wasm function indexes.
+pub(super) fn build_signatures<'a>(
     module: &Module<'a>,
     program_base: u32,
 ) -> Result<HashMap<String, FunctionSignature>, CompileDiagnostics<'a>> {
@@ -274,7 +65,8 @@ fn build_signatures<'a>(
     }
 }
 
-fn add_program_types(module: &Module<'_>, types: &mut TypeSection) -> Vec<u32> {
+/// Adds one ValueRef-based Wasm signature for every source function.
+pub(super) fn add_program_types(module: &Module<'_>, types: &mut TypeSection) -> Vec<u32> {
     module
         .functions
         .iter()
@@ -289,20 +81,24 @@ fn add_program_types(module: &Module<'_>, types: &mut TypeSection) -> Vec<u32> {
         .collect()
 }
 
-struct FunctionCompiler<'a, 'module> {
+/// Lowers one direct ExS function to a Wasm function.
+pub(super) struct FunctionCompiler<'a, 'module> {
     declaration: &'module FunctionDeclaration<'a>,
     signatures: &'module HashMap<String, FunctionSignature>,
     runtime: &'module HashMap<String, u32>,
+    literals: &'module HashMap<String, u32>,
     function: Function,
     scopes: Vec<HashMap<String, u32>>,
     next_local: u32,
 }
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
-    fn new(
+    /// Prepares direct function lowering with enough ValueRef local slots.
+    pub(super) fn new(
         declaration: &'module FunctionDeclaration<'a>,
         signatures: &'module HashMap<String, FunctionSignature>,
         runtime: &'module HashMap<String, u32>,
+        literals: &'module HashMap<String, u32>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
         let local_count =
             count_lets(&declaration.body) + count_expressions_block(&declaration.body);
@@ -314,13 +110,15 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             declaration,
             signatures,
             runtime,
+            literals,
             function: Function::new([(local_count, ValType::I32)]),
             scopes: vec![parameters],
             next_local: declaration.parameters.len() as u32,
         })
     }
 
-    fn compile(&mut self) -> Result<Function, CompileDiagnostics<'a>> {
+    /// Compiles this function body, including the implicit null return path.
+    pub(super) fn compile(&mut self) -> Result<Function, CompileDiagnostics<'a>> {
         self.compile_block(&self.declaration.body, false)?;
         self.runtime_call("__exs_rt_null_new", self.declaration.span)?;
         self.function.instruction(&Instruction::End);
@@ -328,6 +126,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(std::mem::replace(&mut self.function, placeholder))
     }
 
+    /// Compiles statements in one lexical block.
     fn compile_block(
         &mut self,
         block: &Block<'a>,
@@ -345,6 +144,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
+    /// Compiles one source statement.
     fn compile_statement(
         &mut self,
         statement: &Statement<'a>,
@@ -413,6 +213,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
+    /// Compiles one source expression into a ValueRef on the Wasm stack.
     fn compile_expression(
         &mut self,
         expression: &Expression<'a>,
@@ -433,6 +234,35 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.function
                     .instruction(&Instruction::F64Const((*value).into()));
                 self.runtime_call("__exs_rt_float_new", *span)?;
+            }
+            Expression::String(value, span) => {
+                let data_index = self.literals.get(value).copied().ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0211",
+                        *span,
+                        "missing compiler string literal data segment",
+                    ))
+                })?;
+                let length = i32::try_from(value.len()).map_err(|_| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0211",
+                        *span,
+                        "string literal is too large for Wasm linear memory",
+                    ))
+                })?;
+                self.function.instruction(&Instruction::I32Const(length));
+                self.runtime_call("__exs_rt_literal_buffer_alloc", *span)?;
+                let buffer_pointer = self.allocate_local();
+                self.function
+                    .instruction(&Instruction::LocalTee(buffer_pointer));
+                self.function.instruction(&Instruction::I32Const(0));
+                self.function.instruction(&Instruction::I32Const(length));
+                self.function
+                    .instruction(&Instruction::MemoryInit { mem: 0, data_index });
+                self.function
+                    .instruction(&Instruction::LocalGet(buffer_pointer));
+                self.function.instruction(&Instruction::I32Const(length));
+                self.runtime_call("__exs_rt_string_new", *span)?;
             }
             Expression::Bool(value, span) => {
                 self.function
@@ -528,6 +358,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
+    /// Compiles short-circuiting boolean conjunction or disjunction.
     fn compile_logical(
         &mut self,
         left: &Expression<'a>,
@@ -556,6 +387,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
+    /// Compiles an expression and verifies it is a boolean without consuming it.
     fn checked_boolean_expression(
         &mut self,
         expression: &Expression<'a>,
@@ -569,6 +401,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
+    /// Emits one named runtime ABI call after resolving its template function index.
     fn runtime_call(
         &mut self,
         name: &str,
@@ -585,6 +418,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
+    /// Looks up one lexical binding's Wasm local index.
     fn lookup(&self, name: &str) -> Option<u32> {
         self.scopes
             .iter()
@@ -592,6 +426,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .find_map(|scope| scope.get(name).copied())
     }
 
+    /// Reserves the next preallocated ValueRef local slot.
     fn allocate_local(&mut self) -> u32 {
         let local = self.next_local;
         self.next_local += 1;
@@ -599,6 +434,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     }
 }
 
+/// Maps a source binary operator to its runtime ABI operation name.
 fn runtime_operation(operator: BinaryOperator) -> &'static str {
     match operator {
         BinaryOperator::Add => "__exs_rt_add",
@@ -614,6 +450,7 @@ fn runtime_operation(operator: BinaryOperator) -> &'static str {
     }
 }
 
+/// Counts local declarations in one block and nested blocks.
 fn count_lets(block: &Block<'_>) -> u32 {
     block
         .statements
@@ -630,6 +467,7 @@ fn count_lets(block: &Block<'_>) -> u32 {
         .sum()
 }
 
+/// Counts expression scratch-local requirements in one block.
 fn count_expressions_block(block: &Block<'_>) -> u32 {
     block
         .statements
@@ -638,6 +476,7 @@ fn count_expressions_block(block: &Block<'_>) -> u32 {
         .sum()
 }
 
+/// Counts expression scratch-local requirements in one statement.
 fn count_expressions_statement(statement: &Statement<'_>) -> u32 {
     match statement {
         Statement::Let { value, .. }
@@ -659,10 +498,12 @@ fn count_expressions_statement(statement: &Statement<'_>) -> u32 {
     }
 }
 
+/// Counts expression scratch-local requirements recursively.
 fn count_expressions(expression: &Expression<'_>) -> u32 {
     match expression {
         Expression::Integer(_, _)
         | Expression::Float(_, _)
+        | Expression::String(_, _)
         | Expression::Bool(_, _)
         | Expression::Variable(_) => 1,
         Expression::Unary { operand, .. } => 1 + count_expressions(operand),
@@ -675,25 +516,16 @@ fn count_expressions(expression: &Expression<'_>) -> u32 {
     }
 }
 
+/// Returns the source span used for a runtime condition check.
 fn condition_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
     match expression {
-        Expression::Integer(_, span) | Expression::Float(_, span) | Expression::Bool(_, span) => {
-            *span
-        }
+        Expression::Integer(_, span)
+        | Expression::Float(_, span)
+        | Expression::String(_, span)
+        | Expression::Bool(_, span) => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. } => *span,
     }
-}
-
-fn module_span<'a>(module: &Module<'a>) -> SourceSpan<'a> {
-    module
-        .functions
-        .first()
-        .map_or_else(|| SourceSpan::empty("<unknown>"), |function| function.span)
-}
-
-fn diagnostics(diagnostic: CompileDiagnostic<'_>) -> CompileDiagnostics<'_> {
-    CompileDiagnostics::from(diagnostic)
 }

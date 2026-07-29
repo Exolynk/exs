@@ -96,6 +96,8 @@ pub enum Expression<'a> {
     Integer(i64, SourceSpan<'a>),
     /// A binary64 floating-point literal.
     Float(f64, SourceSpan<'a>),
+    /// A decoded UTF-8 string literal.
+    String(String, SourceSpan<'a>),
     /// A boolean literal.
     Bool(bool, SourceSpan<'a>),
     /// A local variable lookup.
