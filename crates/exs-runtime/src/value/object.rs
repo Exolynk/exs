@@ -40,13 +40,22 @@ pub(crate) mod operations {
 
     /// Reads one Object property or returns Null when it is absent.
     pub(crate) fn get(receiver: ValueRef, index: ValueRef) -> ValueRef {
-        let key = operations::string_value(index);
+        let key = match operations::string_value(index) {
+            Ok(key) => key,
+            Err(error) => return error,
+        };
         let result = match runtime::value(receiver) {
             RtValue::Object(object) => object
                 .entries
                 .iter()
                 .find_map(|(entry_key, value)| (entry_key.as_ref() == key).then_some(*value)),
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "index access requires an Object receiver",
+                    receiver,
+                );
+            }
         };
         match result {
             Some(value) => value,
@@ -56,7 +65,10 @@ pub(crate) mod operations {
 
     /// Creates or replaces one Object property.
     pub(crate) fn set(receiver: ValueRef, index: ValueRef, replacement: ValueRef) -> ValueRef {
-        let key = operations::string_value(index);
+        let key = match operations::string_value(index) {
+            Ok(key) => key,
+            Err(error) => return error,
+        };
         match runtime::value_mut(receiver) {
             RtValue::Object(object) => {
                 if let Some((_, value)) = object
@@ -70,33 +82,55 @@ pub(crate) mod operations {
                 }
                 replacement
             }
-            _ => runtime::trap(),
+            _ => runtime::recoverable_error(
+                "TypeError",
+                "index assignment requires an Object receiver",
+                receiver,
+            ),
         }
     }
 
     /// Tests whether an Object contains one string key.
     pub(crate) fn has(receiver: ValueRef, key: ValueRef) -> ValueRef {
-        let key = operations::string_value(key);
+        let key = match operations::string_value(key) {
+            Ok(key) => key,
+            Err(error) => return error,
+        };
         let contains = match runtime::value(receiver) {
             RtValue::Object(object) => object
                 .entries
                 .iter()
                 .any(|(entry_key, _)| entry_key.as_ref() == key),
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "has requires an Object receiver",
+                    receiver,
+                );
+            }
         };
         runtime::allocate(RtValue::Bool(contains))
     }
 
     /// Removes one Object property and returns its previous value or Null.
     pub(crate) fn delete(receiver: ValueRef, key: ValueRef) -> ValueRef {
-        let key = operations::string_value(key);
+        let key = match operations::string_value(key) {
+            Ok(key) => key,
+            Err(error) => return error,
+        };
         let removed = match runtime::value_mut(receiver) {
             RtValue::Object(object) => object
                 .entries
                 .iter()
                 .position(|(entry_key, _)| entry_key.as_ref() == key)
                 .map(|index| object.entries.remove(index).1),
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "delete requires an Object receiver",
+                    receiver,
+                );
+            }
         };
         match removed {
             Some(value) => value,
@@ -113,7 +147,13 @@ pub(crate) mod operations {
                 .iter()
                 .map(|(key, _)| String::from(key.as_ref()))
                 .collect::<Vec<_>>(),
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "keys requires an Object receiver",
+                    receiver,
+                );
+            }
         };
         let elements = keys
             .into_iter()
@@ -133,7 +173,13 @@ pub(crate) mod operations {
     pub(crate) fn values(receiver: ValueRef) -> ValueRef {
         let elements = match runtime::value(receiver) {
             RtValue::Object(object) => object.entries.iter().map(|(_, value)| *value).collect(),
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "values requires an Object receiver",
+                    receiver,
+                );
+            }
         };
         runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })))
     }

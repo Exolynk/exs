@@ -3,13 +3,19 @@
 mod function;
 mod linker;
 mod literals;
+pub mod source_map;
 
+use crate::CompileOptions;
 use crate::ast::Module;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 /// Compiles a parsed module into a complete linked Wasm module.
-pub fn compile_module<'a>(module: &Module<'a>) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
-    linker::link(module)
+pub fn compile_module<'a>(
+    module: &Module<'a>,
+    source: &'a str,
+    options: CompileOptions,
+) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
+    linker::link(module, source, options)
 }
 
 /// Returns a diagnostic span covering the module's first function.

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Executes every root test script successfully through the public CLI.
+/// Executes root scripts through the public CLI, including the expected Error fixture.
 #[test]
 fn executes_root_test_scripts() {
     let scripts = root_test_scripts();
@@ -24,13 +24,27 @@ fn executes_root_test_scripts() {
                 script.display()
             ),
         };
-        assert!(
-            output.status.success(),
-            "root test script {} failed\nstdout:\n{}\nstderr:\n{}",
-            script.display(),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
+        let expected_error = script.file_stem().is_some_and(|stem| stem == "error");
+        if expected_error {
+            assert!(
+                !output.status.success(),
+                "root Error script {} unexpectedly succeeded",
+                script.display(),
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("exs:"),
+                "root Error script {} did not print its language Error",
+                script.display(),
+            );
+        } else {
+            assert!(
+                output.status.success(),
+                "root test script {} failed\nstdout:\n{}\nstderr:\n{}",
+                script.display(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
     }
 }
 

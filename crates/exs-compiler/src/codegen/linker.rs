@@ -16,15 +16,22 @@ use wasmparser::{ExternalKind, Parser as WasmParser};
 
 use super::function::{FunctionCompiler, FunctionSignature, add_program_types, build_signatures};
 use super::literals::{LiteralPool, TemplateDataLayout, template_data_layout};
+use super::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
 use super::{diagnostics, module_span};
+use crate::CompileOptions;
 use crate::ast::Module;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
 
 /// Links one source module against the committed runtime template.
-pub(super) fn link<'a>(module: &Module<'a>) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
+pub(super) fn link<'a>(
+    module: &Module<'a>,
+    source: &'a str,
+    options: CompileOptions,
+) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
     let literal_pool = LiteralPool::collect(module);
     let template_data = template_data_layout(module)?;
-    let mut linker = TemplateLinker::new(module, literal_pool, template_data)?;
+    let source_map = SourceMap::collect(module);
+    let mut linker = TemplateLinker::new(module, literal_pool, template_data, source_map)?;
     let mut wasm = WasmModule::new();
     reencode::utils::parse_core_module(&mut linker, &mut wasm, WasmParser::new(0), WASM_TEMPLATE)
         .map_err(|error| match error {
@@ -41,6 +48,16 @@ pub(super) fn link<'a>(module: &Module<'a>) -> Result<Vec<u8>, CompileDiagnostic
             .into_bytes()
             .into(),
     });
+    wasm.section(&CustomSection {
+        name: SOURCE_MAP_SECTION.into(),
+        data: linker.source_map.encode().into(),
+    });
+    if options.embed_sources {
+        wasm.section(&CustomSection {
+            name: SOURCES_SECTION.into(),
+            data: linker.source_map.encode_source(source).into(),
+        });
+    }
     Ok(wasm.finish())
 }
 
@@ -55,6 +72,7 @@ struct TemplateLinker<'source, 'module> {
     start_index: Option<u32>,
     abi_version_index: Option<u32>,
     literals: LiteralPool,
+    source_map: SourceMap<'source>,
     template_has_data_count: bool,
     template_has_data_section: bool,
 }
@@ -65,6 +83,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
         module: &'module Module<'source>,
         literals: LiteralPool,
         template_data: TemplateDataLayout,
+        source_map: SourceMap<'source>,
     ) -> Result<Self, CompileDiagnostics<'source>> {
         let literal_count = u32::try_from(literals.bytes.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
@@ -94,6 +113,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             start_index: None,
             abi_version_index: None,
             literals: literals.with_data_index_base(template_data.count),
+            source_map,
             template_has_data_count: template_data.has_data_count,
             template_has_data_section: template_data.has_data_section,
         })
@@ -224,6 +244,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 signatures,
                 &self.runtime_functions,
                 &self.literals.indices,
+                &self.source_map,
             )
             .map_err(reencode::Error::UserError)?;
             codes.function(&compiler.compile().map_err(reencode::Error::UserError)?);

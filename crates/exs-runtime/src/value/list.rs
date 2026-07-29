@@ -41,35 +41,65 @@ pub(crate) mod operations {
                 list.elements.push(item);
                 list.elements.len()
             }
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "push requires a List receiver",
+                    receiver,
+                );
+            }
         };
         length_value(length)
     }
 
     /// Reads one List element at a zero-based integer index.
     pub(crate) fn get(receiver: ValueRef, index: ValueRef) -> ValueRef {
-        let index = list_index(index);
+        let index_reference = index;
+        let index = match list_index(index) {
+            Ok(index) => index,
+            Err(error) => return error,
+        };
         match runtime::value(receiver) {
             RtValue::List(list) => match list.elements.get(index) {
                 Some(value) => *value,
-                None => runtime::trap(),
+                None => runtime::recoverable_error(
+                    "IndexError",
+                    "List index is outside the List bounds",
+                    index_reference,
+                ),
             },
-            _ => runtime::trap(),
+            _ => runtime::recoverable_error(
+                "TypeError",
+                "index access requires a List receiver",
+                receiver,
+            ),
         }
     }
 
     /// Replaces one List element at a zero-based integer index.
     pub(crate) fn set(receiver: ValueRef, index: ValueRef, replacement: ValueRef) -> ValueRef {
-        let index = list_index(index);
+        let index_reference = index;
+        let index = match list_index(index) {
+            Ok(index) => index,
+            Err(error) => return error,
+        };
         match runtime::value_mut(receiver) {
             RtValue::List(list) => match list.elements.get_mut(index) {
                 Some(value) => {
                     *value = replacement;
                     replacement
                 }
-                None => runtime::trap(),
+                None => runtime::recoverable_error(
+                    "IndexError",
+                    "List index is outside the List bounds",
+                    index_reference,
+                ),
             },
-            _ => runtime::trap(),
+            _ => runtime::recoverable_error(
+                "TypeError",
+                "index assignment requires a List receiver",
+                receiver,
+            ),
         }
     }
 
@@ -84,16 +114,28 @@ pub(crate) mod operations {
                 }
                 elements
             }
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "List addition requires a List receiver",
+                    left,
+                );
+            }
         };
         runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })))
     }
 
-    /// Removes and returns the final List value, or Null for an empty List.
+    /// Removes and returns the final List value, or None for an empty List.
     pub(crate) fn pop(receiver: ValueRef) -> ValueRef {
         let value = match runtime::value_mut(receiver) {
             RtValue::List(list) => list.elements.pop(),
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "pop requires a List receiver",
+                    receiver,
+                );
+            }
         };
         match value {
             Some(value) => value,
@@ -103,48 +145,87 @@ pub(crate) mod operations {
 
     /// Inserts one value into a List while preserving element order.
     pub(crate) fn insert(receiver: ValueRef, index: ValueRef, value: ValueRef) -> ValueRef {
-        let index = list_index(index);
+        let index_reference = index;
+        let index = match list_index(index) {
+            Ok(index) => index,
+            Err(error) => return error,
+        };
         match runtime::value_mut(receiver) {
             RtValue::List(list) if index <= list.elements.len() => {
                 list.elements.insert(index, value);
             }
-            RtValue::List(_) => runtime::trap(),
-            _ => runtime::trap(),
+            RtValue::List(_) => {
+                return runtime::recoverable_error(
+                    "IndexError",
+                    "List insertion index is outside the List bounds",
+                    index_reference,
+                );
+            }
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "insert requires a List receiver",
+                    receiver,
+                );
+            }
         };
         runtime::allocate(RtValue::None)
     }
 
     /// Removes and returns one List value at a zero-based index.
     pub(crate) fn remove(receiver: ValueRef, index: ValueRef) -> ValueRef {
-        let index = list_index(index);
+        let index_reference = index;
+        let index = match list_index(index) {
+            Ok(index) => index,
+            Err(error) => return error,
+        };
         match runtime::value_mut(receiver) {
             RtValue::List(list) if index < list.elements.len() => list.elements.remove(index),
-            RtValue::List(_) => runtime::trap(),
-            _ => runtime::trap(),
+            RtValue::List(_) => runtime::recoverable_error(
+                "IndexError",
+                "List index is outside the List bounds",
+                index_reference,
+            ),
+            _ => {
+                runtime::recoverable_error("TypeError", "remove requires a List receiver", receiver)
+            }
         }
     }
 
-    /// Clears one List and returns Null.
+    /// Clears one List and returns None.
     pub(crate) fn clear(receiver: ValueRef) -> ValueRef {
         match runtime::value_mut(receiver) {
             RtValue::List(list) => list.elements.clear(),
-            _ => runtime::trap(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "clear requires a List receiver",
+                    receiver,
+                );
+            }
         };
         runtime::allocate(RtValue::None)
     }
 
     /// Reads one non-negative runtime integer as a List index.
-    fn list_index(reference: ValueRef) -> usize {
+    fn list_index(reference: ValueRef) -> Result<usize, ValueRef> {
         match runtime::value(reference) {
             RtValue::Int(index) if *index >= 0 => match usize::try_from(*index) {
-                Ok(index) => index,
-                Err(_) => runtime::trap(),
+                Ok(index) => Ok(index),
+                Err(_) => Err(runtime::recoverable_error(
+                    "IndexError",
+                    "List index is outside the supported range",
+                    reference,
+                )),
             },
-            _ => runtime::trap(),
+            _ => Err(runtime::recoverable_error(
+                "IndexError",
+                "List index requires a non-negative Int value",
+                reference,
+            )),
         }
     }
 
-    /// Returns a checked ExS integer containing a collection length.
     /// Allocates a checked ExS integer containing one collection length.
     pub(crate) fn length_value(length: usize) -> ValueRef {
         let Ok(length) = i64::try_from(length) else {
@@ -157,26 +238,40 @@ pub(crate) mod operations {
     }
 
     /// Reads the sole value in one runtime-provided argument List.
-    pub(crate) fn single_argument(arguments: ValueRef) -> ValueRef {
+    pub(crate) fn single_argument(arguments: ValueRef) -> Result<ValueRef, ValueRef> {
         match runtime::value(arguments) {
-            RtValue::List(list) if list.elements.len() == 1 => list.elements[0],
-            _ => runtime::trap(),
+            RtValue::List(list) if list.elements.len() == 1 => Ok(list.elements[0]),
+            _ => Err(runtime::recoverable_error(
+                "ArityError",
+                "method expects exactly one argument",
+                arguments,
+            )),
         }
     }
 
     /// Reads the two values in one runtime-provided argument List.
-    pub(crate) fn two_arguments(arguments: ValueRef) -> (ValueRef, ValueRef) {
+    pub(crate) fn two_arguments(arguments: ValueRef) -> Result<(ValueRef, ValueRef), ValueRef> {
         match runtime::value(arguments) {
-            RtValue::List(list) if list.elements.len() == 2 => (list.elements[0], list.elements[1]),
-            _ => runtime::trap(),
+            RtValue::List(list) if list.elements.len() == 2 => {
+                Ok((list.elements[0], list.elements[1]))
+            }
+            _ => Err(runtime::recoverable_error(
+                "ArityError",
+                "method expects exactly two arguments",
+                arguments,
+            )),
         }
     }
 
     /// Verifies that one runtime-provided argument List is empty.
-    pub(crate) fn require_no_arguments(arguments: ValueRef) {
+    pub(crate) fn require_no_arguments(arguments: ValueRef) -> Result<(), ValueRef> {
         match runtime::value(arguments) {
-            RtValue::List(list) if list.elements.is_empty() => {}
-            _ => runtime::trap(),
+            RtValue::List(list) if list.elements.is_empty() => Ok(()),
+            _ => Err(runtime::recoverable_error(
+                "ArityError",
+                "method expects no arguments",
+                arguments,
+            )),
         }
     }
 }

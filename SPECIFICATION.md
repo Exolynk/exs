@@ -298,7 +298,7 @@ A `List` is a mutable ordered sequence of `Value` references. Lists may contain 
 
 List indexes are zero-based `Int` values. Negative indexes are invalid.
 
-The current implementation supports `[]`, comma-separated list literals, dynamic `value[index]` reads, `value[index] = replacement;` writes, and member-call lowering through `__exs_rt_call_method(receiver, method, arguments)`. The compiler does not establish a receiver type: `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_append`, and `__exs_rt_call_method` dispatch from the runtime `RtValue`. Lists implement `push(value)`, `pop()`, `insert(index, value)`, `remove(index)`, and `clear()`. `push` returns the new length; `pop` returns Null when empty; `insert` and `clear` return Null; and `remove` returns the removed value. `list + value` returns a new shallow List with `value` appended; `list + list` returns a new shallow chained List. Neither `+` form mutates its source Lists. Invalid receiver types, indexes, and method names trap until Error Values are implemented.
+The current implementation supports `[]`, comma-separated list literals, dynamic `value[index]` reads, `value[index] = replacement;` writes, and member-call lowering through `__exs_rt_call_method(receiver, method, arguments)`. The compiler does not establish a receiver type: `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_append`, and `__exs_rt_call_method` dispatch from the runtime `RtValue`. Lists implement `push(value)`, `pop()`, `insert(index, value)`, `remove(index)`, and `clear()`. `push` returns the new length; `pop` returns `None` when empty; `insert` and `clear` return `None`; and `remove` returns the removed value. `list + value` returns a new shallow List with `value` appended; `list + list` returns a new shallow chained List. Neither `+` form mutates its source Lists. Invalid receivers return `TypeError`, invalid indexes return `IndexError`, and incorrect method arity returns `ArityError`.
 
 Nested acyclic Lists cross the current CBOR boundary as arrays. The runtime can create cyclic Lists, but serializing one currently traps; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
 
@@ -306,7 +306,7 @@ Nested acyclic Lists cross the current CBOR boundary as arrays. The runtime can 
 
 An `Object` is a mutable mapping from String keys to `Value` references. Key iteration order is insertion order. Replacing an existing key does not change its position.
 
-The current implementation stores Objects as boxed insertion-ordered entries. It supports `{ key: value, "key": value }` literals, dynamic `object[key]` reads and writes, dot-property reads and writes, and identity equality. Missing Object reads return `null`; writes create or replace a property. `has(key)`, `delete(key)`, `keys()`, and `values()` are dispatched by `__exs_rt_call_method`; `keys()` and `values()` return new Lists in insertion order. Unsupported receivers, non-String keys, and unknown methods trap until Error Values are implemented.
+The current implementation stores Objects as boxed insertion-ordered entries. It supports `{ key: value, "key": value }` literals, dynamic `object[key]` reads and writes, dot-property reads and writes, and identity equality. Missing Object reads return `None`; writes create or replace a property. `has(key)`, `delete(key)`, `keys()`, and `values()` are dispatched by `__exs_rt_call_method`; `keys()` and `values()` return new Lists in insertion order. Unsupported receivers and non-String keys return `TypeError`; an unknown method returns `MethodNotFound`.
 
 Nested acyclic Objects cross the current CBOR boundary as text-keyed maps in their insertion order. The runtime currently traps when serializing a container cycle; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
 
@@ -393,7 +393,7 @@ value["name"]
 
 Dot access is equivalent to indexing with the property name as a String except for compiler-recognized intrinsics such as `clone`.
 
-Reading a missing Object property returns `null`. Writing a property creates or replaces it.
+Reading a missing Object property returns `None`. Writing a property creates or replaces it.
 
 Property access on an unsupported value produces `TypeError`.
 
@@ -547,7 +547,7 @@ A loop variable is a fresh binding for each iteration. Closures created in diffe
 
 The current compiler lowers `while`, `for`, `break`, and `continue` directly to structured WebAssembly control flow. A compiled `for` evaluates its iterable once and calls generic runtime operations to create a shallow List snapshot or a List of Unicode-scalar Strings; the compiler never accesses List or String payload layouts. The iterator snapshot, index, and current binding remain in compiler root-frame slots for the loop lifetime.
 
-Until runtime-wide validation conversion is complete, a non-Bool `while` condition and a non-List/non-String `for` iterable trap the current Wasm execution rather than returning a recoverable `TypeError` value.
+Conditions are validated through the value-returning `__exs_rt_condition_value` runtime operation. It returns either the original Bool or a recoverable `TypeError`; the compiler returns that Error from the current function before converting a validated Bool into a Wasm branch condition. `for` iteration applies the same Error-return path to a non-List/non-String iterable.
 
 ## Return
 
@@ -556,7 +556,7 @@ ret;
 ret value;
 ```
 
-`ret;` returns `null`. `ret value;` evaluates and returns the value.
+`ret;` returns `None`. `ret value;` evaluates and returns the value.
 
 Returning from a task body completes only that task, not the parent function containing the `par` construct.
 
@@ -646,10 +646,10 @@ Assigning `origin` or `trace` produces `ReadOnlyPropertyError`.
 The built-in function is:
 
 ```text
-error(kind, message, data = None, cause = None)
+Error(kind, message, data)
 ```
 
-`kind` and `message` MUST be Strings. `cause` MUST be Error or None. Invalid arguments return `TypeError`.
+`kind` and `message` MUST be Strings. `data` is any language value. The current implementation creates a recoverable Error with the active source position and direct-call trace; explicit source-level cause construction is deferred. Invalid arguments return `TypeError`.
 
 ## Standard kinds
 
@@ -683,7 +683,9 @@ pub struct SourceSpan {
 }
 ```
 
-Line and column are derived from byte offsets. The compiler assigns a compact `SourcePositionId` to every potentially failing operation. `origin` identifies that position and the creating function; runtime frames retain the current position and each trace frame retains its function ID and call-site position.
+Line and column are derived from byte offsets. The compiler assigns a compact non-zero `SourcePositionId` to every source span used by generated runtime operations and direct calls. `origin` identifies the active operation; direct runtime frames retain the function ID and call-site position.
+
+The final Wasm module always contains `exs.source.map`. Its version-two binary payload is `EXSMAP2\0`, source-ID byte length (`u32` little-endian), position-entry count (`u32` little-endian), function-entry count (`u32` little-endian), UTF-8 source ID, then one `(start_byte, end_byte)` pair of `u32` little-endian values for each position ID in ascending order starting at 1. It ends with one `(function_id, name_byte_length, UTF-8 function name)` record for each generated function. Trace frames use this table to render source-level function names. `CompileOptions::embed_sources` additionally emits `exs.sources`, encoded as `EXSSRC1\0`, source-ID byte length, source byte length, UTF-8 source ID, and UTF-8 source text. Production builds can omit this second section while retaining the position and function maps.
 
 `trace` is a List of immutable frame Objects ordered from creation frame toward the root call.
 
@@ -779,7 +781,7 @@ Top-level executable statements are not permitted. A future top-level-code featu
 
 ## Phase-1 modules and entry point
 
-Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the runner exposes Null, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies Null input and prints the result in ExS source notation.
+Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the runner exposes None, Ok, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies None input and prints the result in ExS source notation.
 
 ```text
 fn main(input) {
@@ -812,9 +814,9 @@ Cells are not directly observable and are reported through the value stored in t
 
 Returns an Int length for String, List, or Object. Object length is its number of keys. Unsupported values return TypeError.
 
-## `error(kind, message, data, cause)`
+## `Error(kind, message, data)`
 
-Constructs an Error as defined in the Errors chapter.
+Constructs a recoverable Error as defined in the Errors chapter. `Error` is a reserved keyword and cannot be declared as a source function.
 
 ## List operations
 
@@ -832,7 +834,7 @@ list.clear()            // mutates; returns None
 
 ```text
 object.has(key)         // Bool
-object.delete(key)      // removed value or null
+object.delete(key)      // removed value or None
 object.keys()           // new List of String keys in insertion order
 object.values()         // new shallow List in insertion order
 ```
@@ -947,7 +949,9 @@ All allocated runtime values use this root enum. Complex payloads are boxed:
 
 ```rust
 pub enum RtValue {
-    Null,
+    None,
+    Ok(ValueRef),
+    Error(Box<RuntimeError>),
     Bool(bool),
     Int(i64),
     Float(f64),
@@ -995,7 +999,7 @@ Internal invariant failures MUST NOT be converted into arbitrary language Errors
 
 ## Serialization
 
-Ordinary CBOR serialization supports Null, Bool, Int, Float, String, List, Object, and Error.
+Ordinary CBOR serialization supports None, Ok, Error, Bool, Int, Float, String, List, and Object.
 
 Cycles and aliases are represented with the reference tags defined by the Host ABI.
 
@@ -1169,7 +1173,8 @@ The payload for kinds 0 and 1 is canonical CBOR. Kind 2 uses a CBOR map containi
 
 | ExS                        | CBOR               |
 | --------------------------- | ------------------ |
-| Null                        | null               |
+| None                        | null               |
+| Ok(value)                   | tag 60000 plus value |
 | Bool                        | boolean            |
 | Int                         | integer            |
 | Float                       | binary64           |
@@ -1325,11 +1330,11 @@ The Phase-1 entry point is `fn main(input)`. Before execution, the runner serial
 
 ## Phase-1 result buffer
 
-After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one Null, Bool, Int, Float, String, or recursively nested acyclic List or Object CBOR item. The internal `ValueRef` never crosses this boundary.
+After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one None, Ok, Error, Bool, Int, Float, String, or recursively nested acyclic List or Object CBOR item. The internal `ValueRef` never crosses this boundary.
 
 ## Runtime intrinsics
 
-Compiler-generated code MAY call linked runtime intrinsics whose names begin with `__exs_rt_`, such as `__exs_rt_list_new`, `__exs_rt_object_new`, `__exs_rt_append`, `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_call_method`, `__exs_rt_cell_new`, `__exs_rt_value_is_error`, `__exs_rt_clone`, `__exs_rt_task_create`, and `__exs_rt_cbor_encode`. Except for construction intrinsics such as `__exs_rt_list_new` and `__exs_rt_object_new`, operations dispatch from the runtime value rather than a compiler-proven receiver type. The compiler resolves intrinsic names from the `crates/exs-runtime/exs-runtime.wasm` export section at link time.
+Compiler-generated code MAY call linked runtime intrinsics whose names begin with `__exs_rt_`, such as `__exs_rt_list_new`, `__exs_rt_object_new`, `__exs_rt_error_new`, `__exs_rt_append`, `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_call_method`, `__exs_rt_cell_new`, `__exs_rt_value_is_error`, `__exs_rt_clone`, `__exs_rt_task_create`, and `__exs_rt_cbor_encode`. Except for construction intrinsics such as `__exs_rt_list_new`, `__exs_rt_object_new`, and `__exs_rt_error_new`, operations dispatch from the runtime value rather than a compiler-proven receiver type. The compiler resolves intrinsic names from the `crates/exs-runtime/exs-runtime.wasm` export section at link time.
 
 The compiler resolves runtime functions by these export names, never fixed Wasm indices. Source programs cannot import, export, or reference intrinsic names.
 

@@ -382,6 +382,21 @@ impl<'a> Parser<'a> {
                     span: token.span.through(end),
                 })
             }
+            TokenKind::Error => {
+                self.expect_simple(TokenKind::LeftParen, "expected ( after Error")?;
+                let arguments = self.arguments(TokenKind::RightParen)?;
+                let end = self
+                    .expect_simple(TokenKind::RightParen, "expected ) after Error arguments")?
+                    .span;
+                Ok(Expression::Call {
+                    callee: Identifier {
+                        name: "Error".to_owned(),
+                        span: token.span,
+                    },
+                    arguments,
+                    span: token.span.through(end),
+                })
+            }
             TokenKind::LeftBracket => {
                 let elements = self.arguments(TokenKind::RightBracket)?;
                 let end = self

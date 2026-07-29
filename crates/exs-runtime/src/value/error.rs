@@ -39,7 +39,12 @@ impl RuntimeError {
             message: String::from(message).into_boxed_str(),
             data,
             origin,
-            trace: Vec::new(),
+            trace: unsafe { crate::state::runtime() }
+                .frames
+                .iter()
+                .rev()
+                .copied()
+                .collect(),
             cause: None,
         }
     }

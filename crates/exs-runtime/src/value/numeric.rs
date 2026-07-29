@@ -35,25 +35,31 @@ pub(crate) fn is_numeric(value: &RtValue) -> bool {
 }
 
 /// Converts one runtime numeric payload into the shared numeric dispatch form.
-pub(crate) fn number_of(value: &RtValue) -> Number {
+pub(crate) fn number_of(value: &RtValue) -> Option<Number> {
     match value {
-        RtValue::Bool(false) => Number::Int(0),
-        RtValue::Bool(true) => Number::Int(1),
-        RtValue::Int(value) => Number::Int(*value),
-        RtValue::Float(value) => Number::Float(*value),
+        RtValue::Bool(false) => Some(Number::Int(0)),
+        RtValue::Bool(true) => Some(Number::Int(1)),
+        RtValue::Int(value) => Some(Number::Int(*value)),
+        RtValue::Float(value) => Some(Number::Float(*value)),
         RtValue::None
         | RtValue::Ok(_)
         | RtValue::Error(_)
         | RtValue::String(_)
         | RtValue::List(_)
         | RtValue::Object(_)
-        | RtValue::BoxedFutureValue(_) => runtime::trap(),
+        | RtValue::BoxedFutureValue(_) => None,
     }
 }
 
 /// Converts one runtime numeric reference into the shared numeric dispatch form.
-fn number_of_ref(reference: ValueRef) -> Number {
-    number_of(runtime::value(reference))
+fn number_of_ref(reference: ValueRef) -> Result<Number, ValueRef> {
+    number_of(runtime::value(reference)).ok_or_else(|| {
+        runtime::recoverable_error(
+            "TypeError",
+            "numeric operations require a Bool, Int, or Float value",
+            reference,
+        )
+    })
 }
 
 /// Performs a binary numeric operation with Float promotion.
@@ -63,10 +69,23 @@ pub(crate) fn arithmetic(
     integer_operation: fn(i64, i64) -> Option<i64>,
     float_operation: fn(f64, f64) -> f64,
 ) -> ValueRef {
-    match (number_of_ref(left), number_of_ref(right)) {
+    let left_value = left;
+    let left = match number_of_ref(left) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let right = match number_of_ref(right) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    match (left, right) {
         (Number::Int(left), Number::Int(right)) => match integer_operation(left, right) {
             Some(value) if is_valid_int(value) => runtime::allocate(RtValue::Int(value)),
-            _ => runtime::trap(),
+            _ => runtime::recoverable_error(
+                "IntOverflowError",
+                "integer arithmetic overflowed the ExS integer range",
+                left_value,
+            ),
         },
         (left, right) => runtime::allocate(RtValue::Float(float_operation(
             as_float(left),
@@ -78,17 +97,30 @@ pub(crate) fn arithmetic(
 /// Negates one runtime numeric value.
 pub(crate) fn negate(value: ValueRef) -> ValueRef {
     match number_of_ref(value) {
-        Number::Int(value) => match value.checked_neg() {
+        Ok(Number::Int(number)) => match number.checked_neg() {
             Some(value) if is_valid_int(value) => runtime::allocate(RtValue::Int(value)),
-            _ => runtime::trap(),
+            _ => runtime::recoverable_error(
+                "IntOverflowError",
+                "integer negation overflowed the ExS integer range",
+                value,
+            ),
         },
-        Number::Float(value) => runtime::allocate(RtValue::Float(-value)),
+        Ok(Number::Float(number)) => runtime::allocate(RtValue::Float(-number)),
+        Err(error) => error,
     }
 }
 
 /// Compares two runtime numeric values with Float promotion.
 pub(crate) fn compare(left: ValueRef, right: ValueRef, ordering: Ordering) -> ValueRef {
-    let result = match (number_of_ref(left), number_of_ref(right)) {
+    let left = match number_of_ref(left) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let right = match number_of_ref(right) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let result = match (left, right) {
         (Number::Int(left), Number::Int(right)) => match ordering {
             Ordering::Less => left < right,
             Ordering::LessOrEqual => left <= right,
@@ -115,10 +147,21 @@ pub(crate) fn numbers_equal(left: Number, right: Number) -> bool {
 
 /// Negates one runtime Boolean value.
 pub(crate) fn not(value: ValueRef) -> ValueRef {
-    runtime::allocate(RtValue::Bool(!boolean(value)))
+    match runtime::value(value) {
+        RtValue::Bool(result) => runtime::allocate(RtValue::Bool(!result)),
+        _ => runtime::recoverable_error("TypeError", "! requires a Bool value", value),
+    }
 }
 
-/// Converts one runtime Boolean value to a Wasm condition.
+/// Validates one source value as a Boolean condition while retaining the ValueRef representation.
+pub(crate) fn condition_value(value: ValueRef) -> ValueRef {
+    match runtime::value(value) {
+        RtValue::Bool(_) => value,
+        _ => runtime::recoverable_error("TypeError", "condition requires a Bool value", value),
+    }
+}
+
+/// Converts an already validated runtime Boolean value to a Wasm condition.
 pub(crate) fn condition(value: ValueRef) -> i32 {
     i32::from(boolean(value))
 }

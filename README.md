@@ -70,9 +70,9 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 - [x] Replace Null with None and add shared Ok and structured Error transport values.
 - [x] Add source-level None, Ok(value), is Error, and ? propagation with MissingValue conversion.
-- [ ] Convert all recoverable runtime validation failures from traps to Error values.
-- [ ] Emit source-position IDs, exs.source.map, and optional embedded sources.
-- [ ] Add direct-function and future async-frame language stack traces.
+- [x] Convert recoverable numeric, condition, List, Object, iterable, and method validation failures from traps to Error values.
+- [x] Emit compact source-position IDs, `exs.source.map`, and optional embedded `exs.sources` text.
+- [x] Add direct-function language stack traces; async-frame traces remain part of suspension work.
 
 ### Phase 6: Closures
 

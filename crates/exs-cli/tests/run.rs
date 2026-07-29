@@ -106,3 +106,45 @@ fn prints_the_main_object_result() {
     };
     assert_eq!(stdout, "{\"name\": \"Ada\", \"age\": 42}\n");
 }
+
+/// Prints a complete source-resolved language Error and exits unsuccessfully.
+#[test]
+fn prints_runtime_errors_with_origin_and_named_trace() {
+    let path = std::env::temp_dir().join(format!("exs-cli-error-{}.exs", std::process::id()));
+    let source = r#"
+fn inner(value) {
+    if 1 {
+        ret value;
+    }
+    ret value;
+}
+fn main(input) {
+    ret inner(input);
+}
+"#;
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("run")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(!output.status.success());
+    let stderr = match String::from_utf8(output.stderr) {
+        Ok(stderr) => stderr,
+        Err(error) => panic!("CLI error output was not UTF-8: {error}"),
+    };
+    assert!(stderr.contains("error: TypeError (recoverable)"));
+    assert!(stderr.contains("origin: "));
+    assert!(stderr.contains("if 1 {"));
+    assert!(stderr.contains("trace:"));
+    assert!(stderr.contains("inner called at"));
+    assert!(stderr.contains("main"));
+}

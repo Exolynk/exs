@@ -1,5 +1,6 @@
 //! Stable Wasm ABI exports for the ExS runtime.
 
+use alloc::string::String;
 use core::panic::PanicInfo;
 
 use exs_value::{ValueRef, is_valid_int};
@@ -27,6 +28,36 @@ pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> ValueRef {
         runtime::value(value),
         RtValue::Error(_)
     )))
+}
+
+/// Creates a recoverable language Error from String kind and message values.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_error_new(
+    kind: ValueRef,
+    message: ValueRef,
+    data: ValueRef,
+) -> ValueRef {
+    let kind = match runtime::value(kind) {
+        RtValue::String(value) => String::from(value.as_str()),
+        _ => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "error kind requires a String value",
+                kind,
+            );
+        }
+    };
+    let message = match runtime::value(message) {
+        RtValue::String(value) => String::from(value.as_str()),
+        _ => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "error message requires a String value",
+                message,
+            );
+        }
+    };
+    runtime::recoverable_error(&kind, &message, data)
 }
 
 /// Converts None into an Error while preserving direct values and Result variants.
@@ -58,6 +89,41 @@ pub extern "C" fn __exs_rt_set_source_position(position: i32) {
     };
     unsafe { crate::state::runtime() }.current_source_position =
         Some(exs_abi::SourcePositionId(position));
+}
+
+/// Records the source call site consumed by the next generated function entry.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_set_call_site(position: i32) {
+    let Ok(position) = u32::try_from(position) else {
+        runtime::trap();
+    };
+    unsafe { crate::state::runtime() }.pending_call_site =
+        Some(exs_abi::SourcePositionId(position));
+}
+
+/// Registers one generated direct function invocation.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_frame_push(function_id: i32) {
+    let Ok(function_id) = u32::try_from(function_id) else {
+        runtime::trap();
+    };
+    let state = unsafe { crate::state::runtime() };
+    let call_site = state
+        .pending_call_site
+        .take()
+        .unwrap_or(exs_abi::SourcePositionId(0));
+    state.frames.push(exs_abi::ExsStackFrame {
+        function_id,
+        call_site,
+    });
+}
+
+/// Removes the innermost generated direct function invocation.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_frame_pop() {
+    if unsafe { crate::state::runtime() }.frames.pop().is_none() {
+        runtime::trap();
+    }
 }
 
 /// Allocates a Boolean value from its canonical Wasm representation.
@@ -151,7 +217,13 @@ pub extern "C" fn __exs_rt_not(value: ValueRef) -> ValueRef {
     value::numeric::not(value)
 }
 
-/// Converts a runtime Boolean value to a Wasm condition.
+/// Validates one source value as a Boolean condition or returns a language Error.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_condition_value(value: ValueRef) -> ValueRef {
+    value::numeric::condition_value(value)
+}
+
+/// Converts a compiler-validated runtime Boolean value to a Wasm condition.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_condition(value: ValueRef) -> i32 {
     value::numeric::condition(value)

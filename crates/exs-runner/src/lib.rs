@@ -8,7 +8,7 @@ use exs_abi::{
 };
 use wasmtime::{Engine, Instance, Module, Store};
 
-pub use exs_abi::ExsValue;
+pub use exs_abi::{ErrorSeverity, ExsError, ExsValue, SourcePositionId};
 
 /// A technical error from Wasm loading or execution.
 #[derive(Debug)]

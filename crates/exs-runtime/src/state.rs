@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 
 use dlmalloc::GlobalDlmalloc;
-use exs_abi::SourcePositionId;
+use exs_abi::{ExsStackFrame, SourcePositionId};
 use exs_value::ValueRef;
 
 use crate::value::RtValue;
@@ -48,6 +48,10 @@ pub(crate) struct RuntimeState {
     pub(crate) temporary_roots: Vec<ValueRef>,
     /// Source position applied to the next recoverable runtime Error.
     pub(crate) current_source_position: Option<SourcePositionId>,
+    /// Active direct language calls from root to innermost frame.
+    pub(crate) frames: Vec<ExsStackFrame>,
+    /// Call-site position consumed by the next generated function entry.
+    pub(crate) pending_call_site: Option<SourcePositionId>,
     /// CBOR bytes supplied by the runner for the next root execution.
     pub(crate) input_buffer: Vec<u8>,
     /// Bytes copied from one compiler-owned passive literal data segment.
@@ -65,6 +69,8 @@ impl RuntimeState {
             root_frames: Vec::new(),
             temporary_roots: Vec::new(),
             current_source_position: None,
+            frames: Vec::new(),
+            pending_call_site: None,
             input_buffer: Vec::new(),
             literal_buffer: Vec::new(),
             result_buffer: Vec::new(),

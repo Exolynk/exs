@@ -9,6 +9,7 @@ use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Module,
     ObjectProperty, Statement, UnaryOperator,
 };
+use crate::codegen::source_map::SourceMap;
 use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
@@ -20,6 +21,7 @@ const ROOT_FRAME_RESERVED_LOCALS: u32 = 8;
 pub(super) struct FunctionSignature {
     pub(super) index: u32,
     pub(super) arity: usize,
+    pub(super) function_id: u32,
 }
 
 /// Structured Wasm targets and lexical cleanup data for one active source loop.
@@ -62,6 +64,7 @@ pub(super) fn build_signatures<'a>(
             FunctionSignature {
                 index: program_base + offset as u32,
                 arity: function.parameters.len(),
+                function_id: offset as u32,
             },
         );
     }
@@ -102,12 +105,14 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     signatures: &'module HashMap<String, FunctionSignature>,
     runtime: &'module HashMap<String, u32>,
     literals: &'module HashMap<String, u32>,
+    source_map: &'module SourceMap<'a>,
     function: Function,
     scopes: Vec<HashMap<String, u32>>,
     loops: Vec<LoopContext>,
     next_local: u32,
     root_frame_local: u32,
     control_depth: u32,
+    function_id: u32,
 }
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
@@ -117,6 +122,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         signatures: &'module HashMap<String, FunctionSignature>,
         runtime: &'module HashMap<String, u32>,
         literals: &'module HashMap<String, u32>,
+        source_map: &'module SourceMap<'a>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
         let expression_locals = count_expressions_block(&declaration.body)
             .checked_mul(3)
@@ -157,18 +163,22 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             signatures,
             runtime,
             literals,
+            source_map,
             function: Function::new([(local_count + 1, ValType::I32)]),
             scopes: vec![parameters],
             loops: Vec::new(),
             next_local: declaration.parameters.len() as u32,
             root_frame_local,
             control_depth: 0,
+            function_id: signatures
+                .get(&declaration.name.name)
+                .map_or(0, |signature| signature.function_id),
         };
         compiler.initialize_root_frame(root_slot_count)?;
         Ok(compiler)
     }
 
-    /// Compiles this function body, including the implicit null return path.
+    /// Compiles this function body, including the implicit None return path.
     pub(super) fn compile(&mut self) -> Result<Function, CompileDiagnostics<'a>> {
         self.compile_block(&self.declaration.body, false)?;
         self.runtime_call("__exs_rt_none_new", self.declaration.span)?;
@@ -295,7 +305,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 ..
             } => {
                 self.compile_expression(condition)?;
-                self.runtime_value_call("__exs_rt_condition", 1, condition_span(condition))?;
+                self.compile_condition(condition_span(condition))?;
                 self.function
                     .instruction(&Instruction::If(BlockType::Empty));
                 self.enter_control()?;
@@ -341,7 +351,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let continue_depth = self.control_depth;
 
         self.compile_expression(condition)?;
-        self.runtime_value_call("__exs_rt_condition", 1, condition_span(condition))?;
+        self.compile_condition(condition_span(condition))?;
         self.function.instruction(&Instruction::I32Eqz);
         self.branch_if_to(break_depth, span)?;
 
@@ -372,6 +382,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let iterable = self.store_stack_value()?;
         self.function.instruction(&Instruction::LocalGet(iterable));
         self.runtime_value_call("__exs_rt_iter_snapshot", 1, span)?;
+        self.return_if_error(span)?;
         let snapshot = self.store_stack_value()?;
         self.clear_root_slot(iterable)?;
 
@@ -402,7 +413,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function.instruction(&Instruction::LocalSet(condition));
         self.clear_root_slot(length)?;
         self.function.instruction(&Instruction::LocalGet(condition));
-        self.runtime_value_call("__exs_rt_condition", 1, span)?;
+        self.compile_condition(span)?;
         self.function.instruction(&Instruction::I32Eqz);
         self.branch_if_to(break_depth, span)?;
 
@@ -587,6 +598,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 arguments,
                 span,
             } => {
+                if callee.name == "Error" {
+                    self.compile_error_builtin(arguments, *span)?;
+                    return Ok(());
+                }
                 let signature = self.signatures.get(&callee.name).ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
                         "E0207",
@@ -614,6 +629,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 for local in &argument_locals {
                     self.function.instruction(&Instruction::LocalGet(*local));
                 }
+                self.set_runtime_call_site(*span)?;
                 self.function
                     .instruction(&Instruction::Call(signature.index));
                 for local in argument_locals {
@@ -673,6 +689,37 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.clear_root_slot(receiver)?;
                 self.clear_root_slot(property)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Compiles the reserved `Error(kind, message, data)` source constructor.
+    fn compile_error_builtin(
+        &mut self,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if arguments.len() != 3 {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0208",
+                span,
+                format!(
+                    "constructor `Error` expects 3 arguments but received {}",
+                    arguments.len()
+                ),
+            )));
+        }
+        let mut argument_locals = Vec::new();
+        for argument in arguments {
+            self.compile_expression(argument)?;
+            argument_locals.push(self.store_stack_value()?);
+        }
+        for local in &argument_locals {
+            self.function.instruction(&Instruction::LocalGet(*local));
+        }
+        self.runtime_value_call("__exs_rt_error_new", 3, span)?;
+        for local in argument_locals {
+            self.clear_root_slot(local)?;
         }
         Ok(())
     }
@@ -771,7 +818,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         self.compile_expression(left)?;
-        self.runtime_value_call("__exs_rt_condition", 1, span)?;
+        self.compile_condition(span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
         self.enter_control()?;
@@ -819,6 +866,30 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.exit_control()
     }
 
+    /// Validates the ValueRef on the stack as a Boolean and lowers it to Wasm i32 control flow.
+    fn compile_condition(&mut self, span: SourceSpan<'a>) -> Result<(), CompileDiagnostics<'a>> {
+        self.runtime_value_call("__exs_rt_condition_value", 1, span)?;
+        self.return_if_error(span)?;
+        self.runtime_value_call("__exs_rt_condition", 1, span)
+    }
+
+    /// Returns a language Error from the current function or leaves the non-Error value on stack.
+    fn return_if_error(&mut self, span: SourceSpan<'a>) -> Result<(), CompileDiagnostics<'a>> {
+        let outcome = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.runtime_value_call("__exs_rt_is_error", 1, span)?;
+        self.runtime_value_call("__exs_rt_condition", 1, span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.enter_control()?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.return_stack_value()?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.clear_root_slot(outcome)
+    }
+
     /// Compiles an expression and verifies it is a boolean without consuming it.
     fn checked_boolean_expression(
         &mut self,
@@ -827,7 +898,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.compile_expression(expression)?;
         let temporary = self.store_stack_value()?;
         self.function.instruction(&Instruction::LocalGet(temporary));
-        self.runtime_value_call("__exs_rt_condition", 1, condition_span(expression))?;
+        self.compile_condition(condition_span(expression))?;
         self.function.instruction(&Instruction::Drop);
         self.function.instruction(&Instruction::LocalGet(temporary));
         self.clear_root_slot(temporary)?;
@@ -851,15 +922,33 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         &mut self,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        let position = i32::try_from(span.start_byte).map_err(|_| {
+        let position = self.source_map.id(span).ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0214",
                 span,
-                "source position exceeds the Wasm i32 ABI",
+                "missing source-map position for generated runtime call",
             ))
         })?;
-        self.function.instruction(&Instruction::I32Const(position));
+        self.function
+            .instruction(&Instruction::I32Const(position.cast_signed()));
         self.runtime_call_unpositioned("__exs_rt_set_source_position", span)
+    }
+
+    /// Emits the source call site consumed by the next generated function entry.
+    fn set_runtime_call_site(
+        &mut self,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let position = self.source_map.id(span).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0214",
+                span,
+                "missing source-map position for generated function call",
+            ))
+        })?;
+        self.function
+            .instruction(&Instruction::I32Const(position.cast_signed()));
+        self.runtime_call_unpositioned("__exs_rt_set_call_site", span)
     }
 
     /// Emits one runtime ABI call without updating the active source position.
@@ -996,6 +1085,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.runtime_call("__exs_rt_root_push", self.declaration.span)?;
         self.function
             .instruction(&Instruction::LocalSet(self.root_frame_local));
+        self.function
+            .instruction(&Instruction::I32Const(self.function_id.cast_signed()));
+        self.runtime_call("__exs_rt_frame_push", self.declaration.span)?;
         for parameter in 0..self.declaration.parameters.len() {
             self.set_root_slot(u32::try_from(parameter).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(
@@ -1058,6 +1150,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function
             .instruction(&Instruction::LocalGet(self.root_frame_local));
         self.runtime_call("__exs_rt_root_pop", self.declaration.span)?;
+        self.runtime_call("__exs_rt_frame_pop", self.declaration.span)?;
         self.function.instruction(&Instruction::LocalGet(result));
         self.function.instruction(&Instruction::Return);
         Ok(())

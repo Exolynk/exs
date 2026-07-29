@@ -23,7 +23,10 @@ pub(crate) fn equal(left: ValueRef, right: ValueRef) -> ValueRef {
     let equal = match (runtime::value(left), runtime::value(right)) {
         (RtValue::None, RtValue::None) => true,
         (left, right) if numeric::is_numeric(left) && numeric::is_numeric(right) => {
-            numeric::numbers_equal(numeric::number_of(left), numeric::number_of(right))
+            match (numeric::number_of(left), numeric::number_of(right)) {
+                (Some(left), Some(right)) => numeric::numbers_equal(left, right),
+                _ => false,
+            }
         }
         (RtValue::String(left), RtValue::String(right)) => left.as_str() == right.as_str(),
         (RtValue::List(_), RtValue::List(_)) | (RtValue::Object(_), RtValue::Object(_)) => {
@@ -50,7 +53,11 @@ pub(crate) fn index_get(receiver: ValueRef, index: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
         RtValue::List(_) => list::operations::get(receiver, index),
         RtValue::Object(_) => object::operations::get(receiver, index),
-        _ => runtime::trap(),
+        _ => runtime::recoverable_error(
+            "TypeError",
+            "index access requires a List or Object receiver",
+            receiver,
+        ),
     }
 }
 
@@ -59,7 +66,11 @@ pub(crate) fn index_set(receiver: ValueRef, index: ValueRef, replacement: ValueR
     match runtime::value(receiver) {
         RtValue::List(_) => list::operations::set(receiver, index, replacement),
         RtValue::Object(_) => object::operations::set(receiver, index, replacement),
-        _ => runtime::trap(),
+        _ => runtime::recoverable_error(
+            "TypeError",
+            "index assignment requires a List or Object receiver",
+            receiver,
+        ),
     }
 }
 
@@ -89,7 +100,11 @@ pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
             gc::restore_temporary_roots(checkpoint);
             snapshot
         }
-        _ => runtime::trap(),
+        _ => runtime::recoverable_error(
+            "NotIterable",
+            "for requires a List or String iterable",
+            iterable,
+        ),
     }
 }
 
@@ -99,51 +114,76 @@ pub(crate) fn length(value: ValueRef) -> ValueRef {
         RtValue::String(value) => value.as_str().chars().count(),
         RtValue::List(value) => value.elements.len(),
         RtValue::Object(value) => value.entries.len(),
-        _ => runtime::trap(),
+        _ => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "len requires a String, List, or Object value",
+                value,
+            );
+        }
     };
     list::operations::length_value(length)
 }
 
 /// Dispatches a statically named runtime member method.
 pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: ValueRef) -> ValueRef {
-    let method = string_value(method);
+    let method = match string_value(method) {
+        Ok(method) => method,
+        Err(error) => return error,
+    };
     match method.as_str() {
-        "push" => list::operations::append(receiver, list::operations::single_argument(arguments)),
-        "pop" => {
-            list::operations::require_no_arguments(arguments);
-            list::operations::pop(receiver)
-        }
-        "insert" => {
-            let (index, value) = list::operations::two_arguments(arguments);
-            list::operations::insert(receiver, index, value)
-        }
-        "remove" => {
-            list::operations::remove(receiver, list::operations::single_argument(arguments))
-        }
-        "clear" => {
-            list::operations::require_no_arguments(arguments);
-            list::operations::clear(receiver)
-        }
-        "has" => object::operations::has(receiver, list::operations::single_argument(arguments)),
-        "delete" => {
-            object::operations::delete(receiver, list::operations::single_argument(arguments))
-        }
-        "keys" => {
-            list::operations::require_no_arguments(arguments);
-            object::operations::keys(receiver)
-        }
-        "values" => {
-            list::operations::require_no_arguments(arguments);
-            object::operations::values(receiver)
-        }
-        _ => runtime::trap(),
+        "push" => match list::operations::single_argument(arguments) {
+            Ok(item) => list::operations::append(receiver, item),
+            Err(error) => error,
+        },
+        "pop" => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => list::operations::pop(receiver),
+            Err(error) => error,
+        },
+        "insert" => match list::operations::two_arguments(arguments) {
+            Ok((index, value)) => list::operations::insert(receiver, index, value),
+            Err(error) => error,
+        },
+        "remove" => match list::operations::single_argument(arguments) {
+            Ok(index) => list::operations::remove(receiver, index),
+            Err(error) => error,
+        },
+        "clear" => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => list::operations::clear(receiver),
+            Err(error) => error,
+        },
+        "has" => match list::operations::single_argument(arguments) {
+            Ok(key) => object::operations::has(receiver, key),
+            Err(error) => error,
+        },
+        "delete" => match list::operations::single_argument(arguments) {
+            Ok(key) => object::operations::delete(receiver, key),
+            Err(error) => error,
+        },
+        "keys" => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => object::operations::keys(receiver),
+            Err(error) => error,
+        },
+        "values" => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => object::operations::values(receiver),
+            Err(error) => error,
+        },
+        _ => runtime::recoverable_error(
+            "MethodNotFound",
+            "receiver does not support this method",
+            receiver,
+        ),
     }
 }
 
 /// Copies one runtime String value for use as a key or method name.
-pub(crate) fn string_value(reference: ValueRef) -> String {
+pub(crate) fn string_value(reference: ValueRef) -> Result<String, ValueRef> {
     match runtime::value(reference) {
-        RtValue::String(value) => value.as_str().into(),
-        _ => runtime::trap(),
+        RtValue::String(value) => Ok(value.as_str().into()),
+        _ => Err(runtime::recoverable_error(
+            "TypeError",
+            "Object keys and method names require a String value",
+            reference,
+        )),
     }
 }

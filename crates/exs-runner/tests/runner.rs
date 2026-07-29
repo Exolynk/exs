@@ -11,7 +11,7 @@ fn compile_source(source: &str) -> exs_compiler::CompiledModule {
             source_id: "test.exs",
             text: source,
         },
-        CompileOptions,
+        CompileOptions::default(),
     ) {
         Ok(module) => module,
         Err(error) => panic!("compilation failed: {error}"),
@@ -546,6 +546,22 @@ fn converts_none_propagation_to_missing_value_error() {
     assert_eq!(error.kind, "MissingValue");
     assert_eq!(error.data, Box::new(ExsValue::None));
     assert!(error.origin.is_some());
+    assert_eq!(error.trace.len(), 1);
+}
+
+/// Captures direct generated function frames when an Error is created.
+#[test]
+fn captures_direct_function_error_trace() {
+    let result = execute_source(
+        "fn inner(value) { ret None?; } fn main(input) { ret inner(input); }",
+        ExsValue::None,
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("missing Error result");
+    };
+    assert_eq!(error.trace.len(), 2);
+    assert_eq!(error.trace[0].function_id, 0);
+    assert_eq!(error.trace[1].function_id, 1);
 }
 
 /// Tests host-provided Error values through source-level is Error.
@@ -564,4 +580,83 @@ fn tests_error_values_in_source() {
         execute_source("fn main(input) { ret input is Error; }", error),
         ExsValue::Bool(true),
     );
+}
+
+/// Constructs a source-level recoverable Error with its data and source trace intact.
+#[test]
+fn constructs_errors_with_the_error_builtin() {
+    let result = execute_source(
+        r#"
+        fn main(input) {
+            ret Error("ValidationError", "invalid input", { value: input });
+        }
+        "#,
+        ExsValue::Int(42),
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("error builtin did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+    assert_eq!(error.kind, "ValidationError");
+    assert_eq!(error.message, "invalid input");
+    assert_eq!(
+        error.data,
+        Box::new(ExsValue::Object(vec![(
+            "value".to_owned(),
+            ExsValue::Int(42)
+        )]))
+    );
+    assert!(error.origin.is_some());
+    assert_eq!(error.trace.len(), 1);
+}
+
+/// Validates the kind and message arguments accepted by the Error builtin.
+#[test]
+fn validates_error_builtin_string_arguments() {
+    assert_error_kind(
+        "fn main(input) { ret Error(1, \"message\", input); }",
+        "TypeError",
+    );
+    assert_error_kind(
+        "fn main(input) { ret Error(\"Kind\", 1, input); }",
+        "TypeError",
+    );
+}
+
+/// Returns a recoverable Error instead of trapping for invalid dynamic source operations.
+#[test]
+fn returns_recoverable_errors_for_invalid_dynamic_operations() {
+    assert_error_kind("fn main(input) { ret [] - 1; }", "TypeError");
+    assert_error_kind("fn main(input) { ret [][0]; }", "IndexError");
+    assert_error_kind(
+        "fn main(input) { let value = 1; ret value.push(2); }",
+        "TypeError",
+    );
+    assert_error_kind(
+        "fn main(input) { for item in 1 { ret item; } ret 0; }",
+        "NotIterable",
+    );
+}
+
+/// Returns a recoverable Error when a non-Boolean value is used as a condition.
+#[test]
+fn returns_a_recoverable_error_for_an_invalid_condition() {
+    let result = execute_source("fn main(input) { if 1 { ret 2; } ret 3; }", ExsValue::None);
+    let ExsValue::Error(error) = result else {
+        panic!("invalid condition did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+    assert_eq!(error.kind, "TypeError");
+    assert!(error.origin.is_some());
+    assert_eq!(error.trace.len(), 1);
+}
+
+/// Executes source and verifies that it returns a recoverable Error of the requested kind.
+fn assert_error_kind(source: &str, kind: &str) {
+    let result = execute_source(source, ExsValue::None);
+    let ExsValue::Error(error) = result else {
+        panic!("source did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+    assert_eq!(error.kind, kind);
 }
