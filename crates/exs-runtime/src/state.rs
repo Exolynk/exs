@@ -5,7 +5,7 @@ use core::cell::UnsafeCell;
 
 use dlmalloc::GlobalDlmalloc;
 
-use crate::RtValue;
+use crate::value::RtValue;
 
 #[global_allocator]
 static ALLOCATOR: GlobalDlmalloc = GlobalDlmalloc;

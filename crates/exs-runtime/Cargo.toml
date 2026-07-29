@@ -9,7 +9,7 @@ license.workspace = true
 workspace = true
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
 dlmalloc.workspace = true
