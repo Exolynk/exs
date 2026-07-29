@@ -1,12 +1,12 @@
 //! Integration tests for the shared ExS CBOR boundary representation.
 
-use exs_abi::{CborError, ExsValue};
+use exs_abi::{CborError, ErrorSeverity, ExsError, ExsValue};
 
 /// Round-trips primitive and nested list values through the shared codec.
 #[test]
 fn round_trips_phase_one_values() {
     for value in [
-        ExsValue::Null,
+        ExsValue::None,
         ExsValue::Bool(true),
         ExsValue::Bool(false),
         ExsValue::Int(-42),
@@ -26,6 +26,16 @@ fn round_trips_phase_one_values() {
                 ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)]),
             ),
         ]),
+        ExsValue::Ok(Box::new(ExsValue::Int(42))),
+        ExsValue::Error(ExsError {
+            severity: ErrorSeverity::Recoverable,
+            kind: "MissingValue".to_owned(),
+            message: "value was absent".to_owned(),
+            data: Box::new(ExsValue::None),
+            origin: None,
+            trace: Vec::new(),
+            cause: None,
+        }),
     ] {
         let encoded = match value.to_cbor() {
             Ok(encoded) => encoded,

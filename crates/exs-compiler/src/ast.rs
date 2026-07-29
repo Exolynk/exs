@@ -168,6 +168,29 @@ pub enum Expression<'a> {
     String(String, SourceSpan<'a>),
     /// A boolean literal.
     Bool(bool, SourceSpan<'a>),
+    /// The absence value shared by Options and empty operations.
+    None(SourceSpan<'a>),
+    /// A successful Option or Result value.
+    Ok {
+        /// Direct payload held by the successful value.
+        value: Box<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// Tests whether one value is a language Error.
+    IsError {
+        /// Value being tested.
+        value: Box<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// Propagates an Error or converts None into MissingValue.
+    Propagate {
+        /// Option or Result value being propagated.
+        value: Box<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
     /// A mutable list literal.
     List {
         /// Elements evaluated from left to right.

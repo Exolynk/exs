@@ -155,7 +155,12 @@ fn collect_assignment_target_literals(target: &AssignmentTarget<'_>, pool: &mut 
 fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPool) {
     match expression {
         Expression::String(value, _) => pool.insert(value),
-        Expression::Unary { operand, .. } => collect_expression_literals(operand, pool),
+        Expression::Unary { operand, .. }
+        | Expression::Ok { value: operand, .. }
+        | Expression::IsError { value: operand, .. }
+        | Expression::Propagate { value: operand, .. } => {
+            collect_expression_literals(operand, pool)
+        }
         Expression::Binary { left, right, .. } => {
             collect_expression_literals(left, pool);
             collect_expression_literals(right, pool);
@@ -203,6 +208,7 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
         Expression::Integer(_, _)
         | Expression::Float(_, _)
         | Expression::Bool(_, _)
+        | Expression::None(_)
         | Expression::Variable(_) => {}
     }
 }

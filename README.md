@@ -66,22 +66,24 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Add compiler-generated root frames, temporary runtime roots, and List/Object heap scanning.
 - [x] Test aliasing, cycles, and allocation-triggered collection, including allocation-heavy loops.
 
-### Phase 5: Closures
+### Phase 5: Errors, Options, and source maps
+
+- [x] Replace Null with None and add shared Ok and structured Error transport values.
+- [x] Add source-level None, Ok(value), is Error, and ? propagation with MissingValue conversion.
+- [ ] Convert all recoverable runtime validation failures from traps to Error values.
+- [ ] Emit source-position IDs, exs.source.map, and optional embedded sources.
+- [ ] Add direct-function and future async-frame language stack traces.
+
+### Phase 6: Closures
 
 - [ ] Add closure discovery, capture analysis, Cells, and closure runtime objects.
 - [ ] Preserve shared mutable binding identity across nested closures.
 
-### Phase 6: Traits
+### Phase 7: Traits
 
 - [ ] Add type - struct like objects with defined keys and functions with impl.
 - [ ] Add trait declarations, implementations, resolution, and dispatch.
 - [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
-
-### Phase 7: Errors and source maps
-
-- [ ] Add Error Values, `is Error`, and `?` propagation.
-- [ ] Emit source-position IDs, `exs.source.map`, and optional embedded sources.
-- [ ] Add language stack traces and error CBOR encoding.
 
 ### Phase 8: Deep clone
 

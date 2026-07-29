@@ -21,7 +21,7 @@ pub(crate) fn add(left: ValueRef, right: ValueRef) -> ValueRef {
 /// Tests two runtime values for equality.
 pub(crate) fn equal(left: ValueRef, right: ValueRef) -> ValueRef {
     let equal = match (runtime::value(left), runtime::value(right)) {
-        (RtValue::Null, RtValue::Null) => true,
+        (RtValue::None, RtValue::None) => true,
         (left, right) if numeric::is_numeric(left) && numeric::is_numeric(right) => {
             numeric::numbers_equal(numeric::number_of(left), numeric::number_of(right))
         }

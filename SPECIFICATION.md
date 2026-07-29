@@ -149,7 +149,7 @@ Reserved keywords are:
 
 ```text
 break continue else export false fn for from if import in
-is let null par ret true while
+is let None Ok Error par ret true while
 ```
 
 ## Literals
@@ -209,7 +209,8 @@ ExS is dynamically typed. Types belong to runtime values, not variable bindings.
 
 | Type           |                Mutable | Heap allocated |
 | -------------- | ---------------------: | -------------: |
-| `Null`         |                     No |            Yes |
+| `None`         |                     No |            Yes |
+| `Ok`           |                     No |            Yes |
 | `Bool`         |                     No |            Yes |
 | `Int`          |                     No |            Yes |
 | `Float`        |                     No |            Yes |
@@ -231,14 +232,16 @@ pub struct ValueRef(NonZeroU32);
 
 `ValueRef` is a nonzero, one-based index into the runtime-owned value table. It has no tag or payload and MUST NOT cross the Wasm-host boundary. The compiler only uses stable runtime ABI operations to create, pass, and operate on values; it MUST NOT inspect the value table or runtime-object layouts.
 
-`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports Null, Bool, Int, Float, String, and recursively nested List and Object transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
+`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports None, Ok, Error, Bool, Int, Float, String, and recursively nested List and Object transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
 
 The runtime stores the actual payload in `RtValue`. Primitive payloads are inline. Every complex variant MUST be boxed so adding it cannot increase the allocation size of primitive values:
 
 ```rust
 #[repr(u8)]
 pub enum RtValue {
-    Null,
+    None,
+    Ok(ValueRef),
+    Error(Box<RuntimeError>),
     Bool(bool),
     Int(i64),
     Float(f64),
@@ -249,9 +252,13 @@ pub enum RtValue {
 }
 ```
 
-## Null
+## None
 
-`null` is the only `Null` value.
+`None` is the only absence value. ExS has no `null` source literal. CBOR `null` is used only as the host-boundary representation of `None`.
+
+## Option and Result
+
+`Ok(value)` is the successful variant shared by Options and Results. An Option is either `None` or `Ok(value)`; a Result is either `Error` or `Ok(value)`. The postfix `?` operator extracts `Ok(value)`, immediately returns an Error unchanged, converts `None` to `Error { kind: "MissingValue" }`, and otherwise returns a direct value unchanged.
 
 ## Bool
 
@@ -330,7 +337,7 @@ let count = 0;
 let empty;
 ```
 
-A declaration without an initializer stores `null`.
+A declaration without an initializer stores None.
 
 A binding MUST be declared before use. Duplicate declarations in the same lexical scope are compile errors. Shadowing in a nested scope is allowed.
 
@@ -438,7 +445,7 @@ Calling a non-callable value produces `TypeError`. Arity is checked at runtime. 
 
 `==` and `!=` never produce an Error.
 
-- `null` equals only `null`.
+- None equals only None.
 - Bool, Int, and Float compare numerically. Bool converts to Int; if either operand is Float, the other numeric operand converts to Float. Float equality uses IEEE 754 equality.
 - Strings compare by scalar sequence.
 - Lists, Objects, Functions, Closures, Cells, Errors, and HostResources compare by identity.
@@ -540,7 +547,7 @@ A loop variable is a fresh binding for each iteration. Closures created in diffe
 
 The current compiler lowers `while`, `for`, `break`, and `continue` directly to structured WebAssembly control flow. A compiled `for` evaluates its iterable once and calls generic runtime operations to create a shallow List snapshot or a List of Unicode-scalar Strings; the compiler never accesses List or String payload layouts. The iterator snapshot, index, and current binding remain in compiler root-frame slots for the loop lifetime.
 
-Until Error Values are implemented, a non-Bool `while` condition and a non-List/non-String `for` iterable trap the current Wasm execution rather than returning a recoverable `TypeError` value.
+Until runtime-wide validation conversion is complete, a non-Bool `while` condition and a non-List/non-String `for` iterable trap the current Wasm execution rather than returning a recoverable `TypeError` value.
 
 ## Return
 
@@ -589,7 +596,7 @@ A function has one exact arity. Calling it with a different argument count produ
 
 ## Return value
 
-Falling off the end of a function returns `null`.
+Falling off the end of a function returns `None`.
 
 ## Closures
 
@@ -626,7 +633,7 @@ Every Error contains:
 | `kind`    | Mutable    | Stable String error category |
 | `message` | Mutable    | Human-readable String        |
 | `data`    | Mutable    | Arbitrary Value              |
-| `cause`   | Mutable    | Error or `null`              |
+| `cause`   | Mutable    | Error or `None`              |
 | `origin`  | Read-only  | Creation-site metadata       |
 | `trace`   | Read-only  | Captured logical call trace  |
 
@@ -639,10 +646,10 @@ Assigning `origin` or `trace` produces `ReadOnlyPropertyError`.
 The built-in function is:
 
 ```text
-error(kind, message, data = null, cause = null)
+error(kind, message, data = None, cause = None)
 ```
 
-`kind` and `message` MUST be Strings. `cause` MUST be Error or null. Invalid arguments return `TypeError`.
+`kind` and `message` MUST be Strings. `cause` MUST be Error or None. Invalid arguments return `TypeError`.
 
 ## Standard kinds
 
@@ -795,7 +802,7 @@ The following built-ins are always available and cannot be shadowed at module to
 Returns one of these Strings:
 
 ```text
-"Null" "Bool" "Int" "Float" "String" "List" "Object"
+"None" "Ok" "Bool" "Int" "Float" "String" "List" "Object"
 "Function" "Closure" "Error" "HostResource"
 ```
 
@@ -815,10 +822,10 @@ The runtime-recognized List methods are:
 
 ```text
 list.push(value)        // mutates and returns new length
-list.pop()              // removes last value; returns null when empty
-list.insert(index, v)   // mutates; returns null or IndexError
+list.pop()              // removes last value; returns None when empty
+list.insert(index, v)   // mutates; returns None or IndexError
 list.remove(index)      // mutates; returns removed value or IndexError
-list.clear()            // mutates; returns null
+list.clear()            // mutates; returns None
 ```
 
 ## Object operations

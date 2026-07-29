@@ -215,7 +215,7 @@ impl<'a> Parser<'a> {
     }
 
     fn comparison(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.binary(
+        let mut expression = self.binary(
             Self::term,
             &[
                 (TokenKind::Less, BinaryOperator::LessThan),
@@ -223,7 +223,16 @@ impl<'a> Parser<'a> {
                 (TokenKind::Greater, BinaryOperator::GreaterThan),
                 (TokenKind::GreaterEqual, BinaryOperator::GreaterOrEqual),
             ],
-        )
+        )?;
+        if self.matches(&TokenKind::Is) {
+            self.expect_simple(TokenKind::Error, "expected Error after is")?;
+            let span = expression_span(&expression).through(self.previous().span);
+            expression = Expression::IsError {
+                value: Box::new(expression),
+                span,
+            };
+        }
+        Ok(expression)
     }
 
     fn term(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
@@ -340,6 +349,12 @@ impl<'a> Parser<'a> {
                         span,
                     };
                 }
+            } else if self.matches(&TokenKind::Question) {
+                let span = expression_span(&expression).through(self.previous().span);
+                expression = Expression::Propagate {
+                    value: Box::new(expression),
+                    span,
+                };
             } else {
                 break;
             }
@@ -355,6 +370,18 @@ impl<'a> Parser<'a> {
             TokenKind::String(value) => Ok(Expression::String(value, token.span)),
             TokenKind::True => Ok(Expression::Bool(true, token.span)),
             TokenKind::False => Ok(Expression::Bool(false, token.span)),
+            TokenKind::None => Ok(Expression::None(token.span)),
+            TokenKind::Ok => {
+                self.expect_simple(TokenKind::LeftParen, "expected ( after Ok")?;
+                let value = self.expression()?;
+                let end = self
+                    .expect_simple(TokenKind::RightParen, "expected ) after Ok value")?
+                    .span;
+                Ok(Expression::Ok {
+                    value: Box::new(value),
+                    span: token.span.through(end),
+                })
+            }
             TokenKind::LeftBracket => {
                 let elements = self.arguments(TokenKind::RightBracket)?;
                 let end = self
@@ -542,11 +569,15 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         Expression::Integer(_, span)
         | Expression::Float(_, span)
         | Expression::String(_, span)
-        | Expression::Bool(_, span) => *span,
+        | Expression::Bool(_, span)
+        | Expression::None(span) => *span,
         Expression::List { span, .. } => *span,
         Expression::Object { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
+        | Expression::Ok { span, .. }
+        | Expression::IsError { span, .. }
+        | Expression::Propagate { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
         | Expression::MethodCall { span, .. }

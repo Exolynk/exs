@@ -50,7 +50,7 @@ pub(crate) mod operations {
         };
         match result {
             Some(value) => value,
-            None => runtime::allocate(RtValue::Null),
+            None => runtime::allocate(RtValue::None),
         }
     }
 
@@ -100,7 +100,7 @@ pub(crate) mod operations {
         };
         match removed {
             Some(value) => value,
-            None => runtime::allocate(RtValue::Null),
+            None => runtime::allocate(RtValue::None),
         }
     }
 

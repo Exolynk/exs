@@ -1,5 +1,6 @@
 //! Runtime value payloads and dynamic value operations.
 
+mod error;
 pub(crate) mod list;
 pub(crate) mod object;
 mod string;
@@ -7,12 +8,14 @@ mod string;
 pub(crate) mod numeric;
 pub(crate) mod operations;
 
+pub(crate) use error::RuntimeError;
 pub(crate) use list::RuntimeList;
 pub(crate) use object::RuntimeObject;
 pub(crate) use string::RuntimeString;
 
 use alloc::boxed::Box;
 use core::mem::{align_of, size_of};
+use exs_value::ValueRef;
 
 /// The allocated payload of one ExS value.
 ///
@@ -20,8 +23,12 @@ use core::mem::{align_of, size_of};
 /// cannot increase the size of every allocated primitive value.
 #[repr(u8)]
 pub(crate) enum RtValue {
-    /// The singular null value.
-    Null,
+    /// The absence variant shared by Options and empty operations.
+    None,
+    /// A successful Option or Result payload.
+    Ok(ValueRef),
+    /// A structured language Error.
+    Error(Box<RuntimeError>),
     /// A boolean value.
     Bool(bool),
     /// A signed ExS integer.

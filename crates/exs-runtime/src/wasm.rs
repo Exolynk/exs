@@ -8,10 +8,56 @@ use crate::gc;
 use crate::runtime;
 use crate::value::{self, RtValue};
 
-/// Allocates and returns the singular null value.
+/// Allocates and returns the singular None value.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_null_new() -> ValueRef {
-    runtime::allocate(RtValue::Null)
+pub extern "C" fn __exs_rt_none_new() -> ValueRef {
+    runtime::allocate(RtValue::None)
+}
+
+/// Wraps one direct value as the successful variant of an Option or Result.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_ok_new(value: ValueRef) -> ValueRef {
+    runtime::allocate(RtValue::Ok(value))
+}
+
+/// Returns whether one runtime value is a language Error.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> ValueRef {
+    runtime::allocate(RtValue::Bool(matches!(
+        runtime::value(value),
+        RtValue::Error(_)
+    )))
+}
+
+/// Converts None into an Error while preserving direct values and Result variants.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_propagate(value: ValueRef) -> ValueRef {
+    match runtime::value(value) {
+        RtValue::Ok(_) | RtValue::Error(_) => value,
+        RtValue::None => {
+            runtime::recoverable_error("MissingValue", "cannot propagate a missing value", value)
+        }
+        _ => value,
+    }
+}
+
+/// Extracts a successful payload while preserving a direct value.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_unwrap(value: ValueRef) -> ValueRef {
+    match runtime::value(value) {
+        RtValue::Ok(value) => *value,
+        _ => value,
+    }
+}
+
+/// Sets the source position attached to newly created runtime Errors.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_set_source_position(position: i32) {
+    let Ok(position) = u32::try_from(position) else {
+        runtime::trap();
+    };
+    unsafe { crate::state::runtime() }.current_source_position =
+        Some(exs_abi::SourcePositionId(position));
 }
 
 /// Allocates a Boolean value from its canonical Wasm representation.

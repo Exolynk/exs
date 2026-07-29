@@ -171,7 +171,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     /// Compiles this function body, including the implicit null return path.
     pub(super) fn compile(&mut self) -> Result<Function, CompileDiagnostics<'a>> {
         self.compile_block(&self.declaration.body, false)?;
-        self.runtime_call("__exs_rt_null_new", self.declaration.span)?;
+        self.runtime_call("__exs_rt_none_new", self.declaration.span)?;
         self.return_stack_value()?;
         self.function.instruction(&Instruction::End);
         let placeholder = Function::new([]);
@@ -280,7 +280,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 if let Some(value) = value {
                     self.compile_expression(value)?;
                 } else {
-                    self.runtime_call("__exs_rt_null_new", *span)?;
+                    self.runtime_call("__exs_rt_none_new", *span)?;
                 }
                 self.return_stack_value()?;
             }
@@ -502,6 +502,18 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     .instruction(&Instruction::I32Const(i32::from(*value)));
                 self.runtime_call("__exs_rt_bool_new", *span)?;
             }
+            Expression::None(span) => {
+                self.runtime_call("__exs_rt_none_new", *span)?;
+            }
+            Expression::Ok { value, span } => {
+                self.compile_expression(value)?;
+                self.runtime_value_call("__exs_rt_ok_new", 1, *span)?;
+            }
+            Expression::IsError { value, span } => {
+                self.compile_expression(value)?;
+                self.runtime_value_call("__exs_rt_is_error", 1, *span)?;
+            }
+            Expression::Propagate { value, span } => self.compile_propagate(value, *span)?,
             Expression::Variable(identifier) => {
                 let local = self.lookup(&identifier.name).ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
@@ -780,6 +792,33 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.exit_control()
     }
 
+    /// Lowers the postfix propagation operator for Option and Result values.
+    fn compile_propagate(
+        &mut self,
+        value: &Expression<'a>,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.compile_expression(value)?;
+        self.runtime_value_call("__exs_rt_propagate", 1, span)?;
+        let outcome = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.runtime_value_call("__exs_rt_is_error", 1, span)?;
+        self.runtime_value_call("__exs_rt_condition", 1, span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.enter_control()?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.return_stack_value()?;
+        self.function.instruction(&Instruction::Else);
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.runtime_value_call("__exs_rt_unwrap", 1, span)?;
+        let extracted = self.store_stack_value()?;
+        self.clear_root_slot(outcome)?;
+        self.function.instruction(&Instruction::LocalGet(extracted));
+        self.function.instruction(&Instruction::End);
+        self.exit_control()
+    }
+
     /// Compiles an expression and verifies it is a boolean without consuming it.
     fn checked_boolean_expression(
         &mut self,
@@ -797,6 +836,34 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
 
     /// Emits one named runtime ABI call after resolving its template function index.
     fn runtime_call(
+        &mut self,
+        name: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if name != "__exs_rt_set_source_position" {
+            self.set_runtime_source_position(span)?;
+        }
+        self.runtime_call_unpositioned(name, span)
+    }
+
+    /// Emits the runtime source position used by a subsequent fallible ABI operation.
+    fn set_runtime_source_position(
+        &mut self,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let position = i32::try_from(span.start_byte).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0214",
+                span,
+                "source position exceeds the Wasm i32 ABI",
+            ))
+        })?;
+        self.function.instruction(&Instruction::I32Const(position));
+        self.runtime_call_unpositioned("__exs_rt_set_source_position", span)
+    }
+
+    /// Emits one runtime ABI call without updating the active source position.
+    fn runtime_call_unpositioned(
         &mut self,
         name: &str,
         span: SourceSpan<'a>,
@@ -1105,7 +1172,11 @@ fn count_expressions(expression: &Expression<'_>) -> u32 {
         | Expression::Float(_, _)
         | Expression::String(_, _)
         | Expression::Bool(_, _)
+        | Expression::None(_)
         | Expression::Variable(_) => 1,
+        Expression::Ok { value, .. }
+        | Expression::IsError { value, .. }
+        | Expression::Propagate { value, .. } => 1 + count_expressions(value),
         Expression::Unary { operand, .. } => 1 + count_expressions(operand),
         Expression::Binary { left, right, .. } => {
             1 + count_expressions(left) + count_expressions(right)
@@ -1140,11 +1211,15 @@ fn condition_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         Expression::Integer(_, span)
         | Expression::Float(_, span)
         | Expression::String(_, span)
-        | Expression::Bool(_, span) => *span,
+        | Expression::Bool(_, span)
+        | Expression::None(span) => *span,
         Expression::List { span, .. } => *span,
         Expression::Object { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
+        | Expression::Ok { span, .. }
+        | Expression::IsError { span, .. }
+        | Expression::Propagate { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
         | Expression::MethodCall { span, .. }

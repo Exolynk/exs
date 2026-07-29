@@ -4,12 +4,12 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
-use exs_abi::ExsValue;
+use exs_abi::{ExsError, ExsValue};
 use exs_value::{ValueRef, is_valid_int};
 
 use crate::gc;
 use crate::state::{HeapSlot, runtime};
-use crate::value::{RtValue, RuntimeList, RuntimeObject, RuntimeString};
+use crate::value::{RtValue, RuntimeError, RuntimeList, RuntimeObject, RuntimeString};
 
 /// Appends one runtime value and returns its one-based table index.
 pub(crate) fn allocate(value: RtValue) -> ValueRef {
@@ -44,6 +44,14 @@ pub(crate) fn allocate(value: RtValue) -> ValueRef {
     };
     state.values.push(Some(HeapSlot::new(value)));
     unsafe { ValueRef::from_runtime_index(next_index) }
+}
+
+/// Allocates one recoverable language Error using the active source position.
+pub(crate) fn recoverable_error(kind: &str, message: &str, data: ValueRef) -> ValueRef {
+    let origin = unsafe { runtime() }.current_source_position;
+    allocate(RtValue::Error(Box::new(RuntimeError::recoverable(
+        kind, message, data, origin,
+    ))))
 }
 
 /// Returns the runtime payload stored at one value-table index.
@@ -144,7 +152,22 @@ fn runtime_to_exs_value_inner(
     active_containers: &mut Vec<ValueRef>,
 ) -> ExsValue {
     match value(reference) {
-        RtValue::Null => ExsValue::Null,
+        RtValue::None => ExsValue::None,
+        RtValue::Ok(value) => ExsValue::Ok(Box::new(runtime_to_exs_value_inner(
+            *value,
+            active_containers,
+        ))),
+        RtValue::Error(error) => ExsValue::Error(ExsError {
+            severity: error.severity,
+            kind: error.kind.as_ref().into(),
+            message: error.message.as_ref().into(),
+            data: Box::new(runtime_to_exs_value_inner(error.data, active_containers)),
+            origin: error.origin,
+            trace: error.trace.clone(),
+            cause: error
+                .cause
+                .map(|cause| Box::new(runtime_to_exs_value_inner(cause, active_containers))),
+        }),
         RtValue::Bool(value) => ExsValue::Bool(*value),
         RtValue::Int(value) => ExsValue::Int(*value),
         RtValue::Float(value) => ExsValue::Float(*value),
@@ -188,7 +211,17 @@ fn runtime_to_exs_value_inner(
 /// Converts a host-safe ABI value into a runtime value table entry.
 fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
     let value = match value {
-        ExsValue::Null => RtValue::Null,
+        ExsValue::None => RtValue::None,
+        ExsValue::Ok(value) => RtValue::Ok(exs_value_to_runtime(*value)),
+        ExsValue::Error(error) => RtValue::Error(Box::new(RuntimeError {
+            severity: error.severity,
+            kind: error.kind.into_boxed_str(),
+            message: error.message.into_boxed_str(),
+            data: exs_value_to_runtime(*error.data),
+            origin: error.origin,
+            trace: error.trace,
+            cause: error.cause.map(|cause| exs_value_to_runtime(*cause)),
+        })),
         ExsValue::Bool(value) => RtValue::Bool(value),
         ExsValue::Int(value) if is_valid_int(value) => RtValue::Int(value),
         ExsValue::Int(_) => trap(),

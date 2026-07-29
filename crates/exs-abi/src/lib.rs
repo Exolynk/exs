@@ -6,12 +6,12 @@ extern crate alloc;
 
 pub mod cbor;
 
-pub use cbor::{CborError, ExsValue};
+pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, SourcePositionId};
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 6 adds generic runtime iteration snapshots for compiled loops.
-pub const ABI_VERSION: u32 = 6;
+/// Version 7 adds None, Ok, and structured Error transport values.
+pub const ABI_VERSION: u32 = 7;
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// The entry export invoked by runners.

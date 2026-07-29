@@ -41,7 +41,9 @@ pub(crate) fn number_of(value: &RtValue) -> Number {
         RtValue::Bool(true) => Number::Int(1),
         RtValue::Int(value) => Number::Int(*value),
         RtValue::Float(value) => Number::Float(*value),
-        RtValue::Null
+        RtValue::None
+        | RtValue::Ok(_)
+        | RtValue::Error(_)
         | RtValue::String(_)
         | RtValue::List(_)
         | RtValue::Object(_)

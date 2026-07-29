@@ -123,9 +123,16 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
     }
     slot.marked = true;
     match &slot.value {
+        RtValue::Ok(value) => worklist.push(*value),
+        RtValue::Error(error) => {
+            worklist.push(error.data);
+            if let Some(cause) = error.cause {
+                worklist.push(cause);
+            }
+        }
         RtValue::List(list) => worklist.extend(list.elements.iter().copied()),
         RtValue::Object(object) => worklist.extend(object.entries.iter().map(|(_, value)| *value)),
-        RtValue::Null
+        RtValue::None
         | RtValue::Bool(_)
         | RtValue::Int(_)
         | RtValue::Float(_)

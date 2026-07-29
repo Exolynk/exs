@@ -43,6 +43,14 @@ pub enum TokenKind {
     Break,
     /// The continue keyword.
     Continue,
+    /// The None keyword.
+    None,
+    /// The Ok keyword.
+    Ok,
+    /// The is keyword.
+    Is,
+    /// The Error keyword.
+    Error,
     /// The `true` keyword.
     True,
     /// The `false` keyword.
@@ -93,6 +101,8 @@ pub enum TokenKind {
     AndAnd,
     /// `||`.
     OrOr,
+    /// `?`.
+    Question,
     /// End of source.
     Eof,
 }
@@ -266,6 +276,7 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                         index += 1;
                         TokenKind::OrOr
                     }
+                    b'?' => TokenKind::Question,
                     _ => {
                         return Err(diagnostic(
                             source,
@@ -443,6 +454,10 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
         "in" => TokenKind::In,
         "break" => TokenKind::Break,
         "continue" => TokenKind::Continue,
+        "None" => TokenKind::None,
+        "Ok" => TokenKind::Ok,
+        "is" => TokenKind::Is,
+        "Error" => TokenKind::Error,
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         _ => TokenKind::Identifier(value.to_owned()),

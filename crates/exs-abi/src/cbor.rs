@@ -1,10 +1,20 @@
 //! CBOR encoding for values that may cross the ExS Wasm-host ABI boundary.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use minicbor::{Decoder, Encoder, data::Type};
+use minicbor::{
+    Decoder, Encoder,
+    data::{Tag, Type},
+};
+
+/// Stable CBOR tag for an ExS successful Option or Result value.
+const OK_TAG: u64 = 60_000;
+/// Stable CBOR tag for an ExS structured Error value.
+const ERROR_TAG: u64 = 60_001;
 
 /// A host-safe ExS value represented independently of the runtime heap.
 ///
@@ -12,8 +22,12 @@ use minicbor::{Decoder, Encoder, data::Type};
 /// references, object identities, and cycles are never exposed through this type.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExsValue {
-    /// The singular ExS null value.
-    Null,
+    /// The absence variant shared by ExS Options and empty operations.
+    None,
+    /// A successful Option or Result payload.
+    Ok(Box<ExsValue>),
+    /// A structured ExS language error.
+    Error(ExsError),
     /// An ExS boolean.
     Bool(bool),
     /// An ExS signed integer.
@@ -26,6 +40,47 @@ pub enum ExsValue {
     List(Vec<ExsValue>),
     /// An insertion-ordered mapping from string keys to host-safe ExS values.
     Object(Vec<(String, ExsValue)>),
+}
+
+/// The severity of one ExS language Error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ErrorSeverity {
+    /// A language error from which execution may safely continue.
+    Recoverable,
+    /// A fault that terminates the current execution context.
+    Fatal,
+}
+
+/// One source position assigned by the compiler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SourcePositionId(pub u32);
+
+/// One language-level call frame stored in an Error trace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExsStackFrame {
+    /// Compiler-assigned source function identifier.
+    pub function_id: u32,
+    /// Compiler-assigned source position for the call site.
+    pub call_site: SourcePositionId,
+}
+
+/// A host-safe ExS language Error.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExsError {
+    /// Whether execution may continue after this Error.
+    pub severity: ErrorSeverity,
+    /// Stable machine-readable error kind.
+    pub kind: String,
+    /// Human-readable error message.
+    pub message: String,
+    /// Additional language data associated with the Error.
+    pub data: Box<ExsValue>,
+    /// Compiler-assigned source position that created the Error.
+    pub origin: Option<SourcePositionId>,
+    /// Language-level call frames from innermost to outermost.
+    pub trace: Vec<ExsStackFrame>,
+    /// An optional prior Error or related language value.
+    pub cause: Option<Box<ExsValue>>,
 }
 
 /// A malformed or unsupported ExS CBOR value.
@@ -82,7 +137,14 @@ impl ExsValue {
 /// Encodes one host-safe ExS value into the current CBOR item position.
 fn encode_value(value: &ExsValue, encoder: &mut Encoder<Vec<u8>>) -> Result<(), CborError> {
     match value {
-        ExsValue::Null => encoder.null().map(|_| ()).map_err(|_| CborError::Encode),
+        ExsValue::None => encoder.null().map(|_| ()).map_err(|_| CborError::Encode),
+        ExsValue::Ok(value) => {
+            encoder
+                .tag(Tag::new(OK_TAG))
+                .map_err(|_| CborError::Encode)?;
+            encode_value(value, encoder)
+        }
+        ExsValue::Error(error) => encode_error(error, encoder),
         ExsValue::Bool(value) => encoder
             .bool(*value)
             .map(|_| ())
@@ -124,7 +186,15 @@ fn decode_value(decoder: &mut Decoder<'_>) -> Result<ExsValue, CborError> {
     match decoder.datatype().map_err(|_| CborError::Malformed)? {
         Type::Null => {
             decoder.null().map_err(|_| CborError::Malformed)?;
-            Ok(ExsValue::Null)
+            Ok(ExsValue::None)
+        }
+        Type::Tag => {
+            let tag = decoder.tag().map_err(|_| CborError::Malformed)?;
+            match tag.as_u64() {
+                OK_TAG => Ok(ExsValue::Ok(Box::new(decode_value(decoder)?))),
+                ERROR_TAG => Ok(ExsValue::Error(decode_error(decoder)?)),
+                _ => Err(CborError::UnsupportedType),
+            }
         }
         Type::Bool => Ok(ExsValue::Bool(
             decoder.bool().map_err(|_| CborError::Malformed)?,
@@ -179,5 +249,132 @@ fn decode_value(decoder: &mut Decoder<'_>) -> Result<ExsValue, CborError> {
             Ok(ExsValue::Object(entries))
         }
         _ => Err(CborError::UnsupportedType),
+    }
+}
+
+/// Encodes the stable seven-field CBOR map used for one ExS Error.
+fn encode_error(error: &ExsError, encoder: &mut Encoder<Vec<u8>>) -> Result<(), CborError> {
+    encoder
+        .tag(Tag::new(ERROR_TAG))
+        .and_then(|encoder| encoder.map(7))
+        .map_err(|_| CborError::Encode)?;
+    encoder
+        .u8(0)
+        .and_then(|encoder| {
+            encoder.u8(match error.severity {
+                ErrorSeverity::Recoverable => 0,
+                ErrorSeverity::Fatal => 1,
+            })
+        })
+        .and_then(|encoder| encoder.u8(1))
+        .and_then(|encoder| encoder.str(&error.kind))
+        .and_then(|encoder| encoder.u8(2))
+        .and_then(|encoder| encoder.str(&error.message))
+        .and_then(|encoder| encoder.u8(3))
+        .map_err(|_| CborError::Encode)?;
+    encode_value(&error.data, encoder)?;
+    encoder.u8(4).map_err(|_| CborError::Encode)?;
+    match error.origin {
+        Some(position) => encoder.u32(position.0),
+        None => encoder.null(),
+    }
+    .map_err(|_| CborError::Encode)?;
+    encoder
+        .u8(5)
+        .and_then(|encoder| encoder.array(error.trace.len() as u64))
+        .map_err(|_| CborError::Encode)?;
+    for frame in &error.trace {
+        encoder
+            .array(2)
+            .and_then(|encoder| encoder.u32(frame.function_id))
+            .and_then(|encoder| encoder.u32(frame.call_site.0))
+            .map_err(|_| CborError::Encode)?;
+    }
+    encoder.u8(6).map_err(|_| CborError::Encode)?;
+    match &error.cause {
+        Some(cause) => encode_value(cause, encoder),
+        None => encoder.null().map(|_| ()).map_err(|_| CborError::Encode),
+    }
+}
+
+/// Decodes the stable seven-field CBOR map used for one ExS Error.
+fn decode_error(decoder: &mut Decoder<'_>) -> Result<ExsError, CborError> {
+    let length = decoder
+        .map()
+        .map_err(|_| CborError::Malformed)?
+        .ok_or(CborError::UnsupportedType)?;
+    if length != 7 {
+        return Err(CborError::Malformed);
+    }
+    let severity = decode_error_key(decoder, 0).and_then(|_| {
+        match decoder.u8().map_err(|_| CborError::Malformed)? {
+            0 => Ok(ErrorSeverity::Recoverable),
+            1 => Ok(ErrorSeverity::Fatal),
+            _ => Err(CborError::Malformed),
+        }
+    })?;
+    let kind = decode_error_key(decoder, 1).and_then(|_| {
+        decoder
+            .str()
+            .map(str::to_owned)
+            .map_err(|_| CborError::Malformed)
+    })?;
+    let message = decode_error_key(decoder, 2).and_then(|_| {
+        decoder
+            .str()
+            .map(str::to_owned)
+            .map_err(|_| CborError::Malformed)
+    })?;
+    decode_error_key(decoder, 3)?;
+    let data = Box::new(decode_value(decoder)?);
+    decode_error_key(decoder, 4)?;
+    let origin = if decoder.datatype().map_err(|_| CborError::Malformed)? == Type::Null {
+        decoder.null().map_err(|_| CborError::Malformed)?;
+        None
+    } else {
+        Some(SourcePositionId(
+            decoder.u32().map_err(|_| CborError::Malformed)?,
+        ))
+    };
+    decode_error_key(decoder, 5)?;
+    let trace_length = decoder
+        .array()
+        .map_err(|_| CborError::Malformed)?
+        .ok_or(CborError::UnsupportedType)?;
+    let mut trace =
+        Vec::with_capacity(usize::try_from(trace_length).map_err(|_| CborError::Malformed)?);
+    for _ in 0..trace_length {
+        if decoder.array().map_err(|_| CborError::Malformed)? != Some(2) {
+            return Err(CborError::Malformed);
+        }
+        trace.push(ExsStackFrame {
+            function_id: decoder.u32().map_err(|_| CborError::Malformed)?,
+            call_site: SourcePositionId(decoder.u32().map_err(|_| CborError::Malformed)?),
+        });
+    }
+    decode_error_key(decoder, 6)?;
+    let cause = if decoder.datatype().map_err(|_| CborError::Malformed)? == Type::Null {
+        decoder.null().map_err(|_| CborError::Malformed)?;
+        None
+    } else {
+        Some(Box::new(decode_value(decoder)?))
+    };
+    Ok(ExsError {
+        severity,
+        kind,
+        message,
+        data,
+        origin,
+        trace,
+        cause,
+    })
+}
+
+/// Reads and validates the next fixed Error-map field identifier.
+fn decode_error_key(decoder: &mut Decoder<'_>, expected: u8) -> Result<(), CborError> {
+    if decoder.u8().map_err(|_| CborError::Malformed)? == expected {
+        Ok(())
+    } else {
+        Err(CborError::Malformed)
     }
 }

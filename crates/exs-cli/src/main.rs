@@ -63,7 +63,7 @@ fn run_program(path: &str) -> Result<(), String> {
     } else {
         compile_source(path)?.wasm
     };
-    let result = exs_runner::execute(&wasm, exs_runner::ExsValue::Null)
+    let result = exs_runner::execute(&wasm, exs_runner::ExsValue::None)
         .map_err(|error| error.to_string())?;
     print_result(result);
     Ok(())
@@ -77,7 +77,11 @@ fn print_result(result: exs_runner::ExsValue) {
 /// Formats one host-safe ExS value using source-like syntax.
 fn format_result(result: &exs_runner::ExsValue) -> String {
     match result {
-        exs_runner::ExsValue::Null => "null".to_owned(),
+        exs_runner::ExsValue::None => "None".to_owned(),
+        exs_runner::ExsValue::Ok(value) => format!("Ok({})", format_result(value)),
+        exs_runner::ExsValue::Error(error) => {
+            format!("Error({:?}, {:?})", error.kind, error.message)
+        }
         exs_runner::ExsValue::Bool(value) => value.to_string(),
         exs_runner::ExsValue::Int(value) => value.to_string(),
         exs_runner::ExsValue::Float(value) if value.is_finite() && value.fract() == 0.0 => {

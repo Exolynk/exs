@@ -1,6 +1,6 @@
 //! Integration tests for executing linked Phase-1 ExS modules.
 
-use exs_abi::ExsValue;
+use exs_abi::{ErrorSeverity, ExsError, ExsValue};
 use exs_compiler::{CompileOptions, SourceInput, compile};
 use exs_runner::execute;
 
@@ -33,7 +33,7 @@ fn executes_compiled_integer_program() {
     assert_eq!(
         execute_source(
             "fn main(input) { let value = 40 + 2; ret value; }",
-            ExsValue::Null
+            ExsValue::None
         ),
         ExsValue::Int(42)
     );
@@ -56,7 +56,7 @@ fn executes_calls_assignments_conditionals_and_booleans() {
                 }
             }
         "#,
-            ExsValue::Null,
+            ExsValue::None,
         ),
         ExsValue::Int(42)
     );
@@ -66,7 +66,7 @@ fn executes_calls_assignments_conditionals_and_booleans() {
 #[test]
 fn executes_the_minimum_exs_integer_literal() {
     assert_eq!(
-        execute_source("fn main(input) { ret -36028797018963968; }", ExsValue::Null,),
+        execute_source("fn main(input) { ret -36028797018963968; }", ExsValue::None,),
         ExsValue::Int(exs_value::MIN_INT)
     );
 }
@@ -75,7 +75,7 @@ fn executes_the_minimum_exs_integer_literal() {
 #[test]
 fn links_against_the_committed_runtime_template() {
     assert_eq!(
-        execute_source("fn main(input) { ret 7 * 6; }", ExsValue::Null),
+        execute_source("fn main(input) { ret 7 * 6; }", ExsValue::None),
         ExsValue::Int(42)
     );
 }
@@ -84,7 +84,7 @@ fn links_against_the_committed_runtime_template() {
 #[test]
 fn evaluates_boolean_equality_in_the_runtime() {
     assert_eq!(
-        execute_source("fn main(input) { ret true == false; }", ExsValue::Null),
+        execute_source("fn main(input) { ret true == false; }", ExsValue::None),
         ExsValue::Bool(false)
     );
 }
@@ -93,7 +93,7 @@ fn evaluates_boolean_equality_in_the_runtime() {
 #[test]
 fn executes_mixed_bool_integer_and_float_arithmetic() {
     assert_eq!(
-        execute_source("fn main(input) { ret true + 2 + 0.5; }", ExsValue::Null),
+        execute_source("fn main(input) { ret true + 2 + 0.5; }", ExsValue::None),
         ExsValue::Float(3.5)
     );
 }
@@ -104,7 +104,7 @@ fn compares_mixed_numeric_values() {
     assert_eq!(
         execute_source(
             "fn main(input) { ret true == 1.0 && false < 1; }",
-            ExsValue::Null,
+            ExsValue::None,
         ),
         ExsValue::Bool(true)
     );
@@ -176,7 +176,7 @@ fn preserves_list_identity_and_returns_push_length() {
                 ret 0;
             }
         "#,
-            ExsValue::Null,
+            ExsValue::None,
         ),
         ExsValue::Int(2),
     );
@@ -214,12 +214,12 @@ fn executes_remaining_list_operations() {
                 ret [removed, last, empty, values];
             }
         "#,
-            ExsValue::Null,
+            ExsValue::None,
         ),
         ExsValue::List(vec![
             ExsValue::Int(1),
             ExsValue::Int(3),
-            ExsValue::Null,
+            ExsValue::None,
             ExsValue::List(vec![]),
         ]),
     );
@@ -371,7 +371,7 @@ fn traces_cycles_during_allocation_triggered_collection() {
                 ret cycle[0] == cycle;
             }
         "#,
-            ExsValue::Null,
+            ExsValue::None,
         ),
         ExsValue::Bool(true),
     );
@@ -399,7 +399,7 @@ fn executes_while_with_break_and_continue() {
                 ret sum;
             }
         "#,
-            ExsValue::Null,
+            ExsValue::None,
         ),
         ExsValue::Int(13),
     );
@@ -426,7 +426,7 @@ fn iterates_a_shallow_list_snapshot() {
                 ret [sum, values];
             }
         "#,
-            ExsValue::Null,
+            ExsValue::None,
         ),
         ExsValue::List(vec![
             ExsValue::Int(4),
@@ -454,7 +454,7 @@ fn iterates_string_unicode_scalars() {
                 ret scalars;
             }
         "#,
-            ExsValue::Null,
+            ExsValue::None,
         ),
         ExsValue::List(vec![
             ExsValue::String("A".to_owned()),
@@ -484,5 +484,84 @@ fn preserves_live_values_during_allocation_heavy_loops() {
             ExsValue::Int(42),
         ),
         ExsValue::Int(42),
+    );
+}
+
+/// Executes source-level None and Ok constructors through the linked runtime.
+#[test]
+fn executes_option_constructors() {
+    assert_eq!(
+        execute_source("fn main(input) { ret Ok(input); }", ExsValue::Int(42)),
+        ExsValue::Ok(Box::new(ExsValue::Int(42))),
+    );
+    assert_eq!(
+        execute_source("fn main(input) { ret None; }", ExsValue::None),
+        ExsValue::None,
+    );
+}
+
+/// Unwraps Ok with question mark and propagates Error values unchanged.
+#[test]
+fn propagates_option_and_result_values() {
+    assert_eq!(
+        execute_source(
+            "fn main(input) { let value = Ok(input)?; ret value; }",
+            ExsValue::Int(42),
+        ),
+        ExsValue::Int(42),
+    );
+    assert_eq!(
+        execute_source(
+            "fn main(input) { let value = input?; ret value; }",
+            ExsValue::Int(42),
+        ),
+        ExsValue::Int(42),
+    );
+    let error = ExsValue::Error(ExsError {
+        severity: ErrorSeverity::Recoverable,
+        kind: "Example".to_owned(),
+        message: "example error".to_owned(),
+        data: Box::new(ExsValue::None),
+        origin: None,
+        trace: Vec::new(),
+        cause: None,
+    });
+    assert_eq!(
+        execute_source(
+            "fn main(input) { let value = input?; ret value; }",
+            error.clone()
+        ),
+        error,
+    );
+}
+
+/// Converts None propagation into a MissingValue Error.
+#[test]
+fn converts_none_propagation_to_missing_value_error() {
+    let result = execute_source("fn main(input) { ret None?; }", ExsValue::None);
+    let ExsValue::Error(error) = result else {
+        panic!("None propagation did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+    assert_eq!(error.kind, "MissingValue");
+    assert_eq!(error.data, Box::new(ExsValue::None));
+    assert!(error.origin.is_some());
+}
+
+/// Tests host-provided Error values through source-level is Error.
+#[test]
+fn tests_error_values_in_source() {
+    let error = ExsValue::Error(ExsError {
+        severity: ErrorSeverity::Recoverable,
+        kind: "Example".to_owned(),
+        message: "example error".to_owned(),
+        data: Box::new(ExsValue::None),
+        origin: None,
+        trace: Vec::new(),
+        cause: None,
+    });
+    assert_eq!(
+        execute_source("fn main(input) { ret input is Error; }", error),
+        ExsValue::Bool(true),
     );
 }

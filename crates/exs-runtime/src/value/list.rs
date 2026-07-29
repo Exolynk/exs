@@ -97,7 +97,7 @@ pub(crate) mod operations {
         };
         match value {
             Some(value) => value,
-            None => runtime::allocate(RtValue::Null),
+            None => runtime::allocate(RtValue::None),
         }
     }
 
@@ -111,7 +111,7 @@ pub(crate) mod operations {
             RtValue::List(_) => runtime::trap(),
             _ => runtime::trap(),
         };
-        runtime::allocate(RtValue::Null)
+        runtime::allocate(RtValue::None)
     }
 
     /// Removes and returns one List value at a zero-based index.
@@ -130,7 +130,7 @@ pub(crate) mod operations {
             RtValue::List(list) => list.elements.clear(),
             _ => runtime::trap(),
         };
-        runtime::allocate(RtValue::Null)
+        runtime::allocate(RtValue::None)
     }
 
     /// Reads one non-negative runtime integer as a List index.
