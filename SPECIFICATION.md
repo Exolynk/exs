@@ -291,7 +291,7 @@ A `List` is a mutable ordered sequence of `Value` references. Lists may contain 
 
 List indexes are zero-based `Int` values. Negative indexes are invalid.
 
-The current implementation supports `[]`, comma-separated list literals, dynamic `value[index]` reads, `value[index] = replacement;` writes, and member-call lowering through `__exs_rt_call_method(receiver, method, arguments)`. The compiler does not establish a receiver type: `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_append`, and `__exs_rt_call_method` dispatch from the runtime `RtValue`. Lists currently implement `push(value)`, which mutates the receiver and returns its new length. Invalid receiver types, indexes, and method names trap until Error Values are implemented.
+The current implementation supports `[]`, comma-separated list literals, dynamic `value[index]` reads, `value[index] = replacement;` writes, and member-call lowering through `__exs_rt_call_method(receiver, method, arguments)`. The compiler does not establish a receiver type: `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_append`, and `__exs_rt_call_method` dispatch from the runtime `RtValue`. Lists implement `push(value)`, `pop()`, `insert(index, value)`, `remove(index)`, and `clear()`. `push` returns the new length; `pop` returns Null when empty; `insert` and `clear` return Null; and `remove` returns the removed value. `list + value` returns a new shallow List with `value` appended; `list + list` returns a new shallow chained List. Neither `+` form mutates its source Lists. Invalid receiver types, indexes, and method names trap until Error Values are implemented.
 
 Nested acyclic Lists cross the current CBOR boundary as arrays. The runtime can create cyclic Lists, but serializing one currently traps; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
 
@@ -428,7 +428,7 @@ Calling a non-callable value produces `TypeError`. Arity is checked at runtime. 
 
 `%` accepts two `Int` operands. Division by zero produces `DivisionByZeroError`. The result has the sign of the left operand.
 
-`+` also concatenates two Strings and concatenates two Lists into a new shallow List. No other implicit conversions occur.
+`+` also concatenates two Strings. When its left operand is a List, `list + value` returns a new shallow List with `value` appended, while `list + list` chains both Lists' elements into a new shallow List. No other implicit conversions occur.
 
 ## Comparison
 

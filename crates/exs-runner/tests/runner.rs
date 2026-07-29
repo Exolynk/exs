@@ -198,6 +198,61 @@ fn passes_list_cbor_input_to_main() {
     );
 }
 
+/// Implements every remaining List mutation method with its specified return value.
+#[test]
+fn executes_remaining_list_operations() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) {
+                let values = [1, 3];
+                values.insert(1, 2);
+                let removed = values.remove(0);
+                let last = values.pop();
+                values.clear();
+                let empty = values.pop();
+                ret [removed, last, empty, values];
+            }
+        "#,
+            ExsValue::Null,
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(1),
+            ExsValue::Int(3),
+            ExsValue::Null,
+            ExsValue::List(vec![]),
+        ]),
+    );
+}
+
+/// Appends one value or chains two Lists without mutating either source List.
+#[test]
+fn adds_lists_to_values_and_other_lists() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) {
+                let base = [1];
+                let appended = base + input;
+                let chained = appended + [3, 4];
+                ret [base, appended, chained];
+            }
+        "#,
+            ExsValue::Int(2),
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![ExsValue::Int(1)]),
+            ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)]),
+            ExsValue::List(vec![
+                ExsValue::Int(1),
+                ExsValue::Int(2),
+                ExsValue::Int(3),
+                ExsValue::Int(4),
+            ]),
+        ]),
+    );
+}
+
 /// Preserves object insertion order through literal construction and mutations.
 #[test]
 fn executes_object_literals_properties_dynamic_keys_and_methods() {

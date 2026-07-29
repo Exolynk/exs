@@ -43,10 +43,10 @@ pub extern "C" fn __exs_rt_float_new(value: f64) -> ValueRef {
     allocate(RtValue::Float(value))
 }
 
-/// Adds two runtime numeric values.
+/// Adds runtime numeric values or produces a new shallow List.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_add(left: ValueRef, right: ValueRef) -> ValueRef {
-    arithmetic(left, right, i64::checked_add, |left, right| left + right)
+    add(left, right)
 }
 
 /// Subtracts two runtime numeric values.
@@ -256,6 +256,19 @@ pub extern "C" fn __exs_rt_call_method(
     let method = string_value(method);
     match method.as_str() {
         "push" => __exs_rt_append(receiver, single_argument(arguments)),
+        "pop" => {
+            require_no_arguments(arguments);
+            list_pop(receiver)
+        }
+        "insert" => {
+            let (index, value) = two_arguments(arguments);
+            list_insert(receiver, index, value)
+        }
+        "remove" => list_remove(receiver, single_argument(arguments)),
+        "clear" => {
+            require_no_arguments(arguments);
+            list_clear(receiver)
+        }
         "has" => object_has(receiver, single_argument(arguments)),
         "delete" => object_delete(receiver, single_argument(arguments)),
         "keys" => {
@@ -513,6 +526,22 @@ fn arithmetic(
     }
 }
 
+/// Adds a List to one value or falls back to numeric addition.
+fn add(left: ValueRef, right: ValueRef) -> ValueRef {
+    let elements = match value(left) {
+        RtValue::List(list) => {
+            let mut elements = list.elements.clone();
+            match value(right) {
+                RtValue::List(right) => elements.extend_from_slice(&right.elements),
+                _ => elements.push(right),
+            }
+            elements
+        }
+        _ => return arithmetic(left, right, i64::checked_add, |left, right| left + right),
+    };
+    allocate(RtValue::List(Box::new(RuntimeList { elements })))
+}
+
 /// Compares two numeric values with Float promotion.
 fn compare(left: ValueRef, right: ValueRef, ordering: Ordering) -> ValueRef {
     let result = match (number_of_ref(left), number_of_ref(right)) {
@@ -586,12 +615,64 @@ fn single_argument(arguments: ValueRef) -> ValueRef {
     }
 }
 
+/// Reads the two values in one runtime-provided argument list.
+fn two_arguments(arguments: ValueRef) -> (ValueRef, ValueRef) {
+    match value(arguments) {
+        RtValue::List(list) if list.elements.len() == 2 => (list.elements[0], list.elements[1]),
+        _ => trap(),
+    }
+}
+
 /// Verifies that one runtime-provided argument list is empty.
 fn require_no_arguments(arguments: ValueRef) {
     match value(arguments) {
         RtValue::List(list) if list.elements.is_empty() => {}
         _ => trap(),
     }
+}
+
+/// Removes and returns the final List value, or Null for an empty List.
+fn list_pop(receiver: ValueRef) -> ValueRef {
+    let value = match value_mut(receiver) {
+        RtValue::List(list) => list.elements.pop(),
+        _ => trap(),
+    };
+    match value {
+        Some(value) => value,
+        None => allocate(RtValue::Null),
+    }
+}
+
+/// Inserts one value into a List while preserving element order.
+fn list_insert(receiver: ValueRef, index: ValueRef, value: ValueRef) -> ValueRef {
+    let index = list_index(index);
+    match value_mut(receiver) {
+        RtValue::List(list) if index <= list.elements.len() => {
+            list.elements.insert(index, value);
+        }
+        RtValue::List(_) => trap(),
+        _ => trap(),
+    };
+    allocate(RtValue::Null)
+}
+
+/// Removes and returns one List value at a zero-based index.
+fn list_remove(receiver: ValueRef, index: ValueRef) -> ValueRef {
+    let index = list_index(index);
+    match value_mut(receiver) {
+        RtValue::List(list) if index < list.elements.len() => list.elements.remove(index),
+        RtValue::List(_) => trap(),
+        _ => trap(),
+    }
+}
+
+/// Clears one List and returns Null.
+fn list_clear(receiver: ValueRef) -> ValueRef {
+    match value_mut(receiver) {
+        RtValue::List(list) => list.elements.clear(),
+        _ => trap(),
+    };
+    allocate(RtValue::Null)
 }
 
 /// Classifies a dynamic index according to the runtime receiver value.
