@@ -10,8 +10,13 @@ pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, Sour
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 9 adds argument-array transport for the multi-parameter main entry point.
-pub const ABI_VERSION: u32 = 9;
+/// Version 10 adds nominal Object type tags and runtime type checks.
+pub const ABI_VERSION: u32 = 10;
+
+/// Receiver method names implemented by the built-in runtime.
+pub const RESERVED_METHOD_NAMES: &[&str] = &[
+    "push", "pop", "insert", "remove", "clear", "has", "delete", "keys", "values",
+];
 
 /// Runtime type-mask bit for None.
 pub const TYPE_NONE: u32 = 1 << 0;

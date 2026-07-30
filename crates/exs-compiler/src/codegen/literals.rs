@@ -24,8 +24,18 @@ impl LiteralPool {
             indices: HashMap::new(),
             data_index_base: 0,
         };
+        for declaration in &module.types {
+            for field in &declaration.fields {
+                pool.insert(&field.name.name);
+            }
+        }
         for function in &module.functions {
             collect_block_literals(&function.body, &mut pool);
+        }
+        for implementation in &module.implementations {
+            for method in &implementation.methods {
+                collect_block_literals(&method.body, &mut pool);
+            }
         }
         pool
     }
@@ -174,7 +184,7 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
                 collect_expression_literals(element, pool);
             }
         }
-        Expression::Object { properties, .. } => {
+        Expression::Object { properties, .. } | Expression::TypedObject { properties, .. } => {
             for property in properties {
                 pool.insert(&property.key);
                 collect_expression_literals(&property.value, pool);
@@ -188,6 +198,11 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
         } => {
             collect_expression_literals(receiver, pool);
             pool.insert(&method.name);
+            for argument in arguments {
+                collect_expression_literals(argument, pool);
+            }
+        }
+        Expression::StaticMethodCall { arguments, .. } => {
             for argument in arguments {
                 collect_expression_literals(argument, pool);
             }

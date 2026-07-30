@@ -44,6 +44,70 @@ fn executes_compiled_integer_program() {
     );
 }
 
+/// Constructs nominal Objects, fills omitted optional fields, and dispatches implementation methods.
+#[test]
+fn executes_nominal_object_construction_and_implementation_methods() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            type User {
+                name: String,
+                nickname: String | None,
+                metadata,
+            }
+            impl User {
+                fn display(self) -> String { ret self.name; }
+                fn named(name: String) -> User { ret User { name: name }; }
+            }
+            fn main() -> String {
+                let user = User::named("Ada");
+                ret user.display();
+            }
+        "#,
+            &[],
+        ),
+        ExsValue::String("Ada".to_owned())
+    );
+}
+
+/// Executes a nominal Object construction without invoking an implementation method.
+#[test]
+fn executes_nominal_object_construction() {
+    assert_eq!(
+        execute_source(
+            "type User { name: String, nickname: String | None, } fn main(input) -> String { let user = User { name: \"Ada\" }; ret user.name; }",
+            ExsValue::None,
+        ),
+        ExsValue::String("Ada".to_owned())
+    );
+}
+
+/// Inserts explicit None entries for omitted `Any` and None-permitting nominal Object fields.
+#[test]
+fn fills_omitted_nominal_object_fields_with_none() {
+    assert_eq!(
+        execute_source(
+            "type User { name: String, nickname: String | None, metadata, } fn main(input) { let user = User { name: \"Ada\" }; ret user.has(\"nickname\") && user.nickname == None && user.has(\"metadata\"); }",
+            ExsValue::None,
+        ),
+        ExsValue::Bool(true)
+    );
+}
+
+/// Returns a language TypeError when a nominal Object field violates its declared contract.
+#[test]
+fn returns_type_error_for_invalid_nominal_object_field() {
+    let result = execute_source_with_inputs(
+        "type User { name: String, } fn main() -> Error { ret User { name: 1 }; }",
+        &[],
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("invalid nominal field did not return an Error");
+    };
+    assert_eq!(error.kind, "TypeError");
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+}
+
 /// Executes calls, assignments, conditionals, and boolean operators.
 #[test]
 fn executes_calls_assignments_conditionals_and_booleans() {

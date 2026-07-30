@@ -5,7 +5,7 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 
 use crate::ast::{BinaryOperator, Expression, ObjectProperty, UnaryOperator};
 use crate::codegen::diagnostics;
-use crate::codegen::types;
+use crate::codegen::types::{self, TypeContract};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::FunctionCompiler;
@@ -66,6 +66,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             Expression::Object { properties, span } => {
                 self.compile_object(properties, *span)?;
             }
+            Expression::TypedObject {
+                type_name,
+                properties,
+                span,
+            } => self.compile_typed_object(type_name, properties, *span)?,
             Expression::Unary {
                 operator,
                 operand,
@@ -166,24 +171,13 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 method,
                 arguments,
                 span,
-            } => {
-                self.compile_expression(receiver)?;
-                let receiver_local = self.store_stack_value()?;
-                self.compile_string(&method.name, method.span)?;
-                let method_local = self.store_stack_value()?;
-                self.compile_list(arguments, *span)?;
-                let arguments_local = self.store_stack_value()?;
-                self.function
-                    .instruction(&Instruction::LocalGet(receiver_local));
-                self.function
-                    .instruction(&Instruction::LocalGet(method_local));
-                self.function
-                    .instruction(&Instruction::LocalGet(arguments_local));
-                self.runtime_value_call("__exs_rt_call_method", 3, *span)?;
-                self.clear_root_slot(receiver_local)?;
-                self.clear_root_slot(method_local)?;
-                self.clear_root_slot(arguments_local)?;
-            }
+            } => self.compile_method_call(receiver, method, arguments, *span)?,
+            Expression::StaticMethodCall {
+                type_name,
+                method,
+                arguments,
+                span,
+            } => self.compile_static_method_call(type_name, method, arguments, *span)?,
             Expression::Index {
                 receiver,
                 index,
@@ -247,6 +241,167 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.clear_root_slot(local)?;
         }
         Ok(())
+    }
+
+    /// Compiles one static nominal type method call.
+    pub(super) fn compile_static_method_call(
+        &mut self,
+        type_name: &crate::ast::Identifier<'a>,
+        method: &crate::ast::Identifier<'a>,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if self.types.get(&type_name.name).is_none() {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0216",
+                type_name.span,
+                format!("unknown type `{}`", type_name.name),
+            )));
+        }
+        let key = format!("{}::{}", type_name.name, method.name);
+        let signature = self.signatures.get(&key).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0225",
+                method.span,
+                format!(
+                    "type `{}` has no static method `{}`",
+                    type_name.name, method.name
+                ),
+            ))
+        })?;
+        if !self.methods.is_static(&key) {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0225",
+                method.span,
+                format!(
+                    "type `{}` method `{}` requires a receiver",
+                    type_name.name, method.name
+                ),
+            )));
+        }
+        if signature.arity != arguments.len() {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0208",
+                span,
+                format!(
+                    "static method `{}::{}` expects {} arguments but received {}",
+                    type_name.name,
+                    method.name,
+                    signature.arity,
+                    arguments.len()
+                ),
+            )));
+        }
+        let mut argument_locals = Vec::new();
+        for argument in arguments {
+            self.compile_expression(argument)?;
+            argument_locals.push(self.store_stack_value()?);
+        }
+        for local in &argument_locals {
+            self.function.instruction(&Instruction::LocalGet(*local));
+        }
+        self.set_runtime_call_site(span)?;
+        self.function
+            .instruction(&Instruction::Call(signature.index));
+        for local in argument_locals {
+            self.clear_root_slot(local)?;
+        }
+        Ok(())
+    }
+
+    /// Compiles an instance implementation dispatch with generic runtime-method fallback.
+    pub(super) fn compile_method_call(
+        &mut self,
+        receiver: &Expression<'a>,
+        method: &crate::ast::Identifier<'a>,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.compile_expression(receiver)?;
+        let receiver = self.store_stack_value()?;
+        let mut argument_locals = Vec::new();
+        for argument in arguments {
+            self.compile_expression(argument)?;
+            argument_locals.push(self.store_stack_value()?);
+        }
+        let targets = self.methods.instance(&method.name).map(ToOwned::to_owned);
+        self.emit_instance_method_dispatch(
+            targets.as_deref().unwrap_or_default(),
+            0,
+            receiver,
+            &argument_locals,
+            method,
+            span,
+        )?;
+        self.clear_root_slot(receiver)?;
+        for argument in argument_locals {
+            self.clear_root_slot(argument)?;
+        }
+        Ok(())
+    }
+
+    /// Emits nested Wasm branches that dispatch one static method name by nominal Object tag.
+    fn emit_instance_method_dispatch(
+        &mut self,
+        targets: &[super::method::InstanceMethod],
+        index: usize,
+        receiver: u32,
+        arguments: &[u32],
+        method: &crate::ast::Identifier<'a>,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let Some(target) = targets.get(index) else {
+            return self.compile_runtime_method_call(receiver, arguments, method, span);
+        };
+        self.function.instruction(&Instruction::LocalGet(receiver));
+        self.function
+            .instruction(&Instruction::I32Const(target.type_id.cast_signed()));
+        self.runtime_call("__exs_rt_object_is_type", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.enter_control()?;
+        if target.signature.arity == arguments.len() + 1 {
+            self.function.instruction(&Instruction::LocalGet(receiver));
+            for argument in arguments {
+                self.function.instruction(&Instruction::LocalGet(*argument));
+            }
+            self.set_runtime_call_site(span)?;
+            self.function
+                .instruction(&Instruction::Call(target.signature.index));
+        } else {
+            self.function.instruction(&Instruction::LocalGet(receiver));
+            self.runtime_value_call("__exs_rt_method_arity_error", 1, span)?;
+        }
+        self.function.instruction(&Instruction::Else);
+        self.emit_instance_method_dispatch(targets, index + 1, receiver, arguments, method, span)?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()
+    }
+
+    /// Calls the generic runtime method dispatcher using already evaluated argument locals.
+    fn compile_runtime_method_call(
+        &mut self,
+        receiver: u32,
+        arguments: &[u32],
+        method: &crate::ast::Identifier<'a>,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.runtime_call("__exs_rt_list_new", span)?;
+        let list = self.store_stack_value()?;
+        for argument in arguments {
+            self.function.instruction(&Instruction::LocalGet(list));
+            self.function.instruction(&Instruction::LocalGet(*argument));
+            self.runtime_value_call("__exs_rt_append", 2, span)?;
+            self.function.instruction(&Instruction::Drop);
+        }
+        self.compile_string(&method.name, method.span)?;
+        let method = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(receiver));
+        self.function.instruction(&Instruction::LocalGet(method));
+        self.function.instruction(&Instruction::LocalGet(list));
+        self.runtime_value_call("__exs_rt_call_method", 3, span)?;
+        self.clear_root_slot(method)?;
+        self.clear_root_slot(list)
     }
 
     /// Compiles one static source string through the compiler-owned literal pool.
@@ -334,6 +489,103 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
+    /// Constructs one nominal Object and validates every declared field contract.
+    pub(super) fn compile_typed_object(
+        &mut self,
+        type_name: &crate::ast::Identifier<'a>,
+        properties: &[ObjectProperty<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let nominal = self.types.get(&type_name.name).cloned().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0216",
+                type_name.span,
+                format!("unknown type `{}`", type_name.name),
+            ))
+        })?;
+        for property in properties {
+            if !nominal
+                .fields
+                .iter()
+                .any(|field| field.name == property.key)
+            {
+                self.return_type_error(property.key_span)?;
+                return Ok(());
+            }
+            if properties
+                .iter()
+                .filter(|other| other.key == property.key)
+                .count()
+                > 1
+            {
+                self.return_type_error(property.key_span)?;
+                return Ok(());
+            }
+        }
+        self.function
+            .instruction(&Instruction::I32Const(nominal.id.cast_signed()));
+        self.runtime_call("__exs_rt_object_typed_new", span)?;
+        let object = self.store_stack_value()?;
+        for property in properties {
+            let field = nominal
+                .fields
+                .iter()
+                .find(|field| field.name == property.key)
+                .ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0999",
+                        property.key_span,
+                        "missing resolved nominal field",
+                    ))
+                })?;
+            self.compile_expression(&property.value)?;
+            let value = self.store_stack_value()?;
+            self.validate_local_type(value, &field.contract, property.span)?;
+            self.compile_string(&property.key, property.key_span)?;
+            let key = self.store_stack_value()?;
+            self.function.instruction(&Instruction::LocalGet(object));
+            self.function.instruction(&Instruction::LocalGet(key));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.runtime_value_call("__exs_rt_index_set", 3, property.span)?;
+            self.function.instruction(&Instruction::Drop);
+            self.clear_root_slot(key)?;
+            self.clear_root_slot(value)?;
+        }
+        for field in &nominal.fields {
+            if properties.iter().any(|property| property.key == field.name) {
+                continue;
+            }
+            self.runtime_call("__exs_rt_none_new", span)?;
+            let value = self.store_stack_value()?;
+            self.validate_local_type(value, &field.contract, span)?;
+            self.compile_string(&field.name, span)?;
+            let key = self.store_stack_value()?;
+            self.function.instruction(&Instruction::LocalGet(object));
+            self.function.instruction(&Instruction::LocalGet(key));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.runtime_value_call("__exs_rt_index_set", 3, span)?;
+            self.function.instruction(&Instruction::Drop);
+            self.clear_root_slot(key)?;
+            self.clear_root_slot(value)?;
+        }
+        self.function.instruction(&Instruction::LocalGet(object));
+        Ok(())
+    }
+
+    /// Returns the current function's recoverable or fatal generic type-contract Error.
+    fn return_type_error(&mut self, span: SourceSpan<'a>) -> Result<(), CompileDiagnostics<'a>> {
+        self.runtime_call("__exs_rt_none_new", span)?;
+        let value = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(value));
+        self.function
+            .instruction(&Instruction::I32Const(i32::from(types::permits_error(
+                &self.return_type,
+            ))));
+        self.runtime_call("__exs_rt_type_mismatch", span)?;
+        self.clear_root_slot(value)?;
+        self.return_stack_value()
+    }
+
     /// Compiles short-circuiting boolean conjunction or disjunction.
     pub(super) fn compile_logical(
         &mut self,
@@ -370,7 +622,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         value: &Expression<'a>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if !types::permits_error(self.return_type) {
+        if !types::permits_error(&self.return_type) {
             return Err(diagnostics(CompileDiagnostic::new(
                 "E0218",
                 span,
@@ -405,7 +657,8 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .instruction(&Instruction::If(BlockType::Empty));
         self.enter_control()?;
         self.function.instruction(&Instruction::LocalGet(outcome));
-        self.validate_local_type(outcome, self.return_type, span)?;
+        let return_type = self.return_type.clone();
+        self.validate_local_type(outcome, &return_type, span)?;
         self.function.instruction(&Instruction::LocalGet(outcome));
         self.return_stack_value()?;
         self.function.instruction(&Instruction::End);
@@ -421,7 +674,8 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         let value = self.return_value_local;
         self.store_stack_value_in(value)?;
-        self.validate_local_type(value, self.return_type, span)?;
+        let return_type = self.return_type.clone();
+        self.validate_local_type(value, &return_type, span)?;
         self.function.instruction(&Instruction::LocalGet(value));
         self.clear_root_slot(value)
     }
@@ -430,13 +684,25 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     pub(super) fn validate_local_type(
         &mut self,
         local: u32,
-        types: u32,
+        contract: &TypeContract,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        let matches = self.type_match_local;
         self.function.instruction(&Instruction::LocalGet(local));
         self.function
-            .instruction(&Instruction::I32Const(types.cast_signed()));
+            .instruction(&Instruction::I32Const(contract.builtin_mask.cast_signed()));
         self.runtime_call("__exs_rt_type_matches", span)?;
+        self.function.instruction(&Instruction::LocalSet(matches));
+        for type_id in &contract.nominal_type_ids {
+            self.function.instruction(&Instruction::LocalGet(matches));
+            self.function.instruction(&Instruction::LocalGet(local));
+            self.function
+                .instruction(&Instruction::I32Const(type_id.cast_signed()));
+            self.runtime_call("__exs_rt_object_is_type", span)?;
+            self.function.instruction(&Instruction::I32Or);
+            self.function.instruction(&Instruction::LocalSet(matches));
+        }
+        self.function.instruction(&Instruction::LocalGet(matches));
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.enter_control()?;
@@ -444,7 +710,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function.instruction(&Instruction::LocalGet(local));
         self.function
             .instruction(&Instruction::I32Const(i32::from(types::permits_error(
-                self.return_type,
+                &self.return_type,
             ))));
         self.runtime_call("__exs_rt_type_mismatch", span)?;
         self.return_stack_value()?;

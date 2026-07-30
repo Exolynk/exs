@@ -5,8 +5,45 @@ use crate::diagnostic::SourceSpan;
 /// A parsed `ExS` source unit.
 #[derive(Debug)]
 pub struct Module<'a> {
-    /// Top-level Phase-1 function items.
+    /// Named nominal Object type declarations.
+    pub types: Vec<TypeDeclaration<'a>>,
+    /// Type-specific direct method declarations.
+    pub implementations: Vec<ImplDeclaration<'a>>,
+    /// Top-level direct function declarations.
     pub functions: Vec<FunctionDeclaration<'a>>,
+}
+
+/// A nominal Object type with declared field contracts.
+#[derive(Debug)]
+pub struct TypeDeclaration<'a> {
+    /// The source-visible type name.
+    pub name: Identifier<'a>,
+    /// Fields in source order.
+    pub fields: Vec<TypeField<'a>>,
+    /// Full declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+/// One named field of a nominal Object type.
+#[derive(Debug)]
+pub struct TypeField<'a> {
+    /// The source-visible field name.
+    pub name: Identifier<'a>,
+    /// Optional accepted type union. An omitted annotation means `Any`.
+    pub type_annotation: Option<TypeAnnotation<'a>>,
+    /// Full field declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+/// The methods associated with one nominal Object type.
+#[derive(Debug)]
+pub struct ImplDeclaration<'a> {
+    /// The type receiving these methods.
+    pub type_name: Identifier<'a>,
+    /// Methods in source order.
+    pub methods: Vec<FunctionDeclaration<'a>>,
+    /// Full implementation span.
+    pub span: SourceSpan<'a>,
 }
 
 /// A named function declaration.
@@ -227,6 +264,15 @@ pub enum Expression<'a> {
         /// Full expression span.
         span: SourceSpan<'a>,
     },
+    /// A nominal Object construction with statically named properties.
+    TypedObject {
+        /// The constructed nominal type.
+        type_name: Identifier<'a>,
+        /// Properties evaluated from left to right.
+        properties: Vec<ObjectProperty<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
     /// A local variable lookup.
     Variable(Identifier<'a>),
     /// A unary operation.
@@ -265,6 +311,17 @@ pub enum Expression<'a> {
         /// Statically written method name.
         method: Identifier<'a>,
         /// Positional arguments evaluated from left to right.
+        arguments: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// A direct static method call on one nominal Object type.
+    StaticMethodCall {
+        /// The type owning the static method.
+        type_name: Identifier<'a>,
+        /// Statically written method name.
+        method: Identifier<'a>,
+        /// Positional arguments.
         arguments: Vec<Expression<'a>>,
         /// Full expression span.
         span: SourceSpan<'a>,

@@ -25,6 +25,10 @@ pub enum TokenKind {
     String(String),
     /// The `fn` keyword.
     Fn,
+    /// The `type` keyword.
+    Type,
+    /// The `impl` keyword.
+    Impl,
     /// The `let` keyword.
     Let,
     /// The `ret` keyword.
@@ -69,6 +73,8 @@ pub enum TokenKind {
     Dot,
     /// `:`.
     Colon,
+    /// `::`.
+    DoubleColon,
     /// `,`.
     Comma,
     /// `;`.
@@ -244,6 +250,10 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                     b'[' => TokenKind::LeftBracket,
                     b']' => TokenKind::RightBracket,
                     b'.' => TokenKind::Dot,
+                    b':' if bytes.get(index) == Some(&b':') => {
+                        index += 1;
+                        TokenKind::DoubleColon
+                    }
                     b':' => TokenKind::Colon,
                     b',' => TokenKind::Comma,
                     b';' => TokenKind::Semicolon,
@@ -452,6 +462,8 @@ fn valid_digit_segment(segment: &str) -> bool {
 fn keyword_or_identifier(value: &str) -> TokenKind {
     match value {
         "fn" => TokenKind::Fn,
+        "type" => TokenKind::Type,
+        "impl" => TokenKind::Impl,
         "let" => TokenKind::Let,
         "ret" => TokenKind::Ret,
         "if" => TokenKind::If,

@@ -1,55 +1,177 @@
-//! Function-boundary type annotation resolution.
+//! Built-in and nominal type-contract resolution.
+
+use std::collections::HashMap;
 
 use exs_abi::{
     TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_NONE, TYPE_OBJECT,
     TYPE_STRING,
 };
 
-use crate::ast::TypeAnnotation;
+use crate::ast::{Module, TypeAnnotation};
 use crate::codegen::diagnostics;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
-/// Resolves one optional source annotation to a runtime type mask.
-pub(super) fn resolve<'a>(
-    annotation: Option<&TypeAnnotation<'a>>,
-    default_span: SourceSpan<'a>,
-) -> Result<u32, CompileDiagnostics<'a>> {
-    let Some(annotation) = annotation else {
-        return Ok(TYPE_ANY);
-    };
-    let mut types = 0;
-    for member in &annotation.members {
-        let member_types = match member.name.as_str() {
-            "Any" => TYPE_ANY,
-            "None" => TYPE_NONE,
-            "Error" => TYPE_ERROR,
-            "Bool" => TYPE_BOOL,
-            "Int" => TYPE_INT,
-            "Float" => TYPE_FLOAT,
-            "String" => TYPE_STRING,
-            "List" => TYPE_LIST,
-            "Object" => TYPE_OBJECT,
-            _ => {
+/// One resolved runtime type contract.
+#[derive(Debug, Clone)]
+pub(super) struct TypeContract {
+    /// Accepted built-in runtime value categories.
+    pub(super) builtin_mask: u32,
+    /// Accepted nominal Object type identifiers.
+    pub(super) nominal_type_ids: Vec<u32>,
+}
+
+/// One resolved nominal Object field contract.
+#[derive(Debug, Clone)]
+pub(super) struct NominalField {
+    /// Source-visible field name.
+    pub(super) name: String,
+    /// Accepted value types for this field.
+    pub(super) contract: TypeContract,
+}
+
+/// One compiler-owned nominal Object type.
+#[derive(Debug, Clone)]
+pub(super) struct NominalType {
+    /// Opaque runtime tag assigned in source order.
+    pub(super) id: u32,
+    /// Fields in declaration order.
+    pub(super) fields: Vec<NominalField>,
+}
+
+/// The nominal type registry for one compiled module.
+#[derive(Debug, Clone)]
+pub(super) struct TypeRegistry {
+    types: HashMap<String, NominalType>,
+}
+
+impl TypeRegistry {
+    /// Collects named types and resolves every declared field contract.
+    pub(super) fn build<'a>(module: &Module<'a>) -> Result<Self, CompileDiagnostics<'a>> {
+        let mut types = HashMap::new();
+        for (offset, declaration) in module.types.iter().enumerate() {
+            if builtin_mask(&declaration.name.name).is_some()
+                || types.contains_key(&declaration.name.name)
+            {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0219",
+                    declaration.name.span,
+                    format!("duplicate or reserved type `{}`", declaration.name.name),
+                )));
+            }
+            let id = u32::try_from(offset)
+                .ok()
+                .and_then(|id| id.checked_add(1))
+                .ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0212",
+                        declaration.name.span,
+                        "too many nominal types in one module",
+                    ))
+                })?;
+            types.insert(
+                declaration.name.name.clone(),
+                NominalType {
+                    id,
+                    fields: Vec::new(),
+                },
+            );
+        }
+        let mut registry = Self { types };
+        for declaration in &module.types {
+            let mut fields = Vec::new();
+            for field in &declaration.fields {
+                if fields
+                    .iter()
+                    .any(|existing: &NominalField| existing.name == field.name.name)
+                {
+                    return Err(diagnostics(CompileDiagnostic::new(
+                        "E0220",
+                        field.name.span,
+                        format!("duplicate field `{}`", field.name.name),
+                    )));
+                }
+                fields.push(NominalField {
+                    name: field.name.name.clone(),
+                    contract: registry.resolve(field.type_annotation.as_ref(), field.name.span)?,
+                });
+            }
+            let Some(registered) = registry.types.get_mut(&declaration.name.name) else {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    declaration.name.span,
+                    "missing collected nominal type",
+                )));
+            };
+            registered.fields = fields;
+        }
+        Ok(registry)
+    }
+
+    /// Resolves one optional source union annotation against this module's named types.
+    pub(super) fn resolve<'a>(
+        &self,
+        annotation: Option<&TypeAnnotation<'a>>,
+        default_span: SourceSpan<'a>,
+    ) -> Result<TypeContract, CompileDiagnostics<'a>> {
+        let Some(annotation) = annotation else {
+            return Ok(TypeContract {
+                builtin_mask: TYPE_ANY,
+                nominal_type_ids: Vec::new(),
+            });
+        };
+        let mut resolved_builtin_mask = 0;
+        let mut nominal_type_ids = Vec::new();
+        for member in &annotation.members {
+            if let Some(mask) = builtin_mask(&member.name) {
+                resolved_builtin_mask |= mask;
+            } else if let Some(nominal) = self.types.get(&member.name) {
+                if !nominal_type_ids.contains(&nominal.id) {
+                    nominal_type_ids.push(nominal.id);
+                }
+            } else {
                 return Err(diagnostics(CompileDiagnostic::new(
                     "E0216",
                     member.span,
                     format!("unknown type `{}`", member.name),
                 )));
             }
-        };
-        types |= member_types;
+        }
+        if resolved_builtin_mask == 0 && nominal_type_ids.is_empty() {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0216",
+                default_span,
+                "type annotation cannot be empty",
+            )));
+        }
+        Ok(TypeContract {
+            builtin_mask: resolved_builtin_mask,
+            nominal_type_ids,
+        })
     }
-    if types == 0 {
-        return Err(diagnostics(CompileDiagnostic::new(
-            "E0216",
-            default_span,
-            "function type annotation cannot be empty",
-        )));
+
+    /// Returns one nominal Object declaration by its source-visible name.
+    pub(super) fn get(&self, name: &str) -> Option<&NominalType> {
+        self.types.get(name)
     }
-    Ok(types)
 }
 
-/// Returns whether one resolved return type permits returning a language Error.
-pub(super) const fn permits_error(types: u32) -> bool {
-    types & TYPE_ERROR != 0
+/// Returns whether a function return contract permits language Error values.
+pub(super) const fn permits_error(contract: &TypeContract) -> bool {
+    contract.builtin_mask & TYPE_ERROR != 0
+}
+
+/// Resolves one built-in source type spelling to its ABI mask.
+fn builtin_mask(name: &str) -> Option<u32> {
+    match name {
+        "Any" => Some(TYPE_ANY),
+        "None" => Some(TYPE_NONE),
+        "Error" => Some(TYPE_ERROR),
+        "Bool" => Some(TYPE_BOOL),
+        "Int" => Some(TYPE_INT),
+        "Float" => Some(TYPE_FLOAT),
+        "String" => Some(TYPE_STRING),
+        "List" => Some(TYPE_LIST),
+        "Object" => Some(TYPE_OBJECT),
+        _ => None,
+    }
 }

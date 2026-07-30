@@ -7,6 +7,8 @@ use exs_value::ValueRef;
 
 /// A mutable insertion-ordered mapping from string keys to runtime values.
 pub(crate) struct RuntimeObject {
+    /// Compiler-owned nominal type tag, if this Object was constructed through `Type { ... }`.
+    pub(crate) type_id: Option<u32>,
     /// Key-value entries in insertion order.
     pub(crate) entries: Vec<(Box<str>, ValueRef)>,
 }
@@ -15,6 +17,15 @@ impl RuntimeObject {
     /// Creates an empty runtime Object.
     pub(crate) const fn new() -> Self {
         Self {
+            type_id: None,
+            entries: Vec::new(),
+        }
+    }
+
+    /// Creates an empty Object carrying one compiler-owned nominal type tag.
+    pub(crate) const fn typed(type_id: u32) -> Self {
+        Self {
+            type_id: Some(type_id),
             entries: Vec::new(),
         }
     }
@@ -36,6 +47,16 @@ pub(crate) mod operations {
     /// Allocates an empty mutable runtime Object.
     pub(crate) fn new_value() -> ValueRef {
         runtime::allocate(RtValue::Object(Box::new(RuntimeObject::new())))
+    }
+
+    /// Allocates an empty nominal Object with one compiler-provided type tag.
+    pub(crate) fn new_typed_value(type_id: u32) -> ValueRef {
+        runtime::allocate(RtValue::Object(Box::new(RuntimeObject::typed(type_id))))
+    }
+
+    /// Returns whether one value is an Object carrying the requested nominal type tag.
+    pub(crate) fn has_type(receiver: ValueRef, type_id: u32) -> bool {
+        matches!(runtime::value(receiver), RtValue::Object(object) if object.type_id == Some(type_id))
     }
 
     /// Reads one Object property or returns Null when it is absent.

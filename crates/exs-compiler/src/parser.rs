@@ -1,21 +1,54 @@
 //! Recursive-descent parser for the Phase-1 `ExS` grammar.
 
+use std::collections::HashSet;
+
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module,
-    ObjectProperty, Parameter, Statement, TypeAnnotation, TypeName, UnaryOperator,
+    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier,
+    ImplDeclaration, Module, ObjectProperty, Parameter, Statement, TypeAnnotation, TypeDeclaration,
+    TypeField, TypeName, UnaryOperator,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{Token, TokenKind};
 
-/// Parses a token stream into a function-only `ExS` module.
+/// Parses a token stream into one ExS module.
 pub fn parse<'a>(
     source_id: &'a str,
     tokens: Vec<Token<'a>>,
 ) -> Result<Module<'a>, CompileDiagnostics<'a>> {
-    let mut parser = Parser { tokens, current: 0 };
+    let type_names = tokens
+        .windows(2)
+        .filter_map(|pair| match (&pair[0].kind, &pair[1].kind) {
+            (TokenKind::Type, TokenKind::Identifier(name)) => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut parser = Parser {
+        tokens,
+        current: 0,
+        type_names,
+    };
+    let mut types = Vec::new();
+    let mut implementations = Vec::new();
     let mut functions = Vec::new();
     while !parser.at_end() {
-        functions.push(parser.function().map_err(CompileDiagnostics::from)?);
+        match &parser.peek().kind {
+            TokenKind::Type => types.push(
+                parser
+                    .type_declaration()
+                    .map_err(CompileDiagnostics::from)?,
+            ),
+            TokenKind::Impl => {
+                implementations.push(parser.implementation().map_err(CompileDiagnostics::from)?)
+            }
+            TokenKind::Fn => functions.push(parser.function().map_err(CompileDiagnostics::from)?),
+            _ => {
+                return Err(CompileDiagnostics::from(parser.error(
+                    parser.peek().span,
+                    "E0100",
+                    "expected `type`, `impl`, or `fn` at module level",
+                )));
+            }
+        }
     }
     if functions.is_empty() {
         return Err(CompileDiagnostics::from(CompileDiagnostic::new(
@@ -24,12 +57,17 @@ pub fn parse<'a>(
             "a module must declare fn main()",
         )));
     }
-    Ok(Module { functions })
+    Ok(Module {
+        types,
+        implementations,
+        functions,
+    })
 }
 
 struct Parser<'a> {
     tokens: Vec<Token<'a>>,
     current: usize,
+    type_names: HashSet<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -37,6 +75,14 @@ impl<'a> Parser<'a> {
         let start = self
             .expect_simple(TokenKind::Fn, "expected `fn` at module level")?
             .span;
+        self.function_from_start(start)
+    }
+
+    /// Parses one function after its `fn` keyword was consumed.
+    fn function_from_start(
+        &mut self,
+        start: SourceSpan<'a>,
+    ) -> Result<FunctionDeclaration<'a>, CompileDiagnostic<'a>> {
         let name = self.identifier("expected function name")?;
         self.expect_simple(TokenKind::LeftParen, "expected `(` after function name")?;
         let mut parameters = Vec::new();
@@ -73,6 +119,75 @@ impl<'a> Parser<'a> {
             return_type,
             span: start.through(body.span),
             body,
+        })
+    }
+
+    /// Parses one nominal Object type declaration.
+    fn type_declaration(&mut self) -> Result<TypeDeclaration<'a>, CompileDiagnostic<'a>> {
+        let start = self
+            .expect_simple(TokenKind::Type, "expected `type` at module level")?
+            .span;
+        let name = self.identifier("expected type name after `type`")?;
+        self.expect_simple(TokenKind::LeftBrace, "expected `{` after type name")?;
+        let mut fields = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.at_end() {
+            let field_start = self.peek().span;
+            let name = self.identifier("expected type field name")?;
+            let type_annotation = if self.matches(&TokenKind::Colon) {
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
+            let end = type_annotation
+                .as_ref()
+                .map_or(name.span, |annotation| annotation.span);
+            fields.push(TypeField {
+                name,
+                type_annotation,
+                span: field_start.through(end),
+            });
+            if !self.matches(&TokenKind::Comma) {
+                if !self.check(&TokenKind::RightBrace) {
+                    return Err(self.error(
+                        self.peek().span,
+                        "E0103",
+                        "expected `,` or `}` after type field",
+                    ));
+                }
+                break;
+            }
+        }
+        let end = self
+            .expect_simple(TokenKind::RightBrace, "expected `}` after type fields")?
+            .span;
+        Ok(TypeDeclaration {
+            name,
+            fields,
+            span: start.through(end),
+        })
+    }
+
+    /// Parses one implementation block for a nominal Object type.
+    fn implementation(&mut self) -> Result<ImplDeclaration<'a>, CompileDiagnostic<'a>> {
+        let start = self
+            .expect_simple(TokenKind::Impl, "expected `impl` at module level")?
+            .span;
+        let type_name = self.identifier("expected type name after `impl`")?;
+        self.expect_simple(TokenKind::LeftBrace, "expected `{` after impl type name")?;
+        let mut methods = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.at_end() {
+            let method_start = self
+                .expect_simple(TokenKind::Fn, "expected `fn` inside impl block")?
+                .span;
+            methods.push(self.function_from_start(method_start)?);
+        }
+        let end = self
+            .expect_simple(TokenKind::RightBrace, "expected `}` after impl methods")?
+            .span;
+        Ok(ImplDeclaration {
+            type_name,
+            methods,
+            span: start.through(end),
         })
     }
 
@@ -343,7 +458,59 @@ impl<'a> Parser<'a> {
     fn call(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
         let mut expression = self.primary()?;
         loop {
-            if self.matches(&TokenKind::LeftParen) {
+            if self.matches(&TokenKind::DoubleColon) {
+                let type_name = match expression {
+                    Expression::Variable(identifier) => identifier,
+                    _ => {
+                        return Err(self.error(
+                            self.previous().span,
+                            "E0110",
+                            "static calls require a type name",
+                        ));
+                    }
+                };
+                let method = self.identifier("expected method name after `::`")?;
+                self.expect_simple(
+                    TokenKind::LeftParen,
+                    "expected `(` after static method name",
+                )?;
+                let arguments = self.arguments(TokenKind::RightParen)?;
+                let close = self
+                    .expect_simple(TokenKind::RightParen, "expected `)` after arguments")?
+                    .span;
+                expression = Expression::StaticMethodCall {
+                    type_name: type_name.clone(),
+                    method,
+                    arguments,
+                    span: type_name.span.through(close),
+                };
+            } else if self.check(&TokenKind::LeftBrace)
+                && matches!(&expression, Expression::Variable(identifier) if self.type_names.contains(&identifier.name))
+            {
+                self.advance();
+                let type_name = match expression {
+                    Expression::Variable(identifier) => identifier,
+                    _ => {
+                        return Err(self.error(
+                            self.previous().span,
+                            "E0110",
+                            "typed object construction requires a type name",
+                        ));
+                    }
+                };
+                let properties = self.object_properties()?;
+                let end = self
+                    .expect_simple(
+                        TokenKind::RightBrace,
+                        "expected `}` after typed Object properties",
+                    )?
+                    .span;
+                expression = Expression::TypedObject {
+                    type_name: type_name.clone(),
+                    properties,
+                    span: type_name.span.through(end),
+                };
+            } else if self.matches(&TokenKind::LeftParen) {
                 let open = self.previous().span;
                 let callee = match expression {
                     Expression::Variable(identifier) => identifier,
@@ -445,24 +612,7 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::LeftBrace => {
-                let mut properties = Vec::new();
-                if !self.check(&TokenKind::RightBrace) {
-                    loop {
-                        let (key, key_span) = self.object_key()?;
-                        self.expect_simple(TokenKind::Colon, "expected `:` after object property")?;
-                        let value = self.expression()?;
-                        let property_span = key_span.through(expression_span(&value));
-                        properties.push(ObjectProperty {
-                            key,
-                            key_span,
-                            value,
-                            span: property_span,
-                        });
-                        if !self.matches(&TokenKind::Comma) || self.check(&TokenKind::RightBrace) {
-                            break;
-                        }
-                    }
-                }
+                let properties = self.object_properties()?;
                 let end = self
                     .expect_simple(
                         TokenKind::RightBrace,
@@ -502,6 +652,29 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(arguments)
+    }
+
+    /// Parses comma-separated statically named Object properties after `{`.
+    fn object_properties(&mut self) -> Result<Vec<ObjectProperty<'a>>, CompileDiagnostic<'a>> {
+        let mut properties = Vec::new();
+        if !self.check(&TokenKind::RightBrace) {
+            loop {
+                let (key, key_span) = self.object_key()?;
+                self.expect_simple(TokenKind::Colon, "expected `:` after object property")?;
+                let value = self.expression()?;
+                let property_span = key_span.through(expression_span(&value));
+                properties.push(ObjectProperty {
+                    key,
+                    key_span,
+                    value,
+                    span: property_span,
+                });
+                if !self.matches(&TokenKind::Comma) || self.check(&TokenKind::RightBrace) {
+                    break;
+                }
+            }
+        }
+        Ok(properties)
     }
 
     /// Converts a parsed expression into a permitted statement assignment location.
@@ -625,6 +798,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::None(span) => *span,
         Expression::List { span, .. } => *span,
         Expression::Object { span, .. } => *span,
+        Expression::TypedObject { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::IsError { span, .. }
@@ -632,6 +806,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
         | Expression::MethodCall { span, .. }
+        | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }
         | Expression::Property { span, .. } => *span,
     }

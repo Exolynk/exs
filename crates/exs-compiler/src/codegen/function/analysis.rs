@@ -120,11 +120,20 @@ pub(super) fn count_expressions(expression: &Expression<'_>) -> u32 {
                 .map(|property| 1 + count_expressions(&property.value))
                 .sum::<u32>()
         }
+        Expression::TypedObject { properties, .. } => {
+            1 + properties
+                .iter()
+                .map(|property| 1 + count_expressions(&property.value))
+                .sum::<u32>()
+        }
         Expression::MethodCall {
             receiver,
             arguments,
             ..
         } => 5 + count_expressions(receiver) + arguments.iter().map(count_expressions).sum::<u32>(),
+        Expression::StaticMethodCall { arguments, .. } => {
+            1 + arguments.iter().map(count_expressions).sum::<u32>()
+        }
         Expression::Index {
             receiver, index, ..
         } => 1 + count_expressions(receiver) + count_expressions(index),
@@ -144,6 +153,7 @@ pub(in crate::codegen::function) fn condition_span<'a>(
         | Expression::None(span) => *span,
         Expression::List { span, .. } => *span,
         Expression::Object { span, .. } => *span,
+        Expression::TypedObject { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
         | Expression::IsError { span, .. }
@@ -151,6 +161,7 @@ pub(in crate::codegen::function) fn condition_span<'a>(
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
         | Expression::MethodCall { span, .. }
+        | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }
         | Expression::Property { span, .. } => *span,
     }

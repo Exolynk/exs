@@ -79,7 +79,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Add optional parameter and return union annotations for non-entry functions, with dynamic runtime contracts for `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`.
 - [x] Return recoverable `TypeError` for a contract mismatch when `Error` is allowed and a source-mapped fatal `TypeError` for strict return contracts. `?` requires `Error` or `Any` in the return annotation.
 - [x] Support zero or more typed `main` inputs, substitute `None` for missing values, and return fatal `ArityError` for excess values.
-- [ ] Add type - struct like objects with defined keys and functions with impl.
+- [x] Add nominal Object types with declared fields, named type contracts, explicit `None` for omitted optional fields, instance `impl` methods, and static `Type::method()` methods.
 - [ ] Add trait declarations, implementations, resolution, and dispatch.
 - [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
 

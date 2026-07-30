@@ -194,17 +194,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function
             .instruction(&Instruction::I32Const(self.function_id.cast_signed()));
         self.runtime_call("__exs_rt_frame_push", self.declaration.span)?;
-        let signature = self
-            .signatures
-            .get(&self.declaration.name.name)
-            .ok_or_else(|| {
-                diagnostics(CompileDiagnostic::new(
-                    "E0999",
-                    self.declaration.name.span,
-                    "missing function signature during parameter validation",
-                ))
-            })?;
-        for (parameter, types) in signature.parameter_types.iter().copied().enumerate() {
+        let signature = self.signatures.get(&self.signature_key).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                self.declaration.name.span,
+                "missing function signature during parameter validation",
+            ))
+        })?;
+        for (parameter, types) in signature.parameter_types.iter().enumerate() {
             let parameter = u32::try_from(parameter).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(
                     "E0212",

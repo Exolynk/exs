@@ -35,27 +35,30 @@ impl<'a> SourceMap<'a> {
                 .functions
                 .iter()
                 .map(|function| function.name.name.clone())
+                .chain(module.implementations.iter().flat_map(|implementation| {
+                    implementation.methods.iter().map(|method| {
+                        format!("{}::{}", implementation.type_name.name, method.name.name)
+                    })
+                }))
                 .collect(),
         };
+        for declaration in &module.types {
+            source_map.insert(declaration.span);
+            source_map.insert(declaration.name.span);
+            for field in &declaration.fields {
+                source_map.insert(field.span);
+                source_map.insert(field.name.span);
+            }
+        }
         for function in &module.functions {
-            source_map.insert(function.span);
-            source_map.insert(function.name.span);
-            for parameter in &function.parameters {
-                source_map.insert(parameter.name.span);
-                if let Some(annotation) = &parameter.type_annotation {
-                    source_map.insert(annotation.span);
-                    for member in &annotation.members {
-                        source_map.insert(member.span);
-                    }
-                }
+            source_map.collect_function(function);
+        }
+        for implementation in &module.implementations {
+            source_map.insert(implementation.span);
+            source_map.insert(implementation.type_name.span);
+            for method in &implementation.methods {
+                source_map.collect_function(method);
             }
-            if let Some(annotation) = &function.return_type {
-                source_map.insert(annotation.span);
-                for member in &annotation.members {
-                    source_map.insert(member.span);
-                }
-            }
-            source_map.collect_block(&function.body);
         }
         source_map
     }
@@ -117,6 +120,28 @@ impl<'a> SourceMap<'a> {
         for statement in &block.statements {
             self.collect_statement(statement);
         }
+    }
+
+    /// Collects all spans reachable from one direct function declaration.
+    fn collect_function(&mut self, function: &crate::ast::FunctionDeclaration<'a>) {
+        self.insert(function.span);
+        self.insert(function.name.span);
+        for parameter in &function.parameters {
+            self.insert(parameter.name.span);
+            if let Some(annotation) = &parameter.type_annotation {
+                self.insert(annotation.span);
+                for member in &annotation.members {
+                    self.insert(member.span);
+                }
+            }
+        }
+        if let Some(annotation) = &function.return_type {
+            self.insert(annotation.span);
+            for member in &annotation.members {
+                self.insert(member.span);
+            }
+        }
+        self.collect_block(&function.body);
     }
 
     /// Collects all spans reachable from one statement.
@@ -226,7 +251,10 @@ impl<'a> SourceMap<'a> {
                     self.collect_expression(element);
                 }
             }
-            Expression::Object { properties, span } => {
+            Expression::Object { properties, span }
+            | Expression::TypedObject {
+                properties, span, ..
+            } => {
                 self.insert(*span);
                 for property in properties {
                     self.collect_property(property);
@@ -264,6 +292,19 @@ impl<'a> SourceMap<'a> {
                 self.insert(*span);
                 self.insert(method.span);
                 self.collect_expression(receiver);
+                for argument in arguments {
+                    self.collect_expression(argument);
+                }
+            }
+            Expression::StaticMethodCall {
+                type_name,
+                method,
+                arguments,
+                span,
+            } => {
+                self.insert(*span);
+                self.insert(type_name.span);
+                self.insert(method.span);
                 for argument in arguments {
                     self.collect_expression(argument);
                 }

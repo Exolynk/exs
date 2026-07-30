@@ -269,6 +269,7 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
             elements: elements.into_iter().map(exs_value_to_runtime).collect(),
         })),
         ExsValue::Object(entries) => RtValue::Object(Box::new(RuntimeObject {
+            type_id: None,
             entries: entries
                 .into_iter()
                 .map(|(key, value)| (key.into_boxed_str(), exs_value_to_runtime(value)))

@@ -308,6 +308,38 @@ The current implementation stores Objects as boxed insertion-ordered entries. It
 
 Nested acyclic Objects cross the current CBOR boundary as text-keyed maps in their insertion order. The runtime currently traps when serializing a container cycle; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
 
+## Nominal Object types
+
+An ExS module MAY declare a nominal Object type:
+
+```text
+type User {
+    name: String,
+    nickname: String | None,
+    metadata,
+}
+```
+
+Each field annotation is optional and an omitted annotation means `Any`. A nominal Object is constructed with `User { ... }`. Every declared field is present after construction: an omitted field whose contract permits `None`, including `Any`, is inserted as an explicit `None` property. Missing required fields, unknown fields, duplicate fields, and incompatible field values produce the same recoverable-or-fatal `TypeError` behavior as a function contract mismatch.
+
+Nominal type identity is separate from Object shape. The runtime stores an opaque compiler-assigned tag only for Objects constructed with `Type { ... }`; decoded host Objects and ordinary Object literals are untyped. Nominal tags never cross the CBOR boundary.
+
+An `impl` block declares direct methods for one nominal type:
+
+```text
+impl User {
+    fn display(self) -> String {
+        ret self.name;
+    }
+
+    fn named(name: String) -> User {
+        ret User { name: name };
+    }
+}
+```
+
+A first bare `self` parameter declares an instance method, invoked as `user.display()`, and is implicitly constrained to the enclosing nominal type. A method without `self` is static and is invoked as `User::named("Ada")`. Method references are not supported. Runtime method names `push`, `pop`, `insert`, `remove`, `clear`, `has`, `delete`, `keys`, and `values` are reserved and MUST NOT be declared by an `impl` block.
+
 ## Function and Closure
 
 A `Function` is immutable executable code. A `Closure` combines a function with captured lexical cells.
@@ -598,7 +630,7 @@ fn some(input: Int, offset: Float) -> String | Int | Bool | Error {
 }
 ```
 
-The current names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`. An omitted annotation is exactly `Any`. An annotation is checked dynamically at function entry for every parameter and at each explicit or implicit return. The compiler does not statically prove call argument types.
+The current built-in names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`. Every nominal type declared by the same module is also valid in a union annotation. An omitted annotation is exactly `Any`. An annotation is checked dynamically at function entry for every parameter and at each explicit or implicit return. The compiler does not statically prove call argument types.
 
 On a contract mismatch, the runtime returns a recoverable `Error { kind: "TypeError" }` when the function return annotation includes `Error` or is omitted (`Any`). If the return annotation excludes `Error`, compiler-generated contract lowering returns a fatal `TypeError` from the current function. This preserves source position and trace information while terminating the program through the normal Error-reporting path. A valid Error value satisfies an `Error` union member and is returned unchanged.
 
@@ -1302,7 +1334,7 @@ The runner MUST NOT expose raw WebAssembly memory addresses or runtime heap iden
 
 ## Version
 
-This chapter defines compiler/runtime ABI `9`.
+This chapter defines compiler/runtime ABI `10`.
 
 ## Phase-1 required exports
 
@@ -1326,7 +1358,7 @@ The runtime owns both input and result buffers in linear memory. The runner call
 (major << 16) | minor
 ```
 
-For this specification the value is `0x00000009`.
+For this specification the value is `0x0000000A`.
 
 ## Run status
 

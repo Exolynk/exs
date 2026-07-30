@@ -34,10 +34,22 @@ pub extern "C" fn __exs_rt_type_matches(value: ValueRef, allowed_types: i32) -> 
     let Ok(allowed_types) = u32::try_from(allowed_types) else {
         runtime::trap();
     };
-    if allowed_types == 0 || allowed_types & !TYPE_ANY != 0 {
+    if allowed_types & !TYPE_ANY != 0 {
         runtime::trap();
     }
     i32::from(value_type_mask(runtime::value(value)) & allowed_types != 0)
+}
+
+/// Returns whether a value is an Object carrying one compiler-owned nominal type tag.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_object_is_type(value: ValueRef, type_id: i32) -> i32 {
+    let Ok(type_id) = u32::try_from(type_id) else {
+        runtime::trap();
+    };
+    if type_id == 0 {
+        runtime::trap();
+    }
+    i32::from(value::object::operations::has_type(value, type_id))
 }
 
 /// Creates a type-contract Error after one failed function-boundary type check.
@@ -317,6 +329,28 @@ pub extern "C" fn __exs_rt_list_new() -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_object_new() -> ValueRef {
     value::object::operations::new_value()
+}
+
+/// Allocates an empty nominal Object with a compiler-owned type tag.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_object_typed_new(type_id: i32) -> ValueRef {
+    let Ok(type_id) = u32::try_from(type_id) else {
+        runtime::trap();
+    };
+    if type_id == 0 {
+        runtime::trap();
+    }
+    value::object::operations::new_typed_value(type_id)
+}
+
+/// Creates the recoverable Error used for an implementation method arity mismatch.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_method_arity_error(receiver: ValueRef) -> ValueRef {
+    runtime::recoverable_error(
+        "ArityError",
+        "method received an incorrect number of arguments",
+        receiver,
+    )
 }
 
 /// Appends a value through the receiver's runtime collection dispatch.

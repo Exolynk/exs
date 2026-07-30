@@ -3,6 +3,7 @@
 mod analysis;
 mod control;
 mod lowering;
+mod method;
 mod runtime;
 mod signature;
 
@@ -13,10 +14,28 @@ use wasm_encoder::{Function, Instruction, ValType};
 use crate::ast::FunctionDeclaration;
 use crate::codegen::diagnostics;
 use crate::codegen::source_map::SourceMap;
+use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
 
 use analysis::{ROOT_FRAME_RESERVED_LOCALS, count_expressions_block, count_lets};
+pub(super) use method::MethodRegistry;
 pub(super) use signature::{FunctionSignature, add_program_types, build_signatures};
+
+/// Immutable module-wide dependencies used while lowering one direct function.
+pub(super) struct FunctionCompilerContext<'a, 'module> {
+    /// Linked direct function signatures.
+    pub(super) signatures: &'module HashMap<String, FunctionSignature>,
+    /// Runtime-template export indexes.
+    pub(super) runtime: &'module HashMap<String, u32>,
+    /// Compiler literal data indexes.
+    pub(super) literals: &'module HashMap<String, u32>,
+    /// Generated source-position metadata.
+    pub(super) source_map: &'module SourceMap<'a>,
+    /// Module nominal type declarations.
+    pub(super) types: &'module TypeRegistry,
+    /// Module implementation method dispatch table.
+    pub(super) methods: &'module MethodRegistry,
+}
 
 /// Structured Wasm targets and lexical cleanup data for one active source loop.
 #[derive(Clone, Copy)]
@@ -32,33 +51,36 @@ struct LoopContext {
 /// Lowers one direct ExS function to a Wasm function.
 pub(super) struct FunctionCompiler<'a, 'module> {
     declaration: &'module FunctionDeclaration<'a>,
+    signature_key: String,
     signatures: &'module HashMap<String, FunctionSignature>,
     runtime: &'module HashMap<String, u32>,
     literals: &'module HashMap<String, u32>,
     source_map: &'module SourceMap<'a>,
+    types: &'module TypeRegistry,
+    methods: &'module MethodRegistry,
     function: Function,
     scopes: Vec<HashMap<String, u32>>,
     loops: Vec<LoopContext>,
     next_local: u32,
     /// Reused local that holds values while validating return contracts.
     return_value_local: u32,
+    /// Reused Wasm i32 local that combines built-in and nominal type-match results.
+    type_match_local: u32,
     root_frame_local: u32,
     control_depth: u32,
     function_id: u32,
-    return_type: u32,
+    return_type: TypeContract,
 }
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
     /// Prepares direct function lowering with enough ValueRef local slots.
     pub(super) fn new(
         declaration: &'module FunctionDeclaration<'a>,
-        signatures: &'module HashMap<String, FunctionSignature>,
-        runtime: &'module HashMap<String, u32>,
-        literals: &'module HashMap<String, u32>,
-        source_map: &'module SourceMap<'a>,
+        signature_key: &str,
+        context: FunctionCompilerContext<'a, 'module>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
         let expression_locals = count_expressions_block(&declaration.body)
-            .checked_mul(3)
+            .checked_mul(10)
             .ok_or_else(|| {
                 diagnostics(CompileDiagnostic::new(
                     "E0212",
@@ -97,25 +119,38 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         }
         let mut compiler = Self {
             declaration,
-            signatures,
-            runtime,
-            literals,
-            source_map,
+            signature_key: signature_key.to_owned(),
+            signatures: context.signatures,
+            runtime: context.runtime,
+            literals: context.literals,
+            source_map: context.source_map,
+            types: context.types,
+            methods: context.methods,
             function: Function::new([(local_count + 1, ValType::I32)]),
             scopes: vec![parameters],
             loops: Vec::new(),
             // Reserve one reusable local for return contracts so multiple return paths do not
             // consume additional statically declared Wasm locals.
-            next_local: parameter_count + 1,
+            next_local: parameter_count + 2,
             return_value_local: parameter_count,
+            type_match_local: parameter_count + 1,
             root_frame_local,
             control_depth: 0,
-            function_id: signatures
-                .get(&declaration.name.name)
+            function_id: context
+                .signatures
+                .get(signature_key)
                 .map_or(0, |signature| signature.function_id),
-            return_type: signatures
-                .get(&declaration.name.name)
-                .map_or(exs_abi::TYPE_ANY, |signature| signature.return_type),
+            return_type: context
+                .signatures
+                .get(signature_key)
+                .map(|signature| signature.return_type.clone())
+                .ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0999",
+                        declaration.name.span,
+                        "missing function signature during lowering",
+                    ))
+                })?,
         };
         compiler.initialize_root_frame(root_slot_count)?;
         Ok(compiler)

@@ -13,9 +13,13 @@ use wasm_encoder::{
 use wasmparser::{ExternalKind, Parser as WasmParser};
 
 use super::entry::compile_start;
-use super::function::{FunctionCompiler, FunctionSignature, add_program_types, build_signatures};
+use super::function::{
+    FunctionCompiler, FunctionCompilerContext, FunctionSignature, MethodRegistry,
+    add_program_types, build_signatures,
+};
 use super::literals::{LiteralPool, TemplateDataLayout, template_data_layout};
 use super::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
+use super::types::TypeRegistry;
 use super::{diagnostics, module_span};
 use crate::CompileOptions;
 use crate::ast::Module;
@@ -65,7 +69,9 @@ struct TemplateLinker<'source, 'module> {
     module: &'module Module<'source>,
     program_types: Vec<u32>,
     signatures: Option<HashMap<String, FunctionSignature>>,
+    methods: Option<MethodRegistry>,
     runtime_functions: HashMap<String, u32>,
+    type_registry: TypeRegistry,
     start_type: Option<u32>,
     abi_version_type: Option<u32>,
     start_index: Option<u32>,
@@ -102,11 +108,14 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
                         "too many data segments for the Wasm data index space",
                     ))
                 })?;
+        let type_registry = TypeRegistry::build(module)?;
         Ok(Self {
             module,
             program_types: Vec::new(),
             signatures: None,
+            methods: None,
             runtime_functions: HashMap::new(),
+            type_registry,
             start_type: None,
             abi_version_type: None,
             start_index: None,
@@ -135,6 +144,20 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             .data_index_base
             .checked_add(literal_count)
             .ok_or_else(|| self.state_error("too many Wasm data segments"))
+    }
+
+    /// Returns the number of direct and implementation methods linked into this module.
+    fn program_function_count(&self) -> Result<u32, reencode::Error<CompileDiagnostics<'source>>> {
+        let count = self.module.functions.len().checked_add(
+            self.module
+                .implementations
+                .iter()
+                .map(|implementation| implementation.methods.len())
+                .sum::<usize>(),
+        );
+        count
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or_else(|| self.state_error("too many source functions"))
     }
 }
 
@@ -166,12 +189,17 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
     ) -> Result<(), reencode::Error<Self::Error>> {
         reencode::utils::parse_function_section(self, functions, section)?;
         let program_base = functions.len();
-        self.signatures =
-            Some(build_signatures(self.module, program_base).map_err(reencode::Error::UserError)?);
+        let signatures = build_signatures(self.module, program_base, &self.type_registry)
+            .map_err(reencode::Error::UserError)?;
+        self.methods = Some(
+            MethodRegistry::build(self.module, &self.type_registry, &signatures)
+                .map_err(reencode::Error::UserError)?,
+        );
+        self.signatures = Some(signatures);
         for type_index in &self.program_types {
             functions.function(*type_index);
         }
-        let start_index = program_base + self.module.functions.len() as u32;
+        let start_index = program_base + self.program_function_count()?;
         self.start_index = Some(start_index);
         self.abi_version_index = Some(start_index + 1);
         functions.function(
@@ -237,16 +265,44 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             .signatures
             .as_ref()
             .ok_or_else(|| self.state_error("missing program signatures"))?;
+        let methods = self
+            .methods
+            .as_ref()
+            .ok_or_else(|| self.state_error("missing implementation methods"))?;
         for function in &self.module.functions {
             let mut compiler = FunctionCompiler::new(
                 function,
-                signatures,
-                &self.runtime_functions,
-                &self.literals.indices,
-                &self.source_map,
+                &function.name.name,
+                FunctionCompilerContext {
+                    signatures,
+                    runtime: &self.runtime_functions,
+                    literals: &self.literals.indices,
+                    source_map: &self.source_map,
+                    types: &self.type_registry,
+                    methods,
+                },
             )
             .map_err(reencode::Error::UserError)?;
             codes.function(&compiler.compile().map_err(reencode::Error::UserError)?);
+        }
+        for implementation in &self.module.implementations {
+            for method in &implementation.methods {
+                let key = format!("{}::{}", implementation.type_name.name, method.name.name);
+                let mut compiler = FunctionCompiler::new(
+                    method,
+                    &key,
+                    FunctionCompilerContext {
+                        signatures,
+                        runtime: &self.runtime_functions,
+                        literals: &self.literals.indices,
+                        source_map: &self.source_map,
+                        types: &self.type_registry,
+                        methods,
+                    },
+                )
+                .map_err(reencode::Error::UserError)?;
+                codes.function(&compiler.compile().map_err(reencode::Error::UserError)?);
+            }
         }
         let main = signatures.get("main").ok_or_else(|| {
             reencode::Error::UserError(diagnostics(CompileDiagnostic::new(

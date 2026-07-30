@@ -1,7 +1,7 @@
 //! Integration tests for the public Phase-1 compiler API.
 
 use exs_compiler::{CompileOptions, SourceInput, compile, read_debug_info};
-use wasmparser::{Parser, Payload};
+use wasmparser::{Parser, Payload, Validator};
 
 /// Compiles the required minimal entry point.
 #[test]
@@ -102,6 +102,50 @@ fn compiles_function_type_annotations() {
         CompileOptions::default(),
     );
     assert!(module.is_ok());
+}
+
+/// Compiles nominal Object declarations, implementation methods, and static calls.
+#[test]
+fn compiles_nominal_types_and_implementations() {
+    let module = compile(
+        SourceInput {
+            source_id: "nominal-types.exs",
+            text: "type User { name: String, nickname: String | None, metadata, } impl User { fn display(self) -> String { ret self.name; } fn named(name: String) -> User { ret User { name: name }; } } fn main() -> String { let user = User::named(\"Ada\"); ret user.display(); }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
+}
+
+/// Emits a valid Wasm module for nominal Object construction.
+#[test]
+fn validates_wasm_for_nominal_object_construction() {
+    let compiled = match compile(
+        SourceInput {
+            source_id: "nominal-validation.exs",
+            text: "type User { name: String, } fn main(input) -> String { let user = User { name: \"Ada\" }; ret user.name; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    if let Err(error) = Validator::new().validate_all(&compiled.wasm) {
+        panic!("generated Wasm is invalid: {error}");
+    }
+}
+
+/// Rejects an implementation declaration that shadows one built-in method name.
+#[test]
+fn rejects_reserved_implementation_method_name() {
+    let result = compile(
+        SourceInput {
+            source_id: "reserved-method.exs",
+            text: "type User {} impl User { fn keys(self) { ret None; } } fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(result.is_err());
 }
 
 /// Rejects a type name that is not in the current built-in type set.
