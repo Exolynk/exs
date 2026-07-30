@@ -602,11 +602,13 @@ The current names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, 
 
 On a contract mismatch, the runtime returns a recoverable `Error { kind: "TypeError" }` when the function return annotation includes `Error` or is omitted (`Any`). If the return annotation excludes `Error`, compiler-generated contract lowering returns a fatal `TypeError` from the current function. This preserves source position and trace information while terminating the program through the normal Error-reporting path. A valid Error value satisfies an `Error` union member and is returned unchanged.
 
-The Phase-1 `fn main(input)` ABI remains dynamically typed and does not accept these annotations. It retains exactly one input parameter.
+`main` uses the same optional parameter and return contracts as every other function. The runner supplies its ordered arguments through the entry ABI; missing arguments become `None` and excess arguments produce a fatal `ArityError`.
 
 ## Arity
 
 A function has one exact arity. Calling it with a different argument count produces `ArityError`.
+
+The entry point is the exception at the runner boundary: missing `main` inputs are supplied as `None`, while excess inputs produce a fatal `ArityError` before `main` runs.
 
 ## Return value
 
@@ -795,15 +797,15 @@ Top-level executable statements are not permitted. A future top-level-code featu
 
 ## Phase-1 modules and entry point
 
-Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the runner exposes None, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies None input and prints the result in ExS source notation.
+Phase 1 accepts only `Function` items. The required entry point is `fn main(...)` with zero or more parameters. The runner supplies an ordered CBOR array of `ExsValue` arguments; the runtime decodes each argument to an `RtValue` before calling `main`, supplies `None` for missing positions, and returns a fatal `ArityError` for excess positions. `main` returns one ExS value with `ret`; the runner exposes None, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI accepts positional values after `--` and prints the result in ExS source notation.
 
 ```text
-fn main(input) {
-    ret input + 1;
+fn main(left: Int, right: Int) -> Int {
+    ret left + right;
 }
 ```
 
-The module root, function-only top level, and single-parameter `main` entry remain mandatory.
+The module root, function-only top level, and one `main` entry remain mandatory.
 
 ## Future module resolution
 
@@ -1300,7 +1302,7 @@ The runner MUST NOT expose raw WebAssembly memory addresses or runtime heap iden
 
 ## Version
 
-This chapter defines compiler/runtime ABI `0.2`.
+This chapter defines compiler/runtime ABI `9`.
 
 ## Phase-1 required exports
 
@@ -1314,7 +1316,7 @@ __exs_result_ptr() -> i32
 __exs_result_len() -> i32
 ```
 
-The runtime owns both input and result buffers in linear memory. The runner calls `__exs_input_alloc`, copies one `ExsValue` CBOR item into the returned buffer, and passes that pointer-length pair to `__exs_start`. The completed result is another CBOR item in the byte range returned by `__exs_result_ptr` and `__exs_result_len`. Later hostcall phases extend this export set with initialization, resume, and cancellation operations.
+The runtime owns both input and result buffers in linear memory. The runner calls `__exs_input_alloc`, copies one CBOR array of ordered `ExsValue` arguments into the returned buffer, and passes that pointer-length pair to `__exs_start`. The completed result is one `ExsValue` CBOR item in the byte range returned by `__exs_result_ptr` and `__exs_result_len`. Later hostcall phases extend this export set with initialization, resume, and cancellation operations.
 
 ## ABI version value
 
@@ -1324,7 +1326,7 @@ The runtime owns both input and result buffers in linear memory. The runner call
 (major << 16) | minor
 ```
 
-For this specification the value is `0x00000002`.
+For this specification the value is `0x00000009`.
 
 ## Run status
 
@@ -1338,7 +1340,7 @@ Phase-1 `__exs_start(input_ptr, input_len)` returns:
 
 ## Invocation
 
-The Phase-1 entry point is `fn main(input)`. Before execution, the runner serializes one `ExsValue`, calls `__exs_input_alloc`, copies the resulting CBOR bytes to the returned linear-memory range, and invokes `__exs_start(input_ptr, input_len)`. The runtime validates that pair against its owned input buffer, decodes exactly one CBOR item, converts it to `RtValue`, and passes it to `main`.
+The Phase-1 entry point is `fn main(...)`. Before execution, the runner serializes its ordered `ExsValue` arguments as one CBOR array, calls `__exs_input_alloc`, copies the resulting CBOR bytes to the returned linear-memory range, and invokes `__exs_start(input_ptr, input_len)`. The runtime validates that pair against its owned input buffer, decodes the argument array, converts each item to `RtValue`, substitutes `None` for missing declared parameters, and passes the resulting values to `main`. More supplied values than declared parameters produce a fatal `ArityError` before `main` starts.
 
 ## Phase-1 result buffer
 
@@ -1417,7 +1419,7 @@ objectItem      = ( identifier | string ) ":" expression ;
 
 Assignment targets MUST be identifiers, property accesses, or index accesses.
 
-Top-level `statement` and `letDecl` occurrences are invalid. Phase 1 accepts only `functionDecl` items and requires exactly one `fn main(input)` declaration with one parameter.
+Top-level `statement` and `letDecl` occurrences are invalid. Phase 1 accepts only `functionDecl` items and requires exactly one `fn main(...)` declaration.
 
 # 20 – Conformance and Security
 

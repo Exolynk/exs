@@ -2,9 +2,7 @@
 
 use std::collections::HashMap;
 
-use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, MODULE_METADATA_SECTION, START_EXPORT, STATUS_COMPLETE,
-};
+use exs_abi::{ABI_VERSION, ABI_VERSION_EXPORT, MODULE_METADATA_SECTION, START_EXPORT};
 use exs_runtime::WASM_TEMPLATE;
 use wasm_encoder::{
     CodeSection, CustomSection, DataCountSection, DataSection, ExportKind, ExportSection, Function,
@@ -14,6 +12,7 @@ use wasm_encoder::{
 };
 use wasmparser::{ExternalKind, Parser as WasmParser};
 
+use super::entry::compile_start;
 use super::function::{FunctionCompiler, FunctionSignature, add_program_types, build_signatures};
 use super::literals::{LiteralPool, TemplateDataLayout, template_data_layout};
 use super::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
@@ -256,28 +255,8 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 "missing fn main()",
             )))
         })?;
-        let decode_input = self
-            .runtime_functions
-            .get("__exs_rt_decode_input")
-            .copied()
-            .ok_or_else(|| {
-                self.state_error("runtime template does not export __exs_rt_decode_input")
-            })?;
-        let mut start = Function::new([]);
-        start.instruction(&Instruction::LocalGet(0));
-        start.instruction(&Instruction::LocalGet(1));
-        start.instruction(&Instruction::Call(decode_input));
-        start.instruction(&Instruction::Call(main.index));
-        let set_result = self
-            .runtime_functions
-            .get("__exs_rt_set_result")
-            .copied()
-            .ok_or_else(|| {
-                self.state_error("runtime template does not export __exs_rt_set_result")
-            })?;
-        start.instruction(&Instruction::Call(set_result));
-        start.instruction(&Instruction::I32Const(STATUS_COMPLETE));
-        start.instruction(&Instruction::End);
+        let start = compile_start(self.module, main, &self.runtime_functions)
+            .map_err(reencode::Error::UserError)?;
         codes.function(&start);
 
         let mut abi_version = Function::new([]);

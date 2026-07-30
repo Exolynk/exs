@@ -20,8 +20,13 @@ fn compile_source(source: &str) -> exs_compiler::CompiledModule {
 
 /// Executes source text and unwraps a successful runner result for assertions.
 fn execute_source(source: &str, input: ExsValue) -> ExsValue {
+    execute_source_with_inputs(source, &[input])
+}
+
+/// Executes source text with all supplied main arguments for assertions.
+fn execute_source_with_inputs(source: &str, inputs: &[ExsValue]) -> ExsValue {
     let compiled = compile_source(source);
-    match execute(&compiled.wasm, input) {
+    match execute(&compiled.wasm, inputs) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     }
@@ -117,6 +122,43 @@ fn passes_cbor_input_to_main() {
         execute_source("fn main(input) { ret input + 1; }", ExsValue::Int(41)),
         ExsValue::Int(42)
     );
+}
+
+/// Passes ordered CBOR values into typed multi-parameter main declarations.
+#[test]
+fn passes_multiple_cbor_inputs_to_main() {
+    assert_eq!(
+        execute_source_with_inputs(
+            "fn main(number: Int, offset: Float, name: String) -> String { ret name; }",
+            &[
+                ExsValue::Int(1),
+                ExsValue::Float(0.5),
+                ExsValue::String("Ada".to_owned()),
+            ],
+        ),
+        ExsValue::String("Ada".to_owned()),
+    );
+}
+
+/// Substitutes None for missing main arguments before applying their contracts.
+#[test]
+fn substitutes_none_for_missing_main_inputs() {
+    assert_eq!(
+        execute_source_with_inputs("fn main(value: None) -> None { ret value; }", &[]),
+        ExsValue::None,
+    );
+}
+
+/// Rejects entry input arrays that contain more values than main declares.
+#[test]
+fn rejects_excess_main_inputs_with_a_fatal_arity_error() {
+    let result = execute_source_with_inputs("fn main() { ret None; }", &[ExsValue::Int(1)]);
+    let ExsValue::Error(error) = result else {
+        panic!("excess main input did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Fatal);
+    assert_eq!(error.kind, "ArityError");
+    assert_eq!(error.data, Box::new(ExsValue::List(vec![ExsValue::Int(1)])));
 }
 
 /// Constructs a UTF-8 literal from a passive Wasm data segment and compares its contents.
@@ -615,7 +657,7 @@ fn returns_a_fatal_error_for_a_strict_function_type_contract_violation() {
 /// Keeps malformed Wasm modules on the technical runner-error path.
 #[test]
 fn reports_malformed_wasm_as_a_runner_error() {
-    assert!(execute(&[0], ExsValue::None).is_err());
+    assert!(execute(&[0], &[]).is_err());
 }
 
 /// Preserves direct values and propagates Error values unchanged with question mark.

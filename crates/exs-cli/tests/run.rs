@@ -29,6 +29,68 @@ fn prints_the_main_result() {
     assert_eq!(stdout, "1.0\n");
 }
 
+/// Parses multiple CLI values and passes them to a typed main declaration.
+#[test]
+fn passes_multiple_cli_values_to_main() {
+    let path = std::env::temp_dir().join(format!("exs-cli-inputs-{}.exs", std::process::id()));
+    let source = r#"
+fn main(number: Int, name: String, values: List, profile: Object) -> String {
+    ret profile.role;
+}
+"#;
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("run")
+        .arg(&path)
+        .arg("--")
+        .arg("1")
+        .arg("Ada")
+        .arg("[3, 'four']")
+        .arg("{role: admin}")
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(output.status.success());
+    let stdout = match String::from_utf8(output.stdout) {
+        Ok(stdout) => stdout,
+        Err(error) => panic!("CLI output was not UTF-8: {error}"),
+    };
+    assert_eq!(stdout, "\"admin\"\n");
+}
+
+/// Supplies None when no CLI value is present for a declared main parameter.
+#[test]
+fn supplies_none_for_missing_cli_values() {
+    let path = std::env::temp_dir().join(format!("exs-cli-missing-{}.exs", std::process::id()));
+    if let Err(error) = fs::write(&path, "fn main(value: None) -> None { ret value; }") {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("run")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(output.status.success());
+    let stdout = match String::from_utf8(output.stdout) {
+        Ok(stdout) => stdout,
+        Err(error) => panic!("CLI output was not UTF-8: {error}"),
+    };
+    assert_eq!(stdout, "None\n");
+}
+
 /// Prints a completed string result in ExS source notation.
 #[test]
 fn prints_the_main_string_result() {

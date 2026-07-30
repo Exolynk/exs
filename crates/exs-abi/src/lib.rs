@@ -10,8 +10,8 @@ pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, Sour
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 8 removes Ok transport values and adds runtime type-contract validation.
-pub const ABI_VERSION: u32 = 8;
+/// Version 9 adds argument-array transport for the multi-parameter main entry point.
+pub const ABI_VERSION: u32 = 9;
 
 /// Runtime type-mask bit for None.
 pub const TYPE_NONE: u32 = 1 << 0;

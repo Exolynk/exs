@@ -40,10 +40,10 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Define `#[repr(transparent)] ValueRef(NonZeroU32)` for runtime-allocated values.
 - [x] Compile and commit `crates/exs-runtime/exs-runtime.wasm` for compiler linking.
 - [x] Implement source loading, lexer, parser, `Module` AST, source spans, and diagnostics.
-- [x] Support a function-only module root with exactly one-parameter `fn main(input)`.
+- [x] Support a function-only module root with `fn main(...)`, including zero or multiple parameters.
 - [x] Support local `let`, reassignment, `ret`, semicolon validation, integers, floats, booleans, mixed numeric arithmetic/comparisons, logical expressions, calls, conditionals, `while`, and `break`/`continue`.
 - [x] Lower direct functions to Wasm and link them with the runtime template into one `.wasm` output.
-- [x] Implement a minimal Wasmtime runner that passes an `ExsValue` CBOR input to `fn main(input)` and returns an `ExsValue` result without exposing internal references.
+- [x] Implement a minimal Wasmtime runner that passes an ordered `ExsValue` CBOR input array to `fn main(...)` and returns an `ExsValue` result without exposing internal references.
 - [x] Add lexer, parser, compiler, and end-to-end Wasm execution tests.
 
 ### Phase 2: Dynamic values and runtime ABI
@@ -78,7 +78,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 - [x] Add optional parameter and return union annotations for non-entry functions, with dynamic runtime contracts for `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`.
 - [x] Return recoverable `TypeError` for a contract mismatch when `Error` is allowed and a source-mapped fatal `TypeError` for strict return contracts. `?` requires `Error` or `Any` in the return annotation.
-- [ ] Extend the fixed one-value `main` entry ABI to support multiple inputs.
+- [x] Support zero or more typed `main` inputs, substitute `None` for missing values, and return fatal `ArityError` for excess values.
 - [ ] Add type - struct like objects with defined keys and functions with impl.
 - [ ] Add trait declarations, implementations, resolution, and dispatch.
 - [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
@@ -128,3 +128,4 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - `wasm-encoder`, `wasmparser`, and `wasmtime` are approved dependencies for the initial implementation.
 - `crates/exs-runtime/exs-runtime.wasm` is a committed Rust-compiled artifact embedded by the `exs-runtime` crate. Compiler users never build it themselves.
 - Run `cargo fmt`, `cargo test`, `cargo check`, and `cargo clippy` after Rust changes.
+- Invoke a program with positional values using `exs run app.exs -- 1 Ada "[3, 'four']"`.

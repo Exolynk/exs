@@ -125,6 +125,41 @@ pub(crate) fn decode_input_value(pointer_value: i32, length: i32) -> ValueRef {
     value
 }
 
+/// Returns the number of CBOR-decoded values supplied to the generated entry point.
+pub(crate) fn input_argument_count(arguments: ValueRef) -> i32 {
+    let RtValue::List(arguments) = value(arguments) else {
+        trap();
+    };
+    match i32::try_from(arguments.elements.len()) {
+        Ok(length) => length,
+        Err(_) => trap(),
+    }
+}
+
+/// Returns one supplied entry argument or allocates None for a missing position.
+pub(crate) fn input_argument(arguments: ValueRef, index: i32) -> ValueRef {
+    let Ok(index) = usize::try_from(index) else {
+        trap();
+    };
+    let RtValue::List(arguments) = value(arguments) else {
+        trap();
+    };
+    arguments
+        .elements
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| allocate(RtValue::None))
+}
+
+/// Creates the fatal Error returned when the entry receives too many arguments.
+pub(crate) fn input_arity_error(arguments: ValueRef) -> ValueRef {
+    fatal_error(
+        "ArityError",
+        "main received more input values than declared parameters",
+        arguments,
+    )
+}
+
 /// Encodes a completed program result into the runtime-owned CBOR result buffer.
 pub(crate) fn set_result(value: ValueRef) {
     let result = runtime_to_exs_value(value);

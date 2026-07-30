@@ -33,12 +33,12 @@ impl fmt::Display for RunnerError {
 
 impl std::error::Error for RunnerError {}
 
-/// Executes a Phase-1 linked `ExS` module using Wasmtime.
+/// Executes a linked `ExS` module using the supplied ordered main arguments.
 ///
 /// # Errors
 ///
 /// Returns an error when the module cannot be instantiated, violates the ABI, traps, or does not complete.
-pub fn execute(wasm: &[u8], input: ExsValue) -> Result<ExsValue, RunnerError> {
+pub fn execute(wasm: &[u8], inputs: &[ExsValue]) -> Result<ExsValue, RunnerError> {
     let engine = Engine::default();
     let module =
         Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
@@ -46,7 +46,7 @@ pub fn execute(wasm: &[u8], input: ExsValue) -> Result<ExsValue, RunnerError> {
     let instance = Instance::new(&mut store, &module, &[])
         .map_err(|error| RunnerError::Wasm(error.to_string()))?;
     check_abi(&mut store, &instance)?;
-    let (input_pointer, input_length) = write_input(&mut store, &instance, input)?;
+    let (input_pointer, input_length) = write_input(&mut store, &instance, inputs)?;
     let start = instance
         .get_typed_func::<(i32, i32), i32>(&mut store, START_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;
@@ -81,13 +81,13 @@ fn result(store: &mut Store<()>, instance: &Instance) -> Result<ExsValue, Runner
         .map_err(|error| RunnerError::Abi(format!("invalid result CBOR: {error}")))
 }
 
-/// Encodes input and writes it to the runtime-owned linear-memory input buffer.
+/// Encodes ordered main arguments and writes them to the runtime-owned input buffer.
 fn write_input(
     store: &mut Store<()>,
     instance: &Instance,
-    input: ExsValue,
+    inputs: &[ExsValue],
 ) -> Result<(i32, i32), RunnerError> {
-    let bytes = input
+    let bytes = ExsValue::List(inputs.to_vec())
         .to_cbor()
         .map_err(|error| RunnerError::Abi(format!("could not encode input CBOR: {error}")))?;
     let length = i32::try_from(bytes.len())

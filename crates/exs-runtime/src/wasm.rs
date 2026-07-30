@@ -375,6 +375,24 @@ pub extern "C" fn __exs_rt_decode_input(pointer: i32, length: i32) -> ValueRef {
     runtime::decode_input_value(pointer, length)
 }
 
+/// Returns the number of values in one runtime-owned entry argument array.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_input_argument_count(arguments: ValueRef) -> i32 {
+    runtime::input_argument_count(arguments)
+}
+
+/// Returns one entry argument, substituting None when the requested argument is absent.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_input_argument(arguments: ValueRef, index: i32) -> ValueRef {
+    runtime::input_argument(arguments, index)
+}
+
+/// Creates a fatal ArityError for an entry argument array that has excess values.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_input_arity_error(arguments: ValueRef) -> ValueRef {
+    runtime::input_arity_error(arguments)
+}
+
 /// Encodes a completed program result into the runtime-owned CBOR result buffer.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_set_result(value: ValueRef) {

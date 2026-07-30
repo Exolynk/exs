@@ -52,19 +52,6 @@ pub(super) fn build_signatures<'a>(
                 format!("duplicate function `{}`", function.name.name),
             )));
         }
-        if function.name.name == "main"
-            && (function.return_type.is_some()
-                || function
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.type_annotation.is_some()))
-        {
-            return Err(diagnostics(CompileDiagnostic::new(
-                "E0219",
-                function.name.span,
-                "Phase 1 does not support type annotations on fn main",
-            )));
-        }
         let mut parameters = HashMap::new();
         let mut parameter_types = Vec::new();
         for parameter in &function.parameters {
@@ -92,18 +79,14 @@ pub(super) fn build_signatures<'a>(
             },
         );
     }
-    match signatures.get("main") {
-        Some(signature) if signature.arity == 1 => Ok(signatures),
-        Some(_) => Err(diagnostics(CompileDiagnostic::new(
-            "E0203",
-            module_span(module),
-            "Phase 1 requires fn main(input) with exactly one parameter",
-        ))),
-        None => Err(diagnostics(CompileDiagnostic::new(
+    if signatures.contains_key("main") {
+        Ok(signatures)
+    } else {
+        Err(diagnostics(CompileDiagnostic::new(
             "E0200",
             module_span(module),
             "missing fn main()",
-        ))),
+        )))
     }
 }
 

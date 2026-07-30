@@ -1,5 +1,7 @@
 //! Command-line interface for the Phase-1 `ExS` toolchain.
 
+mod input;
+
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -34,7 +36,14 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
                 .map_err(|error| format!("could not write {}: {error}", arguments[3]))?;
             Ok(())
         }
-        "run" if arguments.len() == 2 => run_program(&arguments[1]),
+        "run" if arguments.len() >= 2 => {
+            let inputs = match arguments.get(2) {
+                None => Vec::new(),
+                Some(separator) if separator == "--" => input::parse_arguments(&arguments[3..])?,
+                Some(_) => return Err("expected `--` before run input values".to_owned()),
+            };
+            run_program(&arguments[1], &inputs)
+        }
         _ => Err(usage()),
     }
 }
@@ -57,7 +66,7 @@ fn compile_source(
 }
 
 /// Executes a source file or linked WebAssembly module.
-fn run_program(path: &str) -> Result<(), String> {
+fn run_program(path: &str, inputs: &[exs_runner::ExsValue]) -> Result<(), String> {
     let wasm = if Path::new(path)
         .extension()
         .is_some_and(|extension| extension == "wasm")
@@ -73,8 +82,7 @@ fn run_program(path: &str) -> Result<(), String> {
         .wasm
     };
     let debug_info = read_debug_info(&wasm).ok();
-    let result = exs_runner::execute(&wasm, exs_runner::ExsValue::None)
-        .map_err(|error| error.to_string())?;
+    let result = exs_runner::execute(&wasm, inputs).map_err(|error| error.to_string())?;
     match result {
         exs_runner::ExsValue::Error(error) => Err(format_error(&error, debug_info.as_ref())),
         result => {
@@ -264,5 +272,5 @@ fn line_and_column(source: &str, offset: u32) -> (usize, usize) {
 
 /// Returns CLI usage text.
 fn usage() -> String {
-    "usage: exs check <file.exs> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm>".to_owned()
+    "usage: exs check <file.exs> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...]".to_owned()
 }

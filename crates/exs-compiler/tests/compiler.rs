@@ -138,21 +138,17 @@ fn rejects_propagation_without_an_error_return_type() {
     assert_eq!(error.diagnostics[0].code, "E0218");
 }
 
-/// Keeps the fixed dynamic Phase-1 entry ABI separate from function contracts.
+/// Compiles typed main declarations with multiple parameters.
 #[test]
-fn rejects_type_annotations_on_main() {
-    let result = compile(
+fn compiles_typed_multi_parameter_main() {
+    let module = compile(
         SourceInput {
             source_id: "typed-main.exs",
-            text: "fn main(input: Int) -> Int { ret input; }",
+            text: "fn main(first: Int, second: Float) -> Float { ret first + second; }",
         },
         CompileOptions::default(),
     );
-    let error = match result {
-        Ok(_) => panic!("compilation unexpectedly succeeded"),
-        Err(error) => error,
-    };
-    assert_eq!(error.diagnostics[0].code, "E0219");
+    assert!(module.is_ok());
 }
 
 /// Compiles decoded string escapes into compiler-owned passive data segments.
@@ -259,19 +255,15 @@ fn reports_a_missing_statement_semicolon() {
     assert_eq!(error.diagnostics[0].code, "E0103");
 }
 
-/// Rejects the obsolete zero-parameter Phase-1 entry point.
+/// Compiles a zero-parameter main entry point.
 #[test]
-fn requires_one_main_parameter() {
-    let result = compile(
+fn compiles_zero_parameter_main() {
+    let module = compile(
         SourceInput {
             source_id: "entry.exs",
             text: "fn main() { ret 42; }",
         },
         CompileOptions::default(),
     );
-    let error = match result {
-        Ok(_) => panic!("compilation unexpectedly succeeded"),
-        Err(error) => error,
-    };
-    assert_eq!(error.diagnostics[0].code, "E0203");
+    assert!(module.is_ok());
 }

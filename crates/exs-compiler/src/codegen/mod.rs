@@ -1,5 +1,6 @@
 //! WebAssembly code generation and runtime-template linking.
 
+mod entry;
 mod function;
 mod linker;
 mod literals;
