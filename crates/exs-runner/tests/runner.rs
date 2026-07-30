@@ -596,12 +596,26 @@ fn accepts_none_in_function_type_contracts() {
     );
 }
 
-/// Traps when a strict return contract cannot represent a type mismatch as Error.
+/// Returns a fatal Error when a strict function contract rejects a value.
 #[test]
-fn traps_for_a_strict_function_type_contract_violation() {
-    let compiled =
-        compile_source("fn wrong() -> Int { ret \"invalid\"; } fn main(input) { ret wrong(); }");
-    assert!(execute(&compiled.wasm, ExsValue::None).is_err());
+fn returns_a_fatal_error_for_a_strict_function_type_contract_violation() {
+    let result = execute_source(
+        "fn wrong() -> Int { ret \"invalid\"; } fn main(input) { ret wrong(); }",
+        ExsValue::None,
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("strict type contract did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Fatal);
+    assert_eq!(error.kind, "TypeError");
+    assert!(error.origin.is_some());
+    assert_eq!(error.trace.len(), 2);
+}
+
+/// Keeps malformed Wasm modules on the technical runner-error path.
+#[test]
+fn reports_malformed_wasm_as_a_runner_error() {
+    assert!(execute(&[0], ExsValue::None).is_err());
 }
 
 /// Preserves direct values and propagates Error values unchanged with question mark.

@@ -148,3 +148,44 @@ fn main(input) {
     assert!(stderr.contains("inner called at"));
     assert!(stderr.contains("main"));
 }
+
+/// Prints a fatal type contract Error without exposing a Wasmtime backtrace.
+#[test]
+fn prints_fatal_type_contract_errors_with_source_context() {
+    let path = std::env::temp_dir().join(format!("exs-cli-fatal-{}.exs", std::process::id()));
+    let source = r#"
+fn add(value: Int, offset: Float) -> Float {
+    ret value + offset;
+}
+fn main(input) {
+    ret add(3.3, 2.3)?;
+}
+"#;
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("run")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(!output.status.success());
+    let stderr = match String::from_utf8(output.stderr) {
+        Ok(stderr) => stderr,
+        Err(error) => panic!("CLI error output was not UTF-8: {error}"),
+    };
+    assert!(stderr.contains("error: TypeError (fatal)"));
+    assert!(stderr.contains("value does not satisfy the declared function type"));
+    assert!(stderr.contains("data: 3.3"));
+    assert!(stderr.contains("origin: "));
+    assert!(stderr.contains("trace:"));
+    assert!(stderr.contains("add called at"));
+    assert!(stderr.contains("main"));
+    assert!(!stderr.contains("WebAssembly error"));
+}

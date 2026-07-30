@@ -33,8 +33,29 @@ impl RuntimeError {
         data: ValueRef,
         origin: Option<SourcePositionId>,
     ) -> Self {
+        Self::new(ErrorSeverity::Recoverable, kind, message, data, origin)
+    }
+
+    /// Creates one fatal runtime Error with no explicit cause.
+    pub(crate) fn fatal(
+        kind: &str,
+        message: &str,
+        data: ValueRef,
+        origin: Option<SourcePositionId>,
+    ) -> Self {
+        Self::new(ErrorSeverity::Fatal, kind, message, data, origin)
+    }
+
+    /// Builds one runtime Error with the active direct-function trace.
+    fn new(
+        severity: ErrorSeverity,
+        kind: &str,
+        message: &str,
+        data: ValueRef,
+        origin: Option<SourcePositionId>,
+    ) -> Self {
         Self {
-            severity: ErrorSeverity::Recoverable,
+            severity,
             kind: String::from(kind).into_boxed_str(),
             message: String::from(message).into_boxed_str(),
             data,

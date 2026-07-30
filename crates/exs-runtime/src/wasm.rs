@@ -40,7 +40,7 @@ pub extern "C" fn __exs_rt_type_matches(value: ValueRef, allowed_types: i32) -> 
     i32::from(value_type_mask(runtime::value(value)) & allowed_types != 0)
 }
 
-/// Creates a type-contract Error or traps after one failed function-boundary type check.
+/// Creates a type-contract Error after one failed function-boundary type check.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_type_mismatch(value: ValueRef, error_allowed: i32) -> ValueRef {
     if error_allowed == 1 {
@@ -50,7 +50,11 @@ pub extern "C" fn __exs_rt_type_mismatch(value: ValueRef, error_allowed: i32) ->
             value,
         )
     } else if error_allowed == 0 {
-        runtime::trap()
+        runtime::fatal_error(
+            "TypeError",
+            "value does not satisfy the declared function type",
+            value,
+        )
     } else {
         runtime::trap()
     }

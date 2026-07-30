@@ -54,6 +54,14 @@ pub(crate) fn recoverable_error(kind: &str, message: &str, data: ValueRef) -> Va
     ))))
 }
 
+/// Allocates one fatal language Error using the active source position.
+pub(crate) fn fatal_error(kind: &str, message: &str, data: ValueRef) -> ValueRef {
+    let origin = unsafe { runtime() }.current_source_position;
+    allocate(RtValue::Error(Box::new(RuntimeError::fatal(
+        kind, message, data, origin,
+    ))))
+}
+
 /// Returns the runtime payload stored at one value-table index.
 pub(crate) fn value(reference: ValueRef) -> &'static RtValue {
     let index = reference.runtime_index() as usize - 1;

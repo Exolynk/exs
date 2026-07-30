@@ -77,7 +77,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 ### Phase 6: Traits & Types
 
 - [x] Add optional parameter and return union annotations for non-entry functions, with dynamic runtime contracts for `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`.
-- [x] Return recoverable `TypeError` for a contract mismatch when `Error` is allowed; trap for strict return contracts. `?` requires `Error` or `Any` in the return annotation.
+- [x] Return recoverable `TypeError` for a contract mismatch when `Error` is allowed and a source-mapped fatal `TypeError` for strict return contracts. `?` requires `Error` or `Any` in the return annotation.
 - [ ] Extend the fixed one-value `main` entry ABI to support multiple inputs.
 - [ ] Add type - struct like objects with defined keys and functions with impl.
 - [ ] Add trait declarations, implementations, resolution, and dispatch.

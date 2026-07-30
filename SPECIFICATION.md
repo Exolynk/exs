@@ -600,7 +600,7 @@ fn some(input: Int, offset: Float) -> String | Int | Bool | Error {
 
 The current names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`. An omitted annotation is exactly `Any`. An annotation is checked dynamically at function entry for every parameter and at each explicit or implicit return. The compiler does not statically prove call argument types.
 
-On a contract mismatch, the runtime returns a recoverable `Error { kind: "TypeError" }` when the function return annotation includes `Error` or is omitted (`Any`). If the return annotation excludes `Error`, the runtime traps because the contract cannot represent the failure. A valid Error value satisfies an `Error` union member and is returned unchanged.
+On a contract mismatch, the runtime returns a recoverable `Error { kind: "TypeError" }` when the function return annotation includes `Error` or is omitted (`Any`). If the return annotation excludes `Error`, compiler-generated contract lowering returns a fatal `TypeError` from the current function. This preserves source position and trace information while terminating the program through the normal Error-reporting path. A valid Error value satisfies an `Error` union member and is returned unchanged.
 
 The Phase-1 `fn main(input)` ABI remains dynamically typed and does not accept these annotations. It retains exactly one input parameter.
 
@@ -634,7 +634,7 @@ Recursion is allowed. Stack depth is constrained by runner and WebAssembly imple
 
 ## Error model
 
-Recoverable failures are Error values. ExS does not throw exceptions and does not unwind the stack.
+Recoverable failures are Error values. ExS does not throw exceptions and does not unwind the stack. Fatal language failures are also Error values with fatal severity when the runtime can safely construct and serialize them; compiler-generated strict type-contract failures use this path. Heap corruption, invalid ABI state, malformed generated code, and other technical invariant failures remain Wasm traps and runner errors.
 
 An operation may return either its normal value or an Error. Callers inspect it directly or propagate it using `?`.
 
