@@ -149,7 +149,7 @@ Reserved keywords are:
 
 ```text
 break continue else export false fn for from if import in
-is let None Ok Error par ret true while
+is let None Error par ret true while
 ```
 
 ## Literals
@@ -210,7 +210,6 @@ ExS is dynamically typed. Types belong to runtime values, not variable bindings.
 | Type           |                Mutable | Heap allocated |
 | -------------- | ---------------------: | -------------: |
 | `None`         |                     No |            Yes |
-| `Ok`           |                     No |            Yes |
 | `Bool`         |                     No |            Yes |
 | `Int`          |                     No |            Yes |
 | `Float`        |                     No |            Yes |
@@ -232,7 +231,7 @@ pub struct ValueRef(NonZeroU32);
 
 `ValueRef` is a nonzero, one-based index into the runtime-owned value table. It has no tag or payload and MUST NOT cross the Wasm-host boundary. The compiler only uses stable runtime ABI operations to create, pass, and operate on values; it MUST NOT inspect the value table or runtime-object layouts.
 
-`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports None, Ok, Error, Bool, Int, Float, String, and recursively nested List and Object transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
+`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports None, Error, Bool, Int, Float, String, and recursively nested List and Object transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
 
 The runtime stores the actual payload in `RtValue`. Primitive payloads are inline. Every complex variant MUST be boxed so adding it cannot increase the allocation size of primitive values:
 
@@ -240,7 +239,6 @@ The runtime stores the actual payload in `RtValue`. Primitive payloads are inlin
 #[repr(u8)]
 pub enum RtValue {
     None,
-    Ok(ValueRef),
     Error(Box<RuntimeError>),
     Bool(bool),
     Int(i64),
@@ -258,7 +256,7 @@ pub enum RtValue {
 
 ## Option and Result
 
-`Ok(value)` is the successful variant shared by Options and Results. An Option is either `None` or `Ok(value)`; a Result is either `Error` or `Ok(value)`. The postfix `?` operator extracts `Ok(value)`, immediately returns an Error unchanged, converts `None` to `Error { kind: "MissingValue" }`, and otherwise returns a direct value unchanged.
+ExS has no `Ok` wrapper. An Option is either `None` or a direct value; a Result is either an `Error` or a direct value. The postfix `?` operator immediately returns an Error unchanged, converts `None` to `Error { kind: "MissingValue" }`, and otherwise leaves its direct value unchanged. In a function with an explicit return contract, `?` is valid only when that contract includes `Error`; an omitted `Any` contract also permits it.
 
 ## Bool
 
@@ -590,6 +588,22 @@ Parameters are positional and dynamically typed. Duplicate parameter names are c
 
 ExS 0.1 does not define default, variadic, named, or keyword arguments.
 
+### Optional function contracts
+
+Non-entry functions MAY annotate each parameter and their return value with a union of current runtime type names:
+
+```text
+fn some(input: Int, offset: Float) -> String | Int | Bool | Error {
+    ret input + offset;
+}
+```
+
+The current names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`. An omitted annotation is exactly `Any`. An annotation is checked dynamically at function entry for every parameter and at each explicit or implicit return. The compiler does not statically prove call argument types.
+
+On a contract mismatch, the runtime returns a recoverable `Error { kind: "TypeError" }` when the function return annotation includes `Error` or is omitted (`Any`). If the return annotation excludes `Error`, the runtime traps because the contract cannot represent the failure. A valid Error value satisfies an `Error` union member and is returned unchanged.
+
+The Phase-1 `fn main(input)` ABI remains dynamically typed and does not accept these annotations. It retains exactly one input parameter.
+
 ## Arity
 
 A function has one exact arity. Calling it with a different argument count produces `ArityError`.
@@ -781,7 +795,7 @@ Top-level executable statements are not permitted. A future top-level-code featu
 
 ## Phase-1 modules and entry point
 
-Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the runner exposes None, Ok, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies None input and prints the result in ExS source notation.
+Phase 1 accepts only `Function` items. The required entry point is `fn main(input)` with exactly one parameter. The runner supplies one `ExsValue` as CBOR; the runtime decodes it to an `RtValue` before calling `main`. `main` returns one ExS value with `ret`; the runner exposes None, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI supplies None input and prints the result in ExS source notation.
 
 ```text
 fn main(input) {
@@ -804,7 +818,7 @@ The following built-ins are always available and cannot be shadowed at module to
 Returns one of these Strings:
 
 ```text
-"None" "Ok" "Bool" "Int" "Float" "String" "List" "Object"
+"None" "Bool" "Int" "Float" "String" "List" "Object"
 "Function" "Closure" "Error" "HostResource"
 ```
 
@@ -950,7 +964,6 @@ All allocated runtime values use this root enum. Complex payloads are boxed:
 ```rust
 pub enum RtValue {
     None,
-    Ok(ValueRef),
     Error(Box<RuntimeError>),
     Bool(bool),
     Int(i64),
@@ -999,7 +1012,7 @@ Internal invariant failures MUST NOT be converted into arbitrary language Errors
 
 ## Serialization
 
-Ordinary CBOR serialization supports None, Ok, Error, Bool, Int, Float, String, List, and Object.
+Ordinary CBOR serialization supports None, Error, Bool, Int, Float, String, List, and Object.
 
 Cycles and aliases are represented with the reference tags defined by the Host ABI.
 
@@ -1174,7 +1187,6 @@ The payload for kinds 0 and 1 is canonical CBOR. Kind 2 uses a CBOR map containi
 | ExS                        | CBOR               |
 | --------------------------- | ------------------ |
 | None                        | null               |
-| Ok(value)                   | tag 60000 plus value |
 | Bool                        | boolean            |
 | Int                         | integer            |
 | Float                       | binary64           |
@@ -1330,7 +1342,7 @@ The Phase-1 entry point is `fn main(input)`. Before execution, the runner serial
 
 ## Phase-1 result buffer
 
-After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one None, Ok, Error, Bool, Int, Float, String, or recursively nested acyclic List or Object CBOR item. The internal `ValueRef` never crosses this boundary.
+After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one None, Error, Bool, Int, Float, String, or recursively nested acyclic List or Object CBOR item. The internal `ValueRef` never crosses this boundary.
 
 ## Runtime intrinsics
 
@@ -1346,9 +1358,12 @@ This grammar is normative for syntax but omits lexical Unicode productions alrea
 module          = { functionDecl } ;
 declaration     = functionDecl | letDecl ;
 
-functionDecl    = "fn" identifier "(" parameters? ")" block ;
+functionDecl    = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] block ;
 functionExpr    = "fn" "(" parameters? ")" block ;
-parameters      = identifier { "," identifier } [ "," ] ;
+parameters      = parameter { "," parameter } [ "," ] ;
+parameter       = identifier [ ":" typeUnion ] ;
+typeUnion       = typeName { "|" typeName } ;
+typeName        = identifier | "None" | "Error" ;
 
 letDecl         = "let" identifier [ "=" expression ] ";" ;
 

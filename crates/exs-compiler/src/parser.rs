@@ -2,7 +2,7 @@
 
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module,
-    ObjectProperty, Statement, UnaryOperator,
+    ObjectProperty, Parameter, Statement, TypeAnnotation, TypeName, UnaryOperator,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{Token, TokenKind};
@@ -42,7 +42,16 @@ impl<'a> Parser<'a> {
         let mut parameters = Vec::new();
         if !self.check(&TokenKind::RightParen) {
             loop {
-                parameters.push(self.identifier("expected parameter name")?);
+                let name = self.identifier("expected parameter name")?;
+                let type_annotation = if self.matches(&TokenKind::Colon) {
+                    Some(self.type_annotation()?)
+                } else {
+                    None
+                };
+                parameters.push(Parameter {
+                    name,
+                    type_annotation,
+                });
                 if !self.matches(&TokenKind::Comma) {
                     break;
                 }
@@ -52,12 +61,51 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect_simple(TokenKind::RightParen, "expected `)` after parameters")?;
+        let return_type = if self.matches(&TokenKind::Arrow) {
+            Some(self.type_annotation()?)
+        } else {
+            None
+        };
         let body = self.block()?;
         Ok(FunctionDeclaration {
             name,
             parameters,
+            return_type,
             span: start.through(body.span),
             body,
+        })
+    }
+
+    /// Parses one non-empty `Type | Type` annotation in a function boundary position.
+    fn type_annotation(&mut self) -> Result<TypeAnnotation<'a>, CompileDiagnostic<'a>> {
+        let first = self.type_name()?;
+        let mut members = vec![first];
+        while self.matches(&TokenKind::Pipe) {
+            members.push(self.type_name()?);
+        }
+        let span = members
+            .first()
+            .map_or_else(|| SourceSpan::empty("<unknown>"), |member| member.span)
+            .through(
+                members
+                    .last()
+                    .map_or_else(|| SourceSpan::empty("<unknown>"), |member| member.span),
+            );
+        Ok(TypeAnnotation { members, span })
+    }
+
+    /// Parses one source-visible type name.
+    fn type_name(&mut self) -> Result<TypeName<'a>, CompileDiagnostic<'a>> {
+        let token = self.advance().clone();
+        let name = match token.kind {
+            TokenKind::Identifier(name) => name,
+            TokenKind::None => "None".to_owned(),
+            TokenKind::Error => "Error".to_owned(),
+            _ => return Err(self.error(token.span, "E0111", "expected type name")),
+        };
+        Ok(TypeName {
+            name,
+            span: token.span,
         })
     }
 
@@ -371,17 +419,6 @@ impl<'a> Parser<'a> {
             TokenKind::True => Ok(Expression::Bool(true, token.span)),
             TokenKind::False => Ok(Expression::Bool(false, token.span)),
             TokenKind::None => Ok(Expression::None(token.span)),
-            TokenKind::Ok => {
-                self.expect_simple(TokenKind::LeftParen, "expected ( after Ok")?;
-                let value = self.expression()?;
-                let end = self
-                    .expect_simple(TokenKind::RightParen, "expected ) after Ok value")?
-                    .span;
-                Ok(Expression::Ok {
-                    value: Box::new(value),
-                    span: token.span.through(end),
-                })
-            }
             TokenKind::Error => {
                 self.expect_simple(TokenKind::LeftParen, "expected ( after Error")?;
                 let arguments = self.arguments(TokenKind::RightParen)?;
@@ -590,7 +627,6 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         Expression::Object { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
-        | Expression::Ok { span, .. }
         | Expression::IsError { span, .. }
         | Expression::Propagate { span, .. }
         | Expression::Binary { span, .. }

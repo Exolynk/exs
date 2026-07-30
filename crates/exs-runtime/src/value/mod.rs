@@ -15,7 +15,6 @@ pub(crate) use string::RuntimeString;
 
 use alloc::boxed::Box;
 use core::mem::{align_of, size_of};
-use exs_value::ValueRef;
 
 /// The allocated payload of one ExS value.
 ///
@@ -25,8 +24,6 @@ use exs_value::ValueRef;
 pub(crate) enum RtValue {
     /// The absence variant shared by Options and empty operations.
     None,
-    /// A successful Option or Result payload.
-    Ok(ValueRef),
     /// A structured language Error.
     Error(Box<RuntimeError>),
     /// A boolean value.

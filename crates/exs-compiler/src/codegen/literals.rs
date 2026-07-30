@@ -156,7 +156,6 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
     match expression {
         Expression::String(value, _) => pool.insert(value),
         Expression::Unary { operand, .. }
-        | Expression::Ok { value: operand, .. }
         | Expression::IsError { value: operand, .. }
         | Expression::Propagate { value: operand, .. } => {
             collect_expression_literals(operand, pool)

@@ -3,6 +3,10 @@
 use alloc::string::String;
 use core::panic::PanicInfo;
 
+use exs_abi::{
+    TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_NONE, TYPE_OBJECT,
+    TYPE_STRING,
+};
 use exs_value::{ValueRef, is_valid_int};
 
 use crate::gc;
@@ -15,12 +19,6 @@ pub extern "C" fn __exs_rt_none_new() -> ValueRef {
     runtime::allocate(RtValue::None)
 }
 
-/// Wraps one direct value as the successful variant of an Option or Result.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_ok_new(value: ValueRef) -> ValueRef {
-    runtime::allocate(RtValue::Ok(value))
-}
-
 /// Returns whether one runtime value is a language Error.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> ValueRef {
@@ -28,6 +26,34 @@ pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> ValueRef {
         runtime::value(value),
         RtValue::Error(_)
     )))
+}
+
+/// Tests one function-boundary value against a compiler-emitted type mask.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_type_matches(value: ValueRef, allowed_types: i32) -> i32 {
+    let Ok(allowed_types) = u32::try_from(allowed_types) else {
+        runtime::trap();
+    };
+    if allowed_types == 0 || allowed_types & !TYPE_ANY != 0 {
+        runtime::trap();
+    }
+    i32::from(value_type_mask(runtime::value(value)) & allowed_types != 0)
+}
+
+/// Creates a type-contract Error or traps after one failed function-boundary type check.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_type_mismatch(value: ValueRef, error_allowed: i32) -> ValueRef {
+    if error_allowed == 1 {
+        runtime::recoverable_error(
+            "TypeError",
+            "value does not satisfy the declared function type",
+            value,
+        )
+    } else if error_allowed == 0 {
+        runtime::trap()
+    } else {
+        runtime::trap()
+    }
 }
 
 /// Creates a recoverable language Error from String kind and message values.
@@ -60,23 +86,29 @@ pub extern "C" fn __exs_rt_error_new(
     runtime::recoverable_error(&kind, &message, data)
 }
 
-/// Converts None into an Error while preserving direct values and Result variants.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_propagate(value: ValueRef) -> ValueRef {
-    match runtime::value(value) {
-        RtValue::Ok(_) | RtValue::Error(_) => value,
-        RtValue::None => {
-            runtime::recoverable_error("MissingValue", "cannot propagate a missing value", value)
-        }
-        _ => value,
+/// Returns the compiler-visible type-mask bit for one runtime value.
+fn value_type_mask(value: &RtValue) -> u32 {
+    match value {
+        RtValue::None => TYPE_NONE,
+        RtValue::Error(_) => TYPE_ERROR,
+        RtValue::Bool(_) => TYPE_BOOL,
+        RtValue::Int(_) => TYPE_INT,
+        RtValue::Float(_) => TYPE_FLOAT,
+        RtValue::String(_) => TYPE_STRING,
+        RtValue::List(_) => TYPE_LIST,
+        RtValue::Object(_) => TYPE_OBJECT,
+        RtValue::BoxedFutureValue(_) => 0,
     }
 }
 
-/// Extracts a successful payload while preserving a direct value.
+/// Converts None into an Error while preserving direct values and Error values.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_unwrap(value: ValueRef) -> ValueRef {
+pub extern "C" fn __exs_rt_propagate(value: ValueRef) -> ValueRef {
     match runtime::value(value) {
-        RtValue::Ok(value) => *value,
+        RtValue::Error(_) => value,
+        RtValue::None => {
+            runtime::recoverable_error("MissingValue", "cannot propagate a missing value", value)
+        }
         _ => value,
     }
 }

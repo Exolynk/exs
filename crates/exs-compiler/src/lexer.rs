@@ -45,8 +45,6 @@ pub enum TokenKind {
     Continue,
     /// The None keyword.
     None,
-    /// The Ok keyword.
-    Ok,
     /// The is keyword.
     Is,
     /// The Error keyword.
@@ -79,6 +77,8 @@ pub enum TokenKind {
     Plus,
     /// `-`.
     Minus,
+    /// `->`.
+    Arrow,
     /// `*`.
     Star,
     /// `!`.
@@ -101,6 +101,8 @@ pub enum TokenKind {
     AndAnd,
     /// `||`.
     OrOr,
+    /// `|`.
+    Pipe,
     /// `?`.
     Question,
     /// End of source.
@@ -246,6 +248,10 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                     b',' => TokenKind::Comma,
                     b';' => TokenKind::Semicolon,
                     b'+' => TokenKind::Plus,
+                    b'-' if bytes.get(index) == Some(&b'>') => {
+                        index += 1;
+                        TokenKind::Arrow
+                    }
                     b'-' => TokenKind::Minus,
                     b'*' => TokenKind::Star,
                     b'!' if bytes.get(index) == Some(&b'=') => {
@@ -276,6 +282,7 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                         index += 1;
                         TokenKind::OrOr
                     }
+                    b'|' => TokenKind::Pipe,
                     b'?' => TokenKind::Question,
                     _ => {
                         return Err(diagnostic(
@@ -455,7 +462,6 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
         "break" => TokenKind::Break,
         "continue" => TokenKind::Continue,
         "None" => TokenKind::None,
-        "Ok" => TokenKind::Ok,
         "is" => TokenKind::Is,
         "Error" => TokenKind::Error,
         "true" => TokenKind::True,

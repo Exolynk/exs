@@ -153,10 +153,6 @@ fn runtime_to_exs_value_inner(
 ) -> ExsValue {
     match value(reference) {
         RtValue::None => ExsValue::None,
-        RtValue::Ok(value) => ExsValue::Ok(Box::new(runtime_to_exs_value_inner(
-            *value,
-            active_containers,
-        ))),
         RtValue::Error(error) => ExsValue::Error(ExsError {
             severity: error.severity,
             kind: error.kind.as_ref().into(),
@@ -212,7 +208,6 @@ fn runtime_to_exs_value_inner(
 fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
     let value = match value {
         ExsValue::None => RtValue::None,
-        ExsValue::Ok(value) => RtValue::Ok(exs_value_to_runtime(*value)),
         ExsValue::Error(error) => RtValue::Error(Box::new(RuntimeError {
             severity: error.severity,
             kind: error.kind.into_boxed_str(),

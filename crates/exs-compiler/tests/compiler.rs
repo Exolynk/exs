@@ -91,6 +91,70 @@ fn compiles_floating_point_literals() {
     assert!(module.is_ok());
 }
 
+/// Compiles optional parameter and return union type annotations.
+#[test]
+fn compiles_function_type_annotations() {
+    let module = compile(
+        SourceInput {
+            source_id: "types.exs",
+            text: "fn convert(value: Int, offset: Float) -> Float | Error { ret value + offset; } fn main(input) { ret convert(input, 0.5); }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok());
+}
+
+/// Rejects a type name that is not in the current built-in type set.
+#[test]
+fn rejects_an_unknown_function_type() {
+    let result = compile(
+        SourceInput {
+            source_id: "unknown-type.exs",
+            text: "fn value(input: Unknown) { ret input; } fn main(input) { ret value(input); }",
+        },
+        CompileOptions::default(),
+    );
+    let error = match result {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics[0].code, "E0216");
+}
+
+/// Rejects propagation in a function whose declared return type excludes Error.
+#[test]
+fn rejects_propagation_without_an_error_return_type() {
+    let result = compile(
+        SourceInput {
+            source_id: "strict-return.exs",
+            text: "fn value(input) -> Int { ret input?; } fn main(input) { ret value(input); }",
+        },
+        CompileOptions::default(),
+    );
+    let error = match result {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics[0].code, "E0218");
+}
+
+/// Keeps the fixed dynamic Phase-1 entry ABI separate from function contracts.
+#[test]
+fn rejects_type_annotations_on_main() {
+    let result = compile(
+        SourceInput {
+            source_id: "typed-main.exs",
+            text: "fn main(input: Int) -> Int { ret input; }",
+        },
+        CompileOptions::default(),
+    );
+    let error = match result {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics[0].code, "E0219");
+}
+
 /// Compiles decoded string escapes into compiler-owned passive data segments.
 #[test]
 fn compiles_utf8_string_literals() {

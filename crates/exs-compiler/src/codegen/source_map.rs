@@ -41,7 +41,19 @@ impl<'a> SourceMap<'a> {
             source_map.insert(function.span);
             source_map.insert(function.name.span);
             for parameter in &function.parameters {
-                source_map.insert(parameter.span);
+                source_map.insert(parameter.name.span);
+                if let Some(annotation) = &parameter.type_annotation {
+                    source_map.insert(annotation.span);
+                    for member in &annotation.members {
+                        source_map.insert(member.span);
+                    }
+                }
+            }
+            if let Some(annotation) = &function.return_type {
+                source_map.insert(annotation.span);
+                for member in &annotation.members {
+                    source_map.insert(member.span);
+                }
             }
             source_map.collect_block(&function.body);
         }
@@ -204,9 +216,7 @@ impl<'a> SourceMap<'a> {
             | Expression::String(_, span)
             | Expression::Bool(_, span)
             | Expression::None(span) => self.insert(*span),
-            Expression::Ok { value, span }
-            | Expression::IsError { value, span }
-            | Expression::Propagate { value, span } => {
+            Expression::IsError { value, span } | Expression::Propagate { value, span } => {
                 self.insert(*span);
                 self.collect_expression(value);
             }

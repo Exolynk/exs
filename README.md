@@ -68,22 +68,25 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 5: Errors, Options, and source maps
 
-- [x] Replace Null with None and add shared Ok and structured Error transport values.
-- [x] Add source-level None, Ok(value), is Error, and ? propagation with MissingValue conversion.
+- [x] Replace Null with direct None and structured Error transport values.
+- [x] Add source-level None, `is Error`, and ? propagation with MissingValue conversion.
 - [x] Convert recoverable numeric, condition, List, Object, iterable, and method validation failures from traps to Error values.
 - [x] Emit compact source-position IDs, `exs.source.map`, and optional embedded `exs.sources` text.
 - [x] Add direct-function language stack traces; async-frame traces remain part of suspension work.
 
-### Phase 6: Closures
+### Phase 6: Traits & Types
 
-- [ ] Add closure discovery, capture analysis, Cells, and closure runtime objects.
-- [ ] Preserve shared mutable binding identity across nested closures.
-
-### Phase 7: Traits
-
+- [x] Add optional parameter and return union annotations for non-entry functions, with dynamic runtime contracts for `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`.
+- [x] Return recoverable `TypeError` for a contract mismatch when `Error` is allowed; trap for strict return contracts. `?` requires `Error` or `Any` in the return annotation.
+- [ ] Extend the fixed one-value `main` entry ABI to support multiple inputs.
 - [ ] Add type - struct like objects with defined keys and functions with impl.
 - [ ] Add trait declarations, implementations, resolution, and dispatch.
 - [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
+
+### Phase 7: Closures
+
+- [ ] Add closure discovery, capture analysis, Cells, and closure runtime objects.
+- [ ] Preserve shared mutable binding identity across nested closures.
 
 ### Phase 8: Deep clone
 

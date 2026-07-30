@@ -26,7 +26,6 @@ fn round_trips_phase_one_values() {
                 ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)]),
             ),
         ]),
-        ExsValue::Ok(Box::new(ExsValue::Int(42))),
         ExsValue::Error(ExsError {
             severity: ErrorSeverity::Recoverable,
             kind: "MissingValue".to_owned(),

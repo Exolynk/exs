@@ -123,7 +123,6 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
     }
     slot.marked = true;
     match &slot.value {
-        RtValue::Ok(value) => worklist.push(*value),
         RtValue::Error(error) => {
             worklist.push(error.data);
             if let Some(cause) = error.cause {

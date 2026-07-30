@@ -14,8 +14,10 @@ pub struct Module<'a> {
 pub struct FunctionDeclaration<'a> {
     /// Function name.
     pub name: Identifier<'a>,
-    /// Positional parameter names.
-    pub parameters: Vec<Identifier<'a>>,
+    /// Positional parameters with optional type annotations.
+    pub parameters: Vec<Parameter<'a>>,
+    /// Optional union type annotation for the returned value.
+    pub return_type: Option<TypeAnnotation<'a>>,
     /// Function body.
     pub body: Block<'a>,
     /// Full declaration span.
@@ -28,6 +30,33 @@ pub struct Identifier<'a> {
     /// Identifier spelling.
     pub name: String,
     /// Identifier source span.
+    pub span: SourceSpan<'a>,
+}
+
+/// One named function parameter with an optional type annotation.
+#[derive(Debug)]
+pub struct Parameter<'a> {
+    /// Parameter binding name.
+    pub name: Identifier<'a>,
+    /// Optional declared accepted value types.
+    pub type_annotation: Option<TypeAnnotation<'a>>,
+}
+
+/// One optional function-boundary union type annotation.
+#[derive(Debug)]
+pub struct TypeAnnotation<'a> {
+    /// Source-spelled type members in union order.
+    pub members: Vec<TypeName<'a>>,
+    /// Full source span of the annotation excluding `:` and `->`.
+    pub span: SourceSpan<'a>,
+}
+
+/// One source-spelled member of a union type annotation.
+#[derive(Debug)]
+pub struct TypeName<'a> {
+    /// Type name spelling.
+    pub name: String,
+    /// Source span of this type name.
     pub span: SourceSpan<'a>,
 }
 
@@ -170,13 +199,6 @@ pub enum Expression<'a> {
     Bool(bool, SourceSpan<'a>),
     /// The absence value shared by Options and empty operations.
     None(SourceSpan<'a>),
-    /// A successful Option or Result value.
-    Ok {
-        /// Direct payload held by the successful value.
-        value: Box<Expression<'a>>,
-        /// Full expression span.
-        span: SourceSpan<'a>,
-    },
     /// Tests whether one value is a language Error.
     IsError {
         /// Value being tested.

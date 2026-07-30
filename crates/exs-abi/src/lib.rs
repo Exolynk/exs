@@ -10,8 +10,34 @@ pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, Sour
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 7 adds None, Ok, and structured Error transport values.
-pub const ABI_VERSION: u32 = 7;
+/// Version 8 removes Ok transport values and adds runtime type-contract validation.
+pub const ABI_VERSION: u32 = 8;
+
+/// Runtime type-mask bit for None.
+pub const TYPE_NONE: u32 = 1 << 0;
+/// Runtime type-mask bit for Error.
+pub const TYPE_ERROR: u32 = 1 << 1;
+/// Runtime type-mask bit for Bool.
+pub const TYPE_BOOL: u32 = 1 << 2;
+/// Runtime type-mask bit for Int.
+pub const TYPE_INT: u32 = 1 << 3;
+/// Runtime type-mask bit for Float.
+pub const TYPE_FLOAT: u32 = 1 << 4;
+/// Runtime type-mask bit for String.
+pub const TYPE_STRING: u32 = 1 << 5;
+/// Runtime type-mask bit for List.
+pub const TYPE_LIST: u32 = 1 << 6;
+/// Runtime type-mask bit for Object.
+pub const TYPE_OBJECT: u32 = 1 << 7;
+/// Runtime type-mask accepting every current source-visible value type.
+pub const TYPE_ANY: u32 = TYPE_NONE
+    | TYPE_ERROR
+    | TYPE_BOOL
+    | TYPE_INT
+    | TYPE_FLOAT
+    | TYPE_STRING
+    | TYPE_LIST
+    | TYPE_OBJECT;
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// The entry export invoked by runners.

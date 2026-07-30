@@ -487,12 +487,12 @@ fn preserves_live_values_during_allocation_heavy_loops() {
     );
 }
 
-/// Executes source-level None and Ok constructors through the linked runtime.
+/// Executes direct Option values through the linked runtime.
 #[test]
-fn executes_option_constructors() {
+fn executes_direct_option_values() {
     assert_eq!(
-        execute_source("fn main(input) { ret Ok(input); }", ExsValue::Int(42)),
-        ExsValue::Ok(Box::new(ExsValue::Int(42))),
+        execute_source("fn main(input) { ret input; }", ExsValue::Int(42)),
+        ExsValue::Int(42),
     );
     assert_eq!(
         execute_source("fn main(input) { ret None; }", ExsValue::None),
@@ -500,16 +500,113 @@ fn executes_option_constructors() {
     );
 }
 
-/// Unwraps Ok with question mark and propagates Error values unchanged.
+/// Enforces annotated argument and return types at direct function boundaries.
 #[test]
-fn propagates_option_and_result_values() {
+fn validates_function_type_contracts() {
     assert_eq!(
         execute_source(
-            "fn main(input) { let value = Ok(input)?; ret value; }",
-            ExsValue::Int(42),
+            r#"
+            fn convert(value: Int, offset: Float) -> Float | Error {
+                ret value + offset;
+            }
+            fn main(input) {
+                ret convert(input, 0.5);
+            }
+            "#,
+            ExsValue::Int(2),
         ),
-        ExsValue::Int(42),
+        ExsValue::Float(2.5),
     );
+    assert_eq!(
+        execute_source(
+            r#"
+            fn echo(value: Any) -> Any {
+                ret value;
+            }
+            fn main(input) {
+                ret echo(input);
+            }
+            "#,
+            ExsValue::Object(vec![("enabled".to_owned(), ExsValue::Bool(true))]),
+        ),
+        ExsValue::Object(vec![("enabled".to_owned(), ExsValue::Bool(true))]),
+    );
+    assert_error_kind_with_input(
+        r#"
+        fn identity(value: Int) -> Int | Error {
+            ret value;
+        }
+        fn main(input) {
+            ret identity(input);
+        }
+        "#,
+        ExsValue::String("invalid".to_owned()),
+        "TypeError",
+    );
+    assert_error_kind(
+        r#"
+        fn wrong() -> Int | Error {
+            ret "invalid";
+        }
+        fn main(input) {
+            ret wrong();
+        }
+        "#,
+        "TypeError",
+    );
+}
+
+/// Preserves direct Error values that are explicitly accepted by a return union.
+#[test]
+fn accepts_error_values_in_function_type_contracts() {
+    let result = execute_source(
+        r#"
+        fn fail(value: Error) -> Int | Error {
+            ret value;
+        }
+        fn main(input) {
+            ret fail(input);
+        }
+        "#,
+        ExsValue::Error(ExsError {
+            severity: ErrorSeverity::Recoverable,
+            kind: "Expected".to_owned(),
+            message: "expected failure".to_owned(),
+            data: Box::new(ExsValue::None),
+            origin: None,
+            trace: Vec::new(),
+            cause: None,
+        }),
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("typed Error value was not returned");
+    };
+    assert_eq!(error.kind, "Expected");
+}
+
+/// Accepts None when a return union explicitly includes it.
+#[test]
+fn accepts_none_in_function_type_contracts() {
+    assert_eq!(
+        execute_source(
+            "fn missing() -> None | Int { ret None; } fn main(input) { ret missing(); }",
+            ExsValue::None,
+        ),
+        ExsValue::None,
+    );
+}
+
+/// Traps when a strict return contract cannot represent a type mismatch as Error.
+#[test]
+fn traps_for_a_strict_function_type_contract_violation() {
+    let compiled =
+        compile_source("fn wrong() -> Int { ret \"invalid\"; } fn main(input) { ret wrong(); }");
+    assert!(execute(&compiled.wasm, ExsValue::None).is_err());
+}
+
+/// Preserves direct values and propagates Error values unchanged with question mark.
+#[test]
+fn propagates_option_and_result_values() {
     assert_eq!(
         execute_source(
             "fn main(input) { let value = input?; ret value; }",
@@ -653,7 +750,12 @@ fn returns_a_recoverable_error_for_an_invalid_condition() {
 
 /// Executes source and verifies that it returns a recoverable Error of the requested kind.
 fn assert_error_kind(source: &str, kind: &str) {
-    let result = execute_source(source, ExsValue::None);
+    assert_error_kind_with_input(source, ExsValue::None, kind);
+}
+
+/// Executes source and verifies an input-specific recoverable Error result.
+fn assert_error_kind_with_input(source: &str, input: ExsValue, kind: &str) {
+    let result = execute_source(source, input);
     let ExsValue::Error(error) = result else {
         panic!("source did not return an Error");
     };

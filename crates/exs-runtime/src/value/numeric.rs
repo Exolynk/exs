@@ -42,7 +42,6 @@ pub(crate) fn number_of(value: &RtValue) -> Option<Number> {
         RtValue::Int(value) => Some(Number::Int(*value)),
         RtValue::Float(value) => Some(Number::Float(*value)),
         RtValue::None
-        | RtValue::Ok(_)
         | RtValue::Error(_)
         | RtValue::String(_)
         | RtValue::List(_)

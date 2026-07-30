@@ -11,8 +11,6 @@ use minicbor::{
     data::{Tag, Type},
 };
 
-/// Stable CBOR tag for an ExS successful Option or Result value.
-const OK_TAG: u64 = 60_000;
 /// Stable CBOR tag for an ExS structured Error value.
 const ERROR_TAG: u64 = 60_001;
 
@@ -24,8 +22,6 @@ const ERROR_TAG: u64 = 60_001;
 pub enum ExsValue {
     /// The absence variant shared by ExS Options and empty operations.
     None,
-    /// A successful Option or Result payload.
-    Ok(Box<ExsValue>),
     /// A structured ExS language error.
     Error(ExsError),
     /// An ExS boolean.
@@ -138,12 +134,6 @@ impl ExsValue {
 fn encode_value(value: &ExsValue, encoder: &mut Encoder<Vec<u8>>) -> Result<(), CborError> {
     match value {
         ExsValue::None => encoder.null().map(|_| ()).map_err(|_| CborError::Encode),
-        ExsValue::Ok(value) => {
-            encoder
-                .tag(Tag::new(OK_TAG))
-                .map_err(|_| CborError::Encode)?;
-            encode_value(value, encoder)
-        }
         ExsValue::Error(error) => encode_error(error, encoder),
         ExsValue::Bool(value) => encoder
             .bool(*value)
@@ -191,7 +181,6 @@ fn decode_value(decoder: &mut Decoder<'_>) -> Result<ExsValue, CborError> {
         Type::Tag => {
             let tag = decoder.tag().map_err(|_| CborError::Malformed)?;
             match tag.as_u64() {
-                OK_TAG => Ok(ExsValue::Ok(Box::new(decode_value(decoder)?))),
                 ERROR_TAG => Ok(ExsValue::Error(decode_error(decoder)?)),
                 _ => Err(CborError::UnsupportedType),
             }

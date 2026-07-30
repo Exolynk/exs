@@ -10,6 +10,7 @@ use crate::ast::{
     ObjectProperty, Statement, UnaryOperator,
 };
 use crate::codegen::source_map::SourceMap;
+use crate::codegen::types;
 use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
@@ -17,11 +18,13 @@ use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 const ROOT_FRAME_RESERVED_LOCALS: u32 = 8;
 
 /// The linked Wasm function index and source arity of one ExS function.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct FunctionSignature {
     pub(super) index: u32,
     pub(super) arity: usize,
     pub(super) function_id: u32,
+    pub(super) parameter_types: Vec<u32>,
+    pub(super) return_type: u32,
 }
 
 /// Structured Wasm targets and lexical cleanup data for one active source loop.
@@ -49,22 +52,43 @@ pub(super) fn build_signatures<'a>(
                 format!("duplicate function `{}`", function.name.name),
             )));
         }
+        if function.name.name == "main"
+            && (function.return_type.is_some()
+                || function
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.type_annotation.is_some()))
+        {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0219",
+                function.name.span,
+                "Phase 1 does not support type annotations on fn main",
+            )));
+        }
         let mut parameters = HashMap::new();
+        let mut parameter_types = Vec::new();
         for parameter in &function.parameters {
-            if parameters.insert(&parameter.name, ()).is_some() {
+            if parameters.insert(&parameter.name.name, ()).is_some() {
                 return Err(diagnostics(CompileDiagnostic::new(
                     "E0202",
-                    parameter.span,
-                    format!("duplicate parameter `{}`", parameter.name),
+                    parameter.name.span,
+                    format!("duplicate parameter `{}`", parameter.name.name),
                 )));
             }
+            parameter_types.push(types::resolve(
+                parameter.type_annotation.as_ref(),
+                parameter.name.span,
+            )?);
         }
+        let return_type = types::resolve(function.return_type.as_ref(), function.name.span)?;
         signatures.insert(
             function.name.name.clone(),
             FunctionSignature {
                 index: program_base + offset as u32,
                 arity: function.parameters.len(),
                 function_id: offset as u32,
+                parameter_types,
+                return_type,
             },
         );
     }
@@ -110,9 +134,12 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     scopes: Vec<HashMap<String, u32>>,
     loops: Vec<LoopContext>,
     next_local: u32,
+    /// Reused local that holds values while validating return contracts.
+    return_value_local: u32,
     root_frame_local: u32,
     control_depth: u32,
     function_id: u32,
+    return_type: u32,
 }
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
@@ -143,20 +170,24 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     "too many locals for one function",
                 ))
             })?;
-        let root_slot_count = u32::try_from(declaration.parameters.len())
-            .ok()
-            .and_then(|parameters| parameters.checked_add(local_count))
-            .ok_or_else(|| {
-                diagnostics(CompileDiagnostic::new(
-                    "E0212",
-                    declaration.span,
-                    "too many root slots for one function",
-                ))
-            })?;
+        let parameter_count = u32::try_from(declaration.parameters.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                declaration.span,
+                "too many parameters for one function",
+            ))
+        })?;
+        let root_slot_count = parameter_count.checked_add(local_count).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                declaration.span,
+                "too many root slots for one function",
+            ))
+        })?;
         let root_frame_local = root_slot_count;
         let mut parameters = HashMap::new();
         for (index, parameter) in declaration.parameters.iter().enumerate() {
-            parameters.insert(parameter.name.clone(), index as u32);
+            parameters.insert(parameter.name.name.clone(), index as u32);
         }
         let mut compiler = Self {
             declaration,
@@ -167,12 +198,18 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             function: Function::new([(local_count + 1, ValType::I32)]),
             scopes: vec![parameters],
             loops: Vec::new(),
-            next_local: declaration.parameters.len() as u32,
+            // Reserve one reusable local for return contracts so multiple return paths do not
+            // consume additional statically declared Wasm locals.
+            next_local: parameter_count + 1,
+            return_value_local: parameter_count,
             root_frame_local,
             control_depth: 0,
             function_id: signatures
                 .get(&declaration.name.name)
                 .map_or(0, |signature| signature.function_id),
+            return_type: signatures
+                .get(&declaration.name.name)
+                .map_or(exs_abi::TYPE_ANY, |signature| signature.return_type),
         };
         compiler.initialize_root_frame(root_slot_count)?;
         Ok(compiler)
@@ -182,6 +219,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     pub(super) fn compile(&mut self) -> Result<Function, CompileDiagnostics<'a>> {
         self.compile_block(&self.declaration.body, false)?;
         self.runtime_call("__exs_rt_none_new", self.declaration.span)?;
+        self.validate_return_type(self.declaration.span)?;
         self.return_stack_value()?;
         self.function.instruction(&Instruction::End);
         let placeholder = Function::new([]);
@@ -292,6 +330,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 } else {
                     self.runtime_call("__exs_rt_none_new", *span)?;
                 }
+                self.validate_return_type(*span)?;
                 self.return_stack_value()?;
             }
             Statement::Expression { expression, .. } => {
@@ -515,10 +554,6 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             }
             Expression::None(span) => {
                 self.runtime_call("__exs_rt_none_new", *span)?;
-            }
-            Expression::Ok { value, span } => {
-                self.compile_expression(value)?;
-                self.runtime_value_call("__exs_rt_ok_new", 1, *span)?;
             }
             Expression::IsError { value, span } => {
                 self.compile_expression(value)?;
@@ -845,25 +880,16 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         value: &Expression<'a>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        if !types::permits_error(self.return_type) {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0218",
+                span,
+                "? requires the current function return type to include Error or Any",
+            )));
+        }
         self.compile_expression(value)?;
         self.runtime_value_call("__exs_rt_propagate", 1, span)?;
-        let outcome = self.store_stack_value()?;
-        self.function.instruction(&Instruction::LocalGet(outcome));
-        self.runtime_value_call("__exs_rt_is_error", 1, span)?;
-        self.runtime_value_call("__exs_rt_condition", 1, span)?;
-        self.function
-            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
-        self.enter_control()?;
-        self.function.instruction(&Instruction::LocalGet(outcome));
-        self.return_stack_value()?;
-        self.function.instruction(&Instruction::Else);
-        self.function.instruction(&Instruction::LocalGet(outcome));
-        self.runtime_value_call("__exs_rt_unwrap", 1, span)?;
-        let extracted = self.store_stack_value()?;
-        self.clear_root_slot(outcome)?;
-        self.function.instruction(&Instruction::LocalGet(extracted));
-        self.function.instruction(&Instruction::End);
-        self.exit_control()
+        self.return_if_error(span)
     }
 
     /// Validates the ValueRef on the stack as a Boolean and lowers it to Wasm i32 control flow.
@@ -883,11 +909,48 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .instruction(&Instruction::If(BlockType::Empty));
         self.enter_control()?;
         self.function.instruction(&Instruction::LocalGet(outcome));
+        self.validate_local_type(outcome, self.return_type, span)?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
         self.return_stack_value()?;
         self.function.instruction(&Instruction::End);
         self.exit_control()?;
         self.function.instruction(&Instruction::LocalGet(outcome));
         self.clear_root_slot(outcome)
+    }
+
+    /// Validates the ValueRef on stack against this function's declared return type.
+    fn validate_return_type(&mut self, span: SourceSpan<'a>) -> Result<(), CompileDiagnostics<'a>> {
+        let value = self.return_value_local;
+        self.store_stack_value_in(value)?;
+        self.validate_local_type(value, self.return_type, span)?;
+        self.function.instruction(&Instruction::LocalGet(value));
+        self.clear_root_slot(value)
+    }
+
+    /// Checks one rooted local against a type mask and returns a mismatch Error or traps.
+    fn validate_local_type(
+        &mut self,
+        local: u32,
+        types: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.function.instruction(&Instruction::LocalGet(local));
+        self.function
+            .instruction(&Instruction::I32Const(types.cast_signed()));
+        self.runtime_call("__exs_rt_type_matches", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.enter_control()?;
+        self.function.instruction(&Instruction::Else);
+        self.function.instruction(&Instruction::LocalGet(local));
+        self.function
+            .instruction(&Instruction::I32Const(i32::from(types::permits_error(
+                self.return_type,
+            ))));
+        self.runtime_call("__exs_rt_type_mismatch", span)?;
+        self.return_stack_value()?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()
     }
 
     /// Compiles an expression and verifies it is a boolean without consuming it.
@@ -1088,14 +1151,30 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function
             .instruction(&Instruction::I32Const(self.function_id.cast_signed()));
         self.runtime_call("__exs_rt_frame_push", self.declaration.span)?;
-        for parameter in 0..self.declaration.parameters.len() {
-            self.set_root_slot(u32::try_from(parameter).map_err(|_| {
+        let signature = self
+            .signatures
+            .get(&self.declaration.name.name)
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    self.declaration.name.span,
+                    "missing function signature during parameter validation",
+                ))
+            })?;
+        for (parameter, types) in signature.parameter_types.iter().copied().enumerate() {
+            let parameter = u32::try_from(parameter).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(
                     "E0212",
                     self.declaration.span,
                     "too many parameters for one function",
                 ))
-            })?)?;
+            })?;
+            self.set_root_slot(parameter)?;
+            self.validate_local_type(
+                parameter,
+                types,
+                self.declaration.parameters[parameter as usize].name.span,
+            )?;
         }
         Ok(())
     }
@@ -1267,9 +1346,9 @@ fn count_expressions(expression: &Expression<'_>) -> u32 {
         | Expression::Bool(_, _)
         | Expression::None(_)
         | Expression::Variable(_) => 1,
-        Expression::Ok { value, .. }
-        | Expression::IsError { value, .. }
-        | Expression::Propagate { value, .. } => 1 + count_expressions(value),
+        Expression::IsError { value, .. } | Expression::Propagate { value, .. } => {
+            1 + count_expressions(value)
+        }
         Expression::Unary { operand, .. } => 1 + count_expressions(operand),
         Expression::Binary { left, right, .. } => {
             1 + count_expressions(left) + count_expressions(right)
@@ -1310,7 +1389,6 @@ fn condition_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         Expression::Object { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Unary { span, .. }
-        | Expression::Ok { span, .. }
         | Expression::IsError { span, .. }
         | Expression::Propagate { span, .. }
         | Expression::Binary { span, .. }

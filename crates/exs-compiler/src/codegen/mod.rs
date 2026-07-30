@@ -4,6 +4,7 @@ mod function;
 mod linker;
 mod literals;
 pub mod source_map;
+mod types;
 
 use crate::CompileOptions;
 use crate::ast::Module;
