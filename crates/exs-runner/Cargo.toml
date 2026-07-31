@@ -16,3 +16,7 @@ wasmtime.workspace = true
 exs-runtime = { path = "../exs-runtime" }
 exs-compiler = { path = "../exs-compiler" }
 exs-value = { path = "../exs-value" }
+
+[[bench]]
+name = "basic_script"
+harness = false
