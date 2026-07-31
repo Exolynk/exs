@@ -17,7 +17,8 @@ impl Suspendability {
         let mut functions = hir
             .functions()
             .filter_map(|(key, function)| {
-                (!function.host_calls().is_empty()).then_some(key.to_owned())
+                (!function.host_calls().is_empty() || !function.parallel_calls().is_empty())
+                    .then_some(key.to_owned())
             })
             .collect::<HashSet<_>>();
         loop {
@@ -90,6 +91,9 @@ fn validate_hir(hir: &HirModule<'_>) {
         }
         for host_call in function.host_calls() {
             debug_assert!(host_call.span.start_byte <= host_call.span.end_byte);
+        }
+        for parallel in function.parallel_calls() {
+            debug_assert!(parallel.start_byte <= parallel.end_byte);
         }
     }
     for closure in hir.closures() {

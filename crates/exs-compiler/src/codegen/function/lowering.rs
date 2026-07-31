@@ -67,6 +67,13 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     "closure lowering is not implemented",
                 )));
             }
+            Expression::ParallelStatic { span, .. } | Expression::ParallelDynamic { span, .. } => {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0300",
+                    *span,
+                    "par requires the Phase 11 continuation lowerer",
+                )));
+            }
             Expression::List { elements, span } => {
                 self.compile_list(elements, *span)?;
             }

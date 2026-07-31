@@ -56,6 +56,8 @@ pub(crate) struct AsyncFrame {
     pub(crate) slots: Vec<Option<ValueRef>>,
     /// Caller continuation, absent for the root resumable invocation.
     pub(crate) caller: Option<FrameContinuation>,
+    /// Whether this frame owns one entry in the shared language error-trace stack.
+    pub(crate) traced: bool,
 }
 
 /// Mutable state isolated to one instantiated Phase-1 runtime.

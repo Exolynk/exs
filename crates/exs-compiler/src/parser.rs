@@ -698,6 +698,7 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::Host => self.host_call(token.span),
+            TokenKind::Par => self.parallel(token.span),
             TokenKind::LeftBracket => {
                 let elements = self.arguments(TokenKind::RightBracket)?;
                 let end = self
@@ -744,6 +745,52 @@ impl<'a> Parser<'a> {
             }
             _ => Err(self.error(token.span, "E0101", "expected expression")),
         }
+    }
+
+    /// Parses static parallel expressions or one dynamic callable List expression.
+    fn parallel(&mut self, start: SourceSpan<'a>) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
+        if self.matches(&TokenKind::LeftBrace) {
+            let mut tasks = Vec::new();
+            while !self.check(&TokenKind::RightBrace) && !self.at_end() {
+                let value = self.expression()?;
+                let value_span = expression_span(&value);
+                let end = self.expect_statement_semicolon(
+                    value_span,
+                    "expected semicolon after static par task",
+                )?;
+                let body = Block {
+                    statements: vec![Statement::Return {
+                        value: Some(value),
+                        span: value_span.through(end),
+                    }],
+                    span: value_span.through(end),
+                };
+                tasks.push(Expression::Closure {
+                    parameters: Vec::new(),
+                    body,
+                    span: value_span,
+                });
+            }
+            let end = self
+                .expect_simple(TokenKind::RightBrace, "expected `}` after static par tasks")?
+                .span;
+            return Ok(Expression::ParallelStatic {
+                tasks,
+                span: start.through(end),
+            });
+        }
+        self.expect_simple(TokenKind::LeftParen, "expected `{` or `(` after par")?;
+        let functions = self.expression()?;
+        let end = self
+            .expect_simple(
+                TokenKind::RightParen,
+                "expected `)` after par callable List",
+            )?
+            .span;
+        Ok(Expression::ParallelDynamic {
+            functions: Box::new(functions),
+            span: start.through(end),
+        })
     }
 
     /// Parses a simple closure parameter list only when it is followed by `=>`.
@@ -1065,5 +1112,6 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }
         | Expression::Property { span, .. } => *span,
+        Expression::ParallelStatic { span, .. } | Expression::ParallelDynamic { span, .. } => *span,
     }
 }

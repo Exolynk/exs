@@ -151,6 +151,7 @@ pub(crate) struct HirFunction<'a> {
     calls: Vec<CallEdge<'a>>,
     callable_calls: Vec<CallableCall<'a>>,
     host_calls: Vec<HostCall<'a>>,
+    parallel_calls: Vec<SourceSpan<'a>>,
 }
 
 impl<'a> HirFunction<'a> {
@@ -169,6 +170,7 @@ impl<'a> HirFunction<'a> {
             calls: lowerer.calls,
             callable_calls: lowerer.callable_calls,
             host_calls: lowerer.host_calls,
+            parallel_calls: lowerer.parallel_calls,
         }
     }
 
@@ -200,6 +202,12 @@ impl<'a> HirFunction<'a> {
     #[must_use]
     pub(crate) fn host_calls(&self) -> &[HostCall<'a>] {
         &self.host_calls
+    }
+
+    /// Returns parallel-expression sites that require resumable lowering.
+    #[must_use]
+    pub(crate) fn parallel_calls(&self) -> &[SourceSpan<'a>] {
+        &self.parallel_calls
     }
 }
 
@@ -309,6 +317,7 @@ struct FunctionLowerer<'a, 'state> {
     calls: Vec<CallEdge<'a>>,
     callable_calls: Vec<CallableCall<'a>>,
     host_calls: Vec<HostCall<'a>>,
+    parallel_calls: Vec<SourceSpan<'a>>,
     instance_targets: &'state HashMap<String, Vec<String>>,
     state: &'state LoweringState<'a>,
 }
@@ -332,6 +341,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             calls: Vec::new(),
             callable_calls: Vec::new(),
             host_calls: Vec::new(),
+            parallel_calls: Vec::new(),
             instance_targets,
             state,
         };
@@ -361,6 +371,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             calls: Vec::new(),
             callable_calls: Vec::new(),
             host_calls: Vec::new(),
+            parallel_calls: Vec::new(),
             instance_targets,
             state,
         };
@@ -570,6 +581,16 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 body,
                 span,
             } => self.lower_closure(parameters, body, *span),
+            Expression::ParallelStatic { tasks, span } => {
+                self.parallel_calls.push(*span);
+                for task in tasks {
+                    self.lower_expression(task);
+                }
+            }
+            Expression::ParallelDynamic { functions, span } => {
+                self.parallel_calls.push(*span);
+                self.lower_expression(functions);
+            }
             Expression::Integer(_, _)
             | Expression::Float(_, _)
             | Expression::String(_, _)

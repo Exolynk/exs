@@ -328,6 +328,20 @@ pub enum Expression<'a> {
         /// Full expression span.
         span: SourceSpan<'a>,
     },
+    /// A fixed source-order set of zero-argument expressions evaluated as parallel tasks.
+    ParallelStatic {
+        /// Compiler-synthesized zero-argument closure task expressions.
+        tasks: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// A runtime List of zero-argument callable values evaluated as parallel tasks.
+    ParallelDynamic {
+        /// Expression expected to evaluate to a List of callable values.
+        functions: Box<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
     /// A unary operation.
     Unary {
         /// Operation kind.

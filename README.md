@@ -116,8 +116,9 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 11: `par`
 
-- [ ] Add static `par { ... }` and dynamic `par(list)` lowering using callable Values.
-- [ ] Preserve source-order results and continue sibling tasks after recoverable Errors.
+- [x] Add static `par { ... }` and dynamic `par(list)` lowering using callable Values.
+- [x] Preserve source-order results and continue sibling tasks after recoverable Errors.
+- [x] Have a test which checks, that futures are executed in parrallel
 
 ### Phase 12: Deep clone
 

@@ -608,6 +608,59 @@ pub extern "C" fn __exs_rt_async_frame_new(function_id: i32, slot_count: i32) ->
     runtime::async_frame_new(function_id, slot_count)
 }
 
+/// Allocates one untraced parallel child frame without replacing the active parent task.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_new_parallel(
+    group: ValueRef,
+    index: i32,
+    function_id: i32,
+    slot_count: i32,
+) -> i32 {
+    runtime::async_frame_new_parallel(group, index, function_id, slot_count)
+}
+
+/// Creates one compiler-internal parallel result group.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_parallel_new(count: i32) -> ValueRef {
+    runtime::parallel_new(count)
+}
+
+/// Suspends the active parent task until its parallel child group completes.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_parallel_wait(group: ValueRef) -> i32 {
+    runtime::parallel_wait(group)
+}
+
+/// Returns the completed source-order result List for one parallel group.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_parallel_take_results(group: ValueRef) -> ValueRef {
+    runtime::parallel_take_results(group)
+}
+
+/// Returns the number of source List elements supplied to dynamic `par`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_parallel_list_count(list: ValueRef) -> i32 {
+    runtime::parallel_list_count(list)
+}
+
+/// Returns one source List element supplied to dynamic `par`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_parallel_list_get(list: ValueRef, index: i32) -> ValueRef {
+    runtime::parallel_list_get(list, index)
+}
+
+/// Returns whether the scheduler selected another runnable task after a host suspension.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_scheduler_status() -> i32 {
+    runtime::scheduler_status()
+}
+
+/// Removes the language trace frame owned by one completing continuation frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_pop_trace(frame: i32) {
+    runtime::async_frame_pop_trace(frame)
+}
+
 /// Stores one persistent frame value that must survive a pending host call.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_async_frame_set_slot(frame: i32, slot: i32, value: ValueRef) {

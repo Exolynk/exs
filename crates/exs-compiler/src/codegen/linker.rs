@@ -213,6 +213,14 @@ fn collect_closures_expression<'source, 'ast>(
             closures.push((parameters, body, *span));
             collect_closures_block(body, closures);
         }
+        Expression::ParallelStatic { tasks, .. } => {
+            for task in tasks {
+                collect_closures_expression(task, closures);
+            }
+        }
+        Expression::ParallelDynamic { functions, .. } => {
+            collect_closures_expression(functions, closures);
+        }
         Expression::IsError { value, .. }
         | Expression::Propagate { value, .. }
         | Expression::Unary { operand: value, .. }

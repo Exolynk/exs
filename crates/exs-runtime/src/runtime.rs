@@ -4,7 +4,10 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
-use exs_abi::{ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY};
+use exs_abi::{
+    ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY, STATUS_PENDING,
+    STATUS_READY,
+};
 use exs_value::{ValueRef, is_valid_int};
 
 use crate::gc;
@@ -256,6 +259,7 @@ pub(crate) fn async_frame_new(function_id: i32, slot_count: i32) -> i32 {
         state: 0,
         slots,
         caller: None,
+        traced: true,
     };
     let state = unsafe { runtime() };
     let index = if let Some(index) = state.free_async_frames.pop() {
@@ -281,6 +285,116 @@ pub(crate) fn async_frame_new(function_id: i32, slot_count: i32) -> i32 {
     };
     execution(state).set_current_frame(identifier);
     i32::try_from(identifier).unwrap_or_else(|_| trap())
+}
+
+/// Allocates one child task frame for a parallel group without changing the active parent task.
+pub(crate) fn async_frame_new_parallel(
+    group: ValueRef,
+    index: i32,
+    function_id: i32,
+    slot_count: i32,
+) -> i32 {
+    let Ok(index) = usize::try_from(index) else {
+        trap();
+    };
+    let Ok(function_id) = u32::try_from(function_id) else {
+        trap();
+    };
+    let Ok(slot_count) = usize::try_from(slot_count) else {
+        trap();
+    };
+    let mut slots = Vec::new();
+    slots.resize(slot_count, None);
+    let state = unsafe { runtime() };
+    let index_frame = state.async_frames.len();
+    state.async_frames.push(Some(AsyncFrame {
+        function_id,
+        state: 0,
+        slots,
+        caller: None,
+        traced: false,
+    }));
+    let identifier = u32::try_from(index_frame)
+        .ok()
+        .and_then(|value| value.checked_add(1))
+        .unwrap_or_else(|| trap());
+    execution(state).parallel_spawn(group, index, identifier);
+    i32::try_from(identifier).unwrap_or_else(|_| trap())
+}
+
+/// Creates one compiler-internal parallel result List and its scheduler group.
+pub(crate) fn parallel_new(count: i32) -> ValueRef {
+    let Ok(count) = usize::try_from(count) else {
+        trap();
+    };
+    let handle = allocate(RtValue::List(Box::new(RuntimeList {
+        elements: Vec::new(),
+    })));
+    execution(unsafe { runtime() }).parallel_new(handle, count);
+    handle
+}
+
+/// Suspends the current parent task until its parallel group has completed.
+pub(crate) fn parallel_wait(group: ValueRef) -> i32 {
+    let execution = execution(unsafe { runtime() });
+    execution.parallel_wait(group);
+    if execution.has_current() {
+        STATUS_READY
+    } else {
+        STATUS_PENDING
+    }
+}
+
+/// Replaces one compiler-internal parallel handle List with its source-order child results.
+pub(crate) fn parallel_take_results(group: ValueRef) -> ValueRef {
+    let results = execution(unsafe { runtime() }).parallel_take_results(group);
+    let RtValue::List(list) = value_mut(group) else {
+        trap();
+    };
+    list.elements = results;
+    group
+}
+
+/// Returns the number of closure values stored in one source List for dynamic `par`.
+pub(crate) fn parallel_list_count(list: ValueRef) -> i32 {
+    let RtValue::List(list) = value(list) else {
+        trap()
+    };
+    i32::try_from(list.elements.len()).unwrap_or_else(|_| trap())
+}
+
+/// Returns one closure candidate from a source List for dynamic `par`.
+pub(crate) fn parallel_list_get(list: ValueRef, index: i32) -> ValueRef {
+    let Ok(index) = usize::try_from(index) else {
+        trap()
+    };
+    let RtValue::List(list) = value(list) else {
+        trap()
+    };
+    *list.elements.get(index).unwrap_or_else(|| trap())
+}
+
+/// Returns the dispatch status after a host call yielded its current task.
+pub(crate) fn scheduler_status() -> i32 {
+    if execution(unsafe { runtime() }).has_current() {
+        STATUS_READY
+    } else {
+        STATUS_PENDING
+    }
+}
+
+/// Pops the language error-trace entry only when this frame owns one.
+pub(crate) fn async_frame_pop_trace(frame: i32) {
+    let frame = async_frame_index(frame);
+    let traced = unsafe { runtime() }
+        .async_frames
+        .get_mut(frame)
+        .and_then(Option::as_mut)
+        .map(|frame| core::mem::replace(&mut frame.traced, false))
+        .unwrap_or_else(|| trap());
+    if traced && unsafe { runtime() }.frames.pop().is_none() {
+        trap();
+    }
 }
 
 /// Stores one frame slot that must remain live across suspension.
@@ -432,9 +546,14 @@ pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
         execution(state).set_current_frame(caller_index as u32 + 1);
         0
     } else {
-        state.completed_async_result = Some(value);
-        execution(state).complete_current_task();
-        1
+        if execution(state).complete_current_task(value) {
+            state.completed_async_result = Some(value);
+            1
+        } else if execution(state).has_current() {
+            0
+        } else {
+            2
+        }
     }
 }
 

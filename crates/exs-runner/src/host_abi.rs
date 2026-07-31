@@ -31,12 +31,11 @@ impl HostAbiState {
         }
     }
 
-    /// Removes the next pending host future together with its runtime-assigned identifier.
-    pub(crate) fn take_pending(&mut self) -> Option<(i64, HostFuture)> {
-        let call_id = self.pending_calls.keys().next().copied()?;
-        self.pending_calls
-            .remove(&call_id)
-            .map(|future| (call_id, future))
+    /// Removes every pending host future together with its runtime-assigned identifier.
+    pub(crate) fn take_pending_all(&mut self) -> Vec<(i64, HostFuture)> {
+        std::mem::take(&mut self.pending_calls)
+            .into_iter()
+            .collect()
     }
 }
 

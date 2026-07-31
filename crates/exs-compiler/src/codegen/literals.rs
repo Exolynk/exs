@@ -233,5 +233,13 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
         | Expression::None(_)
         | Expression::Variable(_) => {}
         Expression::Closure { body, .. } => collect_block_literals(body, pool),
+        Expression::ParallelStatic { tasks, .. } => {
+            for task in tasks {
+                collect_expression_literals(task, pool);
+            }
+        }
+        Expression::ParallelDynamic { functions, .. } => {
+            collect_expression_literals(functions, pool)
+        }
     }
 }

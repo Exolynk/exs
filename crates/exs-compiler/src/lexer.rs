@@ -57,6 +57,8 @@ pub enum TokenKind {
     Error,
     /// The reserved host boundary keyword.
     Host,
+    /// The parallel task expression keyword.
+    Par,
     /// The `true` keyword.
     True,
     /// The `false` keyword.
@@ -530,6 +532,7 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
         "is" => TokenKind::Is,
         "Error" => TokenKind::Error,
         "host" => TokenKind::Host,
+        "par" => TokenKind::Par,
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         _ => TokenKind::Identifier(value.to_owned()),

@@ -2,6 +2,7 @@
 
 use std::future::Future;
 use std::pin::pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
@@ -54,6 +55,108 @@ fn executes_a_closure_argument_with_a_captured_binding() {
         ExsValue::Int(40),
     );
     assert_eq!(result, ExsValue::Int(42));
+}
+
+/// Executes static `par` task closures and retains their source-order results.
+#[test]
+fn executes_static_parallel_tasks_in_source_order() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            fn main() -> List {
+                ret par {
+                    6 * 7;
+                    20 + 1;
+                };
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![ExsValue::Int(42), ExsValue::Int(21)])
+    );
+}
+
+/// Preserves a recoverable task Error while allowing static `par` siblings to finish.
+#[test]
+fn continues_parallel_siblings_after_a_recoverable_error() {
+    let result = execute_source_with_inputs(
+        r#"
+        fn main() -> List {
+            ret par {
+                1 + "invalid";
+                6 * 7;
+            };
+        }
+        "#,
+        &[],
+    );
+    let ExsValue::List(values) = result else {
+        panic!("parallel execution did not return a List");
+    };
+    assert!(matches!(values.first(), Some(ExsValue::Error(_))));
+    assert_eq!(values.get(1), Some(&ExsValue::Int(42)));
+}
+
+/// Executes each closure supplied by dynamic `par(list)` and retains source order.
+#[test]
+fn executes_dynamic_parallel_closure_lists() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            fn main() -> List {
+                let tasks = [() => { ret 40 + 2; }, () => { ret 20 + 1; }];
+                ret par(tasks);
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![ExsValue::Int(42), ExsValue::Int(21)])
+    );
+}
+
+/// Polls every pending parallel host future so one task cannot block its siblings.
+#[test]
+fn polls_parallel_host_calls_concurrently() {
+    let compiled = compile_source(
+        r#"
+        fn main() -> List {
+            ret par {
+                host.call("wait");
+                host.call("wait");
+            };
+        }
+        "#,
+    );
+    let polls = Arc::new(AtomicUsize::new(0));
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("wait", {
+                let polls = Arc::clone(&polls);
+                move |_arguments: Vec<ExsValue>| {
+                    let polls = Arc::clone(&polls);
+                    std::future::poll_fn(move |_| {
+                        if polls.fetch_add(1, Ordering::SeqCst) + 1 >= 2 {
+                            Poll::Ready(ExsValue::Int(7))
+                        } else {
+                            Poll::Pending
+                        }
+                    })
+                }
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(polls.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        result,
+        ExsValue::List(vec![ExsValue::Int(7), ExsValue::Int(7)])
+    );
 }
 
 /// Preserves a captured binding's shared Cell across repeated closure assignments.

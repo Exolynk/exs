@@ -298,6 +298,16 @@ impl<'a> SourceMap<'a> {
                 }
                 self.collect_block(body);
             }
+            Expression::ParallelStatic { tasks, span } => {
+                self.insert(*span);
+                for task in tasks {
+                    self.collect_expression(task);
+                }
+            }
+            Expression::ParallelDynamic { functions, span } => {
+                self.insert(*span);
+                self.collect_expression(functions);
+            }
             Expression::Unary { operand, span, .. } => {
                 self.insert(*span);
                 self.collect_expression(operand);

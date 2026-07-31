@@ -1,6 +1,9 @@
 //! Wasmtime-backed `ExS` server runner.
 
 use std::fmt;
+use std::future::{Future, poll_fn};
+use std::pin::Pin;
+use std::task::Poll;
 
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, INPUT_ALLOC_EXPORT, RESULT_LENGTH_EXPORT,
@@ -72,19 +75,37 @@ impl ServerRunner {
         let mut status = start
             .call(&mut store, (input_pointer, input_length))
             .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        let mut pending = Vec::new();
         loop {
             match status {
                 STATUS_COMPLETE => return result(&mut store, &instance),
                 STATUS_PENDING => {
-                    let (call_id, future) = store.data_mut().take_pending().ok_or_else(|| {
-                        RunnerError::Deadlock(
+                    pending.extend(store.data_mut().take_pending_all().into_iter().map(
+                        |(call_id, future)| {
+                            (
+                                call_id,
+                                cancellation::CancellableHostFuture::new(future, cancellation),
+                            )
+                        },
+                    ));
+                    if pending.is_empty() {
+                        return Err(RunnerError::Deadlock(
                             "program reported Pending without a runner host future".to_owned(),
-                        )
-                    })?;
-                    let response = match cancellation::CancellableHostFuture::new(
-                        future,
-                        cancellation,
-                    )
+                        ));
+                    }
+                    let (call_id, response) = match poll_fn(|context| {
+                        for index in 0..pending.len() {
+                            match Pin::new(&mut pending[index].1).poll(context) {
+                                Poll::Ready(Ok(response)) => {
+                                    let (call_id, _) = pending.swap_remove(index);
+                                    return Poll::Ready(Ok((call_id, response)));
+                                }
+                                Poll::Ready(Err(())) => return Poll::Ready(Err(())),
+                                Poll::Pending => {}
+                            }
+                        }
+                        Poll::Pending
+                    })
                     .await
                     {
                         Ok(response) => response,

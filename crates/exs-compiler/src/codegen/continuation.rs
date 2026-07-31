@@ -109,7 +109,7 @@ pub(super) fn compile_function<'source>(
         source_map,
         frame_layouts,
         return_contract: &signature.return_type,
-        function: Function::new([(5, ValType::I32)]),
+        function: Function::new([(7, ValType::I32)]),
         scratch_local: 1,
     };
     for (state, operation) in graph.operations.iter().enumerate() {
@@ -542,6 +542,24 @@ enum Operation<'source, 'function> {
     ClosureCall {
         closure: u32,
         arguments: Vec<u32>,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
+    /// Spawns zero-argument closure values as parallel child tasks and suspends their parent.
+    ParallelStart {
+        tasks: Vec<u32>,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
+    /// Spawns every closure stored in a runtime List as a parallel child task.
+    ParallelDynamicStart {
+        functions: u32,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
+    /// Replaces a completed compiler-internal parallel group with its ordered result List.
+    ParallelTake {
+        group: u32,
         destination: u32,
         span: SourceSpan<'source>,
     },
@@ -1293,6 +1311,39 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     layout,
                     arity: lifted.declaration.parameters.len(),
                     captures,
+                    destination,
+                    span: *span,
+                });
+                Ok(destination)
+            }
+            Expression::ParallelStatic { tasks, span } => {
+                let mut closures = Vec::with_capacity(tasks.len());
+                for task in tasks {
+                    closures.push(self.lower_expression(task)?);
+                }
+                let destination = self.temporary(*span)?;
+                self.operations.push(Operation::ParallelStart {
+                    tasks: closures,
+                    destination,
+                    span: *span,
+                });
+                self.operations.push(Operation::ParallelTake {
+                    group: destination,
+                    destination,
+                    span: *span,
+                });
+                Ok(destination)
+            }
+            Expression::ParallelDynamic { functions, span } => {
+                let functions = self.lower_expression(functions)?;
+                let destination = self.temporary(*span)?;
+                self.operations.push(Operation::ParallelDynamicStart {
+                    functions,
+                    destination,
+                    span: *span,
+                });
+                self.operations.push(Operation::ParallelTake {
+                    group: destination,
                     destination,
                     span: *span,
                 });
@@ -2181,6 +2232,30 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 destination,
                 span,
             } => self.closure_call(next, *closure, arguments, *destination, *span)?,
+            Operation::ParallelStart {
+                tasks,
+                destination,
+                span,
+            } => {
+                self.parallel_start(next, tasks, *destination, *span)?;
+            }
+            Operation::ParallelDynamicStart {
+                functions,
+                destination,
+                span,
+            } => {
+                self.parallel_dynamic_start(next, *functions, *destination, *span)?;
+            }
+            Operation::ParallelTake {
+                group,
+                destination,
+                span,
+            } => {
+                self.get_slot(*group, *span)?;
+                self.call_runtime("__exs_rt_parallel_take_results", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::InstanceCall {
                 receiver,
                 method,
@@ -2504,6 +2579,167 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         Ok(())
     }
 
+    /// Starts every static parallel closure task and yields execution to the scheduler.
+    fn parallel_start(
+        &mut self,
+        next: u32,
+        tasks: &[u32],
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let count = i32::try_from(tasks.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                span,
+                "too many parallel tasks",
+            ))
+        })?;
+        self.function.instruction(&Instruction::I32Const(count));
+        self.call_runtime("__exs_rt_parallel_new", span)?;
+        self.set_slot(destination, span)?;
+        for (index, task) in tasks.iter().enumerate() {
+            let index = i32::try_from(index).map_err(|_| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    span,
+                    "too many parallel tasks",
+                ))
+            })?;
+            self.get_slot(*task, span)?;
+            self.call_runtime("__exs_rt_closure_function", span)?;
+            self.function.instruction(&Instruction::LocalSet(3));
+            self.get_slot(*task, span)?;
+            self.call_runtime("__exs_rt_closure_slot_count", span)?;
+            self.function.instruction(&Instruction::LocalSet(4));
+            self.get_slot(destination, span)?;
+            self.function.instruction(&Instruction::I32Const(index));
+            self.function.instruction(&Instruction::LocalGet(3));
+            self.function.instruction(&Instruction::LocalGet(4));
+            self.call_runtime("__exs_rt_async_frame_new_parallel", span)?;
+            self.function.instruction(&Instruction::LocalSet(2));
+            self.get_slot(*task, span)?;
+            self.call_runtime("__exs_rt_closure_capture_count", span)?;
+            self.function.instruction(&Instruction::LocalSet(4));
+            self.function.instruction(&Instruction::I32Const(0));
+            self.function.instruction(&Instruction::LocalSet(5));
+            self.function
+                .instruction(&Instruction::Block(BlockType::Empty));
+            self.function
+                .instruction(&Instruction::Loop(BlockType::Empty));
+            self.function.instruction(&Instruction::LocalGet(5));
+            self.function.instruction(&Instruction::LocalGet(4));
+            self.function.instruction(&Instruction::I32GeU);
+            self.function.instruction(&Instruction::BrIf(1));
+            self.function.instruction(&Instruction::LocalGet(2));
+            self.function.instruction(&Instruction::LocalGet(5));
+            self.get_slot(*task, span)?;
+            self.function.instruction(&Instruction::LocalGet(5));
+            self.call_runtime("__exs_rt_closure_capture", span)?;
+            self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
+            self.function.instruction(&Instruction::LocalGet(5));
+            self.function.instruction(&Instruction::I32Const(1));
+            self.function.instruction(&Instruction::I32Add);
+            self.function.instruction(&Instruction::LocalSet(5));
+            self.function.instruction(&Instruction::Br(0));
+            self.function.instruction(&Instruction::End);
+            self.function.instruction(&Instruction::End);
+        }
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.function
+            .instruction(&Instruction::I32Const(next.cast_signed()));
+        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        self.get_slot(destination, span)?;
+        self.call_runtime("__exs_rt_parallel_wait", span)?;
+        self.function.instruction(&Instruction::Drop);
+        self.function
+            .instruction(&Instruction::I32Const(STATUS_READY));
+        self.function.instruction(&Instruction::Return);
+        Ok(())
+    }
+
+    /// Starts every zero-argument closure held in one runtime List and yields to the scheduler.
+    fn parallel_dynamic_start(
+        &mut self,
+        next: u32,
+        functions: u32,
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.get_slot(functions, span)?;
+        self.call_runtime("__exs_rt_parallel_list_count", span)?;
+        self.function.instruction(&Instruction::LocalSet(7));
+        self.function.instruction(&Instruction::LocalGet(7));
+        self.call_runtime("__exs_rt_parallel_new", span)?;
+        self.set_slot(destination, span)?;
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::LocalSet(1));
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
+        self.function
+            .instruction(&Instruction::Loop(BlockType::Empty));
+        self.function.instruction(&Instruction::LocalGet(1));
+        self.function.instruction(&Instruction::LocalGet(7));
+        self.function.instruction(&Instruction::I32GeU);
+        self.function.instruction(&Instruction::BrIf(1));
+        self.get_slot(functions, span)?;
+        self.function.instruction(&Instruction::LocalGet(1));
+        self.call_runtime("__exs_rt_parallel_list_get", span)?;
+        self.function.instruction(&Instruction::LocalSet(6));
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_closure_function", span)?;
+        self.function.instruction(&Instruction::LocalSet(3));
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_closure_slot_count", span)?;
+        self.function.instruction(&Instruction::LocalSet(4));
+        self.get_slot(destination, span)?;
+        self.function.instruction(&Instruction::LocalGet(1));
+        self.function.instruction(&Instruction::LocalGet(3));
+        self.function.instruction(&Instruction::LocalGet(4));
+        self.call_runtime("__exs_rt_async_frame_new_parallel", span)?;
+        self.function.instruction(&Instruction::LocalSet(2));
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_closure_capture_count", span)?;
+        self.function.instruction(&Instruction::LocalSet(4));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::LocalSet(5));
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
+        self.function
+            .instruction(&Instruction::Loop(BlockType::Empty));
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::LocalGet(4));
+        self.function.instruction(&Instruction::I32GeU);
+        self.function.instruction(&Instruction::BrIf(1));
+        self.function.instruction(&Instruction::LocalGet(2));
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.call_runtime("__exs_rt_closure_capture", span)?;
+        self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::I32Const(1));
+        self.function.instruction(&Instruction::I32Add);
+        self.function.instruction(&Instruction::LocalSet(5));
+        self.function.instruction(&Instruction::Br(0));
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::LocalGet(1));
+        self.function.instruction(&Instruction::I32Const(1));
+        self.function.instruction(&Instruction::I32Add);
+        self.function.instruction(&Instruction::LocalSet(1));
+        self.function.instruction(&Instruction::Br(0));
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.function
+            .instruction(&Instruction::I32Const(next.cast_signed()));
+        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        self.get_slot(destination, span)?;
+        self.call_runtime("__exs_rt_parallel_wait", span)?;
+        self.function.instruction(&Instruction::Return);
+        Ok(())
+    }
+
     /// Emits nominal instance dispatch, including suspendable child targets and runtime fallback.
     #[allow(clippy::too_many_arguments)] // This directly mirrors the already-evaluated source call.
     fn instance_call(
@@ -2713,8 +2949,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function
             .instruction(&Instruction::I32Const(resume.cast_signed()));
         self.call_runtime("__exs_rt_async_frame_set_state", span)?;
-        self.function
-            .instruction(&Instruction::I32Const(STATUS_PENDING));
+        self.call_runtime("__exs_rt_scheduler_status", span)?;
         self.function.instruction(&Instruction::Return);
         Ok(())
     }
@@ -2737,11 +2972,16 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         &mut self,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.call_runtime("__exs_rt_frame_pop", span)?;
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.call_runtime("__exs_rt_async_frame_pop_trace", span)?;
         self.function.instruction(&Instruction::LocalGet(0));
         self.function
             .instruction(&Instruction::LocalGet(self.scratch_local));
         self.call_runtime("__exs_rt_async_frame_complete", span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.scratch_local));
+        self.function
+            .instruction(&Instruction::LocalGet(self.scratch_local));
         self.function.instruction(&Instruction::I32Const(1));
         self.function.instruction(&Instruction::I32Eq);
         self.function
@@ -2750,7 +2990,17 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .instruction(&Instruction::I32Const(STATUS_COMPLETE));
         self.function.instruction(&Instruction::Else);
         self.function
+            .instruction(&Instruction::LocalGet(self.scratch_local));
+        self.function.instruction(&Instruction::I32Const(2));
+        self.function.instruction(&Instruction::I32Eq);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.function
+            .instruction(&Instruction::I32Const(STATUS_PENDING));
+        self.function.instruction(&Instruction::Else);
+        self.function
             .instruction(&Instruction::I32Const(STATUS_READY));
+        self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::Return);
         Ok(())
@@ -3134,6 +3384,9 @@ fn operation_span<'source>(operation: &Operation<'source, '_>) -> SourceSpan<'so
         | Operation::DirectCall { span, .. }
         | Operation::ChildCall { span, .. }
         | Operation::ClosureCall { span, .. }
+        | Operation::ParallelStart { span, .. }
+        | Operation::ParallelDynamicStart { span, .. }
+        | Operation::ParallelTake { span, .. }
         | Operation::InstanceCall { span, .. }
         | Operation::ValidateParameters { span, .. }
         | Operation::ValidateSlot { span, .. }
@@ -3169,5 +3422,6 @@ fn expression_span<'source>(expression: &Expression<'source>) -> SourceSpan<'sou
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }
         | Expression::Property { span, .. } => *span,
+        Expression::ParallelStatic { span, .. } | Expression::ParallelDynamic { span, .. } => *span,
     }
 }
