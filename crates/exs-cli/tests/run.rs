@@ -3,6 +3,60 @@
 use std::fs;
 use std::process::Command;
 
+/// Formats a source file in place through the compiler library formatter.
+#[test]
+fn formats_source_files_in_place() {
+    let path = std::env::temp_dir().join(format!("exs-cli-format-{}.exs", std::process::id()));
+    if let Err(error) = fs::write(&path, "fn main(){ret 1+2;}") {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("fmt")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    assert!(output.status.success());
+    let formatted = match fs::read_to_string(&path) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("could not read formatted source: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert_eq!(formatted, "fn main() {\n    ret 1 + 2;\n}\n");
+}
+
+/// Formats errors with the standard source excerpt diagnostics.
+#[test]
+fn reports_format_errors_with_source_context() {
+    let path =
+        std::env::temp_dir().join(format!("exs-cli-format-error-{}.exs", std::process::id()));
+    if let Err(error) = fs::write(&path, "fn main( {") {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("fmt")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(!output.status.success());
+    let stderr = match String::from_utf8(output.stderr) {
+        Ok(stderr) => stderr,
+        Err(error) => panic!("CLI error output was not UTF-8: {error}"),
+    };
+    assert!(stderr.contains("error: E0102 (compile syntax)"));
+    assert!(stderr.contains("fn main( {"));
+}
+
 /// Prints the completed floating-point `main` result for a source program.
 #[test]
 fn prints_the_main_result() {

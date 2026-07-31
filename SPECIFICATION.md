@@ -886,6 +886,12 @@ use geo::display as render;
 
 The single-element and grouped forms are equivalent. A used function becomes an unqualified direct call; a used nominal type or trait becomes valid as an unqualified construction, static-method receiver, or type annotation. `use` aliases are compile-time only and do not create runtime namespace values. A used name MUST NOT collide with a local declaration, another used alias, or a built-in top-level name.
 
+## Formatting
+
+The reference formatter is exposed by the compiler library and as `exs fmt <file.exs>`. It accepts a lexically and syntactically valid source unit, including an imported module without `main`, and rewrites the file in place through the CLI. Invalid input is not modified; formatter diagnostics use the standard source-excerpt rendering.
+
+Canonical output uses four spaces per block level, one statement per line, a final newline, one blank line between top-level declarations, and one blank line between a module prelude and the first declaration. It normalizes spaces around binary operators, assignments, type annotations, function return arrows, commas, and object-property colons. It uses normal escaped string literals for all strings, so raw and dedented spelling is not retained when formatting.
+
 # 11 – Built-ins
 
 The following built-ins are always available and cannot be shadowed at module top level. A nested local binding MAY shadow a built-in.

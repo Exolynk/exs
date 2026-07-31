@@ -12,7 +12,7 @@ use std::task::{Context, Poll, Waker};
 
 use exs_compiler::{
     CompileOptions, ModuleDebugInfo, ModuleResolver, ResolvedSource, SourceInput,
-    compile_with_resolver, read_debug_info,
+    compile_with_resolver, format, read_debug_info,
 };
 use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
 
@@ -43,6 +43,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
                 .map_err(|error| format!("could not write {}: {error}", arguments[3]))?;
             Ok(())
         }
+        "fmt" if arguments.len() == 2 => format_file(&arguments[1]),
         "run" if arguments.len() >= 2 => {
             let inputs = match arguments.get(2) {
                 None => Vec::new(),
@@ -53,6 +54,18 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         }
         _ => Err(usage()),
     }
+}
+
+/// Formats one source file in place using the compiler library formatter.
+fn format_file(path: &str) -> Result<(), String> {
+    let source =
+        fs::read_to_string(path).map_err(|error| format!("could not read {path}: {error}"))?;
+    let formatted = format(SourceInput {
+        source_id: path,
+        text: &source,
+    })
+    .map_err(|error| error.render(&source))?;
+    fs::write(path, formatted).map_err(|error| format!("could not write {path}: {error}"))
 }
 
 /// Compiles one source file using the runtime template embedded in the compiler dependency.
@@ -369,5 +382,5 @@ fn line_and_column(source: &str, offset: u32) -> (usize, usize) {
 
 /// Returns CLI usage text.
 fn usage() -> String {
-    "usage: exs check <file.exs> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...]".to_owned()
+    "usage: exs check <file.exs> | exs fmt <file.exs> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...]".to_owned()
 }

@@ -3,6 +3,7 @@
 mod ast;
 mod codegen;
 mod diagnostic;
+mod formatter;
 mod hir;
 mod lexer;
 mod module_graph;
@@ -90,4 +91,15 @@ pub fn compile_with_resolver<R: ModuleResolver>(
     resolver: &mut R,
 ) -> Result<CompiledModule, String> {
     module_graph::compile(source, options, resolver)
+}
+
+/// Formats one syntactically valid ExS source unit into the canonical source layout.
+///
+/// Unlike compilation, formatting accepts an imported module without `fn main(...)`.
+///
+/// # Errors
+///
+/// Returns lexer or parser diagnostics when the input cannot be formatted safely.
+pub fn format<'a>(source: SourceInput<'a>) -> Result<String, CompileDiagnostics<'a>> {
+    formatter::format(source)
 }

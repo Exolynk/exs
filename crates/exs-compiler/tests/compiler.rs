@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use exs_compiler::{
     CompileOptions, ModuleResolver, ResolvedSource, SourceInput, compile, compile_with_resolver,
-    read_debug_info,
+    format, read_debug_info,
 };
 use wasmparser::{Parser, Payload, Validator};
 
@@ -20,6 +20,44 @@ fn compiles_a_minimal_main_function() {
         CompileOptions::default(),
     );
     assert!(module.is_ok());
+}
+
+/// Formats valid source into a stable, reparsable canonical layout.
+#[test]
+fn formats_source_into_canonical_layout() {
+    let source = "import \"./math.exs\" as math;use math::{add as plus,Point};fn main(value:Int)->Int{let point=Point{value:value};if value>0{ret plus(point.value,1);}else{ret 0;}}";
+    let formatted = match format(SourceInput {
+        source_id: "format.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert_eq!(
+        formatted,
+        "import \"./math.exs\" as math;\nuse math::{add as plus, Point};\n\nfn main(value: Int) -> Int {\n    let point = Point {value: value};\n    if value > 0 {\n        ret plus(point.value, 1);\n    }\n    else {\n        ret 0;\n    }\n}\n"
+    );
+    let reformatted = match format(SourceInput {
+        source_id: "format.exs",
+        text: &formatted,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("reformatting failed: {error}"),
+    };
+    assert_eq!(reformatted, formatted);
+}
+
+/// Rejects malformed source instead of attempting a best-effort rewrite.
+#[test]
+fn formatter_returns_syntax_diagnostics() {
+    let error = match format(SourceInput {
+        source_id: "format-error.exs",
+        text: "fn main( {",
+    }) {
+        Ok(_) => panic!("malformed source was formatted"),
+        Err(error) => error,
+    };
+    assert!(!error.diagnostics.is_empty());
 }
 
 /// Resolves compiler-test source files from an in-memory canonical source table.
