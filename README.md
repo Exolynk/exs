@@ -102,7 +102,9 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 9: Scheduler
 
-- [ ] Add the execution context, task states, deterministic runnable queue, host-completion routing, cancellation, and deadlock detection.
+- [x] Add the execution context, root-task lifecycle, task states, deterministic runnable queue, and scheduler-owned GC roots.
+- [x] Add scheduler checkpoints at function entry, loop backedges, and host resumes, with quantum-based dispatcher yields.
+- [x] Route host completions to tasks, add cancellation and invalidated call IDs, and report scheduler deadlocks.
 
 ### Phase 10: Closures
 

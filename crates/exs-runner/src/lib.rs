@@ -3,16 +3,19 @@
 use std::fmt;
 
 use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, RESULT_LENGTH_EXPORT,
-    RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, START_EXPORT, STATUS_COMPLETE, STATUS_PENDING,
+    ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, INPUT_ALLOC_EXPORT, RESULT_LENGTH_EXPORT,
+    RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, START_EXPORT, STATUS_CANCELLED, STATUS_COMPLETE,
+    STATUS_PENDING,
 };
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
+mod cancellation;
 mod cbor;
 mod host_abi;
 mod host_function;
 mod registry;
 
+pub use self::cancellation::ExecutionCancellation;
 pub use self::cbor::{HostCborError, decode_arguments, encode_result};
 pub use self::host_function::{AsyncHostFunction, HostCall, HostFuture, SyncHostFunction};
 pub use self::registry::{HostFunctionRegistry, RegistryError};
@@ -43,7 +46,15 @@ impl ServerRunner {
     ///
     /// Returns an error for invalid Wasm, ABI violations, engine traps, or an invalid suspend
     /// protocol. Recoverable language failures remain `Ok(ExsValue::Error(...))`.
-    pub async fn execute(&self, wasm: &[u8], inputs: &[ExsValue]) -> Result<ExsValue, RunnerError> {
+    pub async fn execute(
+        &self,
+        wasm: &[u8],
+        inputs: &[ExsValue],
+        cancellation: &ExecutionCancellation,
+    ) -> Result<ExsValue, RunnerError> {
+        if cancellation.is_cancelled() {
+            return Err(RunnerError::Cancelled);
+        }
         let engine = Engine::default();
         let module =
             Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
@@ -66,11 +77,26 @@ impl ServerRunner {
                 STATUS_COMPLETE => return result(&mut store, &instance),
                 STATUS_PENDING => {
                     let (call_id, future) = store.data_mut().take_pending().ok_or_else(|| {
-                        RunnerError::Abi(
+                        RunnerError::Deadlock(
                             "program reported Pending without a runner host future".to_owned(),
                         )
                     })?;
-                    let response = future.await;
+                    let response = match cancellation::CancellableHostFuture::new(
+                        future,
+                        cancellation,
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(()) => {
+                            cancel_execution(&mut store, &instance)?;
+                            return Err(RunnerError::Cancelled);
+                        }
+                    };
+                    if cancellation.is_cancelled() {
+                        cancel_execution(&mut store, &instance)?;
+                        return Err(RunnerError::Cancelled);
+                    }
                     let (pointer, length) = write_response(&mut store, &instance, &response)?;
                     let resume = instance
                         .get_typed_func::<(i64, i32, i32), i32>(&mut store, RESUME_HOST_EXPORT)
@@ -79,6 +105,7 @@ impl ServerRunner {
                         .call(&mut store, (call_id, pointer, length))
                         .map_err(|error| RunnerError::Wasm(error.to_string()))?;
                 }
+                STATUS_CANCELLED => return Err(RunnerError::Cancelled),
                 status => return Err(RunnerError::Status(status)),
             }
         }
@@ -92,6 +119,10 @@ pub enum RunnerError {
     Wasm(String),
     /// A mandatory ABI export was absent or incompatible.
     Abi(String),
+    /// The runner cannot make progress because no host completion can resume the scheduler.
+    Deadlock(String),
+    /// The caller cancelled the currently pending execution.
+    Cancelled,
     /// The module returned an unsupported execution status.
     Status(i32),
 }
@@ -101,12 +132,27 @@ impl fmt::Display for RunnerError {
         match self {
             Self::Wasm(message) => write!(formatter, "WebAssembly error: {message}"),
             Self::Abi(message) => write!(formatter, "ABI error: {message}"),
+            Self::Deadlock(message) => write!(formatter, "scheduler deadlock: {message}"),
+            Self::Cancelled => formatter.write_str("execution cancelled"),
             Self::Status(status) => write!(formatter, "unexpected execution status: {status}"),
         }
     }
 }
 
 impl std::error::Error for RunnerError {}
+
+/// Cancels the active scheduler task in one suspended resumable module.
+fn cancel_execution(
+    store: &mut Store<host_abi::HostAbiState>,
+    instance: &Instance,
+) -> Result<(), RunnerError> {
+    let cancel = instance
+        .get_typed_func::<(), ()>(&mut *store, CANCEL_EXPORT)
+        .map_err(|error| RunnerError::Abi(error.to_string()))?;
+    cancel
+        .call(&mut *store, ())
+        .map_err(|error| RunnerError::Wasm(error.to_string()))
+}
 
 /// Executes a linked `ExS` module using the supplied ordered main arguments.
 ///

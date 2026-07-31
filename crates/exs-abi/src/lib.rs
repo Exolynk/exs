@@ -10,8 +10,8 @@ pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, Sour
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 11 adds generic runner-mediated host-call imports and resumable frames.
-pub const ABI_VERSION: u32 = 11;
+/// Version 14 adds scheduler cancellation and invalidated host-call completion handling.
+pub const ABI_VERSION: u32 = 14;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
@@ -65,6 +65,8 @@ pub const HOST_CALL_RESPONSE_LENGTH_IMPORT: &str = "__exs_host_call_response_len
 pub const HOST_CALL_RESPONSE_COPY_IMPORT: &str = "__exs_host_call_response_copy";
 /// The compiler-generated export used by runners to resume a completed host call.
 pub const RESUME_HOST_EXPORT: &str = "__exs_resume_host";
+/// The compiler-generated export used by runners to cancel a suspended root execution.
+pub const CANCEL_EXPORT: &str = "__exs_cancel";
 
 /// A successfully completed execution.
 pub const STATUS_COMPLETE: i32 = 2;
@@ -72,6 +74,8 @@ pub const STATUS_COMPLETE: i32 = 2;
 pub const STATUS_READY: i32 = 0;
 /// A root execution suspended while waiting for a host-call completion.
 pub const STATUS_PENDING: i32 = 1;
+/// A root execution was cancelled before its pending host call completed.
+pub const STATUS_CANCELLED: i32 = 3;
 /// A host call completed synchronously and has a response available to the runtime.
 pub const HOST_CALL_READY: i32 = 0;
 /// A host call is pending and will be resumed by the runner.

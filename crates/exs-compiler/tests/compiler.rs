@@ -17,7 +17,7 @@ fn compiles_a_minimal_main_function() {
     assert!(module.is_ok());
 }
 
-/// Compiles a frame-backed Host ABI call and its runner-facing resume export.
+/// Compiles a frame-backed Host ABI call and its runner-facing control exports.
 #[test]
 fn compiles_a_resumable_host_call() {
     let compiled = match compile(
@@ -44,6 +44,7 @@ fn compiles_a_resumable_host_call() {
         .map(|export| export.name.to_owned())
         .collect::<Vec<_>>();
     assert!(exports.iter().any(|name| name == "__exs_resume_host"));
+    assert!(exports.iter().any(|name| name == "__exs_cancel"));
 }
 
 /// Emits compact source positions by default and embeds source text only when requested.

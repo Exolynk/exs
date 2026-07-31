@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use std::task::{Context, Poll, Waker};
 
 use exs_compiler::{CompileOptions, ModuleDebugInfo, SourceInput, compile, read_debug_info};
-use exs_runner::{ExsValue, ServerRunner};
+use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
 
 /// Runs the `ExS` command-line interface.
 fn main() -> ExitCode {
@@ -87,7 +87,9 @@ fn run_program(path: &str, inputs: &[exs_runner::ExsValue]) -> Result<(), String
     };
     let debug_info = read_debug_info(&wasm).ok();
     let runner = cli_runner()?;
-    let result = block_on(runner.execute(&wasm, inputs)).map_err(|error| error.to_string())?;
+    let cancellation = ExecutionCancellation::new();
+    let result = block_on(runner.execute(&wasm, inputs, &cancellation))
+        .map_err(|error| error.to_string())?;
     match result {
         exs_runner::ExsValue::Error(error) => Err(format_error(&error, debug_info.as_ref())),
         result => {

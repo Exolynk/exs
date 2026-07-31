@@ -1,0 +1,168 @@
+//! Cooperative cancellation for one running ExS execution.
+
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::task::Waker;
+
+use crate::{ExsValue, HostFuture};
+
+/// Cloneable cancellation control supplied to one runner execution.
+#[derive(Clone, Default)]
+pub struct ExecutionCancellation {
+    /// Shared cancellation state and registered executor wakers.
+    state: Arc<Mutex<CancellationState>>,
+}
+
+/// Mutable shared state for one cancellation control.
+struct CancellationState {
+    /// Whether cancellation was requested.
+    cancelled: bool,
+    /// Monotonic identifier assigned to one registered waker.
+    next_waker_id: u64,
+    /// Executor wakers currently blocked on cancellable host futures.
+    wakers: Vec<(u64, Waker)>,
+}
+
+impl Default for CancellationState {
+    /// Creates an uncancelled state without registered host-future wakers.
+    fn default() -> Self {
+        Self {
+            cancelled: false,
+            next_waker_id: 1,
+            wakers: Vec::new(),
+        }
+    }
+}
+
+impl ExecutionCancellation {
+    /// Creates an uncancelled execution control.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests cancellation and wakes every blocked host-future poller.
+    pub fn cancel(&self) {
+        let wakers = {
+            let mut state = self.state();
+            if state.cancelled {
+                return;
+            }
+            state.cancelled = true;
+            std::mem::take(&mut state.wakers)
+        };
+        for (_, waker) in wakers {
+            waker.wake();
+        }
+    }
+
+    /// Returns whether cancellation has been requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.state().cancelled
+    }
+
+    /// Registers or refreshes the executor waker for one pending host future.
+    fn register_waker(&self, registration: &mut Option<u64>, waker: &Waker) {
+        let mut state = self.state();
+        if state.cancelled {
+            return;
+        }
+        if let Some(identifier) = registration
+            && let Some((_, registered)) = state
+                .wakers
+                .iter_mut()
+                .find(|(registered_id, _)| registered_id == identifier)
+        {
+            if !registered.will_wake(waker) {
+                *registered = waker.clone();
+            }
+            return;
+        }
+        let identifier = state.next_waker_id;
+        let Some(next_identifier) = identifier.checked_add(1) else {
+            return;
+        };
+        state.next_waker_id = next_identifier;
+        state.wakers.push((identifier, waker.clone()));
+        *registration = Some(identifier);
+    }
+
+    /// Removes one completed host future's executor waker.
+    fn unregister_waker(&self, registration: &mut Option<u64>) {
+        let Some(identifier) = registration.take() else {
+            return;
+        };
+        let mut state = self.state();
+        if let Some(position) = state
+            .wakers
+            .iter()
+            .position(|(registered_id, _)| *registered_id == identifier)
+        {
+            state.wakers.swap_remove(position);
+        }
+    }
+
+    /// Locks the shared cancellation state, recovering consistently after a panic.
+    fn state(&self) -> MutexGuard<'_, CancellationState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Future wrapper that resolves when its host future completes or cancellation is requested.
+pub(crate) struct CancellableHostFuture<'cancellation> {
+    /// The runner-owned pending host future.
+    future: HostFuture,
+    /// Caller-owned cancellation control for this execution.
+    cancellation: &'cancellation ExecutionCancellation,
+    /// Registered wake-up slot for this future, when it is pending.
+    registration: Option<u64>,
+}
+
+impl<'cancellation> CancellableHostFuture<'cancellation> {
+    /// Wraps one pending host future with the execution cancellation control.
+    pub(crate) fn new(
+        future: HostFuture,
+        cancellation: &'cancellation ExecutionCancellation,
+    ) -> Self {
+        Self {
+            future,
+            cancellation,
+            registration: None,
+        }
+    }
+}
+
+impl std::future::Future for CancellableHostFuture<'_> {
+    type Output = Result<ExsValue, ()>;
+
+    /// Polls the host future while ensuring cancellation wakes and completes this future.
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if self.cancellation.is_cancelled() {
+            self.cancellation.unregister_waker(&mut self.registration);
+            return std::task::Poll::Ready(Err(()));
+        }
+        self.cancellation
+            .register_waker(&mut self.registration, context.waker());
+        if self.cancellation.is_cancelled() {
+            self.cancellation.unregister_waker(&mut self.registration);
+            return std::task::Poll::Ready(Err(()));
+        }
+        match self.future.as_mut().poll(context) {
+            std::task::Poll::Ready(value) => {
+                self.cancellation.unregister_waker(&mut self.registration);
+                std::task::Poll::Ready(Ok(value))
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+impl Drop for CancellableHostFuture<'_> {
+    /// Releases the registered waker when the runner drops an unfinished execution.
+    fn drop(&mut self) {
+        self.cancellation.unregister_waker(&mut self.registration);
+    }
+}

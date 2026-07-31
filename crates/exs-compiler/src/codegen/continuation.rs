@@ -191,6 +191,12 @@ pub(super) fn compile_start<'a>(
     function.instruction(&Instruction::Return);
     function.instruction(&Instruction::End);
 
+    call_runtime(
+        &mut function,
+        runtime,
+        "__exs_rt_execution_start",
+        module_span(module),
+    )?;
     function.instruction(&Instruction::I32Const(main.function_id.cast_signed()));
     function.instruction(&Instruction::I32Const(frame_slot_count));
     call_runtime(
@@ -232,6 +238,12 @@ pub(super) fn compile_start<'a>(
         "__exs_rt_async_frame_set_current",
         module_span(module),
     )?;
+    call_runtime(
+        &mut function,
+        runtime,
+        "__exs_rt_scheduler_checkpoint",
+        module_span(module),
+    )?;
     emit_dispatch(
         &mut function,
         dispatcher,
@@ -260,7 +272,20 @@ pub(super) fn compile_resume<'a>(
         "__exs_rt_host_call_resume",
         module_span(module),
     )?;
-    function.instruction(&Instruction::Drop);
+    function.instruction(&Instruction::LocalSet(status));
+    function.instruction(&Instruction::LocalGet(status));
+    function.instruction(&Instruction::I32Eqz);
+    function.instruction(&Instruction::If(BlockType::Empty));
+    function.instruction(&Instruction::Else);
+    function.instruction(&Instruction::I32Const(exs_abi::STATUS_CANCELLED));
+    function.instruction(&Instruction::Return);
+    function.instruction(&Instruction::End);
+    call_runtime(
+        &mut function,
+        runtime,
+        "__exs_rt_scheduler_checkpoint",
+        module_span(module),
+    )?;
     emit_dispatch(
         &mut function,
         dispatcher,
@@ -269,6 +294,22 @@ pub(super) fn compile_resume<'a>(
         runtime,
         module_span(module),
     )
+}
+
+/// Generates the runner-facing export that cancels a suspended root execution.
+pub(super) fn compile_cancel<'a>(
+    module: &crate::ast::Module<'a>,
+    runtime: &HashMap<String, u32>,
+) -> Result<Function, CompileDiagnostics<'a>> {
+    let mut function = Function::new([]);
+    call_runtime(
+        &mut function,
+        runtime,
+        "__exs_rt_execution_cancel",
+        module_span(module),
+    )?;
+    function.instruction(&Instruction::End);
+    Ok(function)
 }
 
 /// Generates one module-wide step dispatcher selected by the active frame function id.
@@ -495,6 +536,7 @@ enum Operation<'source, 'function> {
     /// Transfers execution to an explicit continuation state.
     Goto {
         target: u32,
+        checkpoint: bool,
         span: SourceSpan<'source>,
     },
     /// Creates a runtime-owned iterable snapshot and returns an Error early on failure.
@@ -741,7 +783,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         })?;
         let then_start = self.operations.len();
         self.lower_block(then_block)?;
-        let skip_else = self.push(Operation::Goto { target: 0, span })?;
+        let skip_else = self.push(Operation::Goto {
+            target: 0,
+            checkpoint: false,
+            span,
+        })?;
         let else_start = self.operations.len();
         if let Some(else_block) = else_block {
             self.lower_block(else_block)?;
@@ -776,6 +822,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         self.lower_block(body)?;
         let back_edge = self.push(Operation::Goto {
             target: self.state_id(condition_start, span)?,
+            checkpoint: true,
             span,
         })?;
         let exit = self.operations.len();
@@ -853,6 +900,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             .push(Operation::Increment { slot: index, span });
         self.operations.push(Operation::Goto {
             target: self.state_id(condition_start, span)?,
+            checkpoint: true,
             span,
         });
         let exit = self.operations.len();
@@ -887,7 +935,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 format!("{keyword} is only valid inside a loop"),
             )));
         }
-        let branch = self.push(Operation::Goto { target: 0, span })?;
+        let branch = self.push(Operation::Goto {
+            target: 0,
+            checkpoint: !is_break,
+            span,
+        })?;
         let Some(target) = self.loops.last_mut() else {
             return Err(diagnostics(CompileDiagnostic::new(
                 "E0999",
@@ -1371,14 +1423,22 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             destination,
             span,
         });
-        let right_true_exit = self.push(Operation::Goto { target: 0, span })?;
+        let right_true_exit = self.push(Operation::Goto {
+            target: 0,
+            checkpoint: false,
+            span,
+        })?;
         let right_false = self.operations.len();
         self.operations.push(Operation::Boolean {
             value: false,
             destination,
             span,
         });
-        let right_false_exit = self.push(Operation::Goto { target: 0, span })?;
+        let right_false_exit = self.push(Operation::Goto {
+            target: 0,
+            checkpoint: false,
+            span,
+        })?;
 
         let short_start = self.operations.len();
         self.operations.push(Operation::Boolean {
@@ -1386,7 +1446,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             destination,
             span,
         });
-        let short_exit = self.push(Operation::Goto { target: 0, span })?;
+        let short_exit = self.push(Operation::Goto {
+            target: 0,
+            checkpoint: false,
+            span,
+        })?;
         let after = self.operations.len();
 
         if is_or {
@@ -1857,7 +1921,16 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 when_false,
                 span,
             } => self.branch_on_value(*condition, *checked, *when_true, *when_false, *span)?,
-            Operation::Goto { target, span } => self.ready(*target, *span)?,
+            Operation::Goto {
+                target,
+                checkpoint,
+                span,
+            } => {
+                if *checkpoint {
+                    self.call_runtime("__exs_rt_scheduler_checkpoint", *span)?;
+                }
+                self.ready(*target, *span)?;
+            }
             Operation::IterSnapshot {
                 iterable,
                 destination,
@@ -2005,6 +2078,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function
             .instruction(&Instruction::I32Const(destination.cast_signed()));
         self.call_runtime("__exs_rt_async_frame_set_caller", span)?;
+        self.call_runtime("__exs_rt_scheduler_checkpoint", span)?;
         self.function
             .instruction(&Instruction::I32Const(STATUS_READY));
         self.function.instruction(&Instruction::Return);

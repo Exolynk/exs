@@ -15,6 +15,9 @@ mod gc;
 mod runtime;
 
 #[cfg(target_arch = "wasm32")]
+mod scheduler;
+
+#[cfg(target_arch = "wasm32")]
 mod state;
 
 #[cfg(target_arch = "wasm32")]

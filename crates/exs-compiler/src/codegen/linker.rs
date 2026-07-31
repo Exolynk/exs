@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, MODULE_METADATA_SECTION, RESUME_HOST_EXPORT, START_EXPORT,
+    ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, MODULE_METADATA_SECTION, RESUME_HOST_EXPORT,
+    START_EXPORT,
 };
 use exs_runtime::WASM_TEMPLATE;
 use wasm_encoder::{
@@ -85,10 +86,12 @@ struct TemplateLinker<'source, 'module> {
     start_type: Option<u32>,
     abi_version_type: Option<u32>,
     resume_type: Option<u32>,
+    cancel_type: Option<u32>,
     dispatch_type: Option<u32>,
     start_index: Option<u32>,
     abi_version_index: Option<u32>,
     resume_index: Option<u32>,
+    cancel_index: Option<u32>,
     dispatch_index: Option<u32>,
     literals: LiteralPool,
     source_map: SourceMap<'source>,
@@ -137,10 +140,12 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             start_type: None,
             abi_version_type: None,
             resume_type: None,
+            cancel_type: None,
             dispatch_type: None,
             start_index: None,
             abi_version_index: None,
             resume_index: None,
+            cancel_index: None,
             dispatch_index: None,
             literals: literals.with_data_index_base(template_data.count),
             source_map,
@@ -208,10 +213,13 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             .function([ValType::I64, ValType::I32, ValType::I32], [ValType::I32]);
         let dispatch_type = types.len();
         types.ty().function([], [ValType::I32]);
+        let cancel_type = types.len();
+        types.ty().function([], []);
         self.start_type = Some(start_type);
         self.abi_version_type = Some(abi_version_type);
         self.resume_type = Some(resume_type);
         self.dispatch_type = Some(dispatch_type);
+        self.cancel_type = Some(cancel_type);
         Ok(())
     }
 
@@ -324,6 +332,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         self.abi_version_index = Some(start_index + 1);
         if self.suspendable_functions.contains("main") {
             self.resume_index = Some(start_index + 2);
+            self.cancel_index = Some(start_index + 3);
         }
         functions.function(
             self.start_type
@@ -337,6 +346,10 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             functions.function(
                 self.resume_type
                     .ok_or_else(|| self.state_error("missing resume type"))?,
+            );
+            functions.function(
+                self.cancel_type
+                    .ok_or_else(|| self.state_error("missing cancellation type"))?,
             );
         }
         Ok(())
@@ -377,6 +390,9 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         );
         if let Some(resume_index) = self.resume_index {
             exports.export(RESUME_HOST_EXPORT, ExportKind::Func, resume_index);
+        }
+        if let Some(cancel_index) = self.cancel_index {
+            exports.export(CANCEL_EXPORT, ExportKind::Func, cancel_index);
         }
         exports.export(
             ABI_VERSION_EXPORT,
@@ -549,6 +565,9 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             )
             .map_err(reencode::Error::UserError)?;
             codes.function(&resume);
+            let cancel = continuation::compile_cancel(self.module, &self.runtime_functions)
+                .map_err(reencode::Error::UserError)?;
+            codes.function(&cancel);
         }
         Ok(())
     }

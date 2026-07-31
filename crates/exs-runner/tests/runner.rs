@@ -7,7 +7,7 @@ use std::task::{Context, Poll, Waker};
 
 use exs_abi::{ErrorSeverity, ExsError, ExsValue};
 use exs_compiler::{CompileOptions, SourceInput, compile};
-use exs_runner::{ServerRunner, execute};
+use exs_runner::{ExecutionCancellation, RunnerError, ServerRunner, execute};
 
 /// Compiles source text for runner tests.
 fn compile_source(source: &str) -> exs_compiler::CompiledModule {
@@ -305,7 +305,9 @@ fn executes_a_synchronous_dynamic_host_function() {
                 .unwrap_or(ExsValue::None))
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(42)])) {
+    let cancellation = ExecutionCancellation::new();
+    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(42)], &cancellation))
+    {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -325,12 +327,63 @@ fn executes_an_asynchronous_dynamic_host_function() {
             })
             .is_ok()
     );
-    let result =
-        match block_on(runner.execute(&compiled.wasm, &[ExsValue::String("Ada".to_owned())])) {
-            Ok(result) => result,
-            Err(error) => panic!("execution failed: {error}"),
-        };
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::String("Ada".to_owned())],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
     assert_eq!(result, ExsValue::String("Ada".to_owned()));
+}
+
+/// Cancels a suspended execution and invalidates its pending host-call continuation.
+#[test]
+fn cancels_a_pending_host_execution() {
+    let compiled = compile_source("fn main() { ret host.call(\"wait\"); }");
+    let cancellation = ExecutionCancellation::new();
+    let cancellation_for_host = cancellation.clone();
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("wait", move |_arguments: Vec<ExsValue>| {
+                let cancellation = cancellation_for_host.clone();
+                std::future::poll_fn(move |_| {
+                    cancellation.cancel();
+                    Poll::Pending
+                })
+            })
+            .is_ok()
+    );
+    let result = block_on(runner.execute(&compiled.wasm, &[], &cancellation));
+    assert!(matches!(result, Err(RunnerError::Cancelled)));
+}
+
+/// Reports a scheduler deadlock when Wasm suspends without a runner host future.
+#[test]
+fn reports_pending_execution_without_host_future_as_deadlock() {
+    let wasm = format!(
+        r#"
+        (module
+            (memory (export "memory") 1)
+            (func (export "__exs_abi_version") (result i32)
+                i32.const {})
+            (func (export "__exs_input_alloc") (param i32) (result i32)
+                i32.const 0)
+            (func (export "__exs_start") (param i32 i32) (result i32)
+                i32.const 1)
+        )
+        "#,
+        exs_abi::ABI_VERSION
+    );
+    let cancellation = ExecutionCancellation::new();
+    let runner = ServerRunner::new();
+    let result = block_on(runner.execute(wasm.as_bytes(), &[], &cancellation));
+    assert!(
+        matches!(result, Err(RunnerError::Deadlock(message)) if message.contains("without a runner host future"))
+    );
 }
 
 /// Continues through nested expressions and mutable sequential statements after ready host calls.
@@ -355,7 +408,11 @@ fn executes_sequential_continuation_states_for_synchronous_host_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(4)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(4)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -383,7 +440,11 @@ fn executes_sequential_continuation_states_for_asynchronous_host_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(41)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(41)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -430,11 +491,46 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::None])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::None],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
     assert_eq!(result, ExsValue::Int(5));
+}
+
+/// Preserves resumable loop execution across scheduler quantum checkpoints.
+#[test]
+fn executes_asynchronous_host_calls_after_scheduler_quantum_yields() {
+    let compiled = compile_source(
+        r#"
+        fn main() {
+            let count = 0;
+            while count < 130 {
+                count = count + 1;
+            }
+            ret host.call("echo", count);
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+                arguments.into_iter().next().unwrap_or(ExsValue::None)
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(130));
 }
 
 /// Short-circuits resumable logical expressions when host calls return immediately.
@@ -445,7 +541,8 @@ fn short_circuits_logical_continuations_for_synchronous_host_calls() {
     let mut runner = ServerRunner::new();
     register_logical_host(&mut runner, false, Arc::clone(&calls));
 
-    let result = match block_on(runner.execute(&compiled.wasm, &[])) {
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -467,7 +564,8 @@ fn short_circuits_logical_continuations_for_asynchronous_host_calls() {
     let mut runner = ServerRunner::new();
     register_logical_host(&mut runner, true, Arc::clone(&calls));
 
-    let result = match block_on(runner.execute(&compiled.wasm, &[])) {
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -495,11 +593,14 @@ fn constructs_typed_objects_for_synchronous_host_calls() {
             .is_ok()
     );
 
-    let result =
-        match block_on(runner.execute(&compiled.wasm, &[ExsValue::String("Ada".to_owned())])) {
-            Ok(result) => result,
-            Err(error) => panic!("execution failed: {error}"),
-        };
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::String("Ada".to_owned())],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
     assert_eq!(result, ExsValue::String("Ada".to_owned()));
 }
 
@@ -517,11 +618,14 @@ fn constructs_typed_objects_for_asynchronous_host_calls() {
             .is_ok()
     );
 
-    let result =
-        match block_on(runner.execute(&compiled.wasm, &[ExsValue::String("Ada".to_owned())])) {
-            Ok(result) => result,
-            Err(error) => panic!("execution failed: {error}"),
-        };
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::String("Ada".to_owned())],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
     assert_eq!(result, ExsValue::String("Ada".to_owned()));
 }
 
@@ -544,7 +648,8 @@ fn validates_typed_object_fields_after_asynchronous_host_calls() {
             .is_ok()
     );
 
-    let result = match block_on(runner.execute(&compiled.wasm, &[])) {
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -563,7 +668,11 @@ fn executes_continuation_source_positions_for_synchronous_host_calls() {
     let mut runner = ServerRunner::new();
     register_continuation_matrix_hosts(&mut runner, false, Arc::clone(&calls));
 
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(3)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(3)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -579,7 +688,11 @@ fn executes_continuation_source_positions_for_asynchronous_host_calls() {
     let mut runner = ServerRunner::new();
     register_continuation_matrix_hosts(&mut runner, true, Arc::clone(&calls));
 
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(3)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(3)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -606,7 +719,11 @@ fn validates_resumable_function_type_contracts() {
             ))
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(1)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(1)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -639,7 +756,11 @@ fn executes_transitive_suspendable_direct_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(20)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(20)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -667,7 +788,11 @@ fn executes_transitive_suspendable_static_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(20)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(20)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -696,7 +821,11 @@ fn executes_transitive_suspendable_instance_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(20)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(20)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -729,7 +858,11 @@ fn executes_transitive_suspendable_trait_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(20)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(20)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -754,7 +887,11 @@ fn traces_errors_through_suspendable_child_frames() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(7)])) {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(7)],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };

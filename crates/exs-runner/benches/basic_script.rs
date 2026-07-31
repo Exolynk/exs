@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use exs_abi::ExsValue;
 use exs_compiler::{CompileOptions, SourceInput, compile};
-use exs_runner::ServerRunner;
+use exs_runner::{ExecutionCancellation, ServerRunner};
 
 const ITERATIONS: u64 = 100;
 const LIMIT: i64 = 10_000;
@@ -85,7 +85,8 @@ fn register_print(runner: &mut ServerRunner, checksum: Arc<AtomicU64>) {
 
 /// Executes one already-compiled benchmark module through the public runner path.
 fn execute(runner: &ServerRunner, wasm: &[u8]) -> ExsValue {
-    match block_on(runner.execute(wasm, &[ExsValue::Int(LIMIT)])) {
+    let cancellation = ExecutionCancellation::new();
+    match block_on(runner.execute(wasm, &[ExsValue::Int(LIMIT)], &cancellation)) {
         Ok(value) => value,
         Err(error) => panic!("benchmark execution failed: {error}"),
     }

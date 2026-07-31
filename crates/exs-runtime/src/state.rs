@@ -7,6 +7,7 @@ use dlmalloc::GlobalDlmalloc;
 use exs_abi::{ExsStackFrame, SourcePositionId};
 use exs_value::ValueRef;
 
+use crate::scheduler::ExecutionContext;
 use crate::value::RtValue;
 
 #[global_allocator]
@@ -69,8 +70,8 @@ pub(crate) struct RuntimeState {
     pub(crate) async_frames: Vec<Option<AsyncFrame>>,
     /// Reusable zero-based async-frame indexes.
     pub(crate) free_async_frames: Vec<u32>,
-    /// One-based identifier of the frame executed by the generated dispatcher.
-    pub(crate) active_async_frame: Option<u32>,
+    /// Scheduler state for the active root execution, if any.
+    pub(crate) execution: Option<ExecutionContext>,
     /// Root result retained after the final resumable frame completes.
     pub(crate) completed_async_result: Option<ValueRef>,
     /// CBOR request bytes for the active generic host call.
@@ -79,10 +80,6 @@ pub(crate) struct RuntimeState {
     pub(crate) host_response_buffer: Vec<u8>,
     /// The next monotonic HostCallId assigned within this Wasm instance.
     pub(crate) next_host_call_id: u64,
-    /// The HostCallId whose runner response is currently available.
-    pub(crate) active_host_call: Option<u64>,
-    /// A locally generated ready host Error, such as an invalid dynamic call name.
-    pub(crate) ready_host_result: Option<ValueRef>,
     /// Native runtime values temporarily protected across further allocations.
     pub(crate) temporary_roots: Vec<ValueRef>,
     /// Source position applied to the next recoverable runtime Error.
@@ -108,13 +105,11 @@ impl RuntimeState {
             root_frames: Vec::new(),
             async_frames: Vec::new(),
             free_async_frames: Vec::new(),
-            active_async_frame: None,
+            execution: None,
             completed_async_result: None,
             host_request_buffer: Vec::new(),
             host_response_buffer: Vec::new(),
             next_host_call_id: 1,
-            active_host_call: None,
-            ready_host_result: None,
             temporary_roots: Vec::new(),
             current_source_position: None,
             frames: Vec::new(),

@@ -1,6 +1,6 @@
 //! Wasmtime imports implementing the dynamic ExS Host ABI.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use exs_abi::{
     ErrorSeverity, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
@@ -18,7 +18,7 @@ pub(crate) struct HostAbiState {
     /// CBOR responses that completed synchronously and await runtime retrieval.
     ready_responses: HashMap<i64, Vec<u8>>,
     /// Futures that have suspended a runtime task and await later runner resumption.
-    pending_calls: HashMap<i64, HostFuture>,
+    pending_calls: BTreeMap<i64, HostFuture>,
 }
 
 impl HostAbiState {
@@ -27,7 +27,7 @@ impl HostAbiState {
         Self {
             registry,
             ready_responses: HashMap::new(),
-            pending_calls: HashMap::new(),
+            pending_calls: BTreeMap::new(),
         }
     }
 

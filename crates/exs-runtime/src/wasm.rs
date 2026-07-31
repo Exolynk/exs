@@ -19,6 +19,24 @@ pub extern "C" fn __exs_rt_none_new() -> ValueRef {
     runtime::allocate(RtValue::None)
 }
 
+/// Starts one fresh root execution scheduler context.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_execution_start() {
+    runtime::execution_start();
+}
+
+/// Consumes one generated scheduler checkpoint for the current task.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_scheduler_checkpoint() {
+    runtime::scheduler_checkpoint();
+}
+
+/// Cancels every live task in the active root scheduler context.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_execution_cancel() {
+    runtime::execution_cancel();
+}
+
 /// Returns whether one runtime value is a language Error.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> ValueRef {

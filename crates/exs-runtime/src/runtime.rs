@@ -8,7 +8,8 @@ use exs_abi::{ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_
 use exs_value::{ValueRef, is_valid_int};
 
 use crate::gc;
-use crate::state::{AsyncFrame, FrameContinuation, HeapSlot, runtime};
+use crate::scheduler::{ExecutionContext, HostResume};
+use crate::state::{AsyncFrame, FrameContinuation, HeapSlot, RuntimeState, runtime};
 use crate::value::{RtValue, RuntimeError, RuntimeList, RuntimeObject, RuntimeString};
 
 #[link(wasm_import_module = "exs")]
@@ -195,6 +196,29 @@ pub(crate) fn set_result(value: ValueRef) {
     }
 }
 
+/// Starts one fresh root execution with a running scheduler task.
+pub(crate) fn execution_start() {
+    let state = unsafe { runtime() };
+    if state
+        .execution
+        .as_ref()
+        .is_some_and(|execution| !execution.is_complete())
+    {
+        trap();
+    }
+    state.execution = Some(ExecutionContext::start());
+}
+
+/// Consumes one compiler-emitted scheduler checkpoint for the active task.
+pub(crate) fn scheduler_checkpoint() {
+    execution(unsafe { runtime() }).checkpoint_current();
+}
+
+/// Cancels every live scheduler task in the active root execution.
+pub(crate) fn execution_cancel() {
+    execution(unsafe { runtime() }).cancel();
+}
+
 /// Returns the linear-memory pointer of the CBOR result buffer.
 pub(crate) fn result_pointer() -> i32 {
     pointer(unsafe { runtime().result_buffer.as_ptr() })
@@ -247,7 +271,7 @@ pub(crate) fn async_frame_new(function_id: i32, slot_count: i32) -> i32 {
     else {
         trap();
     };
-    state.active_async_frame = Some(identifier);
+    execution(state).set_current_frame(identifier);
     i32::try_from(identifier).unwrap_or_else(|_| trap())
 }
 
@@ -323,7 +347,9 @@ pub(crate) fn async_frame_function(frame: i32) -> i32 {
 /// Returns the current frame identifier, or zero when no resumable execution is active.
 pub(crate) fn async_frame_current() -> i32 {
     unsafe { runtime() }
-        .active_async_frame
+        .execution
+        .as_ref()
+        .and_then(ExecutionContext::current_frame)
         .map_or(0, |frame| i32::try_from(frame).unwrap_or_else(|_| trap()))
 }
 
@@ -344,7 +370,7 @@ pub(crate) fn async_frame_set_current(frame: i32) {
     else {
         trap();
     };
-    unsafe { runtime() }.active_async_frame = Some(frame);
+    execution(unsafe { runtime() }).set_current_frame(frame);
 }
 
 /// Records the parent continuation consumed when a child resumable function completes.
@@ -382,9 +408,6 @@ pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
         trap();
     };
     state.free_async_frames.push(free_index);
-    if state.active_async_frame == Some(async_frame_identifier(frame)) {
-        state.active_async_frame = None;
-    }
     if let Some(continuation) = completed.caller {
         let caller_index = usize::try_from(continuation.frame - 1).unwrap_or_else(|_| trap());
         let Some(caller) = state
@@ -398,10 +421,11 @@ pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
             trap();
         };
         *destination = Some(value);
-        state.active_async_frame = Some(caller_index as u32 + 1);
+        execution(state).set_current_frame(caller_index as u32 + 1);
         0
     } else {
         state.completed_async_result = Some(value);
+        execution(state).complete_current_task();
         1
     }
 }
@@ -441,8 +465,7 @@ pub(crate) fn host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
         trap();
     };
     state.next_host_call_id = next_call_id;
-    state.active_host_call = Some(call_id);
-    state.ready_host_result = None;
+    execution(state).begin_host_call(call_id);
     state.host_request_buffer = encoded;
     let name_pointer = pointer(name.as_ptr());
     let name_length = i32::try_from(name.len()).unwrap_or_else(|_| trap());
@@ -462,18 +485,23 @@ pub(crate) fn host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
         )
     };
     match status {
-        HOST_CALL_READY | HOST_CALL_PENDING | HOST_CALL_FATAL => status,
+        HOST_CALL_READY => status,
+        HOST_CALL_PENDING => {
+            execution(unsafe { runtime() }).suspend_current_for_host(call_id);
+            status
+        }
+        HOST_CALL_FATAL => status,
         _ => trap(),
     }
 }
 
 /// Takes and decodes the response of one synchronously completed generic host call.
 pub(crate) fn host_call_take_ready() -> ValueRef {
-    if let Some(value) = unsafe { runtime() }.ready_host_result.take() {
-        unsafe { runtime() }.active_host_call = None;
+    if let Some(value) = execution(unsafe { runtime() }).take_current_ready_host_result() {
+        execution(unsafe { runtime() }).finish_current_host_call();
         return value;
     }
-    let Some(call_id) = unsafe { runtime() }.active_host_call else {
+    let Some(call_id) = execution(unsafe { runtime() }).current_host_call() else {
         trap();
     };
     let length = unsafe { host_call_response_length_import(call_id.cast_signed()) };
@@ -496,39 +524,39 @@ pub(crate) fn host_call_take_ready() -> ValueRef {
     let checkpoint = gc::temporary_root_checkpoint();
     let value = exs_value_to_runtime(ExsValue::from_cbor(buffer).unwrap_or_else(|_| trap()));
     gc::restore_temporary_roots(checkpoint);
-    unsafe { runtime() }.active_host_call = None;
+    execution(unsafe { runtime() }).finish_current_host_call();
     value
 }
 
-/// Decodes a runner-delivered asynchronous response for the active host call.
+/// Decodes a runner-delivered asynchronous response for its waiting host call.
 ///
 /// The runner must first allocate the runtime-owned input buffer through `__exs_input_alloc` and
 /// copy exactly one canonical ExS CBOR value into it. The generated dispatcher then obtains this
-/// value through `host_call_take_ready` on its next turn.
+/// value through `host_call_take_ready` on its next turn. Returns a nonzero value when the call
+/// identifier was invalidated by cancellation.
 pub(crate) fn host_call_resume(call_id: i64, pointer_value: i32, length: i32) -> i32 {
     let Ok(call_id) = u64::try_from(call_id) else {
         trap();
     };
-    if unsafe { runtime() }.active_host_call != Some(call_id) {
-        trap();
-    }
-    if unsafe { runtime() }.ready_host_result.is_some() {
-        trap();
-    }
     let checkpoint = gc::temporary_root_checkpoint();
     let value = exs_value_to_runtime(decode_input(pointer_value, length));
     gc::restore_temporary_roots(checkpoint);
-    unsafe { runtime() }.ready_host_result = Some(value);
-    0
+    match execution(unsafe { runtime() }).resume_host_call(call_id, value) {
+        HostResume::Delivered => 0,
+        HostResume::Invalidated => 1,
+    }
 }
 
 /// Stores one locally generated language Error as the ready result of a host call.
 fn ready_host_error(kind: &str, message: &str, data: ValueRef) -> i32 {
     let value = recoverable_error(kind, message, data);
-    let state = unsafe { runtime() };
-    state.ready_host_result = Some(value);
-    state.active_host_call = None;
+    execution(unsafe { runtime() }).set_current_ready_host_result(value);
     HOST_CALL_READY
+}
+
+/// Returns the active root scheduler or traps outside resumable root execution.
+fn execution(state: &mut RuntimeState) -> &mut ExecutionContext {
+    state.execution.as_mut().unwrap_or_else(|| trap())
 }
 
 /// Converts a Wasm async-frame identifier into a zero-based state-table index.
