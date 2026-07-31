@@ -102,7 +102,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 9: Scheduler
 
-- [ ] Add the execution context, task states, deterministic runnable queue, cancellation, and limits.
+- [ ] Add the execution context, task states, deterministic runnable queue, host-completion routing, cancellation, and deadlock detection.
 
 ### Phase 10: Closures
 
@@ -120,11 +120,15 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [ ] Add Clone contexts that preserve cycles and aliases.
 - [ ] Support user-defined, potentially suspendable Clone implementations.
 
-### Phase 13: Browser runner
+### Phase 13: Limits
+
+- [ ] Add runner-enforced limits for memory, fuel, timeouts, task and host-call counts, stack depth, CBOR payloads, and results.
+
+### Phase 14: Browser runner
 
 - [ ] Implement the equivalent TypeScript runner and synchronous/asynchronous host registry.
 
-### Phase 14: Optimizations
+### Phase 15: Optimizations
 
 - [ ] Add host-name caching, direct-operation specialization, root-frame reduction, and safe inlining.
 
