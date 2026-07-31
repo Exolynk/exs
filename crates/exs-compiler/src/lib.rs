@@ -3,6 +3,7 @@
 mod ast;
 mod codegen;
 mod diagnostic;
+mod hir;
 mod lexer;
 mod parser;
 

@@ -1,6 +1,6 @@
 //! Function declaration validation and Wasm signature construction.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use exs_abi::RESERVED_METHOD_NAMES;
 use wasm_encoder::{TypeSection, ValType};
@@ -264,23 +264,33 @@ fn too_many_functions<'a>(span: SourceSpan<'a>) -> CompileDiagnostics<'a> {
 pub(in crate::codegen) fn add_program_types(
     module: &Module<'_>,
     types: &mut TypeSection,
+    suspendable_functions: &HashSet<String>,
 ) -> Vec<u32> {
+    let step_type = types.len();
+    types.ty().function([ValType::I32], [ValType::I32]);
     module
         .functions
         .iter()
-        .chain(
-            module
-                .implementations
-                .iter()
-                .flat_map(|implementation| implementation.methods.iter()),
-        )
-        .map(|function| {
-            let index = types.len();
-            types.ty().function(
-                std::iter::repeat_n(ValType::I32, function.parameters.len()),
-                [ValType::I32],
-            );
-            index
+        .map(|function| (function.name.name.clone(), function))
+        .chain(module.implementations.iter().flat_map(|implementation| {
+            implementation.methods.iter().map(|function| {
+                (
+                    format!("{}::{}", implementation.type_name.name, function.name.name),
+                    function,
+                )
+            })
+        }))
+        .map(|(key, function)| {
+            if suspendable_functions.contains(&key) {
+                step_type
+            } else {
+                let index = types.len();
+                types.ty().function(
+                    std::iter::repeat_n(ValType::I32, function.parameters.len()),
+                    [ValType::I32],
+                );
+                index
+            }
         })
         .collect()
 }

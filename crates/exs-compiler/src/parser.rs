@@ -697,6 +697,7 @@ impl<'a> Parser<'a> {
                     span: token.span.through(end),
                 })
             }
+            TokenKind::Host => self.host_call(token.span),
             TokenKind::LeftBracket => {
                 let elements = self.arguments(TokenKind::RightBracket)?;
                 let end = self
@@ -731,6 +732,43 @@ impl<'a> Parser<'a> {
             }
             _ => Err(self.error(token.span, "E0101", "expected expression")),
         }
+    }
+
+    /// Parses the dynamic `host.call(name, args...)` suspendable invocation form.
+    fn host_call(
+        &mut self,
+        start: SourceSpan<'a>,
+    ) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
+        self.expect_simple(TokenKind::Dot, "expected `.` after host")?;
+        let method = self.identifier("expected `call` after host.")?;
+        if method.name != "call" {
+            return Err(self.error(
+                method.span,
+                "E0113",
+                "only dynamic `host.call(name, args...)` is supported",
+            ));
+        }
+        self.expect_simple(TokenKind::LeftParen, "expected `(` after host.call")?;
+        let mut values = self.arguments(TokenKind::RightParen)?;
+        let end = self
+            .expect_simple(
+                TokenKind::RightParen,
+                "expected `)` after host.call arguments",
+            )?
+            .span;
+        if values.is_empty() {
+            return Err(self.error(
+                start.through(end),
+                "E0208",
+                "host.call expects a host-function name as its first argument",
+            ));
+        }
+        let name = Box::new(values.remove(0));
+        Ok(Expression::HostCall {
+            name,
+            arguments: values,
+            span: start.through(end),
+        })
     }
 
     /// Parses a comma-separated expression sequence ending at `terminator`.
@@ -974,6 +1012,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::Propagate { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
+        | Expression::HostCall { span, .. }
         | Expression::MethodCall { span, .. }
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }

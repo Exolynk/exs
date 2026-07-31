@@ -29,6 +29,40 @@ fn prints_the_main_result() {
     assert_eq!(stdout, "1.0\n");
 }
 
+/// Makes the CLI-owned print and println host functions available to source programs.
+#[test]
+fn executes_cli_print_and_println_host_functions() {
+    let path = std::env::temp_dir().join(format!("exs-cli-output-{}.exs", std::process::id()));
+    let source = r#"
+fn main() {
+    host.call("print", "Ada", 7);
+    host.call("println", true);
+    host.call("println");
+    ret None;
+}
+"#;
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("run")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(output.status.success());
+    let stdout = match String::from_utf8(output.stdout) {
+        Ok(stdout) => stdout,
+        Err(error) => panic!("CLI output was not UTF-8: {error}"),
+    };
+    assert_eq!(stdout, "Ada 7true\n\nNone\n");
+}
+
 /// Parses multiple CLI values and passes them to a typed main declaration.
 #[test]
 fn passes_multiple_cli_values_to_main() {

@@ -84,15 +84,21 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 7: Runner and host boundary
 
-- [ ] Add canonical CBOR host input/output handling.
-- [ ] Add a server host registry with typed synchronous and asynchronous adapters.
-- [ ] Validate host schemas and preserve language Errors as normal Values.
+- [x] Add canonical CBOR List argument decoding and `ExsValue` result encoding for host calls.
+- [x] Add a server host registry with synchronous and asynchronous `Vec<ExsValue> -> ExsValue` adapters.
+- [x] Reject invalid argument payloads and duplicate static host names while preserving language Errors as normal Values.
 
 ### Phase 8: Suspension
 
-- [ ] Build the call graph and transitive suspendability analysis.
-- [ ] Lower suspendable functions into state machines with async frames.
-- [ ] Add hostcall resume and the synchronous fast path.
+- [x] Build a conservative call graph and transitive host-call suspendability analysis.
+- [x] Add runtime async frames, GC roots, Host ABI ready/pending transport, and a generated root dispatcher.
+- [x] Add the synchronous host fast path and asynchronous `ServerRunner` resume delivery for the initial `ret host.call(name, arguments...);` main-function path.
+- [ ] Replace the initial path with a full continuation IR that assigns durable slots for lexical bindings and expression temporaries.
+- [ ] Lower sequential statements, nested expressions, assignments, `ret`, and `?` into continuation states.
+- [x] Lower `if`, `while`, `for`, `break`, and `continue` into graph branch and loop states.
+- [x] Lower transitive suspendable direct, instance, static, and trait calls through child frames and caller continuations.
+- [x] Preserve function contracts, source positions, language stack traces, and recoverable Error propagation in resumable frames.
+- [x] Add end-to-end coverage for synchronous and asynchronous calls at every supported source position.
 
 ### Phase 9: Scheduler
 

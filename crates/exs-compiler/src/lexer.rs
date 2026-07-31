@@ -55,6 +55,8 @@ pub enum TokenKind {
     Is,
     /// The Error keyword.
     Error,
+    /// The reserved host boundary keyword.
+    Host,
     /// The `true` keyword.
     True,
     /// The `false` keyword.
@@ -521,6 +523,7 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
         "None" => TokenKind::None,
         "is" => TokenKind::Is,
         "Error" => TokenKind::Error,
+        "host" => TokenKind::Host,
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         _ => TokenKind::Identifier(value.to_owned()),

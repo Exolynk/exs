@@ -4,10 +4,14 @@ mod input;
 
 use std::env;
 use std::fs;
+use std::future::Future;
 use std::path::Path;
+use std::pin::pin;
 use std::process::ExitCode;
+use std::task::{Context, Poll, Waker};
 
 use exs_compiler::{CompileOptions, ModuleDebugInfo, SourceInput, compile, read_debug_info};
+use exs_runner::{ExsValue, ServerRunner};
 
 /// Runs the `ExS` command-line interface.
 fn main() -> ExitCode {
@@ -82,12 +86,67 @@ fn run_program(path: &str, inputs: &[exs_runner::ExsValue]) -> Result<(), String
         .wasm
     };
     let debug_info = read_debug_info(&wasm).ok();
-    let result = exs_runner::execute(&wasm, inputs).map_err(|error| error.to_string())?;
+    let runner = cli_runner()?;
+    let result = block_on(runner.execute(&wasm, inputs)).map_err(|error| error.to_string())?;
     match result {
         exs_runner::ExsValue::Error(error) => Err(format_error(&error, debug_info.as_ref())),
         result => {
             print_result(result);
             Ok(())
+        }
+    }
+}
+
+/// Creates the CLI runner with its standard synchronous output host functions.
+fn cli_runner() -> Result<ServerRunner, String> {
+    let mut runner = ServerRunner::new();
+    runner
+        .registry_mut()
+        .register_sync("print", |arguments: Vec<ExsValue>| {
+            write_host_output(&arguments, false);
+            ExsValue::None
+        })
+        .map_err(|error| format!("could not register CLI print host function: {error}"))?;
+    runner
+        .registry_mut()
+        .register_sync("println", |arguments: Vec<ExsValue>| {
+            write_host_output(&arguments, true);
+            ExsValue::None
+        })
+        .map_err(|error| format!("could not register CLI println host function: {error}"))?;
+    Ok(runner)
+}
+
+/// Writes host-function arguments to standard output with optional line termination.
+fn write_host_output(arguments: &[ExsValue], newline: bool) {
+    let output = arguments
+        .iter()
+        .map(format_host_output)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if newline {
+        println!("{output}");
+    } else {
+        print!("{output}");
+    }
+}
+
+/// Formats one CLI output host-function argument.
+fn format_host_output(value: &ExsValue) -> String {
+    match value {
+        ExsValue::String(value) => value.clone(),
+        value => format_result(value),
+    }
+}
+
+/// Polls one immediately-ready CLI runner future without adding an executor dependency.
+fn block_on<Output>(future: impl Future<Output = Output>) -> Output {
+    let mut future = pin!(future);
+    let mut context = Context::from_waker(Waker::noop());
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => std::thread::yield_now(),
         }
     }
 }

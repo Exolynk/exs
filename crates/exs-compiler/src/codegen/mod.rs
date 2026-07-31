@@ -1,16 +1,19 @@
 //! WebAssembly code generation and runtime-template linking.
 
+mod continuation;
 mod entry;
 mod function;
 mod linker;
 mod literals;
 pub mod source_map;
+mod suspension;
 mod traits;
 mod types;
 
 use crate::CompileOptions;
 use crate::ast::Module;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
+use crate::hir::HirModule;
 
 /// Compiles a parsed module into a complete linked Wasm module.
 pub fn compile_module<'a>(
@@ -26,7 +29,11 @@ pub fn compile_module<'a>(
         return Err(diagnostics);
     }
     traits::apply_defaults(module);
-    linker::link(module, source, options)
+    let hir = HirModule::lower(module);
+    let suspendability = suspension::Suspendability::analyze(&hir);
+    let _has_suspendable_function = suspendability.has_any();
+    let _main_is_suspendable = suspendability.contains("main");
+    linker::link(module, source, options, suspendability.functions())
 }
 
 /// Returns a diagnostic span covering the module's first function.

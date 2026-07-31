@@ -1,14 +1,89 @@
-//! Wasmtime-backed Phase-1 `ExS` runner.
+//! Wasmtime-backed `ExS` server runner.
 
 use std::fmt;
 
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, RESULT_LENGTH_EXPORT,
-    RESULT_POINTER_EXPORT, START_EXPORT, STATUS_COMPLETE,
+    RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, START_EXPORT, STATUS_COMPLETE, STATUS_PENDING,
 };
-use wasmtime::{Engine, Instance, Module, Store};
+use wasmtime::{Engine, Instance, Linker, Module, Store};
 
+mod cbor;
+mod host_abi;
+mod host_function;
+mod registry;
+
+pub use self::cbor::{HostCborError, decode_arguments, encode_result};
+pub use self::host_function::{AsyncHostFunction, HostCall, HostFuture, SyncHostFunction};
+pub use self::registry::{HostFunctionRegistry, RegistryError};
 pub use exs_abi::{ErrorSeverity, ExsError, ExsValue, SourcePositionId};
+
+/// A reusable Wasmtime server runner with dynamically registered host functions.
+#[derive(Default)]
+pub struct ServerRunner {
+    /// Runner-owned host implementations used for every execution.
+    registry: HostFunctionRegistry,
+}
+
+impl ServerRunner {
+    /// Creates a server runner with no registered host functions.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns mutable access to the runner-owned dynamic host-function registry.
+    pub fn registry_mut(&mut self) -> &mut HostFunctionRegistry {
+        &mut self.registry
+    }
+
+    /// Executes one linked module and awaits any asynchronous host completions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid Wasm, ABI violations, engine traps, or an invalid suspend
+    /// protocol. Recoverable language failures remain `Ok(ExsValue::Error(...))`.
+    pub async fn execute(&self, wasm: &[u8], inputs: &[ExsValue]) -> Result<ExsValue, RunnerError> {
+        let engine = Engine::default();
+        let module =
+            Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        let mut store = Store::new(&engine, host_abi::HostAbiState::new(self.registry.clone()));
+        let mut linker = Linker::new(&engine);
+        host_abi::define(&mut linker).map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        check_abi(&mut store, &instance)?;
+        let (input_pointer, input_length) = write_input(&mut store, &instance, inputs)?;
+        let start = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, START_EXPORT)
+            .map_err(|error| RunnerError::Abi(error.to_string()))?;
+        let mut status = start
+            .call(&mut store, (input_pointer, input_length))
+            .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        loop {
+            match status {
+                STATUS_COMPLETE => return result(&mut store, &instance),
+                STATUS_PENDING => {
+                    let (call_id, future) = store.data_mut().take_pending().ok_or_else(|| {
+                        RunnerError::Abi(
+                            "program reported Pending without a runner host future".to_owned(),
+                        )
+                    })?;
+                    let response = future.await;
+                    let (pointer, length) = write_response(&mut store, &instance, &response)?;
+                    let resume = instance
+                        .get_typed_func::<(i64, i32, i32), i32>(&mut store, RESUME_HOST_EXPORT)
+                        .map_err(|error| RunnerError::Abi(error.to_string()))?;
+                    status = resume
+                        .call(&mut store, (call_id, pointer, length))
+                        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+                }
+                status => return Err(RunnerError::Status(status)),
+            }
+        }
+    }
+}
 
 /// A technical error from Wasm loading or execution.
 #[derive(Debug)]
@@ -39,11 +114,23 @@ impl std::error::Error for RunnerError {}
 ///
 /// Returns an error when the module cannot be instantiated, violates the ABI, traps, or does not complete.
 pub fn execute(wasm: &[u8], inputs: &[ExsValue]) -> Result<ExsValue, RunnerError> {
+    execute_with_registry(wasm, inputs, HostFunctionRegistry::new())
+}
+
+/// Executes a module through the synchronous compatibility path with one registry snapshot.
+fn execute_with_registry(
+    wasm: &[u8],
+    inputs: &[ExsValue],
+    registry: HostFunctionRegistry,
+) -> Result<ExsValue, RunnerError> {
     let engine = Engine::default();
     let module =
         Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
-    let mut store = Store::new(&engine, ());
-    let instance = Instance::new(&mut store, &module, &[])
+    let mut store = Store::new(&engine, host_abi::HostAbiState::new(registry));
+    let mut linker = Linker::new(&engine);
+    host_abi::define(&mut linker).map_err(|error| RunnerError::Wasm(error.to_string()))?;
+    let instance = linker
+        .instantiate(&mut store, &module)
         .map_err(|error| RunnerError::Wasm(error.to_string()))?;
     check_abi(&mut store, &instance)?;
     let (input_pointer, input_length) = write_input(&mut store, &instance, inputs)?;
@@ -59,8 +146,39 @@ pub fn execute(wasm: &[u8], inputs: &[ExsValue]) -> Result<ExsValue, RunnerError
     result(&mut store, &instance)
 }
 
+/// Encodes one completed asynchronous response into the runtime-owned reusable input buffer.
+fn write_response(
+    store: &mut Store<host_abi::HostAbiState>,
+    instance: &Instance,
+    response: &ExsValue,
+) -> Result<(i32, i32), RunnerError> {
+    let bytes = encode_result(response).map_err(|error| {
+        RunnerError::Abi(format!("could not encode host response CBOR: {error}"))
+    })?;
+    let length = i32::try_from(bytes.len())
+        .map_err(|_| RunnerError::Abi("host response exceeds Wasm i32 length".to_owned()))?;
+    let allocate = instance
+        .get_typed_func::<i32, i32>(&mut *store, INPUT_ALLOC_EXPORT)
+        .map_err(|error| RunnerError::Abi(error.to_string()))?;
+    let pointer = allocate
+        .call(&mut *store, length)
+        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+    let pointer_usize = usize::try_from(pointer)
+        .map_err(|_| RunnerError::Abi("negative response pointer".to_owned()))?;
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| RunnerError::Abi("missing exported linear memory".to_owned()))?;
+    memory
+        .write(&mut *store, pointer_usize, &bytes)
+        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+    Ok((pointer, length))
+}
+
 /// Decodes the runtime-owned completed result without exposing its `ValueRef` to the host.
-fn result(store: &mut Store<()>, instance: &Instance) -> Result<ExsValue, RunnerError> {
+fn result(
+    store: &mut Store<host_abi::HostAbiState>,
+    instance: &Instance,
+) -> Result<ExsValue, RunnerError> {
     let pointer = call_result_accessor::<i32>(store, instance, RESULT_POINTER_EXPORT)?;
     let length = call_result_accessor::<i32>(store, instance, RESULT_LENGTH_EXPORT)?;
     let memory = instance
@@ -83,7 +201,7 @@ fn result(store: &mut Store<()>, instance: &Instance) -> Result<ExsValue, Runner
 
 /// Encodes ordered main arguments and writes them to the runtime-owned input buffer.
 fn write_input(
-    store: &mut Store<()>,
+    store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     inputs: &[ExsValue],
 ) -> Result<(i32, i32), RunnerError> {
@@ -113,7 +231,7 @@ fn write_input(
 
 /// Calls one zero-argument runtime result accessor.
 fn call_result_accessor<Return>(
-    store: &mut Store<()>,
+    store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     name: &str,
 ) -> Result<Return, RunnerError>
@@ -128,7 +246,10 @@ where
 }
 
 /// Checks the versioned ABI before starting program code.
-fn check_abi(store: &mut Store<()>, instance: &Instance) -> Result<(), RunnerError> {
+fn check_abi(
+    store: &mut Store<host_abi::HostAbiState>,
+    instance: &Instance,
+) -> Result<(), RunnerError> {
     let version = instance
         .get_typed_func::<(), i32>(&mut *store, ABI_VERSION_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?

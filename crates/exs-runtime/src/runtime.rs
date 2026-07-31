@@ -4,12 +4,38 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
-use exs_abi::{ExsError, ExsValue};
+use exs_abi::{ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY};
 use exs_value::{ValueRef, is_valid_int};
 
 use crate::gc;
-use crate::state::{HeapSlot, runtime};
+use crate::state::{AsyncFrame, FrameContinuation, HeapSlot, runtime};
 use crate::value::{RtValue, RuntimeError, RuntimeList, RuntimeObject, RuntimeString};
+
+#[link(wasm_import_module = "exs")]
+unsafe extern "C" {
+    /// Starts one runner-resolved host call.
+    #[link_name = "__exs_host_call_start"]
+    fn host_call_start_import(
+        call_id: i64,
+        name_pointer: i32,
+        name_length: i32,
+        request_pointer: i32,
+        request_length: i32,
+        source_position: i32,
+    ) -> i32;
+
+    /// Returns the byte length of one ready runner-owned host response.
+    #[link_name = "__exs_host_call_response_len"]
+    fn host_call_response_length_import(call_id: i64) -> i32;
+
+    /// Copies one ready runner-owned host response into runtime-owned linear memory.
+    #[link_name = "__exs_host_call_response_copy"]
+    fn host_call_response_copy_import(
+        call_id: i64,
+        destination_pointer: i32,
+        destination_length: i32,
+    ) -> i32;
+}
 
 /// Appends one runtime value and returns its one-based table index.
 pub(crate) fn allocate(value: RtValue) -> ValueRef {
@@ -181,6 +207,350 @@ pub(crate) fn result_length() -> i32 {
         Ok(length) => length,
         Err(_) => trap(),
     }
+}
+
+/// Allocates one persistent compiler-generated async frame and makes it active.
+pub(crate) fn async_frame_new(function_id: i32, slot_count: i32) -> i32 {
+    let Ok(function_id) = u32::try_from(function_id) else {
+        trap();
+    };
+    let Ok(slot_count) = usize::try_from(slot_count) else {
+        trap();
+    };
+    let mut slots = Vec::new();
+    slots.resize(slot_count, None);
+    let frame = AsyncFrame {
+        function_id,
+        state: 0,
+        slots,
+        caller: None,
+    };
+    let state = unsafe { runtime() };
+    let index = if let Some(index) = state.free_async_frames.pop() {
+        let index = index as usize;
+        let Some(slot) = state.async_frames.get_mut(index) else {
+            trap();
+        };
+        if slot.is_some() {
+            trap();
+        }
+        *slot = Some(frame);
+        index
+    } else {
+        let index = state.async_frames.len();
+        state.async_frames.push(Some(frame));
+        index
+    };
+    let Some(identifier) = u32::try_from(index)
+        .ok()
+        .and_then(|index| index.checked_add(1))
+    else {
+        trap();
+    };
+    state.active_async_frame = Some(identifier);
+    i32::try_from(identifier).unwrap_or_else(|_| trap())
+}
+
+/// Stores one frame slot that must remain live across suspension.
+pub(crate) fn async_frame_set_slot(frame: i32, slot: i32, value: ValueRef) {
+    let frame = async_frame_index(frame);
+    let slot = async_frame_slot(slot);
+    let state = unsafe { runtime() };
+    let Some(frame) = state.async_frames.get_mut(frame).and_then(Option::as_mut) else {
+        trap();
+    };
+    let Some(destination) = frame.slots.get_mut(slot) else {
+        trap();
+    };
+    *destination = Some(value);
+}
+
+/// Loads one initialized persistent frame slot.
+pub(crate) fn async_frame_get_slot(frame: i32, slot: i32) -> ValueRef {
+    let frame = async_frame_index(frame);
+    let slot = async_frame_slot(slot);
+    unsafe { runtime() }
+        .async_frames
+        .get(frame)
+        .and_then(Option::as_ref)
+        .and_then(|frame| frame.slots.get(slot))
+        .and_then(|value| *value)
+        .unwrap_or_else(|| trap())
+}
+
+/// Stores the continuation-graph state that runs when the frame is next dispatched.
+pub(crate) fn async_frame_set_state(frame: i32, next_state: i32) {
+    let frame = async_frame_index(frame);
+    let Ok(next_state) = u32::try_from(next_state) else {
+        trap();
+    };
+    let Some(frame) = unsafe { runtime() }
+        .async_frames
+        .get_mut(frame)
+        .and_then(Option::as_mut)
+    else {
+        trap();
+    };
+    frame.state = next_state;
+}
+
+/// Returns the continuation-graph state stored by one persistent frame.
+pub(crate) fn async_frame_state(frame: i32) -> i32 {
+    let frame = async_frame_index(frame);
+    let Some(frame) = unsafe { runtime() }
+        .async_frames
+        .get(frame)
+        .and_then(Option::as_ref)
+    else {
+        trap();
+    };
+    i32::try_from(frame.state).unwrap_or_else(|_| trap())
+}
+
+/// Returns the compiler-generated function identifier for one persistent frame.
+pub(crate) fn async_frame_function(frame: i32) -> i32 {
+    let frame = async_frame_index(frame);
+    let Some(frame) = unsafe { runtime() }
+        .async_frames
+        .get(frame)
+        .and_then(Option::as_ref)
+    else {
+        trap();
+    };
+    i32::try_from(frame.function_id).unwrap_or_else(|_| trap())
+}
+
+/// Returns the current frame identifier, or zero when no resumable execution is active.
+pub(crate) fn async_frame_current() -> i32 {
+    unsafe { runtime() }
+        .active_async_frame
+        .map_or(0, |frame| i32::try_from(frame).unwrap_or_else(|_| trap()))
+}
+
+/// Selects one existing persistent frame as the generated dispatch target.
+pub(crate) fn async_frame_set_current(frame: i32) {
+    let frame = async_frame_index(frame);
+    if unsafe { runtime() }
+        .async_frames
+        .get(frame)
+        .and_then(Option::as_ref)
+        .is_none()
+    {
+        trap();
+    }
+    let Some(frame) = u32::try_from(frame)
+        .ok()
+        .and_then(|index| index.checked_add(1))
+    else {
+        trap();
+    };
+    unsafe { runtime() }.active_async_frame = Some(frame);
+}
+
+/// Records the parent continuation consumed when a child resumable function completes.
+pub(crate) fn async_frame_set_caller(frame: i32, caller: i32, slot: i32) {
+    let frame = async_frame_index(frame);
+    let caller = async_frame_identifier(caller);
+    let Ok(slot) = u32::try_from(slot) else {
+        trap();
+    };
+    let Some(frame) = unsafe { runtime() }
+        .async_frames
+        .get_mut(frame)
+        .and_then(Option::as_mut)
+    else {
+        trap();
+    };
+    frame.caller = Some(FrameContinuation {
+        frame: caller,
+        slot,
+    });
+}
+
+/// Completes one resumable frame and transfers its result to the parent continuation.
+pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
+    let frame_index = async_frame_index(frame);
+    let state = unsafe { runtime() };
+    let Some(completed) = state
+        .async_frames
+        .get_mut(frame_index)
+        .and_then(Option::take)
+    else {
+        trap();
+    };
+    let Ok(free_index) = u32::try_from(frame_index) else {
+        trap();
+    };
+    state.free_async_frames.push(free_index);
+    if state.active_async_frame == Some(async_frame_identifier(frame)) {
+        state.active_async_frame = None;
+    }
+    if let Some(continuation) = completed.caller {
+        let caller_index = usize::try_from(continuation.frame - 1).unwrap_or_else(|_| trap());
+        let Some(caller) = state
+            .async_frames
+            .get_mut(caller_index)
+            .and_then(Option::as_mut)
+        else {
+            trap();
+        };
+        let Some(destination) = caller.slots.get_mut(continuation.slot as usize) else {
+            trap();
+        };
+        *destination = Some(value);
+        state.active_async_frame = Some(caller_index as u32 + 1);
+        0
+    } else {
+        state.completed_async_result = Some(value);
+        1
+    }
+}
+
+/// Takes the completed resumable root result after the generated dispatcher reports completion.
+pub(crate) fn async_frame_take_completed() -> ValueRef {
+    unsafe { runtime() }
+        .completed_async_result
+        .take()
+        .unwrap_or_else(|| trap())
+}
+
+/// Encodes and starts one generic runner-resolved host call.
+pub(crate) fn host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
+    let name = match value(name) {
+        RtValue::String(name) => name.as_str(),
+        _ => {
+            return ready_host_error(
+                "TypeError",
+                "host.call requires a String function name",
+                name,
+            );
+        }
+    };
+    if !matches!(value(arguments), RtValue::List(_)) {
+        return ready_host_error(
+            "TypeError",
+            "host.call arguments must be represented as a List",
+            arguments,
+        );
+    }
+    let request = runtime_to_exs_value(arguments);
+    let encoded = request.to_cbor().unwrap_or_else(|_| trap());
+    let state = unsafe { runtime() };
+    let call_id = state.next_host_call_id;
+    let Some(next_call_id) = call_id.checked_add(1) else {
+        trap();
+    };
+    state.next_host_call_id = next_call_id;
+    state.active_host_call = Some(call_id);
+    state.ready_host_result = None;
+    state.host_request_buffer = encoded;
+    let name_pointer = pointer(name.as_ptr());
+    let name_length = i32::try_from(name.len()).unwrap_or_else(|_| trap());
+    let request_pointer = pointer(state.host_request_buffer.as_ptr());
+    let request_length = i32::try_from(state.host_request_buffer.len()).unwrap_or_else(|_| trap());
+    let source_position = state
+        .current_source_position
+        .map_or(0, |position| position.0.cast_signed());
+    let status = unsafe {
+        host_call_start_import(
+            call_id.cast_signed(),
+            name_pointer,
+            name_length,
+            request_pointer,
+            request_length,
+            source_position,
+        )
+    };
+    match status {
+        HOST_CALL_READY | HOST_CALL_PENDING | HOST_CALL_FATAL => status,
+        _ => trap(),
+    }
+}
+
+/// Takes and decodes the response of one synchronously completed generic host call.
+pub(crate) fn host_call_take_ready() -> ValueRef {
+    if let Some(value) = unsafe { runtime() }.ready_host_result.take() {
+        unsafe { runtime() }.active_host_call = None;
+        return value;
+    }
+    let Some(call_id) = unsafe { runtime() }.active_host_call else {
+        trap();
+    };
+    let length = unsafe { host_call_response_length_import(call_id.cast_signed()) };
+    let Ok(length) = usize::try_from(length) else {
+        trap();
+    };
+    let buffer = &mut unsafe { runtime() }.host_response_buffer;
+    buffer.clear();
+    buffer.resize(length, 0);
+    let status = unsafe {
+        host_call_response_copy_import(
+            call_id.cast_signed(),
+            pointer(buffer.as_ptr()),
+            i32::try_from(length).unwrap_or_else(|_| trap()),
+        )
+    };
+    if status != 0 {
+        trap();
+    }
+    let checkpoint = gc::temporary_root_checkpoint();
+    let value = exs_value_to_runtime(ExsValue::from_cbor(buffer).unwrap_or_else(|_| trap()));
+    gc::restore_temporary_roots(checkpoint);
+    unsafe { runtime() }.active_host_call = None;
+    value
+}
+
+/// Decodes a runner-delivered asynchronous response for the active host call.
+///
+/// The runner must first allocate the runtime-owned input buffer through `__exs_input_alloc` and
+/// copy exactly one canonical ExS CBOR value into it. The generated dispatcher then obtains this
+/// value through `host_call_take_ready` on its next turn.
+pub(crate) fn host_call_resume(call_id: i64, pointer_value: i32, length: i32) -> i32 {
+    let Ok(call_id) = u64::try_from(call_id) else {
+        trap();
+    };
+    if unsafe { runtime() }.active_host_call != Some(call_id) {
+        trap();
+    }
+    if unsafe { runtime() }.ready_host_result.is_some() {
+        trap();
+    }
+    let checkpoint = gc::temporary_root_checkpoint();
+    let value = exs_value_to_runtime(decode_input(pointer_value, length));
+    gc::restore_temporary_roots(checkpoint);
+    unsafe { runtime() }.ready_host_result = Some(value);
+    0
+}
+
+/// Stores one locally generated language Error as the ready result of a host call.
+fn ready_host_error(kind: &str, message: &str, data: ValueRef) -> i32 {
+    let value = recoverable_error(kind, message, data);
+    let state = unsafe { runtime() };
+    state.ready_host_result = Some(value);
+    state.active_host_call = None;
+    HOST_CALL_READY
+}
+
+/// Converts a Wasm async-frame identifier into a zero-based state-table index.
+fn async_frame_index(frame: i32) -> usize {
+    let frame = async_frame_identifier(frame);
+    usize::try_from(frame - 1).unwrap_or_else(|_| trap())
+}
+
+/// Validates and converts one Wasm async-frame identifier.
+fn async_frame_identifier(frame: i32) -> u32 {
+    let Ok(frame) = u32::try_from(frame) else {
+        trap();
+    };
+    if frame == 0 {
+        trap();
+    }
+    frame
+}
+
+/// Converts a Wasm async-frame slot index into a native index.
+fn async_frame_slot(slot: i32) -> usize {
+    usize::try_from(slot).unwrap_or_else(|_| trap())
 }
 
 /// Converts one runtime value into its host-safe ABI value.

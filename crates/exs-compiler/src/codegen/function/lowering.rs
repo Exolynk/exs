@@ -166,6 +166,13 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.clear_root_slot(local)?;
                 }
             }
+            Expression::HostCall { span, .. } => {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0300",
+                    *span,
+                    "host.call requires the Phase 8 continuation lowerer",
+                )));
+            }
             Expression::MethodCall {
                 receiver,
                 method,

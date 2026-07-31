@@ -17,6 +17,35 @@ fn compiles_a_minimal_main_function() {
     assert!(module.is_ok());
 }
 
+/// Compiles a frame-backed Host ABI call and its runner-facing resume export.
+#[test]
+fn compiles_a_resumable_host_call() {
+    let compiled = match compile(
+        SourceInput {
+            source_id: "host-call.exs",
+            text: "fn main(input) { ret host.call(\"echo\", input); }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    if let Err(error) = Validator::new().validate_all(&compiled.wasm) {
+        panic!("generated Wasm is invalid: {error}");
+    }
+    let exports = Parser::new(0)
+        .parse_all(&compiled.wasm)
+        .filter_map(Result::ok)
+        .filter_map(|payload| match payload {
+            Payload::ExportSection(section) => Some(section),
+            _ => None,
+        })
+        .flat_map(|section| section.into_iter().filter_map(Result::ok))
+        .map(|export| export.name.to_owned())
+        .collect::<Vec<_>>();
+    assert!(exports.iter().any(|name| name == "__exs_resume_host"));
+}
+
 /// Emits compact source positions by default and embeds source text only when requested.
 #[test]
 fn emits_source_map_and_optional_source_sections() {

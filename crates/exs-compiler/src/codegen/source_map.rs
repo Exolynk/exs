@@ -309,6 +309,17 @@ impl<'a> SourceMap<'a> {
                     self.collect_expression(argument);
                 }
             }
+            Expression::HostCall {
+                name,
+                arguments,
+                span,
+            } => {
+                self.insert(*span);
+                self.collect_expression(name);
+                for argument in arguments {
+                    self.collect_expression(argument);
+                }
+            }
             Expression::MethodCall {
                 receiver,
                 method,

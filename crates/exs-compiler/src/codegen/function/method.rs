@@ -12,9 +12,9 @@ use super::FunctionSignature;
 #[derive(Debug, Clone)]
 pub(in crate::codegen) struct InstanceMethod {
     /// Runtime nominal Object tag required for this implementation.
-    pub(super) type_id: u32,
+    pub(in crate::codegen) type_id: u32,
     /// Linked direct Wasm function signature.
-    pub(super) signature: FunctionSignature,
+    pub(in crate::codegen) signature: FunctionSignature,
 }
 
 /// All implementation methods declared by one compiled module.
@@ -74,12 +74,12 @@ impl MethodRegistry {
     }
 
     /// Returns every nominal implementation matching one instance method name.
-    pub(super) fn instance(&self, name: &str) -> Option<&[InstanceMethod]> {
+    pub(in crate::codegen) fn instance(&self, name: &str) -> Option<&[InstanceMethod]> {
         self.instance_methods.get(name).map(Vec::as_slice)
     }
 
     /// Returns whether a qualified implementation method is static.
-    pub(super) fn is_static(&self, key: &str) -> bool {
+    pub(in crate::codegen) fn is_static(&self, key: &str) -> bool {
         self.static_methods.contains(key)
     }
 }

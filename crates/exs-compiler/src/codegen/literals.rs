@@ -179,6 +179,14 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
                 collect_expression_literals(argument, pool);
             }
         }
+        Expression::HostCall {
+            name, arguments, ..
+        } => {
+            collect_expression_literals(name, pool);
+            for argument in arguments {
+                collect_expression_literals(argument, pool);
+            }
+        }
         Expression::List { elements, .. } => {
             for element in elements {
                 collect_expression_literals(element, pool);

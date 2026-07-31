@@ -10,8 +10,8 @@ pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, Sour
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 10 adds nominal Object type tags and runtime type checks.
-pub const ABI_VERSION: u32 = 10;
+/// Version 11 adds generic runner-mediated host-call imports and resumable frames.
+pub const ABI_VERSION: u32 = 11;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
@@ -55,8 +55,26 @@ pub const INPUT_ALLOC_EXPORT: &str = "__exs_input_alloc";
 pub const RESULT_POINTER_EXPORT: &str = "__exs_result_ptr";
 /// The export returning the byte length of the completed CBOR result.
 pub const RESULT_LENGTH_EXPORT: &str = "__exs_result_len";
+/// The module name containing runner-provided Host ABI imports.
+pub const HOST_IMPORT_MODULE: &str = "exs";
+/// The generic runner import that starts one host call.
+pub const HOST_CALL_START_IMPORT: &str = "__exs_host_call_start";
+/// The runner import returning one ready host response byte length.
+pub const HOST_CALL_RESPONSE_LENGTH_IMPORT: &str = "__exs_host_call_response_len";
+/// The runner import copying one ready host response into Wasm linear memory.
+pub const HOST_CALL_RESPONSE_COPY_IMPORT: &str = "__exs_host_call_response_copy";
+/// The compiler-generated export used by runners to resume a completed host call.
+pub const RESUME_HOST_EXPORT: &str = "__exs_resume_host";
 
 /// A successfully completed execution.
 pub const STATUS_COMPLETE: i32 = 2;
 /// A runnable execution that needs another runner turn.
 pub const STATUS_READY: i32 = 0;
+/// A root execution suspended while waiting for a host-call completion.
+pub const STATUS_PENDING: i32 = 1;
+/// A host call completed synchronously and has a response available to the runtime.
+pub const HOST_CALL_READY: i32 = 0;
+/// A host call is pending and will be resumed by the runner.
+pub const HOST_CALL_PENDING: i32 = 1;
+/// A host call failed at the runner-technical layer.
+pub const HOST_CALL_FATAL: i32 = 2;

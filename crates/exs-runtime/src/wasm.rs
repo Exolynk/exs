@@ -445,6 +445,90 @@ pub extern "C" fn __exs_result_len() -> i32 {
     runtime::result_length()
 }
 
+/// Allocates one persistent frame for a compiler-generated resumable function.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_new(function_id: i32, slot_count: i32) -> i32 {
+    runtime::async_frame_new(function_id, slot_count)
+}
+
+/// Stores one persistent frame value that must survive a pending host call.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_set_slot(frame: i32, slot: i32, value: ValueRef) {
+    runtime::async_frame_set_slot(frame, slot, value);
+}
+
+/// Loads one persistent frame value after a generated dispatch resumes it.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_get_slot(frame: i32, slot: i32) -> ValueRef {
+    runtime::async_frame_get_slot(frame, slot)
+}
+
+/// Stores the next continuation-graph state for one persistent frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_set_state(frame: i32, state: i32) {
+    runtime::async_frame_set_state(frame, state);
+}
+
+/// Returns the next continuation-graph state for one persistent frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_state(frame: i32) -> i32 {
+    runtime::async_frame_state(frame)
+}
+
+/// Returns the generated function identifier stored in one persistent frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_function(frame: i32) -> i32 {
+    runtime::async_frame_function(frame)
+}
+
+/// Returns the active persistent frame, or zero when no resumable call is active.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_current() -> i32 {
+    runtime::async_frame_current()
+}
+
+/// Selects the persistent frame that the generated dispatcher must execute next.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_set_current(frame: i32) {
+    runtime::async_frame_set_current(frame);
+}
+
+/// Records the parent result slot consumed after a child resumable function completes.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_set_caller(frame: i32, caller: i32, slot: i32) {
+    runtime::async_frame_set_caller(frame, caller, slot);
+}
+
+/// Completes one resumable frame and stores its result for its caller or root execution.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_complete(frame: i32, value: ValueRef) -> i32 {
+    runtime::async_frame_complete(frame, value)
+}
+
+/// Takes the completed root result after a generated resumable dispatcher finishes.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_take_completed() -> ValueRef {
+    runtime::async_frame_take_completed()
+}
+
+/// Starts one dynamic runner-resolved host call with a String name and List arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
+    runtime::host_call_start(name, arguments)
+}
+
+/// Takes the decoded Value returned by a synchronously completed host call.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_host_call_take_ready() -> ValueRef {
+    runtime::host_call_take_ready()
+}
+
+/// Delivers one completed asynchronous host response encoded in runtime-owned input memory.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_host_call_resume(call_id: i64, pointer: i32, length: i32) -> i32 {
+    runtime::host_call_resume(call_id, pointer, length)
+}
+
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     runtime::trap()

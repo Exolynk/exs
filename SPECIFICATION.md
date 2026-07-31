@@ -915,10 +915,10 @@ Trait methods are potential suspension points unless the compiler proves their i
 ## Host invocation
 
 ```text
-host.operation(arguments)
+host.call(name, arguments...)
 ```
 
-`operation` is a static property identifier. `arguments` may be any Host-ABI-marshallable value. Dynamic `host.call(name, arguments)` is deferred.
+`host` is a reserved source keyword. `name` is evaluated at runtime and MUST produce a String naming a runner-registered host function. The remaining arguments are evaluated in source order and transported as one canonical CBOR List. The compiler has no host manifest and does not know whether the selected runner function is synchronous or asynchronous.
 
 `host` is suspendable. It returns the host result or an Error. It does not create a language task.
 
@@ -1181,7 +1181,7 @@ This chapter defines Host ABI `0.1`.
 
 ## Hostcalls
 
-Source-level `host.operation(arguments)` creates a runtime hostcall record and invokes the runner import. Concrete host operations and their schemas are unknown to the compiler; their static property names are embedded in the final module and resolved by the runner at execution time.
+Source-level `host.call(name, arguments...)` creates a runtime hostcall record and invokes the runner import. Concrete host operations are unknown to the compiler; the runtime String `name` is resolved by the runner at execution time. The request payload is a canonical CBOR List whose items are the ordered host-function arguments.
 
 The runtime allocates HostCallId before invoking the host.
 
@@ -1287,7 +1287,7 @@ The runner:
 
 ## Host registry
 
-The server runner owns a registry mapping static host names to independently registered synchronous or asynchronous implementations. It validates CBOR input and output against the registered schemas. A synchronous implementation returns a response through the hostcall fast path. An asynchronous implementation creates a HostCallId, returns pending, and resumes the waiting runtime task when its future completes.
+The server runner owns a registry mapping dynamically resolved host names to independently registered synchronous or asynchronous implementations. A synchronous implementation has the logical signature `fn(Vec<ExsValue>) -> ExsValue`; an asynchronous implementation returns a `Future<Output = ExsValue>` for the same ordered arguments. The registry rejects empty or duplicate names. It validates that request CBOR decodes to an ExS List and that responses encode as ExS CBOR. A synchronous implementation returns a response through the hostcall fast path. An asynchronous implementation creates a HostCallId, returns pending, and resumes the waiting runtime task when its future completes.
 
 The runner's public execution API is asynchronous because a loaded module may use asynchronous host functions. A purely synchronous execution path MAY complete without suspension. A normal recoverable host failure is returned as an ExS Error value; malformed Wasm, an ABI mismatch, engine failure, fuel exhaustion, and runner-internal failures are runner errors.
 

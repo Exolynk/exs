@@ -348,6 +348,18 @@ pub enum Expression<'a> {
         /// Full expression span.
         span: SourceSpan<'a>,
     },
+    /// A dynamically resolved host invocation.
+    ///
+    /// The name expression must evaluate to String at runtime. Every argument is transported in
+    /// source order across the host CBOR boundary.
+    HostCall {
+        /// Runtime expression that supplies the registered host-function name.
+        name: Box<Expression<'a>>,
+        /// Positional arguments passed to the resolved host function.
+        arguments: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
     /// A dynamically dispatched member call.
     MethodCall {
         /// Receiver evaluated before arguments.

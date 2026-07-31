@@ -36,6 +36,27 @@ pub(crate) struct RootFrame {
     pub(crate) slots: Vec<Option<ValueRef>>,
 }
 
+/// The caller location that receives one completed resumable-function result.
+#[derive(Clone, Copy)]
+pub(crate) struct FrameContinuation {
+    /// One-based runtime async-frame identifier.
+    pub(crate) frame: u32,
+    /// Destination slot in the caller frame.
+    pub(crate) slot: u32,
+}
+
+/// Persistent state for one compiler-generated resumable function invocation.
+pub(crate) struct AsyncFrame {
+    /// Compiler-assigned generated function identifier.
+    pub(crate) function_id: u32,
+    /// Compiler-assigned continuation-graph state identifier.
+    pub(crate) state: u32,
+    /// Values that must survive a pending host call.
+    pub(crate) slots: Vec<Option<ValueRef>>,
+    /// Caller continuation, absent for the root resumable invocation.
+    pub(crate) caller: Option<FrameContinuation>,
+}
+
 /// Mutable state isolated to one instantiated Phase-1 runtime.
 pub(crate) struct RuntimeState {
     /// Runtime values addressed by one-based `ValueRef` indices.
@@ -44,6 +65,24 @@ pub(crate) struct RuntimeState {
     pub(crate) free_slots: Vec<u32>,
     /// Active compiler-generated function root frames in call order.
     pub(crate) root_frames: Vec<RootFrame>,
+    /// Durable frames for the currently active resumable root execution.
+    pub(crate) async_frames: Vec<Option<AsyncFrame>>,
+    /// Reusable zero-based async-frame indexes.
+    pub(crate) free_async_frames: Vec<u32>,
+    /// One-based identifier of the frame executed by the generated dispatcher.
+    pub(crate) active_async_frame: Option<u32>,
+    /// Root result retained after the final resumable frame completes.
+    pub(crate) completed_async_result: Option<ValueRef>,
+    /// CBOR request bytes for the active generic host call.
+    pub(crate) host_request_buffer: Vec<u8>,
+    /// CBOR response bytes copied from the runner for a synchronous host result.
+    pub(crate) host_response_buffer: Vec<u8>,
+    /// The next monotonic HostCallId assigned within this Wasm instance.
+    pub(crate) next_host_call_id: u64,
+    /// The HostCallId whose runner response is currently available.
+    pub(crate) active_host_call: Option<u64>,
+    /// A locally generated ready host Error, such as an invalid dynamic call name.
+    pub(crate) ready_host_result: Option<ValueRef>,
     /// Native runtime values temporarily protected across further allocations.
     pub(crate) temporary_roots: Vec<ValueRef>,
     /// Source position applied to the next recoverable runtime Error.
@@ -67,6 +106,15 @@ impl RuntimeState {
             values: Vec::new(),
             free_slots: Vec::new(),
             root_frames: Vec::new(),
+            async_frames: Vec::new(),
+            free_async_frames: Vec::new(),
+            active_async_frame: None,
+            completed_async_result: None,
+            host_request_buffer: Vec::new(),
+            host_response_buffer: Vec::new(),
+            next_host_call_id: 1,
+            active_host_call: None,
+            ready_host_result: None,
             temporary_roots: Vec::new(),
             current_source_position: None,
             frames: Vec::new(),

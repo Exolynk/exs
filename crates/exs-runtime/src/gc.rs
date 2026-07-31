@@ -107,6 +107,11 @@ fn collect_roots() -> Vec<ValueRef> {
     for frame in &state.root_frames {
         roots.extend(frame.slots.iter().flatten().copied());
     }
+    for frame in state.async_frames.iter().flatten() {
+        roots.extend(frame.slots.iter().flatten().copied());
+    }
+    roots.extend(state.completed_async_result);
+    roots.extend(state.ready_host_result);
     roots.extend(state.temporary_roots.iter().copied());
     roots
 }
