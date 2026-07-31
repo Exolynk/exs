@@ -81,38 +81,38 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Support zero or more typed `main` inputs, substitute `None` for missing values, and return fatal `ArityError` for excess values.
 - [x] Add nominal Object types with declared fields, named type contracts, explicit `None` for omitted optional fields, instance `impl` methods, and static `Type::method()` methods.
 - [x] Add nominal trait declarations, required signatures, default methods, `impl Trait for Type` implementations, trait contracts, and instance/static dispatch. Trait and type names share one namespace; duplicate exposed method names are rejected.
-- [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
 
-### Phase 7: Closures
-
-- [ ] Add closure discovery, capture analysis, Cells, and closure runtime objects.
-- [ ] Preserve shared mutable binding identity across nested closures.
-
-### Phase 8: Deep clone
-
-- [ ] Add Clone contexts that preserve cycles and aliases.
-- [ ] Support user-defined, potentially suspendable Clone implementations.
-
-### Phase 9: Runner and host boundary
+### Phase 7: Runner and host boundary
 
 - [ ] Add canonical CBOR host input/output handling.
 - [ ] Add a server host registry with typed synchronous and asynchronous adapters.
 - [ ] Validate host schemas and preserve language Errors as normal Values.
 
-### Phase 10: Suspension
+### Phase 8: Suspension
 
 - [ ] Build the call graph and transitive suspendability analysis.
 - [ ] Lower suspendable functions into state machines with async frames.
 - [ ] Add hostcall resume and the synchronous fast path.
 
-### Phase 11: Scheduler
+### Phase 9: Scheduler
 
 - [ ] Add the execution context, task states, deterministic runnable queue, cancellation, and limits.
 
-### Phase 12: `par`
+### Phase 10: Closures
 
-- [ ] Add static `par { ... }` and dynamic `par(list)` lowering.
+- [ ] Add closure discovery, capture analysis, Cells, and closure runtime objects.
+- [ ] Preserve shared mutable binding identity across nested closures.
+
+### Phase 11: `par`
+
+- [ ] Add static `par { ... }` and dynamic `par(list)` lowering using callable Values.
 - [ ] Preserve source-order results and continue sibling tasks after recoverable Errors.
+
+### Phase 12: Deep clone
+
+- [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
+- [ ] Add Clone contexts that preserve cycles and aliases.
+- [ ] Support user-defined, potentially suspendable Clone implementations.
 
 ### Phase 13: Browser runner
 
