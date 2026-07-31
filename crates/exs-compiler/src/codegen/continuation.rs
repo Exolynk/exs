@@ -12,7 +12,7 @@ use crate::ast::{
 use crate::codegen::diagnostics;
 use crate::codegen::function::{FunctionSignature, InstanceMethod, MethodRegistry};
 use crate::codegen::source_map::SourceMap;
-use crate::codegen::types::TypeContract;
+use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan, module_span};
 
 /// One lowered resumable function and the durable frame capacity it requires.
@@ -78,6 +78,7 @@ pub(super) fn compile_function<'source>(
     source_map: &SourceMap<'source>,
     frame_layouts: &HashMap<String, FrameLayout>,
     methods: &MethodRegistry,
+    types: &TypeRegistry,
 ) -> Result<CompiledContinuation, CompileDiagnostics<'source>> {
     let signature = signatures.get(key).ok_or_else(|| {
         diagnostics(CompileDiagnostic::new(
@@ -86,8 +87,14 @@ pub(super) fn compile_function<'source>(
             "missing resumable function signature",
         ))
     })?;
-    let graph =
-        ContinuationGraph::build(declaration, signature, signatures, frame_layouts, methods)?;
+    let graph = ContinuationGraph::build(
+        declaration,
+        signature,
+        signatures,
+        frame_layouts,
+        methods,
+        types,
+    )?;
     let mut compiler = StepCompiler {
         runtime,
         literals,
@@ -342,6 +349,12 @@ enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Constructs a Boolean value in a destination slot.
+    Boolean {
+        value: bool,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
     /// Copies an already-rooted durable slot.
     Copy {
         source: u32,
@@ -375,6 +388,12 @@ enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Constructs an empty nominal Object with a compiler-resolved type tag.
+    TypedObject {
+        type_id: u32,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
     /// Tests one value for the Error variant.
     IsError {
         value: u32,
@@ -397,7 +416,7 @@ enum Operation<'source, 'function> {
     /// Reads one statically named property.
     Property {
         receiver: u32,
-        property: &'function str,
+        property: String,
         property_span: SourceSpan<'source>,
         destination: u32,
         span: SourceSpan<'source>,
@@ -412,7 +431,7 @@ enum Operation<'source, 'function> {
     /// Mutates a statically named property and discards its runtime result.
     PropertySet {
         receiver: u32,
-        property: &'function str,
+        property: String,
         property_span: SourceSpan<'source>,
         value: u32,
         span: SourceSpan<'source>,
@@ -457,6 +476,12 @@ enum Operation<'source, 'function> {
     /// Validates frame-backed parameter slots against their function contracts.
     ValidateParameters {
         contracts: Vec<TypeContract>,
+        span: SourceSpan<'source>,
+    },
+    /// Validates one durable slot against a source type contract.
+    ValidateSlot {
+        slot: u32,
+        contract: TypeContract,
         span: SourceSpan<'source>,
     },
     /// Branches after checking a source Boolean condition.
@@ -518,6 +543,8 @@ struct GraphBuilder<'source, 'function> {
     frame_layouts: &'function HashMap<String, FrameLayout>,
     /// Instance and static implementation-method metadata.
     methods: &'function MethodRegistry,
+    /// Nominal Object declarations and field contracts.
+    types: &'function TypeRegistry,
 }
 
 /// Unresolved loop branches collected until a loop's exit state is known.
@@ -536,6 +563,7 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
         signatures: &'function HashMap<String, FunctionSignature>,
         frame_layouts: &'function HashMap<String, FrameLayout>,
         methods: &'function MethodRegistry,
+        types: &'function TypeRegistry,
     ) -> Result<Self, CompileDiagnostics<'source>> {
         let parameter_count = u32::try_from(declaration.parameters.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
@@ -557,6 +585,7 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
             signatures,
             frame_layouts,
             methods,
+            types,
         };
         builder.operations.push(Operation::ValidateParameters {
             contracts: signature.parameter_types.clone(),
@@ -645,7 +674,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     let value = self.lower_expression(value)?;
                     self.operations.push(Operation::PropertySet {
                         receiver,
-                        property: &property.name,
+                        property: property.name.clone(),
                         property_span: property.span,
                         value,
                         span: *span,
@@ -1031,7 +1060,12 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 span,
             } => {
                 if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
-                    return Err(self.unsupported(*span, "short-circuiting logical expressions require the next Phase 8 continuation increment"));
+                    return self.lower_logical(
+                        left,
+                        right,
+                        matches!(operator, BinaryOperator::Or),
+                        *span,
+                    );
                 }
                 let left = self.lower_expression(left)?;
                 let right = self.lower_expression(right)?;
@@ -1152,7 +1186,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let destination = self.temporary(*span)?;
                 self.operations.push(Operation::Property {
                     receiver,
-                    property: &property.name,
+                    property: property.name.clone(),
                     property_span: property.span,
                     destination,
                     span: *span,
@@ -1294,11 +1328,177 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 });
                 Ok(destination)
             }
-            Expression::TypedObject { span, .. } => Err(self.unsupported(
-                *span,
-                "nominal object construction requires the remaining child-frame lowering work",
-            )),
+            Expression::TypedObject {
+                type_name,
+                properties,
+                span,
+            } => self.lower_typed_object(type_name, properties, *span),
         }
+    }
+
+    /// Lowers one short-circuiting Boolean expression into explicit continuation branches.
+    fn lower_logical(
+        &mut self,
+        left: &'function Expression<'source>,
+        right: &'function Expression<'source>,
+        is_or: bool,
+        span: SourceSpan<'source>,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        let left = self.lower_expression(left)?;
+        let destination = self.temporary(span)?;
+        let checked = self.temporary(span)?;
+        let branch = self.push(Operation::Branch {
+            condition: left,
+            checked,
+            when_true: 0,
+            when_false: 0,
+            span,
+        })?;
+
+        let right_start = self.operations.len();
+        let right = self.lower_expression(right)?;
+        let right_checked = self.temporary(span)?;
+        let right_branch = self.push(Operation::Branch {
+            condition: right,
+            checked: right_checked,
+            when_true: 0,
+            when_false: 0,
+            span,
+        })?;
+        let right_true = self.operations.len();
+        self.operations.push(Operation::Boolean {
+            value: true,
+            destination,
+            span,
+        });
+        let right_true_exit = self.push(Operation::Goto { target: 0, span })?;
+        let right_false = self.operations.len();
+        self.operations.push(Operation::Boolean {
+            value: false,
+            destination,
+            span,
+        });
+        let right_false_exit = self.push(Operation::Goto { target: 0, span })?;
+
+        let short_start = self.operations.len();
+        self.operations.push(Operation::Boolean {
+            value: is_or,
+            destination,
+            span,
+        });
+        let short_exit = self.push(Operation::Goto { target: 0, span })?;
+        let after = self.operations.len();
+
+        if is_or {
+            self.set_branch_targets(branch, short_start, right_start, span)?;
+        } else {
+            self.set_branch_targets(branch, right_start, short_start, span)?;
+        }
+        self.set_branch_targets(right_branch, right_true, right_false, span)?;
+        self.set_goto_target(right_true_exit, after, span)?;
+        self.set_goto_target(right_false_exit, after, span)?;
+        self.set_goto_target(short_exit, after, span)?;
+        Ok(destination)
+    }
+
+    /// Lowers nominal construction while preserving direct-lowering field validation order.
+    fn lower_typed_object(
+        &mut self,
+        type_name: &'function crate::ast::Identifier<'source>,
+        properties: &'function [crate::ast::ObjectProperty<'source>],
+        span: SourceSpan<'source>,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        let nominal = self.types.get(&type_name.name).cloned().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0216",
+                type_name.span,
+                format!("unknown type `{}`", type_name.name),
+            ))
+        })?;
+        for property in properties {
+            if !nominal
+                .fields
+                .iter()
+                .any(|field| field.name == property.key)
+                || properties
+                    .iter()
+                    .filter(|other| other.key == property.key)
+                    .count()
+                    > 1
+            {
+                let value = self.temporary(property.key_span)?;
+                self.operations.push(Operation::None {
+                    destination: value,
+                    span: property.key_span,
+                });
+                self.operations.push(Operation::ValidateSlot {
+                    slot: value,
+                    contract: TypeContract {
+                        builtin_mask: 0,
+                        nominal_type_ids: Vec::new(),
+                    },
+                    span: property.key_span,
+                });
+                return Ok(value);
+            }
+        }
+
+        let object = self.temporary(span)?;
+        self.operations.push(Operation::TypedObject {
+            type_id: nominal.id,
+            destination: object,
+            span,
+        });
+        for property in properties {
+            let field = nominal
+                .fields
+                .iter()
+                .find(|field| field.name == property.key)
+                .cloned()
+                .ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0999",
+                        property.key_span,
+                        "missing resolved nominal field",
+                    ))
+                })?;
+            let value = self.lower_expression(&property.value)?;
+            self.operations.push(Operation::ValidateSlot {
+                slot: value,
+                contract: field.contract,
+                span: property.span,
+            });
+            self.operations.push(Operation::PropertySet {
+                receiver: object,
+                property: property.key.clone(),
+                property_span: property.key_span,
+                value,
+                span: property.span,
+            });
+        }
+        for field in &nominal.fields {
+            if properties.iter().any(|property| property.key == field.name) {
+                continue;
+            }
+            let value = self.temporary(span)?;
+            self.operations.push(Operation::None {
+                destination: value,
+                span,
+            });
+            self.operations.push(Operation::ValidateSlot {
+                slot: value,
+                contract: field.contract.clone(),
+                span,
+            });
+            self.operations.push(Operation::PropertySet {
+                receiver: object,
+                property: field.name.clone(),
+                property_span: span,
+                value,
+                span,
+            });
+        }
+        Ok(object)
     }
 
     /// Allocates one durable frame slot.
@@ -1331,11 +1531,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     format!("unknown binding `{name}`"),
                 ))
             })
-    }
-
-    /// Creates a diagnostic for a source construct not included in this increment.
-    fn unsupported(&self, span: SourceSpan<'source>, message: &str) -> CompileDiagnostics<'source> {
-        diagnostics(CompileDiagnostic::new("E0301", span, message))
     }
 }
 
@@ -1412,6 +1607,17 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
+            Operation::Boolean {
+                value,
+                destination,
+                span,
+            } => {
+                self.function
+                    .instruction(&Instruction::I32Const(i32::from(*value)));
+                self.call_runtime("__exs_rt_bool_new", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::Copy {
                 source,
                 destination,
@@ -1480,6 +1686,17 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                     self.call_runtime("__exs_rt_index_set", *span)?;
                     self.function.instruction(&Instruction::Drop);
                 }
+                self.ready(next, *span)?;
+            }
+            Operation::TypedObject {
+                type_id,
+                destination,
+                span,
+            } => {
+                self.function
+                    .instruction(&Instruction::I32Const(type_id.cast_signed()));
+                self.call_runtime("__exs_rt_object_typed_new", *span)?;
+                self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
             Operation::IsError {
@@ -1623,6 +1840,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                     })?;
                     self.validate_slot_or_complete(slot, contract, *span)?;
                 }
+                self.ready(next, *span)?;
+            }
+            Operation::ValidateSlot {
+                slot,
+                contract,
+                span,
+            } => {
+                self.validate_slot_or_complete(*slot, contract, *span)?;
                 self.ready(next, *span)?;
             }
             Operation::Branch {
@@ -2394,11 +2619,13 @@ fn operation_span<'source>(operation: &Operation<'source, '_>) -> SourceSpan<'so
         Operation::Literal { expression, .. } => expression_span(expression),
         Operation::Integer { span, .. }
         | Operation::None { span, .. }
+        | Operation::Boolean { span, .. }
         | Operation::Copy { span, .. }
         | Operation::Unary { span, .. }
         | Operation::Binary { span, .. }
         | Operation::List { span, .. }
         | Operation::Object { span, .. }
+        | Operation::TypedObject { span, .. }
         | Operation::IsError { span, .. }
         | Operation::Propagate { span, .. }
         | Operation::Index { span, .. }
@@ -2411,6 +2638,7 @@ fn operation_span<'source>(operation: &Operation<'source, '_>) -> SourceSpan<'so
         | Operation::ChildCall { span, .. }
         | Operation::InstanceCall { span, .. }
         | Operation::ValidateParameters { span, .. }
+        | Operation::ValidateSlot { span, .. }
         | Operation::Branch { span, .. }
         | Operation::Goto { span, .. }
         | Operation::IterSnapshot { span, .. }

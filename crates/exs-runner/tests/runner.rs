@@ -189,6 +189,81 @@ fn continuation_matrix_module() -> exs_compiler::CompiledModule {
     )
 }
 
+/// Registers a Boolean host function that records each expression evaluated through it.
+fn register_logical_host(
+    runner: &mut ServerRunner,
+    asynchronous: bool,
+    calls: Arc<Mutex<Vec<String>>>,
+) {
+    let registration = if asynchronous {
+        runner
+            .registry_mut()
+            .register_async("truth", move |arguments: Vec<ExsValue>| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    record_logical_host_call(&calls, &arguments);
+                    ExsValue::Bool(true)
+                }
+            })
+    } else {
+        runner
+            .registry_mut()
+            .register_sync("truth", move |arguments: Vec<ExsValue>| {
+                record_logical_host_call(&calls, &arguments);
+                ExsValue::Bool(true)
+            })
+    };
+    assert!(registration.is_ok());
+}
+
+/// Records the String label supplied to the logical-expression host function.
+fn record_logical_host_call(calls: &Arc<Mutex<Vec<String>>>, arguments: &[ExsValue]) {
+    let [ExsValue::String(label)] = arguments else {
+        panic!("logical host call received unexpected arguments: {arguments:?}");
+    };
+    calls
+        .lock()
+        .expect("logical call log mutex poisoned")
+        .push(label.clone());
+}
+
+/// Compiles a continuation program that distinguishes evaluated and short-circuited operands.
+fn logical_continuation_module() -> exs_compiler::CompiledModule {
+    compile_source(
+        r#"
+        fn main() {
+            let and_short = false && host.call("truth", "and-short");
+            let and_evaluated = true && host.call("truth", "and-evaluated");
+            let or_short = true || host.call("truth", "or-short");
+            let or_evaluated = false || host.call("truth", "or-evaluated");
+            if and_short || !and_evaluated || !or_short || !or_evaluated {
+                ret 0;
+            }
+            ret 1;
+        }
+        "#,
+    )
+}
+
+/// Compiles a continuation program that constructs a nominal Object from a host result.
+fn typed_object_continuation_module() -> exs_compiler::CompiledModule {
+    compile_source(
+        r#"
+        type User { name: String, nickname: String | None, }
+        impl User {
+            fn display(self) -> String { ret self.name; }
+        }
+        fn main(input: String) -> String | Error {
+            let user = User { name: host.call("echo", input) };
+            if user.nickname != None {
+                ret "invalid";
+            }
+            ret user.display();
+        }
+        "#,
+    )
+}
+
 /// Executes an arithmetic result through the linked runtime.
 #[test]
 fn executes_compiled_integer_program() {
@@ -360,6 +435,124 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
         Err(error) => panic!("execution failed: {error}"),
     };
     assert_eq!(result, ExsValue::Int(5));
+}
+
+/// Short-circuits resumable logical expressions when host calls return immediately.
+#[test]
+fn short_circuits_logical_continuations_for_synchronous_host_calls() {
+    let compiled = logical_continuation_module();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = ServerRunner::new();
+    register_logical_host(&mut runner, false, Arc::clone(&calls));
+
+    let result = match block_on(runner.execute(&compiled.wasm, &[])) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(1));
+    assert_eq!(
+        calls
+            .lock()
+            .expect("logical call log mutex poisoned")
+            .as_slice(),
+        ["and-evaluated", "or-evaluated"]
+    );
+}
+
+/// Short-circuits resumable logical expressions across pending host-call resumes.
+#[test]
+fn short_circuits_logical_continuations_for_asynchronous_host_calls() {
+    let compiled = logical_continuation_module();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = ServerRunner::new();
+    register_logical_host(&mut runner, true, Arc::clone(&calls));
+
+    let result = match block_on(runner.execute(&compiled.wasm, &[])) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(1));
+    assert_eq!(
+        calls
+            .lock()
+            .expect("logical call log mutex poisoned")
+            .as_slice(),
+        ["and-evaluated", "or-evaluated"]
+    );
+}
+
+/// Constructs nominal Objects through the synchronous host fast path in resumable code.
+#[test]
+fn constructs_typed_objects_for_synchronous_host_calls() {
+    let compiled = typed_object_continuation_module();
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("echo", |arguments: Vec<ExsValue>| {
+                arguments.into_iter().next().unwrap_or(ExsValue::None)
+            })
+            .is_ok()
+    );
+
+    let result =
+        match block_on(runner.execute(&compiled.wasm, &[ExsValue::String("Ada".to_owned())])) {
+            Ok(result) => result,
+            Err(error) => panic!("execution failed: {error}"),
+        };
+    assert_eq!(result, ExsValue::String("Ada".to_owned()));
+}
+
+/// Constructs nominal Objects after resuming a pending host result in resumable code.
+#[test]
+fn constructs_typed_objects_for_asynchronous_host_calls() {
+    let compiled = typed_object_continuation_module();
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+                arguments.into_iter().next().unwrap_or(ExsValue::None)
+            })
+            .is_ok()
+    );
+
+    let result =
+        match block_on(runner.execute(&compiled.wasm, &[ExsValue::String("Ada".to_owned())])) {
+            Ok(result) => result,
+            Err(error) => panic!("execution failed: {error}"),
+        };
+    assert_eq!(result, ExsValue::String("Ada".to_owned()));
+}
+
+/// Preserves nominal field contracts after a pending host result is delivered.
+#[test]
+fn validates_typed_object_fields_after_asynchronous_host_calls() {
+    let compiled = compile_source(
+        r#"
+        type User { name: String, }
+        fn main() -> Error { ret User { name: host.call("wrong") }; }
+        "#,
+    );
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("wrong", |_arguments: Vec<ExsValue>| async move {
+                ExsValue::Int(7)
+            })
+            .is_ok()
+    );
+
+    let result = match block_on(runner.execute(&compiled.wasm, &[])) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    let ExsValue::Error(error) = result else {
+        panic!("expected a TypeError result");
+    };
+    assert_eq!(error.kind, "TypeError");
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
 }
 
 /// Covers every supported host-call source position through immediately ready host responses.

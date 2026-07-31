@@ -414,6 +414,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     &self.source_map,
                     &self.frame_layouts,
                     methods,
+                    &self.type_registry,
                 )
                 .map(|compiled| {
                     if function.name.name == "main" {
@@ -456,6 +457,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                         &self.source_map,
                         &self.frame_layouts,
                         methods,
+                        &self.type_registry,
                     )
                     .map(|compiled| compiled.function)
                 } else {

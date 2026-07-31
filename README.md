@@ -93,8 +93,8 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Build a conservative call graph and transitive host-call suspendability analysis.
 - [x] Add runtime async frames, GC roots, Host ABI ready/pending transport, and a generated root dispatcher.
 - [x] Add the synchronous host fast path and asynchronous `ServerRunner` resume delivery for the initial `ret host.call(name, arguments...);` main-function path.
-- [ ] Replace the initial path with a full continuation IR that assigns durable slots for lexical bindings and expression temporaries.
-- [ ] Lower sequential statements, nested expressions, assignments, `ret`, and `?` into continuation states.
+- [x] Replace the initial path with a full continuation IR that assigns durable slots for lexical bindings and expression temporaries.
+- [x] Lower sequential statements, nested expressions, assignments, `ret`, and `?` into continuation states.
 - [x] Lower `if`, `while`, `for`, `break`, and `continue` into graph branch and loop states.
 - [x] Lower transitive suspendable direct, instance, static, and trait calls through child frames and caller continuations.
 - [x] Preserve function contracts, source positions, language stack traces, and recoverable Error propagation in resumable frames.
