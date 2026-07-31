@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use exs_compiler::{
     CompileOptions, ModuleResolver, ResolvedSource, SourceInput, compile, compile_with_resolver,
-    format, read_debug_info,
+    document_with_resolver, format, read_debug_info,
 };
 use wasmparser::{Parser, Payload, Validator};
 
@@ -58,6 +58,49 @@ fn formatter_returns_syntax_diagnostics() {
         Err(error) => error,
     };
     assert!(!error.diagnostics.is_empty());
+}
+
+/// Generates language and API pages for reachable imported modules.
+#[test]
+fn generates_markdown_api_documentation() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./math.exs".to_owned(),
+            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\n/// A coordinate.\ntype Point { value: Int }".to_owned(),
+        )]),
+    };
+    let documentation = match document_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./math.exs\" as math;\n/// Runs the program.\nfn main() -> Int { ret math::add(20, 22); }",
+        },
+        &mut resolver,
+    ) {
+        Ok(documentation) => documentation,
+        Err(error) => panic!("documentation generation failed: {error}"),
+    };
+    assert!(documentation.index.contains("## Available Types"));
+    assert!(
+        documentation
+            .index
+            .contains("`host.call(name, arguments...)`")
+    );
+    assert_eq!(documentation.modules.len(), 2);
+    let main = documentation
+        .modules
+        .iter()
+        .find(|module| module.source_id == "./main.exs")
+        .unwrap_or_else(|| panic!("missing main module page"));
+    assert!(main.markdown.contains("[module](01-math.md)"));
+    let math = documentation
+        .modules
+        .iter()
+        .find(|module| module.source_id == "./math.exs")
+        .unwrap_or_else(|| panic!("missing math module page"));
+    assert!(math.markdown.starts_with("# Module `./math.exs`"));
+    assert!(math.markdown.contains("Adds two integers."));
+    assert!(math.markdown.contains("### `add`"));
+    assert!(math.markdown.contains("### `Point`"));
 }
 
 /// Resolves compiler-test source files from an in-memory canonical source table.

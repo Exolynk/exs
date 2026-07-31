@@ -124,7 +124,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 - [x] Support relative `.exs` file imports with canonical resolver identities, namespaces, merged namespaces, `as`, and `use` aliases.
 - [x] Create a formatter usable as a library API and through `exs fmt <file.exs>`.
-- [ ] Docs creation in a markdown format
+- [x] Generate Markdown language and module API documentation through `exs docs <file.exs> -o <directory>`.
 
 ### Phase 13: Deep clone
 

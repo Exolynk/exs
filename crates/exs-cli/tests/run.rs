@@ -57,6 +57,50 @@ fn reports_format_errors_with_source_context() {
     assert!(stderr.contains("fn main( {"));
 }
 
+/// Writes an index and root-module API page through the documentation CLI command.
+#[test]
+fn generates_markdown_documentation() {
+    let directory = std::env::temp_dir().join(format!("exs-cli-docs-{}", std::process::id()));
+    let source_path = directory.join("main.exs");
+    let output_path = directory.join("docs");
+    if let Err(error) = fs::create_dir_all(&directory) {
+        panic!("could not create documentation fixture directory: {error}");
+    }
+    if let Err(error) = fs::write(
+        &source_path,
+        "/// Runs the program.\nfn main(value: Int) -> Int { ret value + 1; }",
+    ) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("docs")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&output_path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    assert!(output.status.success());
+    let index = match fs::read_to_string(output_path.join("index.md")) {
+        Ok(index) => index,
+        Err(error) => panic!("could not read documentation index: {error}"),
+    };
+    let module = match fs::read_to_string(output_path.join("modules/00-main.md")) {
+        Ok(module) => module,
+        Err(error) => panic!("could not read module documentation: {error}"),
+    };
+    if let Err(error) = fs::remove_dir_all(&directory) {
+        panic!("could not remove documentation fixture directory: {error}");
+    }
+    assert!(index.contains("# ExS API Documentation"));
+    assert!(index.contains("[`./main.exs`](modules/00-main.md)"));
+    assert!(module.starts_with("# Module `./main.exs`"));
+    assert!(module.contains("Runs the program."));
+    assert!(module.contains("fn main(value: Int) -> Int"));
+}
+
 /// Prints the completed floating-point `main` result for a source program.
 #[test]
 fn prints_the_main_result() {

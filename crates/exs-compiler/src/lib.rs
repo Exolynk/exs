@@ -3,6 +3,7 @@
 mod ast;
 mod codegen;
 mod diagnostic;
+mod documentation;
 mod formatter;
 mod hir;
 mod lexer;
@@ -38,6 +39,26 @@ pub struct CompileOptions {
 pub struct CompiledModule {
     /// The complete linked WebAssembly module.
     pub wasm: Vec<u8>,
+}
+
+/// Generated Markdown documentation for one reachable source module.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DocumentationModule {
+    /// Canonical module identity supplied by the resolver.
+    pub source_id: String,
+    /// Relative Markdown path within the generated documentation directory.
+    pub path: String,
+    /// Complete generated Markdown page.
+    pub markdown: String,
+}
+
+/// Generated Markdown documentation for one resolved ExS module graph.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Documentation {
+    /// Project overview and language reference page.
+    pub index: String,
+    /// One API page per reachable source module.
+    pub modules: Vec<DocumentationModule>,
 }
 
 /// One source file returned by a module resolver.
@@ -102,4 +123,19 @@ pub fn compile_with_resolver<R: ModuleResolver>(
 /// Returns lexer or parser diagnostics when the input cannot be formatted safely.
 pub fn format<'a>(source: SourceInput<'a>) -> Result<String, CompileDiagnostics<'a>> {
     formatter::format(source)
+}
+
+/// Generates Markdown language and API documentation for a resolved module graph.
+///
+/// The resolver owns import loading and canonical source identities. The returned documentation
+/// contains no filesystem side effects, so callers decide where and whether to write pages.
+///
+/// # Errors
+///
+/// Returns a rendered diagnostic report when source loading or parsing fails.
+pub fn document_with_resolver<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    resolver: &mut R,
+) -> Result<Documentation, String> {
+    documentation::generate(source, resolver)
 }

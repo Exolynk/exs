@@ -892,6 +892,12 @@ The reference formatter is exposed by the compiler library and as `exs fmt <file
 
 Canonical output uses four spaces per block level, one statement per line, a final newline, one blank line between top-level declarations, and one blank line between a module prelude and the first declaration. It normalizes spaces around binary operators, assignments, type annotations, function return arrows, commas, and object-property colons. It uses normal escaped string literals for all strings, so raw and dedented spelling is not retained when formatting.
 
+## Generated Markdown API documentation
+
+The compiler library exposes resolver-driven Markdown generation for a root source and its complete relative-import graph. It returns an `index.md` page with the general language description, implemented out-of-the-box types and operations, and links to one module page for every reachable source unit. A module page lists its imports, `use` declarations, nominal types and fields, traits and method signatures, implementation methods, and direct functions.
+
+Source comments beginning with `///` immediately before a declaration are emitted as that declaration's Markdown description. The `exs docs <file.exs> -o <directory>` CLI command uses the filesystem resolver and writes `index.md` plus the generated module pages to the selected directory. The compiler library performs no filesystem writes.
+
 # 11 – Built-ins
 
 The following built-ins are always available and cannot be shadowed at module top level. A nested local binding MAY shadow a built-in.
