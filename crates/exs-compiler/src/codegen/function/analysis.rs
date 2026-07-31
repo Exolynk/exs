@@ -141,6 +141,7 @@ pub(super) fn count_expressions(expression: &Expression<'_>) -> u32 {
             receiver, index, ..
         } => 1 + count_expressions(receiver) + count_expressions(index),
         Expression::Property { receiver, .. } => 1 + count_expressions(receiver),
+        Expression::Closure { .. } => 1,
     }
 }
 
@@ -158,6 +159,7 @@ pub(in crate::codegen::function) fn condition_span<'a>(
         Expression::Object { span, .. } => *span,
         Expression::TypedObject { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
+        Expression::Closure { span, .. } => *span,
         Expression::Unary { span, .. }
         | Expression::IsError { span, .. }
         | Expression::Propagate { span, .. }

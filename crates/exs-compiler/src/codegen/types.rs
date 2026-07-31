@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use exs_abi::{
-    TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_NONE, TYPE_OBJECT,
-    TYPE_STRING,
+    TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE,
+    TYPE_OBJECT, TYPE_STRING,
 };
 
 use crate::ast::{Module, TypeAnnotation};
@@ -313,6 +313,7 @@ fn builtin_mask(name: &str) -> Option<u32> {
         "String" => Some(TYPE_STRING),
         "List" => Some(TYPE_LIST),
         "Object" => Some(TYPE_OBJECT),
+        "Fn" => Some(TYPE_FN),
         _ => None,
     }
 }

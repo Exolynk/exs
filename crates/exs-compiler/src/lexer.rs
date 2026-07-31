@@ -95,6 +95,8 @@ pub enum TokenKind {
     Bang,
     /// `=`.
     Equal,
+    /// `=>`.
+    FatArrow,
     /// `==`.
     EqualEqual,
     /// `!=`.
@@ -301,6 +303,10 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                         TokenKind::BangEqual
                     }
                     b'!' => TokenKind::Bang,
+                    b'=' if bytes.get(index) == Some(&b'>') => {
+                        index += 1;
+                        TokenKind::FatArrow
+                    }
                     b'=' if bytes.get(index) == Some(&b'=') => {
                         index += 1;
                         TokenKind::EqualEqual

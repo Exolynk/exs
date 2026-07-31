@@ -1,17 +1,25 @@
 //! Binding-resolved intermediate data used by suspendability analysis.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use crate::ast::{AssignmentTarget, Block, Expression, FunctionDeclaration, Module, Statement};
+use crate::ast::{
+    AssignmentTarget, Block, Expression, FunctionDeclaration, Module, Parameter, Statement,
+};
 use crate::diagnostic::SourceSpan;
 
-/// One compiler-assigned lexical binding identity.
+/// One compiler-assigned lexical binding identity within a source module.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BindingId(pub(crate) u32);
+
+/// One stable source-order identity for a closure lifted from a module.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ClosureId(pub(crate) u32);
 
 /// The resolved data for every source function and implementation method.
 pub(crate) struct HirModule<'a> {
     functions: HashMap<String, HirFunction<'a>>,
+    closures: Vec<HirClosure<'a>>,
 }
 
 impl<'a> HirModule<'a> {
@@ -19,19 +27,24 @@ impl<'a> HirModule<'a> {
     #[must_use]
     pub(crate) fn lower(module: &'a Module<'a>) -> Self {
         let instance_targets = instance_method_targets(module);
+        let state = LoweringState::new();
         let mut functions = HashMap::new();
         for function in &module.functions {
             let key = function.name.name.clone();
-            let _previous = functions.insert(key, HirFunction::lower(function, &instance_targets));
+            let lowered = HirFunction::lower(function, key.clone(), &instance_targets, &state);
+            let _previous = functions.insert(key, lowered);
         }
         for implementation in &module.implementations {
             for function in &implementation.methods {
                 let key = format!("{}::{}", implementation.type_name.name, function.name.name);
-                let _previous =
-                    functions.insert(key, HirFunction::lower(function, &instance_targets));
+                let lowered = HirFunction::lower(function, key.clone(), &instance_targets, &state);
+                let _previous = functions.insert(key, lowered);
             }
         }
-        Self { functions }
+        Self {
+            functions,
+            closures: state.into_closures(),
+        }
     }
 
     /// Returns the resolved data for one direct function or implementation method.
@@ -46,6 +59,89 @@ impl<'a> HirModule<'a> {
             .iter()
             .map(|(key, function)| (key.as_str(), function))
     }
+
+    /// Iterates over closures in stable lexical source order.
+    pub(crate) fn closures(&self) -> impl Iterator<Item = &HirClosure<'a>> {
+        self.closures.iter()
+    }
+}
+
+/// The immediately enclosing callable that owns a lifted closure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ClosureOwner {
+    /// A direct source function or implementation method compiler key.
+    Function(String),
+    /// Another lifted closure.
+    Closure(ClosureId),
+}
+
+/// Resolved closure metadata used by later lifting and runtime-value lowering.
+pub(crate) struct HirClosure<'a> {
+    id: ClosureId,
+    owner: ClosureOwner,
+    parameters: Vec<BindingId>,
+    bindings: Vec<Binding<'a>>,
+    references: Vec<BindingReference<'a>>,
+    captures: Vec<Capture<'a>>,
+    calls: Vec<CallEdge<'a>>,
+    callable_calls: Vec<CallableCall<'a>>,
+    host_calls: Vec<HostCall<'a>>,
+}
+
+impl<'a> HirClosure<'a> {
+    /// Returns the stable lifted identity assigned in lexical source order.
+    #[must_use]
+    pub(crate) fn id(&self) -> ClosureId {
+        self.id
+    }
+
+    /// Returns the immediately enclosing callable that creates this closure.
+    #[must_use]
+    pub(crate) fn owner(&self) -> &ClosureOwner {
+        &self.owner
+    }
+
+    /// Returns the compiler identities of this closure's parameter bindings.
+    #[must_use]
+    pub(crate) fn parameters(&self) -> &[BindingId] {
+        &self.parameters
+    }
+
+    /// Returns the lexical bindings declared inside this closure.
+    #[must_use]
+    pub(crate) fn bindings(&self) -> &[Binding<'a>] {
+        &self.bindings
+    }
+
+    /// Returns source variable references and their resolved binding identities.
+    #[must_use]
+    pub(crate) fn references(&self) -> &[BindingReference<'a>] {
+        &self.references
+    }
+
+    /// Returns the non-local bindings captured in first-use source order.
+    #[must_use]
+    pub(crate) fn captures(&self) -> &[Capture<'a>] {
+        &self.captures
+    }
+
+    /// Returns direct and statically selected call edges.
+    #[must_use]
+    pub(crate) fn calls(&self) -> &[CallEdge<'a>] {
+        &self.calls
+    }
+
+    /// Returns local binding calls that will require dynamic closure invocation.
+    #[must_use]
+    pub(crate) fn callable_calls(&self) -> &[CallableCall<'a>] {
+        &self.callable_calls
+    }
+
+    /// Returns dynamically named host-call suspend points.
+    #[must_use]
+    pub(crate) fn host_calls(&self) -> &[HostCall<'a>] {
+        &self.host_calls
+    }
 }
 
 /// Resolved lexical and call-edge information for one source function.
@@ -53,6 +149,7 @@ pub(crate) struct HirFunction<'a> {
     bindings: Vec<Binding<'a>>,
     references: Vec<BindingReference<'a>>,
     calls: Vec<CallEdge<'a>>,
+    callable_calls: Vec<CallableCall<'a>>,
     host_calls: Vec<HostCall<'a>>,
 }
 
@@ -60,14 +157,17 @@ impl<'a> HirFunction<'a> {
     /// Lowers one source declaration into binding and suspend-point metadata.
     fn lower(
         function: &'a FunctionDeclaration<'a>,
+        key: String,
         instance_targets: &HashMap<String, Vec<String>>,
+        state: &LoweringState<'a>,
     ) -> Self {
-        let mut lowerer = FunctionLowerer::new(function, instance_targets);
+        let mut lowerer = FunctionLowerer::new_root(function, key, instance_targets, state);
         lowerer.lower_block(&function.body);
         HirFunction {
             bindings: lowerer.bindings,
             references: lowerer.references,
             calls: lowerer.calls,
+            callable_calls: lowerer.callable_calls,
             host_calls: lowerer.host_calls,
         }
     }
@@ -88,6 +188,12 @@ impl<'a> HirFunction<'a> {
     #[must_use]
     pub(crate) fn calls(&self) -> &[CallEdge<'a>] {
         &self.calls
+    }
+
+    /// Returns local binding calls that will require dynamic closure invocation.
+    #[must_use]
+    pub(crate) fn callable_calls(&self) -> &[CallableCall<'a>] {
+        &self.callable_calls
     }
 
     /// Returns dynamically named host-call suspend points.
@@ -115,10 +221,28 @@ pub(crate) struct BindingReference<'a> {
     pub(crate) span: SourceSpan<'a>,
 }
 
+/// One non-local binding retained by a closure environment.
+pub(crate) struct Capture<'a> {
+    /// The shared lexical binding identity retained by the closure.
+    pub(crate) binding: BindingId,
+    /// Source spelling resolved to this lexical binding at the first capture use.
+    pub(crate) name: &'a str,
+    /// First source use that required this capture.
+    pub(crate) span: SourceSpan<'a>,
+}
+
 /// A direct source function or static implementation-method invocation.
 pub(crate) struct CallEdge<'a> {
     /// The source name used as the callee lookup key.
     pub(crate) key: String,
+    /// Full call source span.
+    pub(crate) span: SourceSpan<'a>,
+}
+
+/// One source call whose callee resolved to a local lexical binding.
+pub(crate) struct CallableCall<'a> {
+    /// The local binding used as the dynamic callee.
+    pub(crate) binding: BindingId,
     /// Full call source span.
     pub(crate) span: SourceSpan<'a>,
 }
@@ -129,46 +253,139 @@ pub(crate) struct HostCall<'a> {
     pub(crate) span: SourceSpan<'a>,
 }
 
-/// Mutable lexical resolver for one source function.
-struct FunctionLowerer<'a> {
-    scopes: Vec<HashMap<&'a str, BindingId>>,
-    next_binding: u32,
-    bindings: Vec<Binding<'a>>,
-    references: Vec<BindingReference<'a>>,
-    calls: Vec<CallEdge<'a>>,
-    host_calls: Vec<HostCall<'a>>,
-    instance_targets: HashMap<String, Vec<String>>,
+/// Shared identity and closure collection state for one module lowering pass.
+struct LoweringState<'a> {
+    next_binding: Cell<u32>,
+    next_closure: Cell<u32>,
+    closures: RefCell<Vec<HirClosure<'a>>>,
 }
 
-impl<'a> FunctionLowerer<'a> {
+impl<'a> LoweringState<'a> {
+    /// Creates an empty source-order identity allocator.
+    fn new() -> Self {
+        Self {
+            next_binding: Cell::new(0),
+            next_closure: Cell::new(0),
+            closures: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Allocates the next module-wide binding identity.
+    fn allocate_binding(&self) -> BindingId {
+        let next = self.next_binding.get();
+        self.next_binding.set(next.saturating_add(1));
+        BindingId(next)
+    }
+
+    /// Allocates the next lexical source-order closure identity.
+    fn allocate_closure(&self) -> ClosureId {
+        let next = self.next_closure.get();
+        self.next_closure.set(next.saturating_add(1));
+        ClosureId(next)
+    }
+
+    /// Retains one discovered closure for later lifting.
+    fn push_closure(&self, closure: HirClosure<'a>) {
+        self.closures.borrow_mut().push(closure);
+    }
+
+    /// Releases every discovered closure after module lowering completes.
+    fn into_closures(self) -> Vec<HirClosure<'a>> {
+        let mut closures = self.closures.into_inner();
+        closures.sort_by_key(|closure| closure.id.0);
+        closures
+    }
+}
+
+/// Mutable lexical resolver for one source function.
+struct FunctionLowerer<'a, 'state> {
+    scopes: Vec<HashMap<&'a str, BindingId>>,
+    root_key: String,
+    owner: Option<ClosureId>,
+    parameters: Vec<BindingId>,
+    bindings: Vec<Binding<'a>>,
+    references: Vec<BindingReference<'a>>,
+    captures: Vec<Capture<'a>>,
+    calls: Vec<CallEdge<'a>>,
+    callable_calls: Vec<CallableCall<'a>>,
+    host_calls: Vec<HostCall<'a>>,
+    instance_targets: &'state HashMap<String, Vec<String>>,
+    state: &'state LoweringState<'a>,
+}
+
+impl<'a, 'state> FunctionLowerer<'a, 'state> {
     /// Creates a resolver with parameter bindings in the outermost function scope.
-    fn new(
+    fn new_root(
         function: &'a FunctionDeclaration<'a>,
-        instance_targets: &HashMap<String, Vec<String>>,
+        root_key: String,
+        instance_targets: &'state HashMap<String, Vec<String>>,
+        state: &'state LoweringState<'a>,
     ) -> Self {
         let mut lowerer = Self {
             scopes: vec![HashMap::new()],
-            next_binding: 0,
+            root_key,
+            owner: None,
+            parameters: Vec::new(),
             bindings: Vec::new(),
             references: Vec::new(),
+            captures: Vec::new(),
             calls: Vec::new(),
+            callable_calls: Vec::new(),
             host_calls: Vec::new(),
-            instance_targets: instance_targets.clone(),
+            instance_targets,
+            state,
         };
         for parameter in &function.parameters {
-            lowerer.declare(&parameter.name.name, parameter.name.span);
+            lowerer.declare_parameter(&parameter.name.name, parameter.name.span);
+        }
+        lowerer
+    }
+
+    /// Creates a resolver for one closure with its enclosing lexical scopes visible.
+    fn new_closure(
+        scopes: Vec<HashMap<&'a str, BindingId>>,
+        root_key: String,
+        owner: ClosureId,
+        parameters: &'a [Parameter<'a>],
+        instance_targets: &'state HashMap<String, Vec<String>>,
+        state: &'state LoweringState<'a>,
+    ) -> Self {
+        let mut lowerer = Self {
+            scopes,
+            root_key,
+            owner: Some(owner),
+            parameters: Vec::new(),
+            bindings: Vec::new(),
+            references: Vec::new(),
+            captures: Vec::new(),
+            calls: Vec::new(),
+            callable_calls: Vec::new(),
+            host_calls: Vec::new(),
+            instance_targets,
+            state,
+        };
+        lowerer.scopes.push(HashMap::new());
+        for parameter in parameters {
+            lowerer.declare_parameter(&parameter.name.name, parameter.name.span);
         }
         lowerer
     }
 
     /// Allocates one lexical binding in the innermost scope.
     fn declare(&mut self, name: &'a str, span: SourceSpan<'a>) {
-        let id = BindingId(self.next_binding);
-        self.next_binding = self.next_binding.saturating_add(1);
+        let id = self.state.allocate_binding();
         if let Some(scope) = self.scopes.last_mut() {
             let _previous = scope.insert(name, id);
         }
         self.bindings.push(Binding { id, name, span });
+    }
+
+    /// Allocates one parameter binding and retains its declaration order.
+    fn declare_parameter(&mut self, name: &'a str, span: SourceSpan<'a>) {
+        self.declare(name, span);
+        if let Some(binding) = self.bindings.last() {
+            self.parameters.push(binding.id);
+        }
     }
 
     /// Resolves every statement in a lexical block.
@@ -267,10 +484,23 @@ impl<'a> FunctionLowerer<'a> {
                 arguments,
                 span,
             } => {
-                self.calls.push(CallEdge {
-                    key: callee.name.clone(),
-                    span: *span,
-                });
+                if let Some(binding) = self.resolve(&callee.name) {
+                    self.reference_binding(Some(binding), callee.span);
+                    self.callable_calls.push(CallableCall {
+                        binding,
+                        span: *span,
+                    });
+                    // Preserve the current direct-call lowering path until dynamic invocation lands.
+                    self.calls.push(CallEdge {
+                        key: callee.name.clone(),
+                        span: *span,
+                    });
+                } else {
+                    self.calls.push(CallEdge {
+                        key: callee.name.clone(),
+                        span: *span,
+                    });
+                }
                 for argument in arguments {
                     self.lower_expression(argument);
                 }
@@ -335,6 +565,11 @@ impl<'a> FunctionLowerer<'a> {
                 self.lower_expression(index);
             }
             Expression::Property { receiver, .. } => self.lower_expression(receiver),
+            Expression::Closure {
+                parameters,
+                body,
+                span,
+            } => self.lower_closure(parameters, body, *span),
             Expression::Integer(_, _)
             | Expression::Float(_, _)
             | Expression::String(_, _)
@@ -345,12 +580,95 @@ impl<'a> FunctionLowerer<'a> {
 
     /// Records one variable reference with its nearest lexical binding identity.
     fn reference(&mut self, name: &'a str, span: SourceSpan<'a>) {
-        let binding = self
-            .scopes
+        let binding = self.resolve(name);
+        self.reference_binding(binding, span);
+    }
+
+    /// Resolves one name using the innermost visible lexical declaration.
+    fn resolve(&self, name: &str) -> Option<BindingId> {
+        self.scopes
             .iter()
             .rev()
-            .find_map(|scope| scope.get(name).copied());
+            .find_map(|scope| scope.get(name).copied())
+    }
+
+    /// Records a resolved reference and captures non-local bindings for closures.
+    fn reference_binding(&mut self, binding: Option<BindingId>, span: SourceSpan<'a>) {
         self.references.push(BindingReference { binding, span });
+        if let Some(binding) = binding {
+            self.capture(binding, None, span);
+        }
+    }
+
+    /// Records one capture unless this callable owns the referenced binding itself.
+    fn capture(&mut self, binding: BindingId, name: Option<&'a str>, span: SourceSpan<'a>) {
+        if self.owner.is_none() || self.bindings.iter().any(|local| local.id == binding) {
+            return;
+        }
+        if self.capture_index(binding).is_none() {
+            let name = name.unwrap_or_else(|| {
+                self.scopes
+                    .iter()
+                    .rev()
+                    .find_map(|scope| {
+                        scope
+                            .iter()
+                            .find_map(|(name, candidate)| (*candidate == binding).then_some(*name))
+                    })
+                    .unwrap_or("")
+            });
+            self.captures.push(Capture {
+                binding,
+                name,
+                span,
+            });
+        }
+    }
+
+    /// Returns the first-use capture index for one binding, when present.
+    fn capture_index(&self, binding: BindingId) -> Option<usize> {
+        self.captures
+            .iter()
+            .position(|capture| capture.binding == binding)
+    }
+
+    /// Discovers one nested closure and propagates inherited captures to its parent closure.
+    fn lower_closure(
+        &mut self,
+        parameters: &'a [Parameter<'a>],
+        body: &'a Block<'a>,
+        _span: SourceSpan<'a>,
+    ) {
+        let id = self.state.allocate_closure();
+        let owner = self.owner.map_or_else(
+            || ClosureOwner::Function(self.root_key.clone()),
+            ClosureOwner::Closure,
+        );
+        let mut lowerer = Self::new_closure(
+            self.scopes.clone(),
+            self.root_key.clone(),
+            id,
+            parameters,
+            self.instance_targets,
+            self.state,
+        );
+        lowerer.lower_block(body);
+
+        for capture in &lowerer.captures {
+            self.capture(capture.binding, Some(capture.name), capture.span);
+        }
+
+        self.state.push_closure(HirClosure {
+            id,
+            owner,
+            parameters: lowerer.parameters,
+            bindings: lowerer.bindings,
+            references: lowerer.references,
+            captures: lowerer.captures,
+            calls: lowerer.calls,
+            callable_calls: lowerer.callable_calls,
+            host_calls: lowerer.host_calls,
+        });
     }
 }
 
@@ -375,4 +693,118 @@ fn instance_method_targets<'a>(module: &'a Module<'a>) -> HashMap<String, Vec<St
         }
     }
     targets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClosureId, ClosureOwner, HirModule};
+    use crate::SourceInput;
+    use crate::ast::Module;
+
+    /// Parses one source fixture for direct HIR inspection.
+    fn parse_module(source: &str) -> Module<'_> {
+        let lexed = crate::lexer::lex(SourceInput {
+            source_id: "hir-test.exs",
+            text: source,
+        });
+        assert!(lexed.diagnostics.is_empty());
+        match crate::parser::parse("hir-test.exs", lexed.tokens) {
+            Ok(module) => module,
+            Err(diagnostics) => panic!("source did not parse: {diagnostics}"),
+        }
+    }
+
+    /// Resolves one function binding by its source spelling.
+    fn function_binding(hir: &HirModule<'_>, name: &str) -> super::BindingId {
+        match hir.function("main").and_then(|function| {
+            function
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+        }) {
+            Some(binding) => binding.id,
+            None => panic!("missing main binding {name}"),
+        }
+    }
+
+    #[test]
+    fn records_direct_closure_captures_in_first_use_order() {
+        let module = parse_module(
+            "fn main(input) { let first = input; let second = 2; let f = (value) => { ret value + second + first; }; ret 0; }",
+        );
+        let hir = HirModule::lower(&module);
+        let closures = hir.closures().collect::<Vec<_>>();
+
+        assert_eq!(closures.len(), 1);
+        assert_eq!(closures[0].id(), ClosureId(0));
+        assert_eq!(
+            closures[0].owner(),
+            &ClosureOwner::Function("main".to_owned())
+        );
+        assert_eq!(closures[0].captures().len(), 2);
+        assert_eq!(
+            closures[0].captures()[0].binding,
+            function_binding(&hir, "second")
+        );
+        assert_eq!(
+            closures[0].captures()[1].binding,
+            function_binding(&hir, "first")
+        );
+    }
+
+    #[test]
+    fn excludes_shadowed_bindings_from_closure_captures() {
+        let module = parse_module(
+            "fn main(input) { let value = input; let f = (input) => { let value = input; ret value; }; ret 0; }",
+        );
+        let hir = HirModule::lower(&module);
+        let closure = match hir.closures().next() {
+            Some(closure) => closure,
+            None => panic!("missing closure"),
+        };
+
+        assert!(closure.captures().is_empty());
+    }
+
+    #[test]
+    fn propagates_nested_captures_through_the_enclosing_closure() {
+        let module = parse_module(
+            "fn main(input) { let offset = input; let outer = (value) => { ret () => { ret value + offset; }; }; ret 0; }",
+        );
+        let hir = HirModule::lower(&module);
+        let closures = hir.closures().collect::<Vec<_>>();
+        let offset = function_binding(&hir, "offset");
+
+        assert_eq!(closures.len(), 2);
+        assert_eq!(closures[0].id(), ClosureId(0));
+        assert_eq!(closures[1].id(), ClosureId(1));
+        assert_eq!(closures[1].owner(), &ClosureOwner::Closure(ClosureId(0)));
+        assert_eq!(closures[0].captures().len(), 1);
+        assert_eq!(closures[0].captures()[0].binding, offset);
+        assert_eq!(closures[1].captures().len(), 2);
+        assert_eq!(
+            closures[1].captures()[0].binding,
+            closures[0].parameters()[0]
+        );
+        assert_eq!(closures[1].captures()[1].binding, offset);
+    }
+
+    #[test]
+    fn classifies_local_callee_bindings_as_dynamic_calls() {
+        let module =
+            parse_module("fn main(input) { let f = (value) => { ret value; }; ret f(input); }");
+        let hir = HirModule::lower(&module);
+        let function = match hir.function("main") {
+            Some(function) => function,
+            None => panic!("missing main function"),
+        };
+
+        assert_eq!(function.calls().len(), 1);
+        assert_eq!(function.calls()[0].key, "f");
+        assert_eq!(function.callable_calls().len(), 1);
+        assert_eq!(
+            function.callable_calls()[0].binding,
+            function_binding(&hir, "f")
+        );
+    }
 }

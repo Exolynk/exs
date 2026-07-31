@@ -1,6 +1,6 @@
 //! Continuation-graph lowering for functions that may suspend through the Host ABI.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY, STATUS_COMPLETE, STATUS_PENDING, STATUS_READY};
 use exs_value::is_valid_int;
@@ -10,7 +10,7 @@ use crate::ast::{
     AssignmentTarget, BinaryOperator, Expression, FunctionDeclaration, Statement, UnaryOperator,
 };
 use crate::codegen::diagnostics;
-use crate::codegen::function::{FunctionSignature, InstanceMethod, MethodRegistry};
+use crate::codegen::function::{FunctionSignature, InstanceMethod, LiftedFunction, MethodRegistry};
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan, module_span};
@@ -35,6 +35,7 @@ pub(super) struct FrameLayout {
 /// Returns a conservative durable-frame capacity for one source declaration.
 pub(super) fn frame_slot_capacity<'a>(
     declaration: &FunctionDeclaration<'a>,
+    capture_count: usize,
 ) -> Result<u32, CompileDiagnostics<'a>> {
     let source_bytes = declaration
         .span
@@ -47,13 +48,18 @@ pub(super) fn frame_slot_capacity<'a>(
                 "invalid function source span",
             ))
         })?;
-    let parameter_count = u32::try_from(declaration.parameters.len()).map_err(|_| {
-        diagnostics(CompileDiagnostic::new(
-            "E0212",
-            declaration.span,
-            "too many continuation function parameters",
-        ))
-    })?;
+    let parameter_count = declaration
+        .parameters
+        .len()
+        .checked_add(capture_count)
+        .and_then(|count| u32::try_from(count).ok())
+        .ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                declaration.span,
+                "too many continuation function parameters",
+            ))
+        })?;
     let capacity = source_bytes
         .checked_add(parameter_count)
         .and_then(|count| count.checked_add(1))
@@ -77,6 +83,7 @@ pub(super) fn compile_function<'source>(
     literals: &HashMap<String, u32>,
     source_map: &SourceMap<'source>,
     frame_layouts: &HashMap<String, FrameLayout>,
+    lifted: &[LiftedFunction<'source>],
     methods: &MethodRegistry,
     types: &TypeRegistry,
 ) -> Result<CompiledContinuation, CompileDiagnostics<'source>> {
@@ -92,6 +99,7 @@ pub(super) fn compile_function<'source>(
         signature,
         signatures,
         frame_layouts,
+        lifted,
         methods,
         types,
     )?;
@@ -101,7 +109,7 @@ pub(super) fn compile_function<'source>(
         source_map,
         frame_layouts,
         return_contract: &signature.return_type,
-        function: Function::new([(2, ValType::I32)]),
+        function: Function::new([(5, ValType::I32)]),
         scratch_local: 1,
     };
     for (state, operation) in graph.operations.iter().enumerate() {
@@ -402,6 +410,32 @@ enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Allocates shared Cell storage for one captured lexical binding.
+    CellNew {
+        value: u32,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
+    /// Reads the current value from one shared captured lexical binding.
+    CellGet {
+        cell: u32,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
+    /// Replaces the current value in one shared captured lexical binding.
+    CellSet {
+        cell: u32,
+        value: u32,
+        span: SourceSpan<'source>,
+    },
+    /// Creates one runtime closure retaining shared captured Cells.
+    Closure {
+        layout: FrameLayout,
+        arity: usize,
+        captures: Vec<u32>,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
     /// Applies a runtime unary operation.
     Unary {
         operator: UnaryOperator,
@@ -504,6 +538,13 @@ enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Invokes a runtime closure through its generated continuation frame.
+    ClosureCall {
+        closure: u32,
+        arguments: Vec<u32>,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
     /// Dispatches an instance or trait method through nominal targets or the runtime fallback.
     InstanceCall {
         receiver: u32,
@@ -517,6 +558,7 @@ enum Operation<'source, 'function> {
     /// Validates frame-backed parameter slots against their function contracts.
     ValidateParameters {
         contracts: Vec<TypeContract>,
+        offset: u32,
         span: SourceSpan<'source>,
     },
     /// Validates one durable slot against a source type contract.
@@ -570,7 +612,7 @@ enum Operation<'source, 'function> {
 /// Builds a flat continuation graph for sequential source statements.
 struct GraphBuilder<'source, 'function> {
     /// Durable lexical scopes, mapping names to frame slots.
-    scopes: Vec<HashMap<String, u32>>,
+    scopes: Vec<HashMap<String, BindingSlot>>,
     /// The next durable temporary slot.
     next_slot: u32,
     /// Graph operations emitted in source evaluation order.
@@ -587,6 +629,19 @@ struct GraphBuilder<'source, 'function> {
     methods: &'function MethodRegistry,
     /// Nominal Object declarations and field contracts.
     types: &'function TypeRegistry,
+    /// Source spellings that require shared Cell storage when declared.
+    captured_names: HashSet<String>,
+    /// Compiler-private functions lifted from closure expressions.
+    lifted: &'function [LiftedFunction<'source>],
+}
+
+/// One durable lexical binding slot and its storage representation.
+#[derive(Clone, Copy)]
+struct BindingSlot {
+    /// The durable frame slot holding a value or Cell reference.
+    slot: u32,
+    /// Whether the slot holds a Cell rather than its source-visible value.
+    cell: bool,
 }
 
 /// Unresolved loop branches collected until a loop's exit state is known.
@@ -604,20 +659,72 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
         signature: &FunctionSignature,
         signatures: &'function HashMap<String, FunctionSignature>,
         frame_layouts: &'function HashMap<String, FrameLayout>,
+        lifted: &'function [LiftedFunction<'source>],
         methods: &'function MethodRegistry,
         types: &'function TypeRegistry,
     ) -> Result<Self, CompileDiagnostics<'source>> {
-        let parameter_count = u32::try_from(declaration.parameters.len()).map_err(|_| {
-            diagnostics(CompileDiagnostic::new(
-                "E0212",
-                declaration.span,
-                "too many function parameters",
-            ))
-        })?;
+        let capture_count = signature.capture_count;
+        let parameter_count = declaration
+            .parameters
+            .len()
+            .checked_add(capture_count)
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    declaration.span,
+                    "too many function parameters",
+                ))
+            })?;
+        let captured_names = lifted
+            .iter()
+            .flat_map(|closure| closure.captures.iter().cloned())
+            .collect::<HashSet<_>>();
         let mut parameters = HashMap::new();
-        for (index, parameter) in declaration.parameters.iter().enumerate() {
-            parameters.insert(parameter.name.name.clone(), index as u32);
+        let lifted_current = lifted
+            .iter()
+            .find(|closure| closure.key == declaration.name.name);
+        if let Some(closure) = lifted_current {
+            for (index, capture) in closure.captures.iter().enumerate() {
+                parameters.insert(
+                    capture.clone(),
+                    BindingSlot {
+                        slot: u32::try_from(index).map_err(|_| {
+                            diagnostics(CompileDiagnostic::new(
+                                "E0212",
+                                declaration.span,
+                                "too many closure captures",
+                            ))
+                        })?,
+                        cell: true,
+                    },
+                );
+            }
         }
+        for (index, parameter) in declaration.parameters.iter().enumerate() {
+            let index = capture_count
+                .checked_add(index)
+                .and_then(|index| u32::try_from(index).ok())
+                .ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0212",
+                        declaration.span,
+                        "too many function parameters",
+                    ))
+                })?;
+            parameters.insert(
+                parameter.name.name.clone(),
+                BindingSlot {
+                    slot: index,
+                    cell: captured_names.contains(&parameter.name.name),
+                },
+            );
+        }
+        let cell_parameters = parameters
+            .values()
+            .filter(|parameter| parameter.cell && parameter.slot >= capture_count as u32)
+            .copied()
+            .collect::<Vec<_>>();
         let mut builder = GraphBuilder {
             scopes: vec![parameters],
             next_slot: parameter_count,
@@ -628,11 +735,27 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
             frame_layouts,
             methods,
             types,
+            captured_names,
+            lifted,
         };
         builder.operations.push(Operation::ValidateParameters {
             contracts: signature.parameter_types.clone(),
+            offset: u32::try_from(capture_count).map_err(|_| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    declaration.span,
+                    "too many closure captures",
+                ))
+            })?,
             span: declaration.span,
         });
+        for parameter in cell_parameters {
+            builder.operations.push(Operation::CellNew {
+                value: parameter.slot,
+                destination: parameter.slot,
+                span: declaration.span,
+            });
+        }
         for statement in &declaration.body.statements {
             builder.lower_statement(statement)?;
         }
@@ -678,19 +801,41 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     destination: binding,
                     span: name.span,
                 });
+                let cell = self.captured_names.contains(&name.name);
+                if cell {
+                    self.operations.push(Operation::CellNew {
+                        value: binding,
+                        destination: binding,
+                        span: name.span,
+                    });
+                }
                 if let Some(scope) = self.scopes.last_mut() {
-                    scope.insert(name.name.clone(), binding);
+                    scope.insert(
+                        name.name.clone(),
+                        BindingSlot {
+                            slot: binding,
+                            cell,
+                        },
+                    );
                 }
             }
             Statement::Assign { target, value, .. } => match target {
                 AssignmentTarget::Variable(name) => {
                     let destination = self.lookup(&name.name, name.span)?;
                     let value = self.lower_expression(value)?;
-                    self.operations.push(Operation::Copy {
-                        source: value,
-                        destination,
-                        span: name.span,
-                    });
+                    if destination.cell {
+                        self.operations.push(Operation::CellSet {
+                            cell: destination.slot,
+                            value,
+                            span: name.span,
+                        });
+                    } else {
+                        self.operations.push(Operation::Copy {
+                            source: value,
+                            destination: destination.slot,
+                            span: name.span,
+                        });
+                    }
                 }
                 AssignmentTarget::Index {
                     receiver,
@@ -885,8 +1030,13 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             destination: item,
             span,
         });
-        self.scopes
-            .push(HashMap::from([(binding.name.clone(), item)]));
+        self.scopes.push(HashMap::from([(
+            binding.name.clone(),
+            BindingSlot {
+                slot: item,
+                cell: self.captured_names.contains(&binding.name),
+            },
+        )]));
         self.loops.push(LoopBuilderContext {
             continues: Vec::new(),
             breaks: Vec::new(),
@@ -1089,7 +1239,65 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 });
                 Ok(destination)
             }
-            Expression::Variable(identifier) => Ok(self.lookup(&identifier.name, identifier.span)?),
+            Expression::Variable(identifier) => {
+                let binding = self.lookup(&identifier.name, identifier.span)?;
+                if binding.cell {
+                    let destination = self.temporary(identifier.span)?;
+                    self.operations.push(Operation::CellGet {
+                        cell: binding.slot,
+                        destination,
+                        span: identifier.span,
+                    });
+                    Ok(destination)
+                } else {
+                    Ok(binding.slot)
+                }
+            }
+            Expression::Closure { span, .. } => {
+                let lifted = self
+                    .lifted
+                    .iter()
+                    .find(|closure| closure.declaration.span == *span)
+                    .ok_or_else(|| {
+                        diagnostics(CompileDiagnostic::new(
+                            "E0999",
+                            *span,
+                            "missing lifted closure declaration",
+                        ))
+                    })?;
+                let layout = self
+                    .frame_layouts
+                    .get(&lifted.key)
+                    .copied()
+                    .ok_or_else(|| {
+                        diagnostics(CompileDiagnostic::new(
+                            "E0999",
+                            *span,
+                            "missing lifted closure frame layout",
+                        ))
+                    })?;
+                let mut captures = Vec::with_capacity(lifted.captures.len());
+                for name in &lifted.captures {
+                    let binding = self.lookup(name, *span)?;
+                    if !binding.cell {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0999",
+                            *span,
+                            "closure capture was not lowered to shared Cell storage",
+                        )));
+                    }
+                    captures.push(binding.slot);
+                }
+                let destination = self.temporary(*span)?;
+                self.operations.push(Operation::Closure {
+                    layout,
+                    arity: lifted.declaration.parameters.len(),
+                    captures,
+                    destination,
+                    span: *span,
+                });
+                Ok(destination)
+            }
             Expression::Unary {
                 operator,
                 operand,
@@ -1250,6 +1458,31 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 arguments,
                 span,
             } => {
+                if let Some(binding) = self.lookup_optional(&callee.name) {
+                    let closure = if binding.cell {
+                        let destination = self.temporary(callee.span)?;
+                        self.operations.push(Operation::CellGet {
+                            cell: binding.slot,
+                            destination,
+                            span: callee.span,
+                        });
+                        destination
+                    } else {
+                        binding.slot
+                    };
+                    let mut slots = Vec::with_capacity(arguments.len());
+                    for argument in arguments {
+                        slots.push(self.lower_expression(argument)?);
+                    }
+                    let destination = self.temporary(*span)?;
+                    self.operations.push(Operation::ClosureCall {
+                        closure,
+                        arguments: slots,
+                        destination,
+                        span: *span,
+                    });
+                    return Ok(destination);
+                }
                 let signature = self.signatures.get(&callee.name).cloned().ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
                         "E0207",
@@ -1578,12 +1811,12 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         Ok(slot)
     }
 
-    /// Resolves one lexical binding to its durable slot.
+    /// Resolves one lexical binding to its durable slot and storage representation.
     fn lookup(
         &self,
         name: &str,
         span: SourceSpan<'source>,
-    ) -> Result<u32, CompileDiagnostics<'source>> {
+    ) -> Result<BindingSlot, CompileDiagnostics<'source>> {
         self.scopes
             .iter()
             .rev()
@@ -1595,6 +1828,14 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     format!("unknown binding `{name}`"),
                 ))
             })
+    }
+
+    /// Resolves one lexical binding without producing an unknown-name diagnostic.
+    fn lookup_optional(&self, name: &str) -> Option<BindingSlot> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
     }
 }
 
@@ -1688,6 +1929,65 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 span,
             } => {
                 self.get_slot(*source, *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::CellNew {
+                value,
+                destination,
+                span,
+            } => {
+                self.get_slot(*value, *span)?;
+                self.call_runtime("__exs_rt_cell_new", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::CellGet {
+                cell,
+                destination,
+                span,
+            } => {
+                self.get_slot(*cell, *span)?;
+                self.call_runtime("__exs_rt_cell_get", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::CellSet { cell, value, span } => {
+                self.get_slot(*cell, *span)?;
+                self.get_slot(*value, *span)?;
+                self.call_runtime("__exs_rt_cell_set", *span)?;
+                self.function.instruction(&Instruction::Drop);
+                self.ready(next, *span)?;
+            }
+            Operation::Closure {
+                layout,
+                arity,
+                captures,
+                destination,
+                span,
+            } => {
+                self.call_runtime("__exs_rt_list_new", *span)?;
+                self.set_slot(*destination, *span)?;
+                for capture in captures {
+                    self.get_slot(*destination, *span)?;
+                    self.get_slot(*capture, *span)?;
+                    self.call_runtime("__exs_rt_append", *span)?;
+                    self.function.instruction(&Instruction::Drop);
+                }
+                self.function
+                    .instruction(&Instruction::I32Const(layout.function_id.cast_signed()));
+                self.function
+                    .instruction(&Instruction::I32Const(layout.slot_count.cast_signed()));
+                let arity = i32::try_from(*arity).map_err(|_| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0212",
+                        *span,
+                        "too many closure function parameters",
+                    ))
+                })?;
+                self.function.instruction(&Instruction::I32Const(arity));
+                self.get_slot(*destination, *span)?;
+                self.call_runtime("__exs_rt_closure_new", *span)?;
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
@@ -1875,6 +2175,12 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 destination,
                 span,
             } => self.child_call(next, *layout, arguments, *destination, *span)?,
+            Operation::ClosureCall {
+                closure,
+                arguments,
+                destination,
+                span,
+            } => self.closure_call(next, *closure, arguments, *destination, *span)?,
             Operation::InstanceCall {
                 receiver,
                 method,
@@ -1893,9 +2199,20 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 *destination,
                 *span,
             )?,
-            Operation::ValidateParameters { contracts, span } => {
+            Operation::ValidateParameters {
+                contracts,
+                offset,
+                span,
+            } => {
                 for (slot, contract) in contracts.iter().enumerate() {
                     let slot = u32::try_from(slot).map_err(|_| {
+                        diagnostics(CompileDiagnostic::new(
+                            "E0212",
+                            *span,
+                            "too many continuation parameter slots",
+                        ))
+                    })?;
+                    let slot = offset.checked_add(slot).ok_or_else(|| {
                         diagnostics(CompileDiagnostic::new(
                             "E0212",
                             *span,
@@ -2070,6 +2387,108 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             })?;
             self.function.instruction(&Instruction::LocalGet(2));
             self.function.instruction(&Instruction::I32Const(slot));
+            self.get_slot(*argument, span)?;
+            self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
+        }
+        self.function.instruction(&Instruction::LocalGet(2));
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.function
+            .instruction(&Instruction::I32Const(destination.cast_signed()));
+        self.call_runtime("__exs_rt_async_frame_set_caller", span)?;
+        self.call_runtime("__exs_rt_scheduler_checkpoint", span)?;
+        self.function
+            .instruction(&Instruction::I32Const(STATUS_READY));
+        self.function.instruction(&Instruction::Return);
+        Ok(())
+    }
+
+    /// Starts one dynamically selected closure frame and transfers dispatch to it.
+    fn closure_call(
+        &mut self,
+        next: u32,
+        closure: u32,
+        arguments: &[u32],
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.function
+            .instruction(&Instruction::I32Const(next.cast_signed()));
+        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        self.set_call_site(span)?;
+
+        self.get_slot(closure, span)?;
+        self.call_runtime("__exs_rt_closure_arity", span)?;
+        self.function.instruction(&Instruction::LocalSet(5));
+        self.function.instruction(&Instruction::LocalGet(5));
+        let argument_count = i32::try_from(arguments.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                span,
+                "too many closure function arguments",
+            ))
+        })?;
+        self.function
+            .instruction(&Instruction::I32Const(argument_count));
+        self.function.instruction(&Instruction::I32Ne);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.call_runtime("__exs_rt_closure_arity_error", span)?;
+        self.set_slot(destination, span)?;
+        self.ready(next, span)?;
+        self.function.instruction(&Instruction::End);
+
+        self.get_slot(closure, span)?;
+        self.call_runtime("__exs_rt_closure_function", span)?;
+        self.function.instruction(&Instruction::LocalSet(3));
+        self.get_slot(closure, span)?;
+        self.call_runtime("__exs_rt_closure_slot_count", span)?;
+        self.function.instruction(&Instruction::LocalSet(4));
+        self.function.instruction(&Instruction::LocalGet(3));
+        self.function.instruction(&Instruction::LocalGet(4));
+        self.call_runtime("__exs_rt_async_frame_new", span)?;
+        self.function.instruction(&Instruction::LocalSet(2));
+        self.function.instruction(&Instruction::LocalGet(3));
+        self.call_runtime("__exs_rt_frame_push", span)?;
+
+        self.get_slot(closure, span)?;
+        self.call_runtime("__exs_rt_closure_capture_count", span)?;
+        self.function.instruction(&Instruction::LocalSet(4));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::LocalSet(5));
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
+        self.function
+            .instruction(&Instruction::Loop(BlockType::Empty));
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::LocalGet(4));
+        self.function.instruction(&Instruction::I32GeU);
+        self.function.instruction(&Instruction::BrIf(1));
+        self.function.instruction(&Instruction::LocalGet(2));
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.get_slot(closure, span)?;
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.call_runtime("__exs_rt_closure_capture", span)?;
+        self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::I32Const(1));
+        self.function.instruction(&Instruction::I32Add);
+        self.function.instruction(&Instruction::LocalSet(5));
+        self.function.instruction(&Instruction::Br(0));
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
+        for (index, argument) in arguments.iter().enumerate() {
+            let index = i32::try_from(index).map_err(|_| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    span,
+                    "too many closure function arguments",
+                ))
+            })?;
+            self.function.instruction(&Instruction::LocalGet(2));
+            self.function.instruction(&Instruction::LocalGet(4));
+            self.function.instruction(&Instruction::I32Const(index));
+            self.function.instruction(&Instruction::I32Add);
             self.get_slot(*argument, span)?;
             self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
         }
@@ -2695,6 +3114,10 @@ fn operation_span<'source>(operation: &Operation<'source, '_>) -> SourceSpan<'so
         | Operation::None { span, .. }
         | Operation::Boolean { span, .. }
         | Operation::Copy { span, .. }
+        | Operation::CellNew { span, .. }
+        | Operation::CellGet { span, .. }
+        | Operation::CellSet { span, .. }
+        | Operation::Closure { span, .. }
         | Operation::Unary { span, .. }
         | Operation::Binary { span, .. }
         | Operation::List { span, .. }
@@ -2710,6 +3133,7 @@ fn operation_span<'source>(operation: &Operation<'source, '_>) -> SourceSpan<'so
         | Operation::HostResume { span, .. }
         | Operation::DirectCall { span, .. }
         | Operation::ChildCall { span, .. }
+        | Operation::ClosureCall { span, .. }
         | Operation::InstanceCall { span, .. }
         | Operation::ValidateParameters { span, .. }
         | Operation::ValidateSlot { span, .. }
@@ -2731,6 +3155,7 @@ fn expression_span<'source>(expression: &Expression<'source>) -> SourceSpan<'sou
         | Expression::Bool(_, span)
         | Expression::None(span) => *span,
         Expression::Variable(identifier) => identifier.span,
+        Expression::Closure { span, .. } => *span,
         Expression::IsError { span, .. }
         | Expression::Propagate { span, .. }
         | Expression::List { span, .. }

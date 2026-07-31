@@ -46,6 +46,8 @@ pub(crate) fn number_of(value: &RtValue) -> Option<Number> {
         | RtValue::String(_)
         | RtValue::List(_)
         | RtValue::Object(_)
+        | RtValue::Cell(_)
+        | RtValue::Closure(_)
         | RtValue::BoxedFutureValue(_) => None,
     }
 }

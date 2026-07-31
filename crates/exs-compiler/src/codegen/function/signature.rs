@@ -120,14 +120,26 @@ fn validate_function<'a>(
 pub(in crate::codegen) struct FunctionSignature {
     pub(in crate::codegen) index: u32,
     pub(in crate::codegen) arity: usize,
+    pub(in crate::codegen) capture_count: usize,
     pub(in crate::codegen) function_id: u32,
     pub(in crate::codegen) parameter_types: Vec<TypeContract>,
     pub(in crate::codegen) return_type: TypeContract,
 }
 
+/// One compiler-private function lifted from a source closure expression.
+pub(in crate::codegen) struct LiftedFunction<'a> {
+    /// Private linker key used by continuation lowering and dispatch.
+    pub(in crate::codegen) key: String,
+    /// Synthetic declaration preserving the source closure body and parameters.
+    pub(in crate::codegen) declaration: FunctionDeclaration<'a>,
+    /// Captured binding names in first-use closure environment order.
+    pub(in crate::codegen) captures: Vec<String>,
+}
+
 /// Validates declarations and assigns their final linked Wasm function indexes.
 pub(in crate::codegen) fn build_signatures<'a>(
     module: &Module<'a>,
+    lifted: &[LiftedFunction<'a>],
     program_base: u32,
     types: &TypeRegistry,
 ) -> Result<HashMap<String, FunctionSignature>, CompileDiagnostics<'a>> {
@@ -142,6 +154,7 @@ pub(in crate::codegen) fn build_signatures<'a>(
             offset,
             types,
             None,
+            0,
         )?;
         offset = offset
             .checked_add(1)
@@ -177,11 +190,27 @@ pub(in crate::codegen) fn build_signatures<'a>(
                 offset,
                 types,
                 receiver_type,
+                0,
             )?;
             offset = offset
                 .checked_add(1)
                 .ok_or_else(|| too_many_functions(method.name.span))?;
         }
+    }
+    for closure in lifted {
+        insert_signature(
+            &mut signatures,
+            &closure.key,
+            &closure.declaration,
+            program_base,
+            offset,
+            types,
+            None,
+            closure.captures.len(),
+        )?;
+        offset = offset
+            .checked_add(1)
+            .ok_or_else(|| too_many_functions(closure.declaration.span))?;
     }
     if signatures.contains_key("main") {
         Ok(signatures)
@@ -195,6 +224,7 @@ pub(in crate::codegen) fn build_signatures<'a>(
 }
 
 /// Inserts one direct or implementation method signature into the linked function table.
+#[allow(clippy::too_many_arguments)] // Linked function metadata is intentionally passed explicitly.
 fn insert_signature<'a>(
     signatures: &mut HashMap<String, FunctionSignature>,
     key: &str,
@@ -203,6 +233,7 @@ fn insert_signature<'a>(
     function_id: u32,
     types: &TypeRegistry,
     receiver_type: Option<u32>,
+    capture_count: usize,
 ) -> Result<(), CompileDiagnostics<'a>> {
     if signatures.contains_key(key) {
         return Err(diagnostics(CompileDiagnostic::new(
@@ -243,6 +274,7 @@ fn insert_signature<'a>(
         FunctionSignature {
             index: program_base + function_id,
             arity: function.parameters.len(),
+            capture_count,
             function_id,
             parameter_types,
             return_type: types.resolve(function.return_type.as_ref(), function.name.span)?,
@@ -263,6 +295,7 @@ fn too_many_functions<'a>(span: SourceSpan<'a>) -> CompileDiagnostics<'a> {
 /// Adds one ValueRef-based Wasm signature for every source function.
 pub(in crate::codegen) fn add_program_types(
     module: &Module<'_>,
+    lifted: &[LiftedFunction<'_>],
     types: &mut TypeSection,
     suspendable_functions: &HashSet<String>,
 ) -> Vec<u32> {
@@ -292,5 +325,6 @@ pub(in crate::codegen) fn add_program_types(
                 index
             }
         })
+        .chain(std::iter::repeat_n(step_type, lifted.len()))
         .collect()
 }

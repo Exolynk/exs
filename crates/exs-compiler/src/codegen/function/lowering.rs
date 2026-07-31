@@ -60,6 +60,13 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 })?;
                 self.function.instruction(&Instruction::LocalGet(local));
             }
+            Expression::Closure { span, .. } => {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0225",
+                    *span,
+                    "closure lowering is not implemented",
+                )));
+            }
             Expression::List { elements, span } => {
                 self.compile_list(elements, *span)?;
             }

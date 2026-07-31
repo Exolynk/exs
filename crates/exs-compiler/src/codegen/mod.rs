@@ -30,10 +30,16 @@ pub fn compile_module<'a>(
     }
     traits::apply_defaults(module);
     let hir = HirModule::lower(module);
-    let suspendability = suspension::Suspendability::analyze(&hir);
+    let mut suspendability = suspension::Suspendability::analyze(&hir);
+    if hir.closures().next().is_some() {
+        suspendability.include_all(hir.functions().map(|(key, _)| key));
+    }
     let _has_suspendable_function = suspendability.has_any();
     let _main_is_suspendable = suspendability.contains("main");
-    linker::link(module, source, options, suspendability.functions())
+    let lifted = linker::lifted_functions(module, &hir);
+    let suspendable_functions = suspendability.functions().clone();
+    drop(hir);
+    linker::link(module, source, options, lifted, &suspendable_functions)
 }
 
 /// Returns a diagnostic span covering the module's first function.

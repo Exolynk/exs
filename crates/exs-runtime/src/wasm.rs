@@ -1,11 +1,12 @@
 //! Stable Wasm ABI exports for the ExS runtime.
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use core::panic::PanicInfo;
 
 use exs_abi::{
-    TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_NONE, TYPE_OBJECT,
-    TYPE_STRING,
+    TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE,
+    TYPE_OBJECT, TYPE_STRING,
 };
 use exs_value::{ValueRef, is_valid_int};
 
@@ -131,6 +132,8 @@ fn value_type_mask(value: &RtValue) -> u32 {
         RtValue::String(_) => TYPE_STRING,
         RtValue::List(_) => TYPE_LIST,
         RtValue::Object(_) => TYPE_OBJECT,
+        RtValue::Closure(_) => TYPE_FN,
+        RtValue::Cell(_) => 0,
         RtValue::BoxedFutureValue(_) => 0,
     }
 }
@@ -359,6 +362,142 @@ pub extern "C" fn __exs_rt_object_typed_new(type_id: i32) -> ValueRef {
         runtime::trap();
     }
     value::object::operations::new_typed_value(type_id)
+}
+
+/// Allocates internal shared storage for one compiler-captured lexical binding.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_cell_new(value: ValueRef) -> ValueRef {
+    runtime::allocate(RtValue::Cell(Box::new(value::RuntimeCellValue::new(value))))
+}
+
+/// Reads the current value stored in one internal captured-binding Cell.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_cell_get(cell: ValueRef) -> ValueRef {
+    match runtime::value(cell) {
+        RtValue::Cell(cell) => cell.value,
+        _ => runtime::trap(),
+    }
+}
+
+/// Replaces the current value stored in one internal captured-binding Cell.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_cell_set(cell: ValueRef, value: ValueRef) -> ValueRef {
+    match runtime::value_mut(cell) {
+        RtValue::Cell(cell) => {
+            cell.value = value;
+            value
+        }
+        _ => runtime::trap(),
+    }
+}
+
+/// Creates one callable closure from a generated function identity and a List of Cell captures.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_closure_new(
+    function_id: i32,
+    slot_count: i32,
+    arity: i32,
+    captures: ValueRef,
+) -> ValueRef {
+    let Ok(function_id) = u32::try_from(function_id) else {
+        runtime::trap();
+    };
+    let Ok(slot_count) = u32::try_from(slot_count) else {
+        runtime::trap();
+    };
+    let Ok(arity) = u32::try_from(arity) else {
+        runtime::trap();
+    };
+    let RtValue::List(captures) = runtime::value(captures) else {
+        runtime::trap();
+    };
+    let captures = captures.elements.clone();
+    if captures
+        .iter()
+        .any(|capture| !matches!(runtime::value(*capture), RtValue::Cell(_)))
+    {
+        runtime::trap();
+    }
+    runtime::allocate(RtValue::Closure(Box::new(value::RuntimeClosure::new(
+        function_id,
+        slot_count,
+        arity,
+        captures,
+    ))))
+}
+
+/// Returns the generated function identity carried by one callable closure.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_closure_function(closure: ValueRef) -> i32 {
+    let RtValue::Closure(closure) = runtime::value(closure) else {
+        runtime::trap();
+    };
+    match i32::try_from(closure.function_id) {
+        Ok(function_id) => function_id,
+        Err(_) => runtime::trap(),
+    }
+}
+
+/// Returns the number of captured Cells carried by one callable closure.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_closure_capture_count(closure: ValueRef) -> i32 {
+    let RtValue::Closure(closure) = runtime::value(closure) else {
+        runtime::trap();
+    };
+    match i32::try_from(closure.captures.len()) {
+        Ok(length) => length,
+        Err(_) => runtime::trap(),
+    }
+}
+
+/// Returns the durable frame capacity required to invoke one callable closure.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_closure_slot_count(closure: ValueRef) -> i32 {
+    let RtValue::Closure(closure) = runtime::value(closure) else {
+        runtime::trap();
+    };
+    match i32::try_from(closure.slot_count) {
+        Ok(slot_count) => slot_count,
+        Err(_) => runtime::trap(),
+    }
+}
+
+/// Returns the source argument count required by one callable closure.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_closure_arity(closure: ValueRef) -> i32 {
+    let RtValue::Closure(closure) = runtime::value(closure) else {
+        runtime::trap();
+    };
+    match i32::try_from(closure.arity) {
+        Ok(arity) => arity,
+        Err(_) => runtime::trap(),
+    }
+}
+
+/// Creates the recoverable Error returned when a dynamic closure receives the wrong arity.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_closure_arity_error() -> ValueRef {
+    let data = runtime::allocate(RtValue::None);
+    runtime::recoverable_error(
+        "ArityError",
+        "closure received an incorrect number of arguments",
+        data,
+    )
+}
+
+/// Returns one captured Cell by its compiler-assigned closure environment index.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_closure_capture(closure: ValueRef, index: i32) -> ValueRef {
+    let Ok(index) = usize::try_from(index) else {
+        runtime::trap();
+    };
+    let RtValue::Closure(closure) = runtime::value(closure) else {
+        runtime::trap();
+    };
+    match closure.captures.get(index) {
+        Some(capture) => *capture,
+        None => runtime::trap(),
+    }
 }
 
 /// Creates the recoverable Error used for an implementation method arity mismatch.

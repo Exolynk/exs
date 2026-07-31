@@ -108,8 +108,11 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 10: Closures
 
-- [ ] Add closure discovery, capture analysis, Cells, and closure runtime objects.
-- [ ] Preserve shared mutable binding identity across nested closures.
+- [x] Add `(parameters) => { ... }` closure expressions, unparameterized `Fn` contracts, and HIR callable-binding resolution.
+- [x] Discover nested closures before linking, assign stable lifted function identities, and compute their lexical captures.
+- [x] Add GC-traced runtime Cell and Closure values; capture shared Cells so outer and nested assignments retain one binding identity.
+- [x] Lower closure construction and dynamic `Fn` invocation through generated continuation frames, including `host.call` suspension and cancellation.
+- [x] Add end-to-end coverage for closure arguments, returned closures, nested captures, shared mutation, type contracts, and async closure bodies.
 
 ### Phase 11: `par`
 

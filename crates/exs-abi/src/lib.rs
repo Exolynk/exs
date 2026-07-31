@@ -10,8 +10,8 @@ pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, Sour
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 14 adds scheduler cancellation and invalidated host-call completion handling.
-pub const ABI_VERSION: u32 = 14;
+/// Version 16 adds closure arity metadata for checked dynamic invocation.
+pub const ABI_VERSION: u32 = 16;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
@@ -34,6 +34,8 @@ pub const TYPE_STRING: u32 = 1 << 5;
 pub const TYPE_LIST: u32 = 1 << 6;
 /// Runtime type-mask bit for Object.
 pub const TYPE_OBJECT: u32 = 1 << 7;
+/// Runtime type-mask bit for callable closure values.
+pub const TYPE_FN: u32 = 1 << 8;
 /// Runtime type-mask accepting every current source-visible value type.
 pub const TYPE_ANY: u32 = TYPE_NONE
     | TYPE_ERROR
@@ -42,7 +44,8 @@ pub const TYPE_ANY: u32 = TYPE_NONE
     | TYPE_FLOAT
     | TYPE_STRING
     | TYPE_LIST
-    | TYPE_OBJECT;
+    | TYPE_OBJECT
+    | TYPE_FN;
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// The entry export invoked by runners.

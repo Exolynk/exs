@@ -287,6 +287,17 @@ impl<'a> SourceMap<'a> {
                 }
             }
             Expression::Variable(identifier) => self.insert(identifier.span),
+            Expression::Closure {
+                parameters,
+                body,
+                span,
+            } => {
+                self.insert(*span);
+                for parameter in parameters {
+                    self.insert(parameter.name.span);
+                }
+                self.collect_block(body);
+            }
             Expression::Unary { operand, span, .. } => {
                 self.insert(*span);
                 self.collect_expression(operand);

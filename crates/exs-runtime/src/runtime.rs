@@ -76,17 +76,25 @@ pub(crate) fn allocate(value: RtValue) -> ValueRef {
 /// Allocates one recoverable language Error using the active source position.
 pub(crate) fn recoverable_error(kind: &str, message: &str, data: ValueRef) -> ValueRef {
     let origin = unsafe { runtime() }.current_source_position;
-    allocate(RtValue::Error(Box::new(RuntimeError::recoverable(
+    let checkpoint = gc::temporary_root_checkpoint();
+    gc::push_temporary_root(data);
+    let error = allocate(RtValue::Error(Box::new(RuntimeError::recoverable(
         kind, message, data, origin,
-    ))))
+    ))));
+    gc::restore_temporary_roots(checkpoint);
+    error
 }
 
 /// Allocates one fatal language Error using the active source position.
 pub(crate) fn fatal_error(kind: &str, message: &str, data: ValueRef) -> ValueRef {
     let origin = unsafe { runtime() }.current_source_position;
-    allocate(RtValue::Error(Box::new(RuntimeError::fatal(
+    let checkpoint = gc::temporary_root_checkpoint();
+    gc::push_temporary_root(data);
+    let error = allocate(RtValue::Error(Box::new(RuntimeError::fatal(
         kind, message, data, origin,
-    ))))
+    ))));
+    gc::restore_temporary_roots(checkpoint);
+    error
 }
 
 /// Returns the runtime payload stored at one value-table index.
@@ -641,6 +649,7 @@ fn runtime_to_exs_value_inner(
             let _removed = active_containers.pop();
             ExsValue::Object(entries)
         }
+        RtValue::Cell(_) | RtValue::Closure(_) => trap(),
         RtValue::BoxedFutureValue(_) => trap(),
     }
 }

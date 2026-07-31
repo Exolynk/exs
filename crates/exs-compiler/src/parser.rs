@@ -726,11 +726,58 @@ impl<'a> Parser<'a> {
                 span: token.span,
             })),
             TokenKind::LeftParen => {
+                if let Some(parameters) = self.closure_parameters() {
+                    self.expect_simple(
+                        TokenKind::FatArrow,
+                        "expected `=>` after closure parameters",
+                    )?;
+                    let body = self.block()?;
+                    return Ok(Expression::Closure {
+                        parameters,
+                        span: token.span.through(body.span),
+                        body,
+                    });
+                }
                 let expression = self.expression()?;
                 self.expect_simple(TokenKind::RightParen, "expected `)` after expression")?;
                 Ok(expression)
             }
             _ => Err(self.error(token.span, "E0101", "expected expression")),
+        }
+    }
+
+    /// Parses a simple closure parameter list only when it is followed by `=>`.
+    fn closure_parameters(&mut self) -> Option<Vec<Parameter<'a>>> {
+        let start = self.current;
+        let mut parameters = Vec::new();
+        if self.check(&TokenKind::RightParen) {
+            self.advance();
+        } else {
+            loop {
+                let TokenKind::Identifier(name) = self.peek().kind.clone() else {
+                    self.current = start;
+                    return None;
+                };
+                let span = self.advance().span;
+                parameters.push(Parameter {
+                    name: Identifier { name, span },
+                    type_annotation: None,
+                });
+                if self.check(&TokenKind::RightParen) {
+                    self.advance();
+                    break;
+                }
+                if !self.matches(&TokenKind::Comma) {
+                    self.current = start;
+                    return None;
+                }
+            }
+        }
+        if self.check(&TokenKind::FatArrow) {
+            Some(parameters)
+        } else {
+            self.current = start;
+            None
         }
     }
 
@@ -1007,6 +1054,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         Expression::Object { span, .. } => *span,
         Expression::TypedObject { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
+        Expression::Closure { span, .. } => *span,
         Expression::Unary { span, .. }
         | Expression::IsError { span, .. }
         | Expression::Propagate { span, .. }

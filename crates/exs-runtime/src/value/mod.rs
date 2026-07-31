@@ -1,5 +1,7 @@
 //! Runtime value payloads and dynamic value operations.
 
+mod cell;
+mod closure;
 mod error;
 pub(crate) mod list;
 pub(crate) mod object;
@@ -8,6 +10,8 @@ mod string;
 pub(crate) mod numeric;
 pub(crate) mod operations;
 
+pub(crate) use cell::RuntimeCellValue;
+pub(crate) use closure::RuntimeClosure;
 pub(crate) use error::RuntimeError;
 pub(crate) use list::RuntimeList;
 pub(crate) use object::RuntimeObject;
@@ -38,6 +42,10 @@ pub(crate) enum RtValue {
     List(Box<RuntimeList>),
     /// A mutable insertion-ordered string-keyed mapping.
     Object(Box<RuntimeObject>),
+    /// Internal mutable storage shared by captured lexical bindings.
+    Cell(Box<RuntimeCellValue>),
+    /// A compiler-lifted function paired with captured lexical Cells.
+    Closure(Box<RuntimeClosure>),
     /// Reserved shape for future complex runtime values.
     ///
     /// Concrete future complex variants must follow this boxed form.

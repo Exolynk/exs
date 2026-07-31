@@ -17,6 +17,24 @@ fn compiles_a_minimal_main_function() {
     assert!(module.is_ok());
 }
 
+/// Validates the generated Wasm shape for one Cell-backed closure expression.
+#[test]
+fn validates_wasm_for_a_closure_expression() {
+    let compiled = match compile(
+        SourceInput {
+            source_id: "closure.exs",
+            text: "fn main() -> Int { let count = 0; let increment = () => { count = count + 1; ret count; }; increment(); ret increment(); }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    if let Err(error) = Validator::new().validate_all(&compiled.wasm) {
+        panic!("generated Wasm is invalid: {error}");
+    }
+}
+
 /// Compiles a frame-backed Host ABI call and its runner-facing control exports.
 #[test]
 fn compiles_a_resumable_host_call() {

@@ -18,7 +18,7 @@ use wasmparser::{ExternalKind, Parser as WasmParser, TypeRef};
 use super::continuation;
 use super::entry::compile_start;
 use super::function::{
-    FunctionCompiler, FunctionCompilerContext, FunctionSignature, MethodRegistry,
+    FunctionCompiler, FunctionCompilerContext, FunctionSignature, LiftedFunction, MethodRegistry,
     add_program_types, build_signatures,
 };
 use super::literals::{LiteralPool, TemplateDataLayout, template_data_layout};
@@ -26,21 +26,27 @@ use super::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
 use super::types::TypeRegistry;
 use super::{diagnostics, module_span};
 use crate::CompileOptions;
-use crate::ast::Module;
+use crate::ast::{
+    AssignmentTarget, Block, Expression, FunctionDeclaration, Identifier, Module, Parameter,
+    Statement,
+};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
+use crate::hir::HirModule;
 
 /// Links one source module against the committed runtime template.
-pub(super) fn link<'a>(
-    module: &Module<'a>,
-    source: &'a str,
+pub(super) fn link<'source>(
+    module: &Module<'source>,
+    source: &'source str,
     options: CompileOptions,
+    lifted: Vec<LiftedFunction<'source>>,
     suspendable_functions: &HashSet<String>,
-) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
+) -> Result<Vec<u8>, CompileDiagnostics<'source>> {
     let literal_pool = LiteralPool::collect(module);
     let template_data = template_data_layout(module)?;
     let source_map = SourceMap::collect(module);
     let mut linker = TemplateLinker::new(
         module,
+        lifted,
         literal_pool,
         template_data,
         source_map,
@@ -75,9 +81,199 @@ pub(super) fn link<'a>(
     Ok(wasm.finish())
 }
 
+/// Copies closure source bodies and HIR capture data into linker-owned lifted declarations.
+pub(super) fn lifted_functions<'source>(
+    module: &Module<'source>,
+    hir: &HirModule<'_>,
+) -> Vec<LiftedFunction<'source>> {
+    let mut sources = Vec::new();
+    for function in &module.functions {
+        collect_closures_block(&function.body, &mut sources);
+    }
+    for implementation in &module.implementations {
+        for method in &implementation.methods {
+            collect_closures_block(&method.body, &mut sources);
+        }
+    }
+    let metadata = hir.closures().collect::<Vec<_>>();
+    debug_assert_eq!(sources.len(), metadata.len());
+    sources
+        .into_iter()
+        .zip(metadata)
+        .map(|((parameters, body, span), closure)| LiftedFunction {
+            key: format!("$closure:{}", closure.id().0),
+            declaration: FunctionDeclaration {
+                name: Identifier {
+                    name: format!("$closure:{}", closure.id().0),
+                    span,
+                },
+                parameters: parameters.to_vec(),
+                return_type: None,
+                body: body.clone(),
+                span,
+            },
+            captures: closure
+                .captures()
+                .iter()
+                .map(|capture| capture.name.to_owned())
+                .collect(),
+        })
+        .collect()
+}
+
+/// Collects closure expressions in the same pre-order traversal used by HIR lowering.
+fn collect_closures_block<'source, 'ast>(
+    block: &'ast Block<'source>,
+    closures: &mut Vec<(
+        &'ast [Parameter<'source>],
+        &'ast Block<'source>,
+        crate::SourceSpan<'source>,
+    )>,
+) {
+    for statement in &block.statements {
+        collect_closures_statement(statement, closures);
+    }
+}
+
+/// Collects closure expressions nested inside one source statement.
+fn collect_closures_statement<'source, 'ast>(
+    statement: &'ast Statement<'source>,
+    closures: &mut Vec<(
+        &'ast [Parameter<'source>],
+        &'ast Block<'source>,
+        crate::SourceSpan<'source>,
+    )>,
+) {
+    match statement {
+        Statement::Let { value, .. }
+        | Statement::Expression {
+            expression: value, ..
+        } => collect_closures_expression(value, closures),
+        Statement::Assign { target, value, .. } => {
+            match target {
+                AssignmentTarget::Variable(_) => {}
+                AssignmentTarget::Index {
+                    receiver, index, ..
+                } => {
+                    collect_closures_expression(receiver, closures);
+                    collect_closures_expression(index, closures);
+                }
+                AssignmentTarget::Property { receiver, .. } => {
+                    collect_closures_expression(receiver, closures);
+                }
+            }
+            collect_closures_expression(value, closures);
+        }
+        Statement::Return { value, .. } => {
+            if let Some(value) = value {
+                collect_closures_expression(value, closures);
+            }
+        }
+        Statement::If {
+            condition,
+            then_block,
+            else_block,
+            ..
+        } => {
+            collect_closures_expression(condition, closures);
+            collect_closures_block(then_block, closures);
+            if let Some(else_block) = else_block {
+                collect_closures_block(else_block, closures);
+            }
+        }
+        Statement::While {
+            condition, body, ..
+        } => {
+            collect_closures_expression(condition, closures);
+            collect_closures_block(body, closures);
+        }
+        Statement::For { iterable, body, .. } => {
+            collect_closures_expression(iterable, closures);
+            collect_closures_block(body, closures);
+        }
+        Statement::Break { .. } | Statement::Continue { .. } => {}
+    }
+}
+
+/// Collects closure expressions nested inside one source expression.
+fn collect_closures_expression<'source, 'ast>(
+    expression: &'ast Expression<'source>,
+    closures: &mut Vec<(
+        &'ast [Parameter<'source>],
+        &'ast Block<'source>,
+        crate::SourceSpan<'source>,
+    )>,
+) {
+    match expression {
+        Expression::Closure {
+            parameters,
+            body,
+            span,
+        } => {
+            closures.push((parameters, body, *span));
+            collect_closures_block(body, closures);
+        }
+        Expression::IsError { value, .. }
+        | Expression::Propagate { value, .. }
+        | Expression::Unary { operand: value, .. }
+        | Expression::Property {
+            receiver: value, ..
+        } => collect_closures_expression(value, closures),
+        Expression::Binary { left, right, .. }
+        | Expression::Index {
+            receiver: left,
+            index: right,
+            ..
+        } => {
+            collect_closures_expression(left, closures);
+            collect_closures_expression(right, closures);
+        }
+        Expression::Call { arguments, .. } | Expression::StaticMethodCall { arguments, .. } => {
+            for argument in arguments {
+                collect_closures_expression(argument, closures);
+            }
+        }
+        Expression::HostCall {
+            name, arguments, ..
+        } => {
+            collect_closures_expression(name, closures);
+            for argument in arguments {
+                collect_closures_expression(argument, closures);
+            }
+        }
+        Expression::MethodCall {
+            receiver,
+            arguments,
+            ..
+        } => {
+            collect_closures_expression(receiver, closures);
+            for argument in arguments {
+                collect_closures_expression(argument, closures);
+            }
+        }
+        Expression::List { elements, .. } => {
+            for element in elements {
+                collect_closures_expression(element, closures);
+            }
+        }
+        Expression::Object { properties, .. } | Expression::TypedObject { properties, .. } => {
+            for property in properties {
+                collect_closures_expression(&property.value, closures);
+            }
+        }
+        Expression::Integer(_, _)
+        | Expression::Float(_, _)
+        | Expression::String(_, _)
+        | Expression::Bool(_, _)
+        | Expression::None(_)
+        | Expression::Variable(_) => {}
+    }
+}
+
 /// Reencodes the runtime template while appending generated program sections.
 struct TemplateLinker<'source, 'module> {
     module: &'module Module<'source>,
+    lifted: Vec<LiftedFunction<'source>>,
     program_types: Vec<u32>,
     signatures: Option<HashMap<String, FunctionSignature>>,
     methods: Option<MethodRegistry>,
@@ -106,6 +302,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
     /// Creates a linker for one parsed source module.
     fn new(
         module: &'module Module<'source>,
+        lifted: Vec<LiftedFunction<'source>>,
         literals: LiteralPool,
         template_data: TemplateDataLayout,
         source_map: SourceMap<'source>,
@@ -132,6 +329,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
         let type_registry = TypeRegistry::build(module)?;
         Ok(Self {
             module,
+            lifted,
             program_types: Vec::new(),
             signatures: None,
             methods: None,
@@ -186,6 +384,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
                 .sum::<usize>(),
         );
         count
+            .and_then(|count| count.checked_add(self.lifted.len()))
             .and_then(|count| u32::try_from(count).ok())
             .ok_or_else(|| self.state_error("too many source functions"))
     }
@@ -200,7 +399,12 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         section: wasmparser::TypeSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
         reencode::utils::parse_type_section(self, types, section)?;
-        self.program_types = add_program_types(self.module, types, &self.suspendable_functions);
+        self.program_types = add_program_types(
+            self.module,
+            &self.lifted,
+            types,
+            &self.suspendable_functions,
+        );
         let start_type = types.len();
         types
             .ty()
@@ -266,8 +470,9 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             .template_function_import_count
             .checked_add(functions.len())
             .ok_or_else(|| self.state_error("too many runtime functions"))?;
-        let signatures = build_signatures(self.module, program_base, &self.type_registry)
-            .map_err(reencode::Error::UserError)?;
+        let signatures =
+            build_signatures(self.module, &self.lifted, program_base, &self.type_registry)
+                .map_err(reencode::Error::UserError)?;
         self.methods = Some(
             MethodRegistry::build(self.module, &self.type_registry, &signatures)
                 .map_err(reencode::Error::UserError)?,
@@ -289,7 +494,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 function.name.name.clone(),
                 continuation::FrameLayout {
                     function_id: signature.function_id,
-                    slot_count: continuation::frame_slot_capacity(function)
+                    slot_count: continuation::frame_slot_capacity(function, 0)
                         .map_err(reencode::Error::UserError)?,
                 },
             );
@@ -307,11 +512,27 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     key,
                     continuation::FrameLayout {
                         function_id: signature.function_id,
-                        slot_count: continuation::frame_slot_capacity(method)
+                        slot_count: continuation::frame_slot_capacity(method, 0)
                             .map_err(reencode::Error::UserError)?,
                     },
                 );
             }
+        }
+        for closure in &self.lifted {
+            let signature = signatures
+                .get(&closure.key)
+                .ok_or_else(|| self.state_error("missing lifted closure function signature"))?;
+            self.frame_layouts.insert(
+                closure.key.clone(),
+                continuation::FrameLayout {
+                    function_id: signature.function_id,
+                    slot_count: continuation::frame_slot_capacity(
+                        &closure.declaration,
+                        closure.captures.len(),
+                    )
+                    .map_err(reencode::Error::UserError)?,
+                },
+            );
         }
         for type_index in &self.program_types {
             functions.function(*type_index);
@@ -429,6 +650,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     &self.literals.indices,
                     &self.source_map,
                     &self.frame_layouts,
+                    &self.lifted,
                     methods,
                     &self.type_registry,
                 )
@@ -472,6 +694,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                         &self.literals.indices,
                         &self.source_map,
                         &self.frame_layouts,
+                        &self.lifted,
                         methods,
                         &self.type_registry,
                     )
@@ -497,6 +720,25 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     }
                     Err(function_diagnostics) => body_diagnostics.extend(function_diagnostics),
                 }
+            }
+        }
+        for closure in &self.lifted {
+            match continuation::compile_function(
+                &closure.declaration,
+                &closure.key,
+                signatures,
+                &self.runtime_functions,
+                &self.literals.indices,
+                &self.source_map,
+                &self.frame_layouts,
+                &self.lifted,
+                methods,
+                &self.type_registry,
+            ) {
+                Ok(compiled) => {
+                    codes.function(&compiled.function);
+                }
+                Err(diagnostics) => body_diagnostics.extend(diagnostics),
             }
         }
         if !body_diagnostics.is_empty() {

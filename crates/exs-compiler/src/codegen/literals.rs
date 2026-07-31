@@ -232,5 +232,6 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
         | Expression::Bool(_, _)
         | Expression::None(_)
         | Expression::Variable(_) => {}
+        Expression::Closure { body, .. } => collect_block_literals(body, pool),
     }
 }

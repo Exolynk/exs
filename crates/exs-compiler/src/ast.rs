@@ -319,6 +319,15 @@ pub enum Expression<'a> {
     },
     /// A local variable lookup.
     Variable(Identifier<'a>),
+    /// An anonymous callable value with a lexical body.
+    Closure {
+        /// Positional parameters introduced for the closure body.
+        parameters: Vec<Parameter<'a>>,
+        /// Closure body evaluated when the callable is invoked.
+        body: Block<'a>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
     /// A unary operation.
     Unary {
         /// Operation kind.

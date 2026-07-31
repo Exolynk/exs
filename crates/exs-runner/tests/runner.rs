@@ -37,6 +37,161 @@ fn execute_source_with_inputs(source: &str, inputs: &[ExsValue]) -> ExsValue {
     }
 }
 
+/// Executes a closure passed through an unparameterized Fn contract.
+#[test]
+fn executes_a_closure_argument_with_a_captured_binding() {
+    let result = execute_source(
+        r#"
+        fn apply(function: Fn, value: Int) -> Int {
+            ret function(value);
+        }
+        fn main(input: Int) -> Int {
+            let offset = 2;
+            let add = (value) => { ret value + offset; };
+            ret apply(add, input);
+        }
+        "#,
+        ExsValue::Int(40),
+    );
+    assert_eq!(result, ExsValue::Int(42));
+}
+
+/// Preserves a captured binding's shared Cell across repeated closure assignments.
+#[test]
+fn preserves_mutation_shared_by_a_closure() {
+    let result = execute_source_with_inputs(
+        r#"
+        fn main() -> Int {
+            let count = 0;
+            let increment = () => {
+                count = count + 1;
+                ret count;
+            };
+            increment();
+            ret increment();
+        }
+        "#,
+        &[],
+    );
+    assert_eq!(result, ExsValue::Int(2));
+}
+
+/// Returns a recoverable Error when a closure is called with too few arguments.
+#[test]
+fn rejects_too_few_dynamic_closure_arguments() {
+    let result = execute_source_with_inputs(
+        r#"
+        fn main() -> Error {
+            let identity = (value) => { ret value; };
+            ret identity();
+        }
+        "#,
+        &[],
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("missing closure argument did not return an Error");
+    };
+    assert_eq!(error.kind, "ArityError");
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+}
+
+/// Returns a recoverable Error when a closure is called with too many arguments.
+#[test]
+fn rejects_too_many_dynamic_closure_arguments() {
+    let result = execute_source_with_inputs(
+        r#"
+        fn main() -> Error {
+            let identity = (value) => { ret value; };
+            ret identity(1, 2);
+        }
+        "#,
+        &[],
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("excess closure arguments did not return an Error");
+    };
+    assert_eq!(error.kind, "ArityError");
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+}
+
+/// Rejects a non-callable source value passed through an Fn function contract.
+#[test]
+fn rejects_non_function_fn_contract_arguments() {
+    let result = execute_source_with_inputs(
+        r#"
+        fn accept(callback: Fn) -> None | Error {
+            ret None;
+        }
+        fn main() -> Error {
+            ret accept(1);
+        }
+        "#,
+        &[],
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("non-function Fn argument did not return an Error");
+    };
+    assert_eq!(error.kind, "TypeError");
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+}
+
+/// Returns nested closures while retaining captures through the enclosing closure environment.
+#[test]
+fn executes_returned_nested_closures() {
+    let result = execute_source(
+        r#"
+        fn make(value: Int) -> Fn {
+            let offset = value;
+            ret () => {
+                ret () => { ret offset + 2; };
+            };
+        }
+        fn main(input: Int) -> Int {
+            let first = make(input);
+            let second = first();
+            ret second();
+        }
+        "#,
+        ExsValue::Int(40),
+    );
+    assert_eq!(result, ExsValue::Int(42));
+}
+
+/// Resumes a closure body after an asynchronous Host ABI call.
+#[test]
+fn resumes_host_calls_inside_closures() {
+    let compiled = compile_source(
+        r#"
+        fn invoke(function: Fn, value: Int) -> Int | Error {
+            ret function(value);
+        }
+        fn main(input: Int) -> Int | Error {
+            let offset = 2;
+            let add = (value) => { ret host.call("echo", value + offset); };
+            ret invoke(add, input);
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+                arguments.into_iter().next().unwrap_or(ExsValue::None)
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(40)],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(42));
+}
+
 /// Polls one immediately-ready test future without adding an executor dependency.
 fn block_on<Output>(future: impl Future<Output = Output>) -> Output {
     let mut future = pin!(future);
@@ -342,6 +497,36 @@ fn executes_an_asynchronous_dynamic_host_function() {
 #[test]
 fn cancels_a_pending_host_execution() {
     let compiled = compile_source("fn main() { ret host.call(\"wait\"); }");
+    let cancellation = ExecutionCancellation::new();
+    let cancellation_for_host = cancellation.clone();
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("wait", move |_arguments: Vec<ExsValue>| {
+                let cancellation = cancellation_for_host.clone();
+                std::future::poll_fn(move |_| {
+                    cancellation.cancel();
+                    Poll::Pending
+                })
+            })
+            .is_ok()
+    );
+    let result = block_on(runner.execute(&compiled.wasm, &[], &cancellation));
+    assert!(matches!(result, Err(RunnerError::Cancelled)));
+}
+
+/// Cancels a host call that is suspended inside a dynamically invoked closure frame.
+#[test]
+fn cancels_a_pending_host_call_inside_a_closure() {
+    let compiled = compile_source(
+        r#"
+        fn main() {
+            let wait = () => { ret host.call("wait"); };
+            ret wait();
+        }
+        "#,
+    );
     let cancellation = ExecutionCancellation::new();
     let cancellation_for_host = cancellation.clone();
     let mut runner = ServerRunner::new();

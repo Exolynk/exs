@@ -138,6 +138,8 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
         }
         RtValue::List(list) => worklist.extend(list.elements.iter().copied()),
         RtValue::Object(object) => worklist.extend(object.entries.iter().map(|(_, value)| *value)),
+        RtValue::Cell(cell) => worklist.push(cell.value),
+        RtValue::Closure(closure) => worklist.extend(closure.captures.iter().copied()),
         RtValue::None
         | RtValue::Bool(_)
         | RtValue::Int(_)
