@@ -256,6 +256,49 @@ fn compiles_utf8_string_literals() {
     assert!(module.is_ok());
 }
 
+/// Compiles raw and dedented hash-delimited multiline string literals.
+#[test]
+fn compiles_hash_delimited_multiline_string_literals() {
+    let module = compile(
+        SourceInput {
+            source_id: "multiline-string.exs",
+            text: r###"
+            fn main() -> List {
+                let raw = r##"first
+  "# remains raw
+last"##;
+                let dedented = d#"
+                    first
+                      second
+                "#;
+                ret [raw, dedented];
+            }
+            "###,
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok());
+}
+
+/// Rejects hash-delimited raw strings whose closing delimiter never appears.
+#[test]
+fn rejects_unterminated_hash_delimited_string_literals() {
+    let error = compile(
+        SourceInput {
+            source_id: "unterminated-raw-string.exs",
+            text: "fn main() { ret r#\"missing closing delimiter; }",
+        },
+        CompileOptions::default(),
+    )
+    .expect_err("unterminated raw string compiled");
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "E0007")
+    );
+}
+
 /// Compiles list literals, dynamic index expressions, and a member call.
 #[test]
 fn compiles_list_syntax() {

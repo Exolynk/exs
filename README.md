@@ -120,21 +120,27 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Preserve source-order results and continue sibling tasks after recoverable Errors.
 - [x] Have a test which checks, that futures are executed in parrallel
 
-### Phase 12: Deep clone
+### Phase 12: Files, Formatter & Docs
+
+- [ ] Support import of files - name space need to be discussed
+- [ ] Create a formatter, wich is useable as lib and in the cli
+- [ ] Docs creation in a markdown format
+
+### Phase 13: Deep clone
 
 - [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
 - [ ] Add Clone contexts that preserve cycles and aliases.
 - [ ] Support user-defined, potentially suspendable Clone implementations.
 
-### Phase 13: Limits
+### Phase 14: Limits
 
 - [ ] Add runner-enforced limits for memory, fuel, timeouts, task and host-call counts, stack depth, CBOR payloads, and results.
 
-### Phase 14: Browser runner
+### Phase 15: Browser runner
 
 - [ ] Implement the equivalent TypeScript runner and synchronous/asynchronous host registry.
 
-### Phase 15: Optimizations
+### Phase 16: Optimizations
 
 - [ ] Add host-name caching, direct-operation specialization, root-frame reduction, and safe inlining.
 

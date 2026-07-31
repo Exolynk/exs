@@ -76,6 +76,32 @@ fn executes_static_parallel_tasks_in_source_order() {
     );
 }
 
+/// Preserves raw literal bytes and removes shared indentation from dedented multiline literals.
+#[test]
+fn executes_hash_delimited_multiline_strings() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r###"
+            fn main() -> List {
+                let raw = r##"first
+  "# remains raw
+last"##;
+                let dedented = d#"
+                    first
+                      second
+                "#;
+                ret [raw, dedented];
+            }
+            "###,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::String("first\n  \"# remains raw\nlast".to_owned()),
+            ExsValue::String("first\n  second".to_owned()),
+        ])
+    );
+}
+
 /// Preserves a recoverable task Error while allowing static `par` siblings to finish.
 #[test]
 fn continues_parallel_siblings_after_a_recoverable_error() {

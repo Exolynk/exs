@@ -253,6 +253,14 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                 };
                 TokenKind::Integer(value)
             }
+        } else if matches!(byte, b'r' | b'd') && bytes.get(index + 1) == Some(&b'#') {
+            match prefixed_string_literal(source, &mut index, start, byte == b'd') {
+                Ok(token) => token,
+                Err(error) => {
+                    diagnostics.push(error);
+                    continue;
+                }
+            }
         } else if byte == b'"' {
             match string_literal(source, &mut index, start) {
                 Ok(token) => token,
@@ -440,6 +448,124 @@ fn string_literal<'a>(
         "E0007",
         "unterminated string literal",
     ))
+}
+
+/// Reads one hash-delimited raw string and optionally removes its shared content indentation.
+fn prefixed_string_literal<'a>(
+    source: SourceInput<'a>,
+    index: &mut usize,
+    start: usize,
+    dedent: bool,
+) -> Result<TokenKind, CompileDiagnostic<'a>> {
+    let bytes = source.text.as_bytes();
+    *index += 1;
+    let hash_start = *index;
+    while bytes.get(*index) == Some(&b'#') {
+        *index += 1;
+    }
+    let hash_count = index.checked_sub(hash_start).unwrap_or(0);
+    if hash_count == 0 || bytes.get(*index) != Some(&b'"') {
+        return Err(diagnostic(
+            source,
+            start,
+            *index,
+            "E0008",
+            "invalid raw string delimiter",
+        ));
+    }
+    *index += 1;
+    let value_start = *index;
+    while *index < bytes.len() {
+        if bytes[*index] == b'"'
+            && bytes
+                .get(*index + 1..*index + 1 + hash_count)
+                .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#'))
+        {
+            let value = &source.text[value_start..*index];
+            *index += 1 + hash_count;
+            return Ok(TokenKind::String(if dedent {
+                dedent_string(value)
+            } else {
+                value.to_owned()
+            }));
+        }
+        *index += 1;
+    }
+    Err(diagnostic(
+        source,
+        start,
+        bytes.len(),
+        "E0007",
+        "unterminated raw string literal",
+    ))
+}
+
+/// Removes delimiter-only outer lines and common indentation from one dedented raw literal.
+fn dedent_string(value: &str) -> String {
+    let value = remove_outer_delimiter_lines(value);
+    let indent = common_indent(value);
+    if indent.is_empty() {
+        return value.to_owned();
+    }
+    let mut dedented = String::with_capacity(value.len());
+    for line in value.split_inclusive('\n') {
+        let (content, ending) = line
+            .strip_suffix('\n')
+            .map_or((line, ""), |content| (content, "\n"));
+        if content.trim_matches([' ', '\t', '\r']).is_empty() {
+            dedented.push_str(ending);
+        } else {
+            dedented.push_str(content.strip_prefix(indent).unwrap_or(content));
+            dedented.push_str(ending);
+        }
+    }
+    dedented
+}
+
+/// Removes the whitespace-only source lines containing a dedented literal's delimiters.
+fn remove_outer_delimiter_lines(value: &str) -> &str {
+    let value = value
+        .find('\n')
+        .filter(|newline| value[..*newline].trim_matches([' ', '\t', '\r']).is_empty())
+        .map_or(value, |newline| &value[newline + 1..]);
+    value.rfind('\n').map_or(value, |newline| {
+        if value[newline + 1..]
+            .trim_matches([' ', '\t', '\r'])
+            .is_empty()
+        {
+            &value[..newline]
+        } else {
+            value
+        }
+    })
+}
+
+/// Finds the shared spaces-and-tabs prefix used by every nonblank dedented content line.
+fn common_indent(value: &str) -> &str {
+    let mut common = None::<&str>;
+    for line in value.split('\n') {
+        let content = line.strip_suffix('\r').unwrap_or(line);
+        if content.trim_matches([' ', '\t']).is_empty() {
+            continue;
+        }
+        let indent_end = content
+            .bytes()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .count();
+        let indent = &content[..indent_end];
+        common = Some(common.map_or(indent, |current| shared_prefix(current, indent)));
+    }
+    common.unwrap_or("")
+}
+
+/// Returns the common byte prefix of two ASCII indentation strings.
+fn shared_prefix<'a>(first: &'a str, second: &str) -> &'a str {
+    let shared = first
+        .bytes()
+        .zip(second.bytes())
+        .take_while(|(first, second)| first == second)
+        .count();
+    &first[..shared]
 }
 
 /// Decodes a `\\u{HEX}` escape into one Unicode scalar value.
