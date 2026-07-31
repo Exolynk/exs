@@ -4,8 +4,9 @@ use std::collections::HashSet;
 
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier,
-    ImplDeclaration, Module, ObjectProperty, Parameter, Statement, TraitDeclaration,
-    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator,
+    ImplDeclaration, ImportDeclaration, Module, ObjectProperty, Parameter, Statement,
+    TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName,
+    UnaryOperator, UseDeclaration, UseItem,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{Token, TokenKind};
@@ -14,6 +15,7 @@ use crate::lexer::{Token, TokenKind};
 pub fn parse<'a>(
     source_id: &'a str,
     tokens: Vec<Token<'a>>,
+    require_main: bool,
 ) -> Result<Module<'a>, CompileDiagnostics<'a>> {
     let type_names = tokens
         .windows(2)
@@ -28,12 +30,52 @@ pub fn parse<'a>(
         type_names,
         diagnostics: CompileDiagnostics::new(),
     };
+    let mut imports = Vec::new();
+    let mut uses = Vec::new();
     let mut types = Vec::new();
     let mut traits = Vec::new();
     let mut implementations = Vec::new();
     let mut functions = Vec::new();
     while !parser.at_end() {
         match &parser.peek().kind {
+            TokenKind::Import => match parser.import_declaration() {
+                Ok(declaration)
+                    if types.is_empty()
+                        && traits.is_empty()
+                        && implementations.is_empty()
+                        && functions.is_empty() =>
+                {
+                    imports.push(declaration)
+                }
+                Ok(declaration) => parser.diagnostics.push(parser.error(
+                    declaration.span,
+                    "E0112",
+                    "imports must precede module declarations",
+                )),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
+            TokenKind::Use => match parser.use_declaration() {
+                Ok(declaration)
+                    if types.is_empty()
+                        && traits.is_empty()
+                        && implementations.is_empty()
+                        && functions.is_empty() =>
+                {
+                    uses.push(declaration)
+                }
+                Ok(declaration) => parser.diagnostics.push(parser.error(
+                    declaration.span,
+                    "E0112",
+                    "use declarations must precede module declarations",
+                )),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
             TokenKind::Type => match parser.type_declaration() {
                 Ok(declaration) => types.push(declaration),
                 Err(diagnostic) => {
@@ -72,7 +114,7 @@ pub fn parse<'a>(
             }
         }
     }
-    if functions.is_empty() {
+    if require_main && functions.is_empty() {
         parser.diagnostics.push(CompileDiagnostic::new(
             "E0200",
             SourceSpan::empty(source_id),
@@ -83,6 +125,8 @@ pub fn parse<'a>(
         return Err(parser.diagnostics);
     }
     Ok(Module {
+        imports,
+        uses,
         types,
         traits,
         implementations,
@@ -98,6 +142,84 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+    /// Parses one relative source-file import declaration.
+    fn import_declaration(&mut self) -> Result<ImportDeclaration<'a>, CompileDiagnostic<'a>> {
+        let start = self
+            .expect_simple(TokenKind::Import, "expected `import`")?
+            .span;
+        let token = self.advance().clone();
+        let path = match token.kind {
+            TokenKind::String(path) => path,
+            _ => {
+                return Err(self.error(token.span, "E0113", "expected string path after `import`"));
+            }
+        };
+        let alias = if self.matches(&TokenKind::As) {
+            Some(self.identifier("expected namespace after `as`")?)
+        } else {
+            None
+        };
+        let end = self
+            .expect_simple(TokenKind::Semicolon, "expected `;` after import")?
+            .span;
+        Ok(ImportDeclaration {
+            path,
+            alias,
+            span: start.through(end),
+        })
+    }
+
+    /// Parses one `use namespace::{name as alias}` declaration.
+    fn use_declaration(&mut self) -> Result<UseDeclaration<'a>, CompileDiagnostic<'a>> {
+        let start = self.expect_simple(TokenKind::Use, "expected `use`")?.span;
+        let namespace = self.identifier("expected namespace after `use`")?;
+        self.expect_simple(TokenKind::DoubleColon, "expected `::` after use namespace")?;
+        let mut items = Vec::new();
+        if self.matches(&TokenKind::LeftBrace) {
+            loop {
+                let name = self.identifier("expected imported declaration name")?;
+                let alias = if self.matches(&TokenKind::As) {
+                    Some(self.identifier("expected alias after `as`")?)
+                } else {
+                    None
+                };
+                self.type_names.insert(
+                    alias
+                        .as_ref()
+                        .map_or_else(|| name.name.clone(), |alias| alias.name.clone()),
+                );
+                items.push(UseItem { name, alias });
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+                if self.check(&TokenKind::RightBrace) {
+                    break;
+                }
+            }
+            self.expect_simple(TokenKind::RightBrace, "expected `}` after use list")?;
+        } else {
+            let name = self.identifier("expected imported declaration name")?;
+            let alias = if self.matches(&TokenKind::As) {
+                Some(self.identifier("expected alias after `as`")?)
+            } else {
+                None
+            };
+            self.type_names.insert(
+                alias
+                    .as_ref()
+                    .map_or_else(|| name.name.clone(), |alias| alias.name.clone()),
+            );
+            items.push(UseItem { name, alias });
+        }
+        let end = self
+            .expect_simple(TokenKind::Semicolon, "expected `;` after use declaration")?
+            .span;
+        Ok(UseDeclaration {
+            namespace,
+            items,
+            span: start.through(end),
+        })
+    }
     fn function(&mut self) -> Result<FunctionDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::Fn, "expected `fn` at module level")?
@@ -252,11 +374,11 @@ impl<'a> Parser<'a> {
         let start = self
             .expect_simple(TokenKind::Impl, "expected `impl` at module level")?
             .span;
-        let first_name = self.identifier("expected trait or type name after `impl`")?;
+        let first_name = self.qualified_identifier("expected trait or type name after `impl`")?;
         let (trait_name, type_name) = if self.matches(&TokenKind::For) {
             (
                 Some(first_name),
-                self.identifier("expected type name after `for`")?,
+                self.qualified_identifier("expected type name after `for")?,
             )
         } else {
             (None, first_name)
@@ -301,16 +423,20 @@ impl<'a> Parser<'a> {
     /// Parses one source-visible type name.
     fn type_name(&mut self) -> Result<TypeName<'a>, CompileDiagnostic<'a>> {
         let token = self.advance().clone();
-        let name = match token.kind {
+        let mut name = match token.kind {
             TokenKind::Identifier(name) => name,
             TokenKind::None => "None".to_owned(),
             TokenKind::Error => "Error".to_owned(),
             _ => return Err(self.error(token.span, "E0111", "expected type name")),
         };
-        Ok(TypeName {
-            name,
-            span: token.span,
-        })
+        let mut span = token.span;
+        if self.matches(&TokenKind::DoubleColon) {
+            let member = self.identifier("expected type name after `::`")?;
+            name.push_str("::");
+            name.push_str(&member.name);
+            span = span.through(member.span);
+        }
+        Ok(TypeName { name, span })
     }
 
     fn block(&mut self) -> Result<Block<'a>, CompileDiagnostic<'a>> {
@@ -566,6 +692,27 @@ impl<'a> Parser<'a> {
                     }
                 };
                 let method = self.identifier("expected method name after `::`")?;
+                if self.check(&TokenKind::DoubleColon) {
+                    expression = Expression::Variable(Identifier {
+                        name: format!("{}::{}", type_name.name, method.name),
+                        span: type_name.span.through(method.span),
+                    });
+                    continue;
+                }
+                if self.check(&TokenKind::LeftBrace) {
+                    expression = Expression::Variable(Identifier {
+                        name: format!("{}::{}", type_name.name, method.name),
+                        span: type_name.span.through(method.span),
+                    });
+                    continue;
+                }
+                if self.check(&TokenKind::LeftParen) && !self.type_names.contains(&type_name.name) {
+                    expression = Expression::Variable(Identifier {
+                        name: format!("{}::{}", type_name.name, method.name),
+                        span: type_name.span.through(method.span),
+                    });
+                    continue;
+                }
                 self.expect_simple(
                     TokenKind::LeftParen,
                     "expected `(` after static method name",
@@ -581,7 +728,7 @@ impl<'a> Parser<'a> {
                     span: type_name.span.through(close),
                 };
             } else if self.check(&TokenKind::LeftBrace)
-                && matches!(&expression, Expression::Variable(identifier) if self.type_names.contains(&identifier.name))
+                && matches!(&expression, Expression::Variable(identifier) if self.type_names.contains(&identifier.name) || identifier.name.contains("::"))
             {
                 self.advance();
                 let type_name = match expression {
@@ -958,6 +1105,21 @@ impl<'a> Parser<'a> {
         } else {
             Err(self.error(token.span, "E0102", message))
         }
+    }
+
+    /// Parses one optionally namespace-qualified identifier.
+    fn qualified_identifier(
+        &mut self,
+        message: &str,
+    ) -> Result<Identifier<'a>, CompileDiagnostic<'a>> {
+        let mut identifier = self.identifier(message)?;
+        if self.matches(&TokenKind::DoubleColon) {
+            let member = self.identifier("expected identifier after `::`")?;
+            identifier.name.push_str("::");
+            identifier.name.push_str(&member.name);
+            identifier.span = identifier.span.through(member.span);
+        }
+        Ok(identifier)
     }
 
     /// Parses an identifier or string object property key.

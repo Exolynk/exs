@@ -1,6 +1,11 @@
 //! Integration tests for the public Phase-1 compiler API.
 
-use exs_compiler::{CompileOptions, SourceInput, compile, read_debug_info};
+use std::collections::HashMap;
+
+use exs_compiler::{
+    CompileOptions, ModuleResolver, ResolvedSource, SourceInput, compile, compile_with_resolver,
+    read_debug_info,
+};
 use wasmparser::{Parser, Payload, Validator};
 
 /// Compiles the required minimal entry point.
@@ -15,6 +20,133 @@ fn compiles_a_minimal_main_function() {
         CompileOptions::default(),
     );
     assert!(module.is_ok());
+}
+
+/// Resolves compiler-test source files from an in-memory canonical source table.
+struct TestResolver {
+    /// Sources keyed by their canonical identity.
+    sources: HashMap<String, String>,
+}
+
+impl ModuleResolver for TestResolver {
+    /// Resolves a test import through the preconfigured source table.
+    fn resolve(&mut self, _importer: &str, path: &str) -> Result<ResolvedSource, String> {
+        let source_id = path.to_owned();
+        let text = self
+            .sources
+            .get(&source_id)
+            .cloned()
+            .ok_or_else(|| format!("missing test source {path}"))?;
+        Ok(ResolvedSource { source_id, text })
+    }
+}
+
+/// Compiles direct namespace calls and `use` aliases from an in-memory source graph.
+#[test]
+fn compiles_imported_functions_and_use_aliases() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./math.exs".to_owned(),
+            "fn add(left: Int, right: Int) -> Int { ret left + right; }".to_owned(),
+        )]),
+    };
+    let compiled = compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./math.exs\"; use math::add as plus; fn main() -> Int { ret math::add(20, 22); }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    );
+    if let Err(error) = compiled {
+        panic!("compilation failed: {error}");
+    }
+}
+
+/// Preserves imported source identities in linked debug metadata.
+#[test]
+fn emits_multisource_debug_metadata_for_imports() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./math.exs".to_owned(),
+            "fn add(left: Int, right: Int) -> Int { ret left + right; }".to_owned(),
+        )]),
+    };
+    let compiled = match compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./math.exs\"; fn main() -> Int { ret math::add(20, 22); }",
+        },
+        CompileOptions {
+            embed_sources: true,
+        },
+        &mut resolver,
+    ) {
+        Ok(compiled) => compiled,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    let debug_info = match read_debug_info(&compiled.wasm) {
+        Ok(debug_info) => debug_info,
+        Err(error) => panic!("could not read debug info: {error}"),
+    };
+    assert!(
+        debug_info
+            .positions
+            .iter()
+            .any(|position| position.source_id == "./math.exs")
+    );
+    assert!(debug_info.source_for("./math.exs").is_some());
+}
+
+/// Resolves imported nominal types for `use` aliases, construction, and static methods.
+#[test]
+fn compiles_imported_types_and_static_methods() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./geometry.exs".to_owned(),
+            "type Point { value: Int } impl Point { fn new(value: Int) -> Point { ret Point { value: value }; } }".to_owned(),
+        )]),
+    };
+    let compiled = compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./geometry.exs\" as geo; use geo::{Point}; fn main() -> Point { ret Point::new(42); }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    );
+    if let Err(error) = compiled {
+        panic!("compilation failed: {error}");
+    }
+}
+
+/// Rejects cycles before attempting to merge imported declarations.
+#[test]
+fn rejects_import_cycles() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([
+            (
+                "./a.exs".to_owned(),
+                "import \"./b.exs\"; fn value() { ret 1; }".to_owned(),
+            ),
+            (
+                "./b.exs".to_owned(),
+                "import \"./a.exs\"; fn value() { ret 2; }".to_owned(),
+            ),
+        ]),
+    };
+    let error = match compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./a.exs\"; fn main() { ret 0; }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    ) {
+        Ok(_) => panic!("expected import cycle to fail"),
+        Err(error) => error,
+    };
+    assert!(error.contains("import cycle"));
 }
 
 /// Validates the generated Wasm shape for one Cell-backed closure expression.

@@ -21,6 +21,19 @@ pub fn compile_module<'a>(
     source: &'a str,
     options: CompileOptions,
 ) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
+    let source = [crate::SourceInput {
+        source_id: module_span(module).source_id,
+        text: source,
+    }];
+    compile_project_module(module, &source, options)
+}
+
+/// Compiles a resolved source graph into a complete linked Wasm module.
+pub fn compile_project_module<'a>(
+    module: &mut Module<'a>,
+    sources: &[crate::SourceInput<'a>],
+    options: CompileOptions,
+) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
     let mut diagnostics = types::validate(module);
     diagnostics.extend(traits::validate(module));
     diagnostics.extend(function::validate(module));
@@ -39,7 +52,7 @@ pub fn compile_module<'a>(
     let lifted = linker::lifted_functions(module, &hir);
     let suspendable_functions = suspendability.functions().clone();
     drop(hir);
-    linker::link(module, source, options, lifted, &suspendable_functions)
+    linker::link(module, sources, options, lifted, &suspendable_functions)
 }
 
 /// Returns a diagnostic span covering the module's first function.

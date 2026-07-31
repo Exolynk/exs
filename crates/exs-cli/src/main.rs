@@ -10,7 +10,10 @@ use std::pin::pin;
 use std::process::ExitCode;
 use std::task::{Context, Poll, Waker};
 
-use exs_compiler::{CompileOptions, ModuleDebugInfo, SourceInput, compile, read_debug_info};
+use exs_compiler::{
+    CompileOptions, ModuleDebugInfo, ModuleResolver, ResolvedSource, SourceInput,
+    compile_with_resolver, read_debug_info,
+};
 use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
 
 /// Runs the `ExS` command-line interface.
@@ -59,14 +62,47 @@ fn compile_source(
 ) -> Result<exs_compiler::CompiledModule, String> {
     let source =
         fs::read_to_string(path).map_err(|error| format!("could not read {path}: {error}"))?;
-    compile(
+    let canonical =
+        fs::canonicalize(path).map_err(|error| format!("could not resolve {path}: {error}"))?;
+    let source_id = canonical.to_string_lossy().into_owned();
+    let mut resolver = FileResolver;
+    compile_with_resolver(
         SourceInput {
-            source_id: path,
+            source_id: &source_id,
             text: &source,
         },
         options,
+        &mut resolver,
     )
-    .map_err(|error| error.render(&source))
+}
+
+/// Resolves CLI imports through canonical local filesystem paths.
+struct FileResolver;
+
+impl ModuleResolver for FileResolver {
+    /// Resolves one relative `.exs` import and reads its UTF-8 contents.
+    fn resolve(&mut self, importer: &str, path: &str) -> Result<ResolvedSource, String> {
+        if !path.starts_with("./") && !path.starts_with("../") {
+            return Err("imports must use a relative `./` or `../` path".to_owned());
+        }
+        if Path::new(path)
+            .extension()
+            .is_none_or(|extension| extension != "exs")
+        {
+            return Err("imports must name an `.exs` file".to_owned());
+        }
+        let base = Path::new(importer)
+            .parent()
+            .ok_or_else(|| "importing file has no parent directory".to_owned())?;
+        let path = fs::canonicalize(base.join(path))
+            .map_err(|error| format!("could not resolve file: {error}"))?;
+        let text =
+            fs::read_to_string(&path).map_err(|error| format!("could not read file: {error}"))?;
+        Ok(ResolvedSource {
+            source_id: path.to_string_lossy().into_owned(),
+            text,
+        })
+    }
 }
 
 /// Executes a source file or linked WebAssembly module.
@@ -277,7 +313,7 @@ fn format_position(
     let Some(position) = debug_info.and_then(|info| info.position(identifier)) else {
         return format!("position #{}", identifier.0);
     };
-    let Some(source) = debug_info.and_then(|info| info.source.as_deref()) else {
+    let Some(source) = debug_info.and_then(|info| info.source_for(&position.source_id)) else {
         return format!(
             "{}:{}-{}",
             position.source_id, position.start_byte, position.end_byte
@@ -297,7 +333,7 @@ fn append_source_excerpt(
     let Some(position) = debug_info.and_then(|info| info.position(identifier)) else {
         return;
     };
-    let Some(source) = debug_info.and_then(|info| info.source.as_deref()) else {
+    let Some(source) = debug_info.and_then(|info| info.source_for(&position.source_id)) else {
         return;
     };
     let (line, column) = line_and_column(source, position.start_byte);

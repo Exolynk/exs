@@ -36,7 +36,7 @@ use crate::hir::HirModule;
 /// Links one source module against the committed runtime template.
 pub(super) fn link<'source>(
     module: &Module<'source>,
-    source: &'source str,
+    sources: &[crate::SourceInput<'source>],
     options: CompileOptions,
     lifted: Vec<LiftedFunction<'source>>,
     suspendable_functions: &HashSet<String>,
@@ -75,7 +75,7 @@ pub(super) fn link<'source>(
     if options.embed_sources {
         wasm.section(&CustomSection {
             name: SOURCES_SECTION.into(),
-            data: linker.source_map.encode_source(source).into(),
+            data: linker.source_map.encode_source(sources).into(),
         });
     }
     Ok(wasm.finish())

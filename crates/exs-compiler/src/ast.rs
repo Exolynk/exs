@@ -5,6 +5,10 @@ use crate::diagnostic::SourceSpan;
 /// A parsed `ExS` source unit.
 #[derive(Debug, Clone)]
 pub struct Module<'a> {
+    /// Compile-time source-file imports in declaration order.
+    pub imports: Vec<ImportDeclaration<'a>>,
+    /// Compile-time aliases for imported declarations.
+    pub uses: Vec<UseDeclaration<'a>>,
     /// Named nominal Object type declarations.
     pub types: Vec<TypeDeclaration<'a>>,
     /// Named trait declarations.
@@ -13,6 +17,37 @@ pub struct Module<'a> {
     pub implementations: Vec<ImplDeclaration<'a>>,
     /// Top-level direct function declarations.
     pub functions: Vec<FunctionDeclaration<'a>>,
+}
+
+/// One relative source-file import.
+#[derive(Debug, Clone)]
+pub struct ImportDeclaration<'a> {
+    /// Source-spelled relative import path.
+    pub path: String,
+    /// Optional explicit namespace replacing the file-stem default.
+    pub alias: Option<Identifier<'a>>,
+    /// Full declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+/// One declaration introduced by a `use` declaration.
+#[derive(Debug, Clone)]
+pub struct UseItem<'a> {
+    /// Imported declaration name.
+    pub name: Identifier<'a>,
+    /// Optional local alias.
+    pub alias: Option<Identifier<'a>>,
+}
+
+/// One compile-time `use` declaration.
+#[derive(Debug, Clone)]
+pub struct UseDeclaration<'a> {
+    /// Imported namespace being referenced.
+    pub namespace: Identifier<'a>,
+    /// Declarations introduced into the local module scope.
+    pub items: Vec<UseItem<'a>>,
+    /// Full declaration span.
+    pub span: SourceSpan<'a>,
 }
 
 /// A nominal Object type with declared field contracts.

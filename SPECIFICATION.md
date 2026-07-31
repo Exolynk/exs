@@ -148,8 +148,8 @@ Identifiers are case-sensitive and are compared by Unicode scalar sequence witho
 Reserved keywords are:
 
 ```text
-break continue else export false fn for from if import in
-is let None Error par ret true while
+as break continue else export false fn for from if import in
+is let None Error par ret true use while
 ```
 
 ## Literals
@@ -402,7 +402,7 @@ Capture is by reference, not by value.
 
 ## Module bindings
 
-Top-level module bindings are initialized during module initialization. Imported bindings are read-only aliases to exported bindings. Assignment to an imported binding is a compile error.
+Top-level module bindings are initialized during module initialization. A `use` declaration creates a read-only compile-time alias to an imported declaration. Assignment to a used alias is a compile error.
 
 # 05 – Expressions
 
@@ -733,7 +733,11 @@ pub struct SourceSpan {
 
 Line and column are derived from byte offsets. The compiler assigns a compact non-zero `SourcePositionId` to every source span used by generated runtime operations and direct calls. `origin` identifies the active operation; direct runtime frames retain the function ID and call-site position.
 
-The final Wasm module always contains `exs.source.map`. Its version-two binary payload is `EXSMAP2\0`, source-ID byte length (`u32` little-endian), position-entry count (`u32` little-endian), function-entry count (`u32` little-endian), UTF-8 source ID, then one `(start_byte, end_byte)` pair of `u32` little-endian values for each position ID in ascending order starting at 1. It ends with one `(function_id, name_byte_length, UTF-8 function name)` record for each generated function. Trace frames use this table to render source-level function names. `CompileOptions::embed_sources` additionally emits `exs.sources`, encoded as `EXSSRC1\0`, source-ID byte length, source byte length, UTF-8 source ID, and UTF-8 source text. Production builds can omit this second section while retaining the position and function maps.
+The final Wasm module always contains `exs.source.map`. A single-source module uses the version-two payload `EXSMAP2\0`: source-ID byte length (`u32` little-endian), position-entry count (`u32` little-endian), function-entry count (`u32` little-endian), UTF-8 source ID, then one `(start_byte, end_byte)` pair of `u32` little-endian values for each position ID in ascending order starting at 1. It ends with one `(function_id, name_byte_length, UTF-8 function name)` record for each generated function.
+
+A resolved module graph uses version three, `EXSMAP3\0`: source count (`u32` little-endian), position-entry count, function-entry count, then a source table of `(source-ID byte length, UTF-8 source ID)` records in ascending canonical-module identity order. Each position record is `(source index, start_byte, end_byte)`, with all fields encoded as `u32` little-endian. Function records have the same encoding as version two. Trace frames use this table to render source-level function names and source positions.
+
+`CompileOptions::embed_sources` additionally emits `exs.sources`. A single-source module uses `EXSSRC1\0`, encoded as source-ID byte length, source byte length, UTF-8 source ID, and UTF-8 source text. A resolved module graph uses `EXSSRC2\0`: source count followed by `(source-ID byte length, source byte length, UTF-8 source ID, UTF-8 source text)` records in the same source-table order. Production builds can omit this second section while retaining the position and function maps.
 
 `trace` is a List of immutable frame Objects ordered from creation frame toward the root call.
 
@@ -812,6 +816,8 @@ Every source unit has exactly one AST root:
 ```rust
 pub struct Module {
     pub source_id: SourceId,
+    pub imports: Vec<ImportDeclaration>,
+    pub uses: Vec<UseDeclaration>,
     pub items: Vec<Item>,
     pub span: SourceSpan,
 }
@@ -827,9 +833,9 @@ pub enum Item {
 
 Top-level executable statements are not permitted. A future top-level-code feature MUST lower that code into a generated initialization function before HIR lowering.
 
-## Phase-1 modules and entry point
+## Entry point
 
-Phase 1 accepts `Function`, nominal `Type`, `Trait`, and inherent or trait `Impl` items. The required entry point is `fn main(...)` with zero or more parameters. The runner supplies an ordered CBOR array of `ExsValue` arguments; the runtime decodes each argument to an `RtValue` before calling `main`, supplies `None` for missing positions, and returns a fatal `ArityError` for excess positions. `main` returns one ExS value with `ret`; the runner exposes None, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI accepts positional values after `--` and prints the result in ExS source notation.
+The root module required by a runner MUST declare `fn main(...)` with zero or more parameters. Imported modules MUST NOT declare `main`. The runner supplies an ordered CBOR array of `ExsValue` arguments; the runtime decodes each argument to an `RtValue` before calling `main`, supplies `None` for missing positions, and returns a fatal `ArityError` for excess positions. `main` returns one ExS value with `ret`; the runner exposes None, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI accepts positional values after `--` and prints the result in ExS source notation.
 
 ```text
 fn main(left: Int, right: Int) -> Int {
@@ -839,9 +845,46 @@ fn main(left: Int, right: Int) -> Int {
 
 The module root and one `main` entry remain mandatory; top-level statements are not allowed.
 
-## Future module resolution
+## Imports and namespaces
 
-Static imports, exports, and globals are deferred beyond Phase 1. When introduced, imports MUST be resolved to canonical module identities before graph construction, imported bindings MUST be read-only aliases, and cycles MUST be compile errors unless a later language version explicitly defines their semantics.
+An import declaration loads one relative `.exs` source file into a compile-time namespace:
+
+```text
+import "./math.exs";
+import "./models/user.exs" as account;
+```
+
+The default namespace is the imported file's stem. A file stem that is not a valid ExS identifier MUST be imported with `as`. `as` replaces the default namespace for that import.
+
+More than one import MAY use the same namespace. Their directly declared functions, nominal types, and traits form one merged namespace. Every exported declaration name in a merged namespace MUST be unique, including names from different declaration categories. A collision is a compile error with related spans for both declarations. Implementation blocks are associated with their owning nominal type and are not independently named namespace members.
+
+An implementation MUST resolve relative paths against the importing file, canonicalize every resolved identity before graph construction, load each canonical file at most once, and reject every import cycle. The diagnostic for a cycle MUST identify the complete import chain. Bare package names, URLs, implicit search paths, wildcard imports, and automatic namespace re-exports are not part of this language version.
+
+Imports and `use` declarations form a module prelude and MUST precede every type, trait, implementation, and function declaration. A module's own imports are internal: importing that module does not expose its imported namespaces to another module.
+
+Declarations remain qualified by their imported namespace unless shortened by `use`:
+
+```text
+import "./geometry.exs" as geo;
+
+fn render(value: geo::Shape) -> geo::Point {
+    ret geo::Point::new(0, 0);
+}
+```
+
+`namespace::function(...)` invokes an imported direct function. `namespace::Type { ... }`, `namespace::Type::method(...)`, and `namespace::Trait` respectively name an imported nominal type construction, static method, and trait. Qualified type and trait names are valid in every type annotation position.
+
+## `use` declarations
+
+`use` does not load a source file. It introduces one or more local aliases for declarations already exposed by an imported namespace:
+
+```text
+import "./geometry.exs" as geo;
+use geo::{Point, Shape};
+use geo::display as render;
+```
+
+The single-element and grouped forms are equivalent. A used function becomes an unqualified direct call; a used nominal type or trait becomes valid as an unqualified construction, static-method receiver, or type annotation. `use` aliases are compile-time only and do not create runtime namespace values. A used name MUST NOT collide with a local declaration, another used alias, or a built-in top-level name.
 
 # 11 – Built-ins
 
@@ -942,7 +985,7 @@ A conforming compiler MUST perform, explicitly or equivalently:
 12. custom-section generation; and
 13. final WebAssembly validation.
 
-The compiler library is independent of browsers, servers, concrete host functions, and host schemas. It depends on the `exs-runtime` crate, which embeds the committed `exs-runtime.wasm` template. Its public compilation API accepts source input and compile options, then produces final Wasm bytes plus module metadata.
+The compiler library is independent of browsers, servers, concrete host functions, host schemas, and filesystem access. It depends on the `exs-runtime` crate, which embeds the committed `exs-runtime.wasm` template. Its public compilation API accepts root source input, compile options, and a module resolver that returns source text and canonical source identities for relative imports; it then produces final Wasm bytes plus module metadata. A CLI resolver MAY read local files. A server, browser, or IDE resolver supplies source text through its own storage boundary.
 
 ## Diagnostics
 
@@ -1413,7 +1456,13 @@ The compiler resolves runtime functions by these export names, never fixed Wasm 
 This grammar is normative for syntax but omits lexical Unicode productions already defined.
 
 ```ebnf
-module          = { item } ;
+module          = { moduleDecl } { item } ;
+moduleDecl      = importDecl | useDecl ;
+importDecl      = "import" string [ "as" identifier ] ";" ;
+useDecl         = "use" qualifiedName [ "as" identifier ] ";"
+                | "use" identifier "::" "{" useItem { "," useItem } [ "," ] "}" ";" ;
+useItem         = identifier [ "as" identifier ] ;
+qualifiedName   = identifier { "::" identifier } ;
 item            = functionDecl | typeDecl | traitDecl | implDecl ;
 
 functionDecl    = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] block ;
@@ -1426,7 +1475,7 @@ functionExpr    = "fn" "(" parameters? ")" block ;
 parameters      = parameter { "," parameter } [ "," ] ;
 parameter       = identifier [ ":" typeUnion ] ;
 typeUnion       = typeName { "|" typeName } ;
-typeName        = identifier | "None" | "Error" ;
+typeName        = qualifiedName | "None" | "Error" ;
 
 letDecl         = "let" identifier [ "=" expression ] ";" ;
 
@@ -1463,7 +1512,7 @@ index           = "[" expression "]" ;
 property        = "." identifier ;
 
 primary         = literal
-                | identifier
+                | qualifiedName
                 | functionExpr
                 | listLiteral
                 | objectLiteral
@@ -1480,7 +1529,7 @@ objectItem      = ( identifier | string ) ":" expression ;
 
 Assignment targets MUST be identifiers, property accesses, or index accesses.
 
-Top-level `statement` and `letDecl` occurrences are invalid. Phase 1 accepts only `functionDecl`, `typeDecl`, `traitDecl`, and `implDecl` items and requires exactly one `fn main(...)` declaration.
+Top-level `statement` and `letDecl` occurrences are invalid. A module contains an optional import and `use` prelude followed by `functionDecl`, `typeDecl`, `traitDecl`, and `implDecl` items. The root module requires exactly one `fn main(...)` declaration; imported modules require none.
 
 # 20 – Conformance and Security
 

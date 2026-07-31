@@ -15,9 +15,9 @@ pub(super) const SOURCES_SECTION: &str = "exs.sources";
 
 /// One compiler-assigned source position table for a single source unit.
 pub(super) struct SourceMap<'a> {
-    source_id: &'a str,
+    source_ids: Vec<&'a str>,
     entries: Vec<SourceSpan<'a>>,
-    ids: HashMap<(u32, u32), u32>,
+    ids: HashMap<(&'a str, u32, u32), u32>,
     functions: Vec<String>,
 }
 
@@ -25,10 +25,7 @@ impl<'a> SourceMap<'a> {
     /// Assigns compact non-zero position identifiers to all spans in one parsed module.
     pub(super) fn collect(module: &Module<'a>) -> Self {
         let mut source_map = Self {
-            source_id: module
-                .functions
-                .first()
-                .map_or("<unknown>", |function| function.span.source_id),
+            source_ids: Vec::new(),
             entries: Vec::new(),
             ids: HashMap::new(),
             functions: module
@@ -91,18 +88,40 @@ impl<'a> SourceMap<'a> {
 
     /// Returns the compact identifier assigned to one source span.
     pub(super) fn id(&self, span: SourceSpan<'a>) -> Option<u32> {
-        self.ids.get(&(span.start_byte, span.end_byte)).copied()
+        self.ids
+            .get(&(span.source_id, span.start_byte, span.end_byte))
+            .copied()
     }
 
     /// Encodes the `exs.source.map` binary format.
     pub(super) fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"EXSMAP2\0");
-        append_u32(&mut bytes, self.source_id.len());
+        if self.source_ids.len() == 1 {
+            bytes.extend_from_slice(b"EXSMAP2\0");
+            append_u32(&mut bytes, self.source_ids[0].len());
+        } else {
+            bytes.extend_from_slice(b"EXSMAP3\0");
+            append_u32(&mut bytes, self.source_ids.len());
+        }
         append_u32(&mut bytes, self.entries.len());
         append_u32(&mut bytes, self.functions.len());
-        bytes.extend_from_slice(self.source_id.as_bytes());
+        if self.source_ids.len() == 1 {
+            bytes.extend_from_slice(self.source_ids[0].as_bytes());
+        } else {
+            for source_id in &self.source_ids {
+                append_u32(&mut bytes, source_id.len());
+                bytes.extend_from_slice(source_id.as_bytes());
+            }
+        }
         for span in &self.entries {
+            if self.source_ids.len() > 1 {
+                let source = self
+                    .source_ids
+                    .iter()
+                    .position(|source_id| *source_id == span.source_id)
+                    .unwrap_or_default();
+                append_u32(&mut bytes, source);
+            }
             append_u32(&mut bytes, span.start_byte as usize);
             append_u32(&mut bytes, span.end_byte as usize);
         }
@@ -115,19 +134,40 @@ impl<'a> SourceMap<'a> {
     }
 
     /// Encodes the `exs.sources` binary format for one optional embedded source unit.
-    pub(super) fn encode_source(&self, source: &str) -> Vec<u8> {
+    pub(super) fn encode_source(&self, sources: &[crate::SourceInput<'a>]) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"EXSSRC1\0");
-        append_u32(&mut bytes, self.source_id.len());
-        append_u32(&mut bytes, source.len());
-        bytes.extend_from_slice(self.source_id.as_bytes());
-        bytes.extend_from_slice(source.as_bytes());
+        if self.source_ids.len() == 1 {
+            let source = sources
+                .iter()
+                .find(|source| source.source_id == self.source_ids[0]);
+            let Some(source) = source else {
+                return bytes;
+            };
+            bytes.extend_from_slice(b"EXSSRC1\0");
+            append_u32(&mut bytes, source.source_id.len());
+            append_u32(&mut bytes, source.text.len());
+            bytes.extend_from_slice(source.source_id.as_bytes());
+            bytes.extend_from_slice(source.text.as_bytes());
+        } else {
+            bytes.extend_from_slice(b"EXSSRC2\0");
+            append_u32(&mut bytes, self.source_ids.len());
+            for source_id in &self.source_ids {
+                let source = sources.iter().find(|source| source.source_id == *source_id);
+                let Some(source) = source else {
+                    return bytes;
+                };
+                append_u32(&mut bytes, source.source_id.len());
+                append_u32(&mut bytes, source.text.len());
+                bytes.extend_from_slice(source.source_id.as_bytes());
+                bytes.extend_from_slice(source.text.as_bytes());
+            }
+        }
         bytes
     }
 
     /// Adds one span when it has not already received an identifier.
     fn insert(&mut self, span: SourceSpan<'a>) {
-        let key = (span.start_byte, span.end_byte);
+        let key = (span.source_id, span.start_byte, span.end_byte);
         if self.ids.contains_key(&key) {
             return;
         }
@@ -135,6 +175,10 @@ impl<'a> SourceMap<'a> {
             .ok()
             .and_then(|index| index.checked_add(1));
         if let Some(identifier) = identifier {
+            if !self.source_ids.contains(&span.source_id) {
+                self.source_ids.push(span.source_id);
+                self.source_ids.sort_unstable();
+            }
             self.entries.push(span);
             self.ids.insert(key, identifier);
         }
@@ -422,6 +466,15 @@ pub struct FunctionDebugInfo {
     pub name: String,
 }
 
+/// One optional embedded source unit from a resolved module graph.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct EmbeddedSource {
+    /// Canonical source identity.
+    pub source_id: String,
+    /// Complete UTF-8 source text.
+    pub source: String,
+}
+
 /// Debug metadata decoded from ExS custom sections in one linked Wasm module.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ModuleDebugInfo {
@@ -433,6 +486,8 @@ pub struct ModuleDebugInfo {
     pub functions: Vec<FunctionDebugInfo>,
     /// Optional UTF-8 source text embedded in the module.
     pub source: Option<String>,
+    /// All embedded sources when compilation included a resolved module graph.
+    pub sources: Vec<EmbeddedSource>,
 }
 
 impl ModuleDebugInfo {
@@ -450,6 +505,20 @@ impl ModuleDebugInfo {
             .iter()
             .find(|function| function.function_id == identifier)
             .map(|function| function.name.as_str())
+    }
+
+    /// Returns embedded text for one source identity, when source embedding was requested.
+    #[must_use]
+    pub fn source_for(&self, source_id: &str) -> Option<&str> {
+        self.sources
+            .iter()
+            .find(|source| source.source_id == source_id)
+            .map(|source| source.source.as_str())
+            .or_else(|| {
+                (self.source_id == source_id)
+                    .then_some(self.source.as_deref())
+                    .flatten()
+            })
     }
 }
 
@@ -501,11 +570,18 @@ pub fn read_debug_info(wasm: &[u8]) -> Result<ModuleDebugInfo, DebugInfoError> {
     let source_map = source_map.ok_or(DebugInfoError::MissingSourceMap)?;
     let mut info = decode_source_map(&source_map)?;
     if let Some(source) = source {
-        let (source_id, source) = decode_source(&source)?;
-        if source_id != info.source_id {
+        let sources = decode_sources(&source)?;
+        if !sources
+            .iter()
+            .any(|source| source.source_id == info.source_id)
+        {
             return Err(DebugInfoError::Malformed);
         }
-        info.source = Some(source);
+        info.source = sources
+            .iter()
+            .find(|source| source.source_id == info.source_id)
+            .map(|source| source.source.clone());
+        info.sources = sources;
     }
     Ok(info)
 }
@@ -513,15 +589,45 @@ pub fn read_debug_info(wasm: &[u8]) -> Result<ModuleDebugInfo, DebugInfoError> {
 /// Decodes the version-two compact ExS source-map payload.
 fn decode_source_map(bytes: &[u8]) -> Result<ModuleDebugInfo, DebugInfoError> {
     let mut reader = MetadataReader::new(bytes);
-    reader.expect(b"EXSMAP2\0")?;
-    let source_id_length = reader.length()?;
-    let position_count = reader.length()?;
-    let function_count = reader.length()?;
-    let source_id = reader.string(source_id_length)?;
+    let version = reader.take(8)?;
+    let (source_ids, position_count, function_count) = if version == b"EXSMAP2\0" {
+        let source_id_length = reader.length()?;
+        let position_count = reader.length()?;
+        let function_count = reader.length()?;
+        (
+            vec![reader.string(source_id_length)?],
+            position_count,
+            function_count,
+        )
+    } else if version == b"EXSMAP3\0" {
+        let source_count = reader.length()?;
+        let position_count = reader.length()?;
+        let function_count = reader.length()?;
+        let mut source_ids = Vec::new();
+        for _ in 0..source_count {
+            let source_id_length = reader.length()?;
+            source_ids.push(reader.string(source_id_length)?);
+        }
+        (source_ids, position_count, function_count)
+    } else {
+        return Err(DebugInfoError::UnsupportedVersion);
+    };
+    let source_id = source_ids
+        .first()
+        .cloned()
+        .ok_or(DebugInfoError::Malformed)?;
     let mut positions = Vec::new();
     for _ in 0..position_count {
+        let position_source = if source_ids.len() == 1 {
+            source_id.clone()
+        } else {
+            source_ids
+                .get(reader.length()?)
+                .cloned()
+                .ok_or(DebugInfoError::Malformed)?
+        };
         positions.push(SourcePosition {
-            source_id: source_id.clone(),
+            source_id: position_source,
             start_byte: reader.u32()?,
             end_byte: reader.u32()?,
         });
@@ -541,19 +647,32 @@ fn decode_source_map(bytes: &[u8]) -> Result<ModuleDebugInfo, DebugInfoError> {
         positions,
         functions,
         source: None,
+        sources: Vec::new(),
     })
 }
 
 /// Decodes the optional embedded-source custom-section payload.
-fn decode_source(bytes: &[u8]) -> Result<(String, String), DebugInfoError> {
+fn decode_sources(bytes: &[u8]) -> Result<Vec<EmbeddedSource>, DebugInfoError> {
     let mut reader = MetadataReader::new(bytes);
-    reader.expect(b"EXSSRC1\0")?;
-    let source_id_length = reader.length()?;
-    let source_length = reader.length()?;
-    let source_id = reader.string(source_id_length)?;
-    let source = reader.string(source_length)?;
+    let version = reader.take(8)?;
+    let source_count = if version == b"EXSSRC1\0" {
+        1
+    } else if version == b"EXSSRC2\0" {
+        reader.length()?
+    } else {
+        return Err(DebugInfoError::UnsupportedVersion);
+    };
+    let mut sources = Vec::new();
+    for _ in 0..source_count {
+        let source_id_length = reader.length()?;
+        let source_length = reader.length()?;
+        sources.push(EmbeddedSource {
+            source_id: reader.string(source_id_length)?,
+            source: reader.string(source_length)?,
+        });
+    }
     reader.finish()?;
-    Ok((source_id, source))
+    Ok(sources)
 }
 
 /// Bounds-checked reader for fixed-format ExS metadata sections.
@@ -568,15 +687,6 @@ impl<'a> MetadataReader<'a> {
     /// Starts reading at the first byte of one metadata payload.
     const fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, position: 0 }
-    }
-
-    /// Requires one exact byte prefix at the current reader position.
-    fn expect(&mut self, expected: &[u8]) -> Result<(), DebugInfoError> {
-        if self.take(expected.len())? == expected {
-            Ok(())
-        } else {
-            Err(DebugInfoError::UnsupportedVersion)
-        }
     }
 
     /// Reads one little-endian unsigned 32-bit value.

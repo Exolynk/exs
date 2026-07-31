@@ -729,7 +729,7 @@ mod tests {
             text: source,
         });
         assert!(lexed.diagnostics.is_empty());
-        match crate::parser::parse("hir-test.exs", lexed.tokens) {
+        match crate::parser::parse("hir-test.exs", lexed.tokens, true) {
             Ok(module) => module,
             Err(diagnostics) => panic!("source did not parse: {diagnostics}"),
         }

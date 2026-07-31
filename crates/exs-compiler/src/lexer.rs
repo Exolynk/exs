@@ -25,6 +25,12 @@ pub enum TokenKind {
     String(String),
     /// The `fn` keyword.
     Fn,
+    /// The `import` keyword.
+    Import,
+    /// The `use` keyword.
+    Use,
+    /// The `as` keyword.
+    As,
     /// The `type` keyword.
     Type,
     /// The `trait` keyword.
@@ -642,6 +648,9 @@ fn valid_digit_segment(segment: &str) -> bool {
 fn keyword_or_identifier(value: &str) -> TokenKind {
     match value {
         "fn" => TokenKind::Fn,
+        "import" => TokenKind::Import,
+        "use" => TokenKind::Use,
+        "as" => TokenKind::As,
         "type" => TokenKind::Type,
         "trait" => TokenKind::Trait,
         "impl" => TokenKind::Impl,
