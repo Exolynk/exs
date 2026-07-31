@@ -10,9 +10,20 @@ impl User {
     }
 }
 
-fn test(u: User) {
-    ret u.name();
+trait Test {
+    fn auto_test(self) -> String {
+        ret "Auto Test";
+    }
+
+    fn man_test() -> String;
 }
+
+impl Test for User {
+    fn man_test() -> String {
+        ret "Manual test";
+    }
+}
+
 
 fn main() {
     let u = User {
@@ -21,5 +32,5 @@ fn main() {
         data: "myData"
     };
 
-    ret test(u);
+    ret u.auto_test();
 }

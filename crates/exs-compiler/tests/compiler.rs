@@ -410,6 +410,113 @@ fn collects_multiple_lexical_diagnostics() {
     );
 }
 
+/// Compiles trait contracts, required methods, and inherited default methods.
+#[test]
+fn compiles_traits_and_default_methods() {
+    let module = compile(
+        SourceInput {
+            source_id: "traits.exs",
+            text: r#"
+trait Label {
+    fn label(self) -> String;
+    fn category() -> String { ret "person"; }
+}
+
+type User { name: String, }
+impl Label for User {
+    fn label(self) -> String { ret self.name; }
+}
+fn main() -> String { ret User::category(); }
+"#,
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
+}
+
+/// Accepts a declared trait contract before any nominal type implements it.
+#[test]
+fn compiles_unimplemented_trait_contracts() {
+    let module = compile(
+        SourceInput {
+            source_id: "unimplemented-trait.exs",
+            text: "trait Label { fn label(self); } fn main(value: Label | None) { ret value; }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
+}
+
+/// Rejects a type and trait that share one source-visible contract name.
+#[test]
+fn rejects_type_and_trait_name_collisions() {
+    let error = match compile(
+        SourceInput {
+            source_id: "trait-name-collision.exs",
+            text: "type Label {} trait Label {} fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(error.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("conflicts with an existing type or trait")
+            && !diagnostic.related.is_empty()
+    }));
+}
+
+/// Rejects a trait implementation that omits a required method.
+#[test]
+fn rejects_missing_required_trait_methods() {
+    let error = match compile(
+        SourceInput {
+            source_id: "missing-trait-method.exs",
+            text: "trait Label { fn label(self); } type User {} impl Label for User {} fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "E0228")
+    );
+}
+
+/// Rejects method names made ambiguous by separate trait implementations for one type.
+#[test]
+fn rejects_duplicate_trait_method_names() {
+    let error = match compile(
+        SourceInput {
+            source_id: "duplicate-trait-method.exs",
+            text: r#"
+trait First { fn display(self) { ret None; } }
+trait Second { fn display(self) { ret None; } }
+type User {}
+impl First for User {}
+impl Second for User {}
+fn main() { ret None; }
+"#,
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "E0226")
+    );
+}
+
 /// Compiles a zero-parameter main entry point.
 #[test]
 fn compiles_zero_parameter_main() {

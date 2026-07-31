@@ -43,7 +43,7 @@ pub fn compile<'a>(
 ) -> Result<CompiledModule, CompileDiagnostics<'a>> {
     let lexed = lexer::lex(source);
     let mut diagnostics = lexed.diagnostics;
-    let module = match parser::parse(source.source_id, lexed.tokens) {
+    let mut module = match parser::parse(source.source_id, lexed.tokens) {
         Ok(module) => module,
         Err(parser_diagnostics) => {
             diagnostics.extend(parser_diagnostics);
@@ -55,6 +55,6 @@ pub fn compile<'a>(
         diagnostics.sort_by_span();
         return Err(diagnostics);
     }
-    let wasm = codegen::compile_module(&module, source.text, options)?;
+    let wasm = codegen::compile_module(&mut module, source.text, options)?;
     Ok(CompiledModule { wasm })
 }

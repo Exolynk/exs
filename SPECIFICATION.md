@@ -338,7 +338,7 @@ impl User {
 }
 ```
 
-A first bare `self` parameter declares an instance method, invoked as `user.display()`, and is implicitly constrained to the enclosing nominal type. A method without `self` is static and is invoked as `User::named("Ada")`. Method references are not supported. Runtime method names `push`, `pop`, `insert`, `remove`, `clear`, `has`, `delete`, `keys`, and `values` are reserved and MUST NOT be declared by an `impl` block.
+A first bare `self` parameter declares an instance method, invoked as `user.display()`, and is implicitly constrained to the enclosing nominal type. A method without `self` is static and is invoked as `User::named("Ada")`. `impl Trait for Type` uses the same method forms and is specified in the Traits section. Method references are not supported. Runtime method names `push`, `pop`, `insert`, `remove`, `clear`, `has`, `delete`, `keys`, and `values` are reserved and MUST NOT be declared by an `impl` block.
 
 ## Function and Closure
 
@@ -829,7 +829,7 @@ Top-level executable statements are not permitted. A future top-level-code featu
 
 ## Phase-1 modules and entry point
 
-Phase 1 accepts only `Function` items. The required entry point is `fn main(...)` with zero or more parameters. The runner supplies an ordered CBOR array of `ExsValue` arguments; the runtime decodes each argument to an `RtValue` before calling `main`, supplies `None` for missing positions, and returns a fatal `ArityError` for excess positions. `main` returns one ExS value with `ret`; the runner exposes None, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI accepts positional values after `--` and prints the result in ExS source notation.
+Phase 1 accepts `Function`, nominal `Type`, `Trait`, and inherent or trait `Impl` items. The required entry point is `fn main(...)` with zero or more parameters. The runner supplies an ordered CBOR array of `ExsValue` arguments; the runtime decodes each argument to an `RtValue` before calling `main`, supplies `None` for missing positions, and returns a fatal `ArityError` for excess positions. `main` returns one ExS value with `ret`; the runner exposes None, Error, Bool, Int, Float, String, and nested acyclic List and Object results as `ExsValue` without exposing `ValueRef`. The `exs run` CLI accepts positional values after `--` and prints the result in ExS source notation.
 
 ```text
 fn main(left: Int, right: Int) -> Int {
@@ -837,11 +837,11 @@ fn main(left: Int, right: Int) -> Int {
 }
 ```
 
-The module root, function-only top level, and one `main` entry remain mandatory.
+The module root and one `main` entry remain mandatory; top-level statements are not allowed.
 
 ## Future module resolution
 
-Static imports, exports, globals, traits, implementations, and user types are deferred beyond Phase 1. When introduced, imports MUST be resolved to canonical module identities before graph construction, imported bindings MUST be read-only aliases, and cycles MUST be compile errors unless a later language version explicitly defines their semantics.
+Static imports, exports, and globals are deferred beyond Phase 1. When introduced, imports MUST be resolved to canonical module identities before graph construction, imported bindings MUST be read-only aliases, and cycles MUST be compile errors unless a later language version explicitly defines their semantics.
 
 # 11 – Built-ins
 
@@ -889,7 +889,26 @@ object.values()         // new shallow List in insertion order
 
 ## Traits
 
-The built-in traits are `ToString`, `PropertyKey`, `Equality`, and `Clone`. User-defined types MAY implement traits once trait declarations and implementations are introduced. Equality for primitive values is by value and reference values use identity unless an applicable `Equality` implementation overrides that behavior. `PropertyKey` conversion is distinct from `ToString` conversion.
+Traits and nominal types share one source-visible namespace. A module MUST reject a trait whose name is already used by a nominal type, and vice versa. Built-in type names are reserved from trait declarations.
+
+```text
+trait Label {
+    fn label(self) -> String;
+    fn category() -> String { ret "person"; }
+}
+
+impl Label for User {
+    fn label(self) -> String { ret self.name; }
+}
+```
+
+A trait method ends either with `;`, making it required for every implementation, or with a block, making that block its inherited default implementation. An `impl Trait for Type` MAY omit a defaulted method and MUST implement every required method. Implementations MAY define both instance methods (first parameter `self`) and static methods. Instance methods are called with `value.method(...)`; static methods are called with `Type::method(...)`.
+
+Every method supplied by a trait implementation MUST be declared by that trait and have the same receiver shape, arity, parameter type annotations, and return type annotation. Parameter names other than `self` do not form part of the method signature. A nominal type MUST NOT expose a method name more than once across inherent and trait implementations, including inherited defaults.
+
+A trait name is valid in every existing type annotation position. For the current nominal-trait implementation, a trait contract matches an Object whose nominal type has an `impl Trait for Type` declaration. A declared trait with no implementations is valid and matches no current value. Implementing traits for primitive values and the built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits are deferred.
+
+The built-in traits are `ToString`, `PropertyKey`, `Equality`, and `Clone`. Equality for primitive values is by value and reference values use identity unless an applicable `Equality` implementation overrides that behavior. `PropertyKey` conversion is distinct from `ToString` conversion.
 
 Trait methods are potential suspension points unless the compiler proves their implementation non-suspendable. Trait dispatch is therefore represented explicitly in HIR and resolved through stable runtime ABI operations.
 
@@ -1394,10 +1413,15 @@ The compiler resolves runtime functions by these export names, never fixed Wasm 
 This grammar is normative for syntax but omits lexical Unicode productions already defined.
 
 ```ebnf
-module          = { functionDecl } ;
-declaration     = functionDecl | letDecl ;
+module          = { item } ;
+item            = functionDecl | typeDecl | traitDecl | implDecl ;
 
 functionDecl    = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] block ;
+typeDecl        = "type" identifier "{" [ typeField { "," typeField } [ "," ] ] "}" ;
+typeField       = identifier [ ":" typeUnion ] ;
+traitDecl       = "trait" identifier "{" { traitMethod } "}" ;
+traitMethod     = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] ( ";" | block ) ;
+implDecl        = "impl" identifier [ "for" identifier ] "{" { functionDecl } "}" ;
 functionExpr    = "fn" "(" parameters? ")" block ;
 parameters      = parameter { "," parameter } [ "," ] ;
 parameter       = identifier [ ":" typeUnion ] ;
@@ -1456,7 +1480,7 @@ objectItem      = ( identifier | string ) ":" expression ;
 
 Assignment targets MUST be identifiers, property accesses, or index accesses.
 
-Top-level `statement` and `letDecl` occurrences are invalid. Phase 1 accepts only `functionDecl` items and requires exactly one `fn main(...)` declaration.
+Top-level `statement` and `letDecl` occurrences are invalid. Phase 1 accepts only `functionDecl`, `typeDecl`, `traitDecl`, and `implDecl` items and requires exactly one `fn main(...)` declaration.
 
 # 20 – Conformance and Security
 

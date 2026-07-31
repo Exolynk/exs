@@ -5,6 +5,7 @@ mod function;
 mod linker;
 mod literals;
 pub mod source_map;
+mod traits;
 mod types;
 
 use crate::CompileOptions;
@@ -13,16 +14,18 @@ use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 /// Compiles a parsed module into a complete linked Wasm module.
 pub fn compile_module<'a>(
-    module: &Module<'a>,
+    module: &mut Module<'a>,
     source: &'a str,
     options: CompileOptions,
 ) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
     let mut diagnostics = types::validate(module);
+    diagnostics.extend(traits::validate(module));
     diagnostics.extend(function::validate(module));
     diagnostics.sort_by_span();
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
+    traits::apply_defaults(module);
     linker::link(module, source, options)
 }
 

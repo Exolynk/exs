@@ -80,7 +80,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Return recoverable `TypeError` for a contract mismatch when `Error` is allowed and a source-mapped fatal `TypeError` for strict return contracts. `?` requires `Error` or `Any` in the return annotation.
 - [x] Support zero or more typed `main` inputs, substitute `None` for missing values, and return fatal `ArityError` for excess values.
 - [x] Add nominal Object types with declared fields, named type contracts, explicit `None` for omitted optional fields, instance `impl` methods, and static `Type::method()` methods.
-- [ ] Add trait declarations, implementations, resolution, and dispatch.
+- [x] Add nominal trait declarations, required signatures, default methods, `impl Trait for Type` implementations, trait contracts, and instance/static dispatch. Trait and type names share one namespace; duplicate exposed method names are rejected.
 - [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
 
 ### Phase 7: Closures

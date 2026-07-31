@@ -3,10 +3,12 @@
 use crate::diagnostic::SourceSpan;
 
 /// A parsed `ExS` source unit.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Module<'a> {
     /// Named nominal Object type declarations.
     pub types: Vec<TypeDeclaration<'a>>,
+    /// Named trait declarations.
+    pub traits: Vec<TraitDeclaration<'a>>,
     /// Type-specific direct method declarations.
     pub implementations: Vec<ImplDeclaration<'a>>,
     /// Top-level direct function declarations.
@@ -14,7 +16,7 @@ pub struct Module<'a> {
 }
 
 /// A nominal Object type with declared field contracts.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeDeclaration<'a> {
     /// The source-visible type name.
     pub name: Identifier<'a>,
@@ -25,7 +27,7 @@ pub struct TypeDeclaration<'a> {
 }
 
 /// One named field of a nominal Object type.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeField<'a> {
     /// The source-visible field name.
     pub name: Identifier<'a>,
@@ -35,9 +37,11 @@ pub struct TypeField<'a> {
     pub span: SourceSpan<'a>,
 }
 
-/// The methods associated with one nominal Object type.
-#[derive(Debug)]
+/// The inherent or trait-provided methods associated with one nominal Object type.
+#[derive(Debug, Clone)]
 pub struct ImplDeclaration<'a> {
+    /// Implemented trait name, or None for an inherent implementation block.
+    pub trait_name: Option<Identifier<'a>>,
     /// The type receiving these methods.
     pub type_name: Identifier<'a>,
     /// Methods in source order.
@@ -46,8 +50,48 @@ pub struct ImplDeclaration<'a> {
     pub span: SourceSpan<'a>,
 }
 
+/// One named trait with required and default methods.
+#[derive(Debug, Clone)]
+pub struct TraitDeclaration<'a> {
+    /// The source-visible trait name.
+    pub name: Identifier<'a>,
+    /// Required and default trait methods in source order.
+    pub methods: Vec<TraitMethodDeclaration<'a>>,
+    /// Full declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+/// One required signature or default implementation declared by a trait.
+#[derive(Debug, Clone)]
+pub struct TraitMethodDeclaration<'a> {
+    /// Source-visible method name.
+    pub name: Identifier<'a>,
+    /// Positional parameters with optional type annotations.
+    pub parameters: Vec<Parameter<'a>>,
+    /// Optional union type annotation for the returned value.
+    pub return_type: Option<TypeAnnotation<'a>>,
+    /// Default body, or None when every implementation must provide this method.
+    pub body: Option<Block<'a>>,
+    /// Full declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+impl<'a> TraitMethodDeclaration<'a> {
+    /// Creates a concrete inherited method from this default declaration.
+    #[must_use]
+    pub fn default_implementation(&self) -> Option<FunctionDeclaration<'a>> {
+        self.body.clone().map(|body| FunctionDeclaration {
+            name: self.name.clone(),
+            parameters: self.parameters.clone(),
+            return_type: self.return_type.clone(),
+            body,
+            span: self.span,
+        })
+    }
+}
+
 /// A named function declaration.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FunctionDeclaration<'a> {
     /// Function name.
     pub name: Identifier<'a>,
@@ -71,7 +115,7 @@ pub struct Identifier<'a> {
 }
 
 /// One named function parameter with an optional type annotation.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Parameter<'a> {
     /// Parameter binding name.
     pub name: Identifier<'a>,
@@ -80,7 +124,7 @@ pub struct Parameter<'a> {
 }
 
 /// One optional function-boundary union type annotation.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeAnnotation<'a> {
     /// Source-spelled type members in union order.
     pub members: Vec<TypeName<'a>>,
@@ -89,7 +133,7 @@ pub struct TypeAnnotation<'a> {
 }
 
 /// One source-spelled member of a union type annotation.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeName<'a> {
     /// Type name spelling.
     pub name: String,
@@ -98,7 +142,7 @@ pub struct TypeName<'a> {
 }
 
 /// A statement block.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block<'a> {
     /// Statements in source order.
     pub statements: Vec<Statement<'a>>,
@@ -108,7 +152,7 @@ pub struct Block<'a> {
 
 /// A Phase-1 statement.
 #[allow(dead_code)] // Every statement keeps its span for later source-map emission.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Statement<'a> {
     /// A local declaration.
     Let {
@@ -186,7 +230,7 @@ pub enum Statement<'a> {
 }
 
 /// A source location that can receive an assignment.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AssignmentTarget<'a> {
     /// A local binding.
     Variable(Identifier<'a>),
@@ -211,7 +255,7 @@ pub enum AssignmentTarget<'a> {
 }
 
 /// One statically named property in an object literal.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ObjectProperty<'a> {
     /// Decoded property key.
     pub key: String,
@@ -224,7 +268,7 @@ pub struct ObjectProperty<'a> {
 }
 
 /// A Phase-1 expression.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression<'a> {
     /// An integer literal.
     Integer(i64, SourceSpan<'a>),

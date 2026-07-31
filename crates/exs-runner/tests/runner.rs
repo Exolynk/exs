@@ -108,6 +108,41 @@ fn returns_type_error_for_invalid_nominal_object_field() {
     assert_eq!(error.severity, ErrorSeverity::Recoverable);
 }
 
+/// Dispatches a required trait instance method through a trait-typed function parameter.
+#[test]
+fn dispatches_trait_instance_methods_and_validates_trait_contracts() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            trait Label { fn label(self) -> String; }
+            type User { name: String, }
+            impl Label for User { fn label(self) -> String { ret self.name; } }
+            fn render(value: Label) -> String { ret value.label(); }
+            fn main() -> String { ret render(User { name: "Ada" }); }
+        "#,
+            &[],
+        ),
+        ExsValue::String("Ada".to_owned())
+    );
+}
+
+/// Dispatches a static trait default method through its implementing nominal type.
+#[test]
+fn dispatches_inherited_static_trait_default_methods() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            trait Category { fn category() -> String { ret "person"; } }
+            type User {}
+            impl Category for User {}
+            fn main() -> String { ret User::category(); }
+        "#,
+            &[],
+        ),
+        ExsValue::String("person".to_owned())
+    );
+}
+
 /// Executes calls, assignments, conditionals, and boolean operators.
 #[test]
 fn executes_calls_assignments_conditionals_and_booleans() {

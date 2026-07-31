@@ -50,6 +50,32 @@ impl<'a> SourceMap<'a> {
                 source_map.insert(field.name.span);
             }
         }
+        for declaration in &module.traits {
+            source_map.insert(declaration.span);
+            source_map.insert(declaration.name.span);
+            for method in &declaration.methods {
+                source_map.insert(method.span);
+                source_map.insert(method.name.span);
+                for parameter in &method.parameters {
+                    source_map.insert(parameter.name.span);
+                    if let Some(annotation) = &parameter.type_annotation {
+                        source_map.insert(annotation.span);
+                        for member in &annotation.members {
+                            source_map.insert(member.span);
+                        }
+                    }
+                }
+                if let Some(annotation) = &method.return_type {
+                    source_map.insert(annotation.span);
+                    for member in &annotation.members {
+                        source_map.insert(member.span);
+                    }
+                }
+                if let Some(body) = &method.body {
+                    source_map.collect_block(body);
+                }
+            }
+        }
         for function in &module.functions {
             source_map.collect_function(function);
         }

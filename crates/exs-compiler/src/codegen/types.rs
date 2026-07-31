@@ -35,6 +35,29 @@ pub(super) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
             );
         }
     }
+    for declaration in &module.traits {
+        if builtin_mask(&declaration.name.name).is_some() {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0219",
+                declaration.name.span,
+                format!("duplicate or reserved trait `{}`", declaration.name.name),
+            ));
+        } else if let Some(previous) =
+            declarations.insert(&declaration.name.name, declaration.name.span)
+        {
+            diagnostics.push(
+                CompileDiagnostic::new(
+                    "E0219",
+                    declaration.name.span,
+                    format!(
+                        "trait `{}` conflicts with an existing type or trait",
+                        declaration.name.name
+                    ),
+                )
+                .with_related(previous, "previous declaration is here"),
+            );
+        }
+    }
     for declaration in &module.types {
         let mut fields = HashMap::new();
         for field in &declaration.fields {
@@ -83,6 +106,10 @@ pub(super) fn validate_annotation<'a>(
                 .types
                 .iter()
                 .any(|declaration| declaration.name.name == member.name)
+            && !module
+                .traits
+                .iter()
+                .any(|declaration| declaration.name.name == member.name)
         {
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
@@ -124,6 +151,7 @@ pub(super) struct NominalType {
 #[derive(Debug, Clone)]
 pub(super) struct TypeRegistry {
     types: HashMap<String, NominalType>,
+    trait_implementations: HashMap<String, Vec<u32>>,
 }
 
 impl TypeRegistry {
@@ -158,7 +186,39 @@ impl TypeRegistry {
                 },
             );
         }
-        let mut registry = Self { types };
+        let mut trait_implementations = HashMap::new();
+        for declaration in &module.traits {
+            trait_implementations.insert(declaration.name.name.clone(), Vec::new());
+        }
+        for implementation in &module.implementations {
+            let Some(trait_name) = &implementation.trait_name else {
+                continue;
+            };
+            let nominal = types.get(&implementation.type_name.name).ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    implementation.type_name.span,
+                    "missing resolved trait implementation type",
+                ))
+            })?;
+            let implementations =
+                trait_implementations
+                    .get_mut(&trait_name.name)
+                    .ok_or_else(|| {
+                        diagnostics(CompileDiagnostic::new(
+                            "E0999",
+                            trait_name.span,
+                            "missing resolved trait declaration",
+                        ))
+                    })?;
+            if !implementations.contains(&nominal.id) {
+                implementations.push(nominal.id);
+            }
+        }
+        let mut registry = Self {
+            types,
+            trait_implementations,
+        };
         for declaration in &module.types {
             let mut fields = Vec::new();
             for field in &declaration.fields {
@@ -193,7 +253,7 @@ impl TypeRegistry {
     pub(super) fn resolve<'a>(
         &self,
         annotation: Option<&TypeAnnotation<'a>>,
-        default_span: SourceSpan<'a>,
+        _default_span: SourceSpan<'a>,
     ) -> Result<TypeContract, CompileDiagnostics<'a>> {
         let Some(annotation) = annotation else {
             return Ok(TypeContract {
@@ -210,6 +270,12 @@ impl TypeRegistry {
                 if !nominal_type_ids.contains(&nominal.id) {
                     nominal_type_ids.push(nominal.id);
                 }
+            } else if let Some(implementations) = self.trait_implementations.get(&member.name) {
+                for type_id in implementations {
+                    if !nominal_type_ids.contains(type_id) {
+                        nominal_type_ids.push(*type_id);
+                    }
+                }
             } else {
                 return Err(diagnostics(CompileDiagnostic::new(
                     "E0216",
@@ -217,13 +283,6 @@ impl TypeRegistry {
                     format!("unknown type `{}`", member.name),
                 )));
             }
-        }
-        if resolved_builtin_mask == 0 && nominal_type_ids.is_empty() {
-            return Err(diagnostics(CompileDiagnostic::new(
-                "E0216",
-                default_span,
-                "type annotation cannot be empty",
-            )));
         }
         Ok(TypeContract {
             builtin_mask: resolved_builtin_mask,

@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier,
-    ImplDeclaration, Module, ObjectProperty, Parameter, Statement, TypeAnnotation, TypeDeclaration,
-    TypeField, TypeName, UnaryOperator,
+    ImplDeclaration, Module, ObjectProperty, Parameter, Statement, TraitDeclaration,
+    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{Token, TokenKind};
@@ -29,12 +29,20 @@ pub fn parse<'a>(
         diagnostics: CompileDiagnostics::new(),
     };
     let mut types = Vec::new();
+    let mut traits = Vec::new();
     let mut implementations = Vec::new();
     let mut functions = Vec::new();
     while !parser.at_end() {
         match &parser.peek().kind {
             TokenKind::Type => match parser.type_declaration() {
                 Ok(declaration) => types.push(declaration),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
+            TokenKind::Trait => match parser.trait_declaration() {
+                Ok(declaration) => traits.push(declaration),
                 Err(diagnostic) => {
                     parser.diagnostics.push(diagnostic);
                     parser.synchronize_declaration();
@@ -58,7 +66,7 @@ pub fn parse<'a>(
                 parser.diagnostics.push(parser.error(
                     parser.peek().span,
                     "E0100",
-                    "expected `type`, `impl`, or `fn` at module level",
+                    "expected `type`, `trait`, `impl`, or `fn` at module level",
                 ));
                 parser.synchronize_declaration();
             }
@@ -76,6 +84,7 @@ pub fn parse<'a>(
     }
     Ok(Module {
         types,
+        traits,
         implementations,
         functions,
     })
@@ -101,6 +110,28 @@ impl<'a> Parser<'a> {
         &mut self,
         start: SourceSpan<'a>,
     ) -> Result<FunctionDeclaration<'a>, CompileDiagnostic<'a>> {
+        let (name, parameters, return_type) = self.function_header_from_start()?;
+        let body = self.block()?;
+        Ok(FunctionDeclaration {
+            name,
+            parameters,
+            return_type,
+            span: start.through(body.span),
+            body,
+        })
+    }
+
+    /// Parses the shared signature portion of a function or trait method.
+    fn function_header_from_start(
+        &mut self,
+    ) -> Result<
+        (
+            Identifier<'a>,
+            Vec<Parameter<'a>>,
+            Option<TypeAnnotation<'a>>,
+        ),
+        CompileDiagnostic<'a>,
+    > {
         let name = self.identifier("expected function name")?;
         self.expect_simple(TokenKind::LeftParen, "expected `(` after function name")?;
         let mut parameters = Vec::new();
@@ -130,14 +161,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        let body = self.block()?;
-        Ok(FunctionDeclaration {
-            name,
-            parameters,
-            return_type,
-            span: start.through(body.span),
-            body,
-        })
+        Ok((name, parameters, return_type))
     }
 
     /// Parses one nominal Object type declaration.
@@ -185,12 +209,58 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses one implementation block for a nominal Object type.
+    /// Parses one trait declaration with required signatures and default method bodies.
+    fn trait_declaration(&mut self) -> Result<TraitDeclaration<'a>, CompileDiagnostic<'a>> {
+        let start = self
+            .expect_simple(TokenKind::Trait, "expected `trait` at module level")?
+            .span;
+        let name = self.identifier("expected trait name after `trait`")?;
+        self.expect_simple(TokenKind::LeftBrace, "expected `{` after trait name")?;
+        let mut methods = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.at_end() {
+            let method_start = self
+                .expect_simple(TokenKind::Fn, "expected `fn` inside trait block")?
+                .span;
+            let (name, parameters, return_type) = self.function_header_from_start()?;
+            let (body, end) = if self.matches(&TokenKind::Semicolon) {
+                (None, self.previous().span)
+            } else {
+                let body = self.block()?;
+                let end = body.span;
+                (Some(body), end)
+            };
+            methods.push(TraitMethodDeclaration {
+                name,
+                parameters,
+                return_type,
+                body,
+                span: method_start.through(end),
+            });
+        }
+        let end = self
+            .expect_simple(TokenKind::RightBrace, "expected `}` after trait methods")?
+            .span;
+        Ok(TraitDeclaration {
+            name,
+            methods,
+            span: start.through(end),
+        })
+    }
+
+    /// Parses one inherent or trait implementation block for a nominal Object type.
     fn implementation(&mut self) -> Result<ImplDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::Impl, "expected `impl` at module level")?
             .span;
-        let type_name = self.identifier("expected type name after `impl`")?;
+        let first_name = self.identifier("expected trait or type name after `impl`")?;
+        let (trait_name, type_name) = if self.matches(&TokenKind::For) {
+            (
+                Some(first_name),
+                self.identifier("expected type name after `for`")?,
+            )
+        } else {
+            (None, first_name)
+        };
         self.expect_simple(TokenKind::LeftBrace, "expected `{` after impl type name")?;
         let mut methods = Vec::new();
         while !self.check(&TokenKind::RightBrace) && !self.at_end() {
@@ -203,6 +273,7 @@ impl<'a> Parser<'a> {
             .expect_simple(TokenKind::RightBrace, "expected `}` after impl methods")?
             .span;
         Ok(ImplDeclaration {
+            trait_name,
             type_name,
             methods,
             span: start.through(end),
@@ -828,7 +899,7 @@ impl<'a> Parser<'a> {
         while !self.at_end()
             && !matches!(
                 self.peek().kind,
-                TokenKind::Type | TokenKind::Impl | TokenKind::Fn
+                TokenKind::Type | TokenKind::Trait | TokenKind::Impl | TokenKind::Fn
             )
         {
             self.advance();

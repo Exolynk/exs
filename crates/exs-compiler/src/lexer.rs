@@ -27,6 +27,8 @@ pub enum TokenKind {
     Fn,
     /// The `type` keyword.
     Type,
+    /// The `trait` keyword.
+    Trait,
     /// The `impl` keyword.
     Impl,
     /// The `let` keyword.
@@ -505,6 +507,7 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
     match value {
         "fn" => TokenKind::Fn,
         "type" => TokenKind::Type,
+        "trait" => TokenKind::Trait,
         "impl" => TokenKind::Impl,
         "let" => TokenKind::Let,
         "ret" => TokenKind::Ret,
