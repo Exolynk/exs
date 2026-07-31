@@ -17,6 +17,12 @@ pub fn compile_module<'a>(
     source: &'a str,
     options: CompileOptions,
 ) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
+    let mut diagnostics = types::validate(module);
+    diagnostics.extend(function::validate(module));
+    diagnostics.sort_by_span();
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
     linker::link(module, source, options)
 }
 

@@ -251,3 +251,39 @@ fn main(input) {
     assert!(stderr.contains("main"));
     assert!(!stderr.contains("WebAssembly error"));
 }
+
+/// Renders all recovered compiler diagnostics with source excerpts.
+#[test]
+fn prints_structured_compile_diagnostics() {
+    let path =
+        std::env::temp_dir().join(format!("exs-cli-compile-errors-{}.exs", std::process::id()));
+    let source = r#"
+fn main() {
+    let value = { name: "Ada"; };
+    ret value
+}
+"#;
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("run")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(!output.status.success());
+    let stderr = match String::from_utf8(output.stderr) {
+        Ok(stderr) => stderr,
+        Err(error) => panic!("CLI error output was not UTF-8: {error}"),
+    };
+    assert_eq!(stderr.matches("error: E0103 (compile syntax)").count(), 2);
+    assert!(stderr.contains("message: expected `,` or `}` after object property"));
+    assert!(stderr.contains("origin: "));
+    assert!(stderr.contains("ret value"));
+}

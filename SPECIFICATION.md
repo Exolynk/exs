@@ -930,10 +930,15 @@ The compiler library is independent of browsers, servers, concrete host function
 Compile errors MUST include:
 
 - a stable diagnostic code;
+- a stable category (`Lexical`, `Syntax`, `Semantic`, or `Internal`);
 - module identity;
 - source span;
 - concise message; and
 - related spans when relevant.
+
+The compiler API MUST return the complete ordered `CompileDiagnostics` collection. Each diagnostic is structured data containing its code, category, primary span, message, and zero or more related spans; source text itself is not retained in that data. Consumers such as IDEs can therefore map byte spans directly to their own source buffers. A source-aware terminal renderer MAY add one-based line and column numbers plus source excerpts.
+
+The lexer, parser, declaration validation, and independent function-body validation SHOULD recover at safe boundaries and report later independent errors in the same compilation. Recovery MUST NOT produce an executable module.
 
 A compiler MUST NOT emit an executable module after an error unless explicitly operating in a non-conforming recovery mode.
 

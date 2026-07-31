@@ -62,7 +62,7 @@ fn compile_source(
         },
         options,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.render(&source))
 }
 
 /// Executes a source file or linked WebAssembly module.

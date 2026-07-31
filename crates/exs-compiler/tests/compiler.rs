@@ -299,6 +299,117 @@ fn reports_a_missing_statement_semicolon() {
     assert_eq!(error.diagnostics[0].code, "E0103");
 }
 
+/// Collects independent syntax errors after recovering at statement boundaries.
+#[test]
+fn collects_multiple_syntax_diagnostics() {
+    let source = r#"
+fn main() {
+    let value = { name: "Ada"; };
+    ret value
+}
+"#;
+    let error = match compile(
+        SourceInput {
+            source_id: "syntax-errors.exs",
+            text: source,
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics.len(), 2);
+    assert!(
+        error.diagnostics.iter().all(
+            |diagnostic| diagnostic.category == exs_compiler::CompileDiagnosticCategory::Syntax
+        )
+    );
+    let rendered = error.render(source);
+    assert!(rendered.contains("error: E0103 (compile syntax)"));
+    assert!(rendered.contains("origin: syntax-errors.exs:3:"));
+    assert!(rendered.contains("ret value"));
+}
+
+/// Collects independent nominal-type and function declaration diagnostics.
+#[test]
+fn collects_multiple_semantic_diagnostics() {
+    let source = r#"
+type User {
+    name: Unknown,
+    name: Missing,
+}
+fn duplicate(value: Undefined, value: Int) -> ReturnType { ret value; }
+fn duplicate(other: AlsoUndefined) { ret other; }
+fn main() { ret None; }
+"#;
+    let error = match compile(
+        SourceInput {
+            source_id: "semantic-errors.exs",
+            text: source,
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(error.diagnostics.len() >= 6, "{error:?}");
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.category
+                == exs_compiler::CompileDiagnosticCategory::Semantic)
+    );
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .any(|diagnostic| !diagnostic.related.is_empty())
+    );
+}
+
+/// Collects independent function-body lowering diagnostics before rejecting the module.
+#[test]
+fn collects_multiple_function_body_diagnostics() {
+    let error = match compile(
+        SourceInput {
+            source_id: "body-errors.exs",
+            text: "fn first() { ret missing_first; } fn second() { ret missing_second; } fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics.len(), 2, "{error:?}");
+    assert!(error.diagnostics.iter().all(|diagnostic| {
+        diagnostic.category == exs_compiler::CompileDiagnosticCategory::Semantic
+    }));
+}
+
+/// Collects malformed tokens while continuing to lex later source text.
+#[test]
+fn collects_multiple_lexical_diagnostics() {
+    let error = match compile(
+        SourceInput {
+            source_id: "lexical-errors.exs",
+            text: "@ # fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics.len(), 2, "{error:?}");
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.category
+                == exs_compiler::CompileDiagnosticCategory::Lexical)
+    );
+}
+
 /// Compiles a zero-parameter main entry point.
 #[test]
 fn compiles_zero_parameter_main() {

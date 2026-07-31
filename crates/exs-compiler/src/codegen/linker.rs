@@ -269,8 +269,9 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             .methods
             .as_ref()
             .ok_or_else(|| self.state_error("missing implementation methods"))?;
+        let mut body_diagnostics = CompileDiagnostics::new();
         for function in &self.module.functions {
-            let mut compiler = FunctionCompiler::new(
+            let result = FunctionCompiler::new(
                 function,
                 &function.name.name,
                 FunctionCompilerContext {
@@ -282,13 +283,18 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     methods,
                 },
             )
-            .map_err(reencode::Error::UserError)?;
-            codes.function(&compiler.compile().map_err(reencode::Error::UserError)?);
+            .and_then(|mut compiler| compiler.compile());
+            match result {
+                Ok(function) => {
+                    codes.function(&function);
+                }
+                Err(function_diagnostics) => body_diagnostics.extend(function_diagnostics),
+            }
         }
         for implementation in &self.module.implementations {
             for method in &implementation.methods {
                 let key = format!("{}::{}", implementation.type_name.name, method.name.name);
-                let mut compiler = FunctionCompiler::new(
+                let result = FunctionCompiler::new(
                     method,
                     &key,
                     FunctionCompilerContext {
@@ -300,9 +306,18 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                         methods,
                     },
                 )
-                .map_err(reencode::Error::UserError)?;
-                codes.function(&compiler.compile().map_err(reencode::Error::UserError)?);
+                .and_then(|mut compiler| compiler.compile());
+                match result {
+                    Ok(function) => {
+                        codes.function(&function);
+                    }
+                    Err(function_diagnostics) => body_diagnostics.extend(function_diagnostics),
+                }
             }
+        }
+        if !body_diagnostics.is_empty() {
+            body_diagnostics.sort_by_span();
+            return Err(reencode::Error::UserError(body_diagnostics));
         }
         let main = signatures.get("main").ok_or_else(|| {
             reencode::Error::UserError(diagnostics(CompileDiagnostic::new(

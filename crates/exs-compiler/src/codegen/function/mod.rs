@@ -19,7 +19,7 @@ use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
 
 use analysis::{ROOT_FRAME_RESERVED_LOCALS, count_expressions_block, count_lets};
 pub(super) use method::MethodRegistry;
-pub(super) use signature::{FunctionSignature, add_program_types, build_signatures};
+pub(super) use signature::{FunctionSignature, add_program_types, build_signatures, validate};
 
 /// Immutable module-wide dependencies used while lowering one direct function.
 pub(super) struct FunctionCompilerContext<'a, 'module> {

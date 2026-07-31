@@ -26,36 +26,53 @@ pub fn parse<'a>(
         tokens,
         current: 0,
         type_names,
+        diagnostics: CompileDiagnostics::new(),
     };
     let mut types = Vec::new();
     let mut implementations = Vec::new();
     let mut functions = Vec::new();
     while !parser.at_end() {
         match &parser.peek().kind {
-            TokenKind::Type => types.push(
-                parser
-                    .type_declaration()
-                    .map_err(CompileDiagnostics::from)?,
-            ),
-            TokenKind::Impl => {
-                implementations.push(parser.implementation().map_err(CompileDiagnostics::from)?)
-            }
-            TokenKind::Fn => functions.push(parser.function().map_err(CompileDiagnostics::from)?),
+            TokenKind::Type => match parser.type_declaration() {
+                Ok(declaration) => types.push(declaration),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
+            TokenKind::Impl => match parser.implementation() {
+                Ok(declaration) => implementations.push(declaration),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
+            TokenKind::Fn => match parser.function() {
+                Ok(declaration) => functions.push(declaration),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
             _ => {
-                return Err(CompileDiagnostics::from(parser.error(
+                parser.diagnostics.push(parser.error(
                     parser.peek().span,
                     "E0100",
                     "expected `type`, `impl`, or `fn` at module level",
-                )));
+                ));
+                parser.synchronize_declaration();
             }
         }
     }
     if functions.is_empty() {
-        return Err(CompileDiagnostics::from(CompileDiagnostic::new(
-            "E0100",
+        parser.diagnostics.push(CompileDiagnostic::new(
+            "E0200",
             SourceSpan::empty(source_id),
             "a module must declare fn main()",
-        )));
+        ));
+    }
+    if !parser.diagnostics.is_empty() {
+        return Err(parser.diagnostics);
     }
     Ok(Module {
         types,
@@ -68,6 +85,7 @@ struct Parser<'a> {
     tokens: Vec<Token<'a>>,
     current: usize,
     type_names: HashSet<String>,
+    diagnostics: CompileDiagnostics<'a>,
 }
 
 impl<'a> Parser<'a> {
@@ -230,7 +248,13 @@ impl<'a> Parser<'a> {
             .span;
         let mut statements = Vec::new();
         while !self.check(&TokenKind::RightBrace) && !self.at_end() {
-            statements.push(self.statement()?);
+            match self.statement() {
+                Ok(statement) => statements.push(statement),
+                Err(diagnostic) => {
+                    self.diagnostics.push(diagnostic);
+                    self.synchronize_statement();
+                }
+            }
         }
         let end = self
             .expect_simple(TokenKind::RightBrace, "expected `}` after block")?
@@ -247,9 +271,10 @@ impl<'a> Parser<'a> {
             let name = self.identifier("expected binding name after `let`")?;
             self.expect_simple(TokenKind::Equal, "Phase 1 requires a `let` initializer")?;
             let value = self.expression()?;
-            let end = self
-                .expect_simple(TokenKind::Semicolon, "expected `;` after let declaration")?
-                .span;
+            let end = self.expect_statement_semicolon(
+                expression_span(&value),
+                "expected `;` after let declaration",
+            )?;
             return Ok(Statement::Let {
                 name,
                 value,
@@ -263,9 +288,10 @@ impl<'a> Parser<'a> {
             } else {
                 Some(self.expression()?)
             };
-            let end = self
-                .expect_simple(TokenKind::Semicolon, "expected `;` after return")?
-                .span;
+            let end = self.expect_statement_semicolon(
+                value.as_ref().map_or(start, expression_span),
+                "expected `;` after return",
+            )?;
             return Ok(Statement::Return {
                 value,
                 span: start.through(end),
@@ -336,9 +362,10 @@ impl<'a> Parser<'a> {
             let start = expression_span(&expression);
             let target = self.assignment_target(expression)?;
             let value = self.expression()?;
-            let end = self
-                .expect_simple(TokenKind::Semicolon, "expected `;` after assignment")?
-                .span;
+            let end = self.expect_statement_semicolon(
+                expression_span(&value),
+                "expected `;` after assignment",
+            )?;
             return Ok(Statement::Assign {
                 target,
                 value,
@@ -346,9 +373,7 @@ impl<'a> Parser<'a> {
             });
         }
         let start = expression_span(&expression);
-        let end = self
-            .expect_simple(TokenKind::Semicolon, "expected `;` after expression")?
-            .span;
+        let end = self.expect_statement_semicolon(start, "expected `;` after expression")?;
         Ok(Statement::Expression {
             expression,
             span: start.through(end),
@@ -669,9 +694,19 @@ impl<'a> Parser<'a> {
                     value,
                     span: property_span,
                 });
-                if !self.matches(&TokenKind::Comma) || self.check(&TokenKind::RightBrace) {
-                    break;
+                if self.matches(&TokenKind::Comma) || self.check(&TokenKind::RightBrace) {
+                    if self.check(&TokenKind::RightBrace) {
+                        break;
+                    }
+                    continue;
                 }
+                let diagnostic = self.error(
+                    self.peek().span,
+                    "E0103",
+                    "expected `,` or `}` after object property",
+                );
+                self.synchronize_delimited(TokenKind::RightBrace);
+                return Err(diagnostic);
             }
         }
         Ok(properties)
@@ -747,6 +782,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Requires one statement terminator and anchors a missing terminator at the statement end.
+    fn expect_statement_semicolon(
+        &mut self,
+        statement_end: SourceSpan<'a>,
+        message: &str,
+    ) -> Result<SourceSpan<'a>, CompileDiagnostic<'a>> {
+        if self.check(&TokenKind::Semicolon) {
+            return Ok(self.advance().span);
+        }
+        let span = SourceSpan {
+            source_id: statement_end.source_id,
+            start_byte: statement_end.end_byte,
+            end_byte: statement_end.end_byte,
+        };
+        Err(self.error(span, "E0103", message))
+    }
+
     fn matches(&mut self, expected: &TokenKind) -> bool {
         if self.check(expected) {
             self.advance();
@@ -769,6 +821,52 @@ impl<'a> Parser<'a> {
 
     fn at_end(&self) -> bool {
         matches!(self.peek().kind, TokenKind::Eof)
+    }
+
+    /// Skips tokens until the next top-level declaration can be parsed independently.
+    fn synchronize_declaration(&mut self) {
+        while !self.at_end()
+            && !matches!(
+                self.peek().kind,
+                TokenKind::Type | TokenKind::Impl | TokenKind::Fn
+            )
+        {
+            self.advance();
+        }
+    }
+
+    /// Skips a malformed statement while preserving its enclosing block terminator.
+    fn synchronize_statement(&mut self) {
+        while !self.at_end() {
+            if self.matches(&TokenKind::Semicolon) {
+                return;
+            }
+            if self.check(&TokenKind::RightBrace)
+                || matches!(
+                    self.peek().kind,
+                    TokenKind::Let
+                        | TokenKind::Ret
+                        | TokenKind::If
+                        | TokenKind::While
+                        | TokenKind::For
+                        | TokenKind::Break
+                        | TokenKind::Continue
+                )
+            {
+                return;
+            }
+            self.advance();
+        }
+    }
+
+    /// Skips malformed delimited content and consumes its closing delimiter when present.
+    fn synchronize_delimited(&mut self, terminator: TokenKind) {
+        while !self.at_end() && !self.check(&terminator) {
+            self.advance();
+        }
+        if self.check(&terminator) {
+            self.advance();
+        }
     }
 
     fn peek(&self) -> &Token<'a> {

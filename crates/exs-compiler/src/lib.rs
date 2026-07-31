@@ -9,7 +9,9 @@ mod parser;
 pub use codegen::source_map::{
     DebugInfoError, FunctionDebugInfo, ModuleDebugInfo, SourcePosition, read_debug_info,
 };
-pub use diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
+pub use diagnostic::{
+    CompileDiagnostic, CompileDiagnosticCategory, CompileDiagnostics, RelatedSpan, SourceSpan,
+};
 
 /// Immutable source input supplied to the compiler.
 #[derive(Debug, Clone, Copy)]
@@ -39,8 +41,20 @@ pub fn compile<'a>(
     source: SourceInput<'a>,
     options: CompileOptions,
 ) -> Result<CompiledModule, CompileDiagnostics<'a>> {
-    let tokens = lexer::lex(source).map_err(CompileDiagnostics::from)?;
-    let module = parser::parse(source.source_id, tokens)?;
+    let lexed = lexer::lex(source);
+    let mut diagnostics = lexed.diagnostics;
+    let module = match parser::parse(source.source_id, lexed.tokens) {
+        Ok(module) => module,
+        Err(parser_diagnostics) => {
+            diagnostics.extend(parser_diagnostics);
+            diagnostics.sort_by_span();
+            return Err(diagnostics);
+        }
+    };
+    if !diagnostics.is_empty() {
+        diagnostics.sort_by_span();
+        return Err(diagnostics);
+    }
     let wasm = codegen::compile_module(&module, source.text, options)?;
     Ok(CompiledModule { wasm })
 }

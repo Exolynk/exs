@@ -10,6 +10,111 @@ use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
+/// Collects independent function and implementation declaration diagnostics before linking.
+pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
+    let mut diagnostics = CompileDiagnostics::new();
+    let mut signatures = HashMap::new();
+    for function in &module.functions {
+        validate_function(module, function, None, &mut signatures, &mut diagnostics);
+    }
+    for implementation in &module.implementations {
+        let nominal = module
+            .types
+            .iter()
+            .find(|declaration| declaration.name.name == implementation.type_name.name);
+        if nominal.is_none() {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0216",
+                implementation.type_name.span,
+                format!("unknown type `{}`", implementation.type_name.name),
+            ));
+        }
+        for method in &implementation.methods {
+            if RESERVED_METHOD_NAMES.contains(&method.name.name.as_str()) {
+                diagnostics.push(CompileDiagnostic::new(
+                    "E0223",
+                    method.name.span,
+                    format!("method `{}` is reserved by the runtime", method.name.name),
+                ));
+            }
+            validate_function(
+                module,
+                method,
+                nominal.map(|declaration| declaration.name.name.as_str()),
+                &mut signatures,
+                &mut diagnostics,
+            );
+        }
+    }
+    if !signatures.contains_key("main") {
+        diagnostics.push(CompileDiagnostic::new(
+            "E0200",
+            module_span(module),
+            "missing fn main()",
+        ));
+    }
+    diagnostics
+}
+
+/// Validates one function declaration without assigning its linked Wasm index.
+fn validate_function<'a>(
+    module: &Module<'a>,
+    function: &FunctionDeclaration<'a>,
+    implementation_type: Option<&str>,
+    signatures: &mut HashMap<String, SourceSpan<'a>>,
+    diagnostics: &mut CompileDiagnostics<'a>,
+) {
+    let key = implementation_type.map_or_else(
+        || function.name.name.clone(),
+        |type_name| format!("{type_name}::{}", function.name.name),
+    );
+    if let Some(previous) = signatures.insert(key.clone(), function.name.span) {
+        diagnostics.push(
+            CompileDiagnostic::new(
+                "E0201",
+                function.name.span,
+                format!("duplicate function `{key}`"),
+            )
+            .with_related(previous, "previous function declaration is here"),
+        );
+    }
+    let mut parameters = HashMap::new();
+    for (index, parameter) in function.parameters.iter().enumerate() {
+        if let Some(previous) = parameters.insert(&parameter.name.name, parameter.name.span) {
+            diagnostics.push(
+                CompileDiagnostic::new(
+                    "E0202",
+                    parameter.name.span,
+                    format!("duplicate parameter `{}`", parameter.name.name),
+                )
+                .with_related(previous, "previous parameter declaration is here"),
+            );
+        }
+        if index == 0 && implementation_type.is_some() && parameter.name.name == "self" {
+            if parameter.type_annotation.is_some() {
+                diagnostics.push(CompileDiagnostic::new(
+                    "E0224",
+                    parameter.name.span,
+                    "the implicit impl receiver `self` cannot have a type annotation",
+                ));
+            }
+        } else {
+            crate::codegen::types::validate_annotation(
+                module,
+                parameter.type_annotation.as_ref(),
+                parameter.name.span,
+                diagnostics,
+            );
+        }
+    }
+    crate::codegen::types::validate_annotation(
+        module,
+        function.return_type.as_ref(),
+        function.name.span,
+        diagnostics,
+    );
+}
+
 /// The linked Wasm function index and source arity of one ExS function.
 #[derive(Debug, Clone)]
 pub(in crate::codegen) struct FunctionSignature {

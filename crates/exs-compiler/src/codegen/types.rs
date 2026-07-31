@@ -11,6 +11,88 @@ use crate::ast::{Module, TypeAnnotation};
 use crate::codegen::diagnostics;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
+/// Collects independent nominal type declaration and field contract diagnostics.
+pub(super) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
+    let mut diagnostics = CompileDiagnostics::new();
+    let mut declarations = HashMap::new();
+    for declaration in &module.types {
+        if builtin_mask(&declaration.name.name).is_some() {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0219",
+                declaration.name.span,
+                format!("duplicate or reserved type `{}`", declaration.name.name),
+            ));
+        } else if let Some(previous) =
+            declarations.insert(&declaration.name.name, declaration.name.span)
+        {
+            diagnostics.push(
+                CompileDiagnostic::new(
+                    "E0219",
+                    declaration.name.span,
+                    format!("duplicate or reserved type `{}`", declaration.name.name),
+                )
+                .with_related(previous, "previous declaration is here"),
+            );
+        }
+    }
+    for declaration in &module.types {
+        let mut fields = HashMap::new();
+        for field in &declaration.fields {
+            if let Some(previous) = fields.insert(&field.name.name, field.name.span) {
+                diagnostics.push(
+                    CompileDiagnostic::new(
+                        "E0220",
+                        field.name.span,
+                        format!("duplicate field `{}`", field.name.name),
+                    )
+                    .with_related(previous, "previous field declaration is here"),
+                );
+            }
+            validate_annotation(
+                module,
+                field.type_annotation.as_ref(),
+                field.name.span,
+                &mut diagnostics,
+            );
+        }
+    }
+    diagnostics
+}
+
+/// Validates every member of one optional source type annotation.
+pub(super) fn validate_annotation<'a>(
+    module: &Module<'a>,
+    annotation: Option<&TypeAnnotation<'a>>,
+    default_span: SourceSpan<'a>,
+    diagnostics: &mut CompileDiagnostics<'a>,
+) {
+    let Some(annotation) = annotation else {
+        return;
+    };
+    if annotation.members.is_empty() {
+        diagnostics.push(CompileDiagnostic::new(
+            "E0216",
+            default_span,
+            "type annotation cannot be empty",
+        ));
+        return;
+    }
+    for member in &annotation.members {
+        if builtin_mask(&member.name).is_none()
+            && !module
+                .types
+                .iter()
+                .any(|declaration| declaration.name.name == member.name)
+        {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0216",
+                member.span,
+                format!("unknown type `{}`", member.name),
+            ));
+        }
+    }
+}
+
 /// One resolved runtime type contract.
 #[derive(Debug, Clone)]
 pub(super) struct TypeContract {

@@ -1,7 +1,7 @@
 //! Lexer for the Phase-1 `ExS` grammar.
 
 use crate::SourceInput;
-use crate::diagnostic::{CompileDiagnostic, SourceSpan};
+use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 /// A token plus its source span.
 #[derive(Debug, Clone)]
@@ -115,10 +115,19 @@ pub enum TokenKind {
     Eof,
 }
 
-/// Lexes a UTF-8 source input into Phase-1 tokens.
-pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnostic<'a>> {
+/// The best-effort output of tokenizing one ExS source input.
+pub struct Lexed<'a> {
+    /// Tokens recognized after malformed source fragments were skipped.
+    pub tokens: Vec<Token<'a>>,
+    /// All lexical diagnostics encountered while tokenizing the source.
+    pub diagnostics: CompileDiagnostics<'a>,
+}
+
+/// Lexes a UTF-8 source input while recovering after malformed token fragments.
+pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
     let bytes = source.text.as_bytes();
     let mut tokens = Vec::new();
+    let mut diagnostics = CompileDiagnostics::new();
     let mut index = 0;
 
     while index < bytes.len() {
@@ -141,13 +150,14 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                 index += 1;
             }
             if index + 1 == bytes.len() {
-                return Err(diagnostic(
+                diagnostics.push(diagnostic(
                     source,
                     start,
                     bytes.len(),
                     "E0002",
                     "unterminated block comment",
                 ));
+                break;
             }
             index += 2;
             continue;
@@ -158,13 +168,14 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
             let integer_start = index;
             index = consume_digits(bytes, index);
             if !valid_digit_segment(&source.text[integer_start..index]) {
-                return Err(diagnostic(
+                diagnostics.push(diagnostic(
                     source,
                     start,
                     index,
                     "E0003",
                     "invalid numeric separator",
                 ));
+                continue;
             }
             let mut is_float = false;
             if bytes.get(index) == Some(&b'.') {
@@ -173,13 +184,14 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                 let fraction_start = index;
                 index = consume_digits(bytes, index);
                 if !valid_digit_segment(&source.text[fraction_start..index]) {
-                    return Err(diagnostic(
+                    diagnostics.push(diagnostic(
                         source,
                         start,
                         index,
                         "E0003",
                         "invalid floating-point fraction",
                     ));
+                    continue;
                 }
             }
             if matches!(bytes.get(index), Some(b'e' | b'E')) {
@@ -191,41 +203,57 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                 let exponent_start = index;
                 index = consume_digits(bytes, index);
                 if !valid_digit_segment(&source.text[exponent_start..index]) {
-                    return Err(diagnostic(
+                    diagnostics.push(diagnostic(
                         source,
                         start,
                         index,
                         "E0003",
                         "invalid floating-point exponent",
                     ));
+                    continue;
                 }
             }
             let numeric = source.text[start..index].replace('_', "");
             if is_float {
-                let value = numeric.parse::<f64>().map_err(|_| {
-                    diagnostic(
-                        source,
-                        start,
-                        index,
-                        "E0005",
-                        "invalid floating-point literal",
-                    )
-                })?;
+                let value = match numeric.parse::<f64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        diagnostics.push(diagnostic(
+                            source,
+                            start,
+                            index,
+                            "E0005",
+                            "invalid floating-point literal",
+                        ));
+                        continue;
+                    }
+                };
                 TokenKind::Float(value)
             } else {
-                let value = numeric.parse::<i64>().map_err(|_| {
-                    diagnostic(
-                        source,
-                        start,
-                        index,
-                        "E0004",
-                        "integer literal is outside i64 range",
-                    )
-                })?;
+                let value = match numeric.parse::<i64>() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        diagnostics.push(diagnostic(
+                            source,
+                            start,
+                            index,
+                            "E0004",
+                            "integer literal is outside i64 range",
+                        ));
+                        continue;
+                    }
+                };
                 TokenKind::Integer(value)
             }
         } else if byte == b'"' {
-            string_literal(source, &mut index, start)?
+            match string_literal(source, &mut index, start) {
+                Ok(token) => token,
+                Err(error) => {
+                    diagnostics.push(error);
+                    recover_string(bytes, &mut index);
+                    continue;
+                }
+            }
         } else if let Some(character) = source.text[index..].chars().next() {
             if character == '_' || character.is_alphabetic() {
                 index += character.len_utf8();
@@ -295,13 +323,14 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
                     b'|' => TokenKind::Pipe,
                     b'?' => TokenKind::Question,
                     _ => {
-                        return Err(diagnostic(
+                        diagnostics.push(diagnostic(
                             source,
                             start,
                             index,
                             "E0001",
                             format!("unexpected character `{character}`"),
                         ));
+                        continue;
                     }
                 }
             }
@@ -318,7 +347,20 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Result<Vec<Token<'a>>, CompileDiagnos
         kind: TokenKind::Eof,
         span: span(source, bytes.len(), bytes.len()),
     });
-    Ok(tokens)
+    Lexed {
+        tokens,
+        diagnostics,
+    }
+}
+
+/// Skips a malformed string remainder without consuming the following source line.
+fn recover_string(bytes: &[u8], index: &mut usize) {
+    while *index < bytes.len() && !matches!(bytes[*index], b'"' | b'\n' | b'\r') {
+        *index += 1;
+    }
+    if bytes.get(*index) == Some(&b'"') {
+        *index += 1;
+    }
 }
 
 /// Reads one double-quoted string literal and decodes its supported escapes.
