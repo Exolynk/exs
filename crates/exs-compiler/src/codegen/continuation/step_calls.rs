@@ -128,11 +128,11 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.call_runtime("__exs_rt_list_new", span)?;
-        self.function
-            .instruction(&Instruction::LocalSet(self.scratch_local));
+        // The method-name allocation below can collect values held only in Wasm locals. Keep
+        // this temporary argument List in the destination's durable async-frame slot instead.
+        self.set_slot(destination, span)?;
         for argument in arguments {
-            self.function
-                .instruction(&Instruction::LocalGet(self.scratch_local));
+            self.get_slot(destination, span)?;
             self.get_slot(*argument, span)?;
             self.call_runtime("__exs_rt_append", span)?;
             self.function.instruction(&Instruction::Drop);
@@ -141,8 +141,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function.instruction(&Instruction::LocalSet(2));
         self.get_slot(receiver, span)?;
         self.function.instruction(&Instruction::LocalGet(2));
-        self.function
-            .instruction(&Instruction::LocalGet(self.scratch_local));
+        self.get_slot(destination, span)?;
         self.call_runtime("__exs_rt_call_method", span)?;
         self.set_slot(destination, span)?;
         self.ready(next, span)

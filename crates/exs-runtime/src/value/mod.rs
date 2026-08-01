@@ -1,6 +1,7 @@
 //! Runtime value payloads and dynamic value operations.
 
 mod cell;
+pub(crate) mod clone;
 mod closure;
 mod error;
 pub(crate) mod list;

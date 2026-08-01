@@ -444,6 +444,7 @@ dependencies = [
  "dlmalloc",
  "exs-abi",
  "exs-value",
+ "libm",
 ]
 
 [[package]]

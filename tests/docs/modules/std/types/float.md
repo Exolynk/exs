@@ -1,7 +1,63 @@
 # Type `std::Float`
 
-A globally available IEEE-754 floating-point value.
+`Float` uses IEEE-754 binary64 values, including infinities, signed zero, and NaN. Mixed arithmetic promotes the other numeric operand to Float.
 
 ```exs
 type Float
 ```
+
+## Usage
+
+```exs
+fn main() -> Float {
+    let price = 19.95;
+    ret price * 1.19;
+}
+```
+
+## Implemented Methods
+
+### `abs() -> Float`
+
+Returns the non-negative floating-point magnitude. It preserves Float semantics for signed zero, infinities, and NaN.
+
+```exs
+fn main() {
+    let delta = -1.5;
+    let magnitude = delta.abs(); // 1.5
+}
+```
+
+### `floor() -> Float`
+
+Rounds down to the greatest integral Float that is not greater than the receiver. The result remains Float so it composes with floating-point arithmetic.
+
+```exs
+fn main() {
+    let page = 3.8;
+    let first_index = page.floor(); // 3.0
+}
+```
+
+### `ceil() -> Float`
+
+Rounds up to the least integral Float that is not less than the receiver. The result remains Float.
+
+```exs
+fn main() {
+    let pages = 3.2;
+    let required = pages.ceil(); // 4.0
+}
+```
+
+### `round() -> Float`
+
+Rounds to the nearest integral Float. Exact halfway values are rounded away from zero, so `1.5` becomes `2.0` and `-1.5` becomes `-2.0`.
+
+```exs
+fn main() {
+    let rating = 4.5;
+    let displayed = rating.round(); // 5.0
+}
+```
+

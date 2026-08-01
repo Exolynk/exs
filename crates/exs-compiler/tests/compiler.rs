@@ -147,6 +147,8 @@ fn generates_markdown_api_documentation() {
         .find(|page| page.path == "modules/std/fn/host-call.md")
         .unwrap_or_else(|| panic!("missing std host.call page"));
     assert!(host_call.markdown.contains("host.call(name, arguments...)"));
+    assert!(host_call.markdown.contains("## Usage"));
+    assert!(host_call.markdown.contains("fn main()"));
     let standard = documentation
         .pages
         .iter()
@@ -165,7 +167,17 @@ fn generates_markdown_api_documentation() {
         .find(|page| page.path == "modules/std/types/error.md")
         .unwrap_or_else(|| panic!("missing std Error type page"));
     assert!(error.markdown.contains("## Constructor"));
+    let any = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/any.md")
+        .unwrap_or_else(|| panic!("missing std Any page"));
+    assert!(any.markdown.contains("clone() -> Any | Error"));
+    assert!(any.markdown.contains("preserving aliases and cycles"));
     assert!(error.markdown.contains("Error(kind, message, data)"));
+    assert!(error.markdown.contains("### `kind() -> String`"));
+    assert!(error.markdown.contains("machine-readable category"));
+    assert!(error.markdown.contains("fn main()"));
     assert!(
         documentation
             .pages
@@ -177,7 +189,16 @@ fn generates_markdown_api_documentation() {
         .iter()
         .find(|page| page.path == "modules/std/types/list.md")
         .unwrap_or_else(|| panic!("missing standard List page"));
-    assert!(list.markdown.contains("### `push(value)`"));
+    assert!(list.markdown.contains("### `push(value) -> Int`"));
+    assert!(list.markdown.contains("### `length() -> Int`"));
+    assert!(list.markdown.contains("mutates the existing List"));
+    assert!(list.markdown.contains("let items = [\"Ada\"];"));
+    let float = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/float.md")
+        .unwrap_or_else(|| panic!("missing standard Float page"));
+    assert!(float.markdown.contains("### `round() -> Float`"));
 }
 
 /// Resolves compiler-test source files from an in-memory canonical source table.

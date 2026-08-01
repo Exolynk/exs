@@ -139,12 +139,12 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 14: Standard Library & Deep Clone
 
-- [ ] Define a deliberately small direct method API for `Int`, `Float`, `String`, `List`, `Object`, and `Error`.
-- [ ] Render built-in method signatures and behavior on the relevant `std` type pages.
-- [ ] Implement automatic deep `value.clone()` for mutable graphs.
-- [ ] Preserve aliases and cycles while cloning Lists, Objects, Errors, nominal Objects, enums, Cells, and Closures.
-- [ ] Reuse immutable values where safe and reject cloning unsupported HostResources.
-- [ ] Keep clone behavior uniform; defer user-defined clone overrides.
+- [x] Define a deliberately small direct method API for `Int`, `Float`, `String`, `List`, `Object`, and `Error`.
+- [x] Render built-in method signatures and behavior on the relevant `std` type pages.
+- [x] Implement automatic deep `value.clone()` for mutable graphs.
+- [x] Preserve aliases and cycles while cloning Lists, Objects, Errors, nominal Objects, enums, Cells, and Closures.
+- [x] Reuse immutable values where safe and reject cloning unsupported HostResources.
+- [x] Keep clone behavior uniform; defer user-defined clone overrides.
 
 ### Phase 15: Extensible Protocols & Operators
 

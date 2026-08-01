@@ -1636,6 +1636,214 @@ fn executes_string_literals_and_content_equality() {
     );
 }
 
+/// Executes the direct Int and Float methods supplied by the standard runtime.
+#[test]
+fn executes_standard_numeric_methods() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> Float {
+                    let integer = -42;
+                    let float = -1.5;
+                    ret integer.abs() + float.abs().ceil() + float.floor() + float.round();
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::Float(40.0)
+    );
+}
+
+/// Executes standard length and emptiness methods for String, List, and Object values.
+#[test]
+fn executes_standard_collection_methods() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> Int {
+                    let text = "🙂";
+                    let list = [1, 2];
+                    let object = { value: 3 };
+                    if text.length() == 1
+                        && !text.is_empty()
+                        && list.length() == 2
+                        && !list.is_empty()
+                        && object.length() == 1
+                        && !object.is_empty() {
+                        ret 4;
+                    }
+                    ret 0;
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::Int(4)
+    );
+}
+
+/// Reads every source-visible Error field through its standard methods.
+#[test]
+fn executes_standard_error_methods() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> Int {
+                    let error = Error("Example", "example message", 7);
+                    if error.kind() == "Example"
+                        && error.message() == "example message"
+                        && error.cause() == None {
+                        ret error.data();
+                    }
+                    ret 0;
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::Int(7)
+    );
+}
+
+/// Deeply clones mutable Lists while preserving aliases within the clone only.
+#[test]
+fn clones_mutable_graphs_without_mutating_the_source() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List {
+                    let shared = [1];
+                    let original = [shared, shared];
+                    let copy = original.clone();
+                    copy[0].push(2);
+                    ret [original[0].length(), copy[0].length(), copy[1].length()];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2), ExsValue::Int(2)])
+    );
+}
+
+/// Preserves a List cycle while making the clone independent of its source graph.
+#[test]
+fn clones_cyclic_lists() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List {
+                    let original = [];
+                    original.push(original);
+                    let copy = original.clone();
+                    copy.push(1);
+                    ret [original.length(), copy.length(), copy[0].length()];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2), ExsValue::Int(2)])
+    );
+}
+
+/// Deeply clones Error data rather than retaining mutable source data by reference.
+#[test]
+fn clones_error_data_graphs() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List {
+                    let original = Error("Invalid", "example", [1]);
+                    let copy = original.clone();
+                    let copied_data = copy.data();
+                    copied_data.push(2);
+                    ret [original.data().length(), copied_data.length()];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)])
+    );
+}
+
+/// Clones Objects and enum payloads without retaining mutable source fields.
+#[test]
+fn clones_objects_and_enum_payloads() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                enum Container {
+                    Items(values),
+                }
+
+                impl Container {
+                    fn items(self) -> List {
+                        ret match self {
+                            Container::Items(values) => values,
+                        };
+                    }
+                }
+
+                fn main() -> List {
+                    let object = { values: [1] };
+                    let object_copy = object.clone();
+                    let object_values = object["values"];
+                    let copied_object_values = object_copy["values"];
+                    copied_object_values.push(2);
+
+                    let enum_value = Container::Items([1]);
+                    let enum_copy = enum_value.clone();
+                    let enum_values = enum_value.items();
+                    let copied_enum_values = enum_copy.items();
+                    copied_enum_values.push(2);
+
+                    ret [
+                        object_values[0],
+                        copied_object_values[1],
+                        enum_values[0],
+                        copied_enum_values[1],
+                    ];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(1),
+            ExsValue::Int(2),
+            ExsValue::Int(1),
+            ExsValue::Int(2),
+        ])
+    );
+}
+
+/// Clones closures into independent capture Cells while retaining their function identity.
+#[test]
+fn clones_closures_with_independent_captured_cells() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List {
+                    let count = 0;
+                    let original = () => {
+                        count = count + 1;
+                        ret count;
+                    };
+                    let copy = original.clone();
+                    let original_first = original();
+                    let copy_first = copy();
+                    let original_second = original();
+                    let copy_second = copy();
+                    ret [original_first, copy_first, original_second, copy_second];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(1),
+            ExsValue::Int(1),
+            ExsValue::Int(2),
+            ExsValue::Int(2),
+        ])
+    );
+}
+
 /// Preserves list reference semantics through dynamic index and member dispatch.
 #[test]
 fn executes_list_literals_index_assignment_and_push() {

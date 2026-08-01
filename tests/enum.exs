@@ -14,7 +14,7 @@ impl Color {
     fn as_number(self) -> Int {
         ret match self {
             Color::Rgb(r, g, b) => r + g + b,
-            Color::Name(_) => 0,
+            Color::Name(s) => s.length(),
             Color::Transparent => {ret -1;}
         };
     }

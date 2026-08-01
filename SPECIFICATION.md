@@ -77,9 +77,9 @@ Normal source execution is strictly sequential. The compiler MUST NOT automatica
 7.  ExS has no exceptions and performs no exception stack unwinding.
 8.  Only `par` creates language tasks.
 9.  Tasks share one heap within a root execution.
-10. Clone is a built-in, deep operation. A built-in primitive clone is synchronous; a user-defined clone implementation MAY suspend.
+10. Clone is a built-in, synchronous deep operation.
 11. Clone preserves cycles and aliasing.
-12. `HostResource` values are not ordinary CBOR values and are not cloneable by default.
+12. `HostResource` values are not ordinary CBOR values and are not cloneable.
 13. One WebAssembly instance executes no more than one root execution at a time.
 14. A root execution MAY have multiple hostcalls outstanding.
 15. Runner-limit violations terminate the entire root execution.
@@ -274,11 +274,15 @@ This is a signed 56-bit range including the sign bit.
 
 An integer literal outside this range is a compile error. Integer arithmetic that exceeds the range produces `IntOverflowError`.
 
+`integer.abs()` returns its non-negative `Int` value. It returns `IntOverflowError` for the unique minimum-range value whose absolute value cannot be represented by `Int`.
+
 ## Float
 
 `Float` uses IEEE 754 binary64 semantics. Implementations MUST preserve all finite binary64 values, infinities, signed zero, and NaN.
 
 Mixed Bool/Int/Float arithmetic converts Bool to Int first. Any operation with a Float converts the other numeric operand to binary64 before applying the operation.
+
+`float.abs()`, `float.floor()`, `float.ceil()`, and `float.round()` return Float values. `round()` rounds exact halfway values away from zero.
 
 ## String
 
@@ -288,7 +292,7 @@ String indexing returns a one-scalar String. An invalid index produces `IndexErr
 
 The current implementation supports double-quoted literals and the required escapes, boxed immutable runtime strings, CBOR String input and output, and content equality. The compiler emits each unique literal as a passive Wasm data segment. At evaluation, generated code copies the segment to a runtime-owned temporary buffer with `memory.init`; `__exs_rt_string_new` validates the complete UTF-8 sequence and copies it into `RuntimeString`. Literal data is therefore never placed in an address range that can overlap the runtime allocator.
 
-String indexing and other String operations are deferred beyond the current implementation slice.
+String indexing and other String operations are deferred beyond the current implementation slice. `string.length()` returns its Unicode scalar count, and `string.is_empty()` returns whether that count is zero.
 
 ## List
 
@@ -298,7 +302,7 @@ List indexes are zero-based `Int` values. Negative indexes are invalid.
 
 The current implementation supports `[]`, comma-separated list literals, dynamic `value[index]` reads, `value[index] = replacement;` writes, and member-call lowering through `__exs_rt_call_method(receiver, method, arguments)`. The compiler does not establish a receiver type: `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_append`, and `__exs_rt_call_method` dispatch from the runtime `RtValue`. Lists implement `push(value)`, `pop()`, `insert(index, value)`, `remove(index)`, and `clear()`. `push` returns the new length; `pop` returns `None` when empty; `insert` and `clear` return `None`; and `remove` returns the removed value. `list + value` returns a new shallow List with `value` appended; `list + list` returns a new shallow chained List. Neither `+` form mutates its source Lists. Invalid receivers return `TypeError`, invalid indexes return `IndexError`, and incorrect method arity returns `ArityError`.
 
-Nested acyclic Lists cross the current CBOR boundary as arrays. The runtime can create cyclic Lists, but serializing one currently traps; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
+`list.length()` returns the current element count and `list.is_empty()` returns whether it is zero. Nested acyclic Lists cross the current CBOR boundary as arrays. The runtime can create cyclic Lists, but serializing one currently traps; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
 
 ## Object
 
@@ -306,7 +310,7 @@ An `Object` is a mutable mapping from String keys to `Value` references. Key ite
 
 The current implementation stores Objects as boxed insertion-ordered entries. It supports `{ key: value, "key": value }` literals, dynamic `object[key]` reads and writes, dot-property reads and writes, and identity equality. Missing Object reads return `None`; writes create or replace a property. `has(key)`, `delete(key)`, `keys()`, and `values()` are dispatched by `__exs_rt_call_method`; `keys()` and `values()` return new Lists in insertion order. Unsupported receivers and non-String keys return `TypeError`; an unknown method returns `MethodNotFound`.
 
-Nested acyclic Objects cross the current CBOR boundary as text-keyed maps in their insertion order. The runtime currently traps when serializing a container cycle; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
+`object.length()` returns the current entry count and `object.is_empty()` returns whether it is zero. Nested acyclic Objects cross the current CBOR boundary as text-keyed maps in their insertion order. The runtime currently traps when serializing a container cycle; graph-reference CBOR encoding is deferred to the Error/host-boundary work.
 
 ## Nominal Object types
 
@@ -390,7 +394,7 @@ An `Error` is a recoverable failure value with the properties defined in the Err
 
 ## HostResource
 
-A `HostResource` is an opaque host-owned capability or handle. Its internal identity and lifetime are host-defined. A program may pass it back to compatible host operations but may not inspect, persist, or serialize it as an ordinary value. It is cloneable only when an applicable user-defined Clone implementation explicitly supports its capability contract.
+A `HostResource` is an opaque host-owned capability or handle. Its internal identity and lifetime are host-defined. A program may pass it back to compatible host operations but may not inspect, clone, persist, or serialize it as an ordinary value.
 
 # 04 – Variables and Scope
 
@@ -457,7 +461,7 @@ value.name
 value["name"]
 ```
 
-Dot access is equivalent to indexing with the property name as a String except for compiler-recognized intrinsics such as `clone`.
+Dot access is equivalent to indexing with the property name as a String except for runtime-owned built-in methods such as `clone()`.
 
 Reading a missing Object property returns `None`. Writing a property creates or replaces it.
 
@@ -535,7 +539,7 @@ The right side MUST name a built-in runtime type. A type test returns Bool and d
 let copy = value.clone();
 ```
 
-`clone()` lowers to the `Clone` trait dispatch. Built-in values use the runtime intrinsic path; user-defined types MAY provide a `Clone` implementation. Such an implementation is potentially suspendable, so the compiler includes it in suspendability analysis. Its complete graph semantics are defined in the Runtime chapter.
+`clone()` is a runtime-owned built-in method available on every value. It is synchronous, cannot be overridden by a type or trait implementation, and has the complete graph semantics defined in the Runtime chapter.
 
 ## Error propagation
 
@@ -733,7 +737,7 @@ The built-in function is:
 Error(kind, message, data)
 ```
 
-`kind` and `message` MUST be Strings. `data` is any language value. The current implementation creates a recoverable Error with the active source position and direct-call trace; explicit source-level cause construction is deferred. Invalid arguments return `TypeError`.
+`kind` and `message` MUST be Strings. `data` is any language value. The current implementation creates a recoverable Error with the active source position and direct-call trace; explicit source-level cause construction is deferred. Invalid arguments return `TypeError`. `error.kind()`, `error.message()`, `error.data()`, and `error.cause()` return these source-visible fields; `cause()` returns None when no related value is available.
 
 ## Standard kinds
 
@@ -1120,7 +1124,7 @@ pub enum RtValue {
 
 ## Deep clone
 
-Built-in `value.clone()` operations are synchronous. A user-defined `Clone` trait implementation MAY suspend, in which case the call is lowered through the suspendable trait-call path while retaining the same observable clone semantics.
+`value.clone()` is synchronous and runtime-owned. It does not perform trait dispatch and cannot be overridden by user code.
 
 Clone returns a deep copy of the reachable language-value graph while preserving topology:
 
@@ -1132,7 +1136,7 @@ Clone returns a deep copy of the reachable language-value graph while preserving
 - Errors are deeply cloned, including `data` and `cause`;
 - `origin` and `trace` may be reused because they are immutable.
 
-By default, a reachable HostResource makes clone return `CloneError` with no observable partial clone. A user-defined Clone implementation MAY explicitly support a HostResource according to its capability contract.
+A reachable HostResource makes clone return `CloneError` with no observable partial clone. The operation never mutates the source graph.
 
 The runtime MUST use a source-identity-to-clone map.
 
@@ -1483,7 +1487,7 @@ After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr`
 
 ## Runtime intrinsics
 
-Compiler-generated code MAY call linked runtime intrinsics whose names begin with `__exs_rt_`, such as `__exs_rt_list_new`, `__exs_rt_object_new`, `__exs_rt_error_new`, `__exs_rt_append`, `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_call_method`, `__exs_rt_cell_new`, `__exs_rt_value_is_error`, `__exs_rt_clone`, `__exs_rt_task_create`, and `__exs_rt_cbor_encode`. Except for construction intrinsics such as `__exs_rt_list_new`, `__exs_rt_object_new`, and `__exs_rt_error_new`, operations dispatch from the runtime value rather than a compiler-proven receiver type. The compiler resolves intrinsic names from the `crates/exs-runtime/exs-runtime.wasm` export section at link time.
+Compiler-generated code MAY call linked runtime intrinsics whose names begin with `__exs_rt_`, such as `__exs_rt_list_new`, `__exs_rt_object_new`, `__exs_rt_error_new`, `__exs_rt_append`, `__exs_rt_index_get`, `__exs_rt_index_set`, `__exs_rt_call_method`, `__exs_rt_cell_new`, `__exs_rt_value_is_error`, `__exs_rt_task_create`, and `__exs_rt_cbor_encode`. Except for construction intrinsics such as `__exs_rt_list_new`, `__exs_rt_object_new`, and `__exs_rt_error_new`, operations dispatch from the runtime value rather than a compiler-proven receiver type. The compiler resolves intrinsic names from the `crates/exs-runtime/exs-runtime.wasm` export section at link time.
 
 The compiler resolves runtime functions by these export names, never fixed Wasm indices. Source programs cannot import, export, or reference intrinsic names.
 

@@ -15,7 +15,8 @@ pub const ABI_VERSION: u32 = 19;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
-    "push", "pop", "insert", "remove", "clear", "has", "delete", "keys", "values",
+    "abs", "floor", "ceil", "round", "clone", "length", "is_empty", "kind", "message", "data",
+    "cause", "push", "pop", "insert", "remove", "clear", "has", "delete", "keys", "values",
 ];
 
 /// Runtime type-mask bit for None.

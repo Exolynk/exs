@@ -27,6 +27,28 @@ struct ImportEdge {
     target: usize,
 }
 
+/// One synthetic standard-library type page and its source-level usage guidance.
+struct StandardType {
+    /// Source-visible built-in type name.
+    name: &'static str,
+    /// Overview rendered before the type declaration.
+    description: &'static str,
+    /// Short valid ExS example that introduces the type.
+    usage: &'static str,
+    /// Runtime-owned methods exposed by this type.
+    methods: &'static [StandardMethod],
+}
+
+/// One documented runtime-owned standard-library method.
+struct StandardMethod {
+    /// Source-level method signature.
+    signature: &'static str,
+    /// Detailed observable behavior and error conditions.
+    description: &'static str,
+    /// Short valid ExS example of a call to the method.
+    example: &'static str,
+}
+
 /// Generates Markdown documentation for one root source and its import graph.
 pub(super) fn generate<R: ModuleResolver>(
     source: SourceInput<'_>,
@@ -465,71 +487,206 @@ fn render_trait_method_details(
 /// Generates the synthetic standard-library module and its declaration pages.
 fn standard_pages() -> Vec<DocumentationPage> {
     let types = [
-        (
-            "Any",
-            "The unconstrained annotation accepted when a type annotation is omitted.",
-            &[][..],
-        ),
-        ("None", "The globally available absence value.", &[][..]),
-        (
-            "Error",
-            "A structured recoverable language error value.",
-            &[][..],
-        ),
-        ("Bool", "A globally available Boolean value.", &[][..]),
-        (
-            "Int",
-            "A globally available signed 56-bit integer value.",
-            &[][..],
-        ),
-        (
-            "Float",
-            "A globally available IEEE-754 floating-point value.",
-            &[][..],
-        ),
-        (
-            "String",
-            "A globally available UTF-8 string value.",
-            &[][..],
-        ),
-        (
-            "List",
-            "A globally available mutable ordered collection.",
-            &[
-                "push(value) - appends one value and returns the new length.",
-                "pop() - removes and returns the final value, or None.",
-                "insert(index, value) - inserts one value.",
-                "remove(index) - removes and returns one value.",
-                "clear() - removes every value.",
-            ][..],
-        ),
-        (
-            "Object",
-            "A globally available mutable keyed collection.",
-            &[
-                "has(key) - returns whether the key exists.",
-                "delete(key) - removes and returns the key value, or None.",
-                "keys() - returns keys in insertion order.",
-                "values() - returns values in insertion order.",
-            ][..],
-        ),
-        (
-            "Fn",
-            "The callable closure contract used in type annotations.",
-            &[][..],
-        ),
+        StandardType {
+            name: "Any",
+            description: "`Any` accepts every ExS value. It is the implicit contract when a parameter or return annotation is omitted, and is useful when a function deliberately forwards values without narrowing their type.",
+            usage: "fn main(value: Any) -> Any {\n    ret value;\n}",
+            methods: &[StandardMethod {
+                signature: "clone() -> Any | Error",
+                description: "Creates a synchronous deep copy of the reachable mutable value graph. Lists, Objects, nominal values, enum payloads, Errors, Cells, and Closures are copied while preserving aliases and cycles inside the copy; immutable values such as None, Bool, Int, Float, and String are reused. A reachable host-owned resource returns `CloneError`, and clone never mutates the source graph.",
+                example: "let original = [[1]];\nlet copy = original.clone();\ncopy[0].push(2);\nret [original[0].length(), copy[0].length()];",
+            }],
+        },
+        StandardType {
+            name: "None",
+            description: "`None` is the single absence value. It is used for missing optional results, empty mutations, and Object reads whose key does not exist; ExS has no `null` source literal.",
+            usage: "fn main() -> None {\n    let absent = None;\n    ret absent;\n}",
+            methods: &[],
+        },
+        StandardType {
+            name: "Error",
+            description: "`Error` is a structured language failure value. Operations return it instead of throwing, and functions that may return an Error should include `Error` in their return contract or use the implicit `Any` contract.",
+            usage: "fn main() -> Int | Error {\n    ret Error(\"DivisionByZeroError\", \"cannot divide by zero\", None);\n}",
+            methods: &[
+                StandardMethod {
+                    signature: "kind() -> String",
+                    description: "Returns the stable machine-readable category assigned when the Error was created. Use it to distinguish expected failures without parsing a human-facing message.",
+                    example: "let error = Error(\"MissingValue\", \"value is required\", None);\nlet category = error.kind();",
+                },
+                StandardMethod {
+                    signature: "message() -> String",
+                    description: "Returns the human-readable explanation stored in the Error. The message is intended for diagnostics and user-facing reporting, not control-flow classification.",
+                    example: "let error = Error(\"MissingValue\", \"value is required\", None);\nlet text = error.message();",
+                },
+                StandardMethod {
+                    signature: "data() -> Any",
+                    description: "Returns the language value attached to the Error. Runtime operations use this to retain the invalid input, index, or other relevant context that caused the failure.",
+                    example: "let error = Error(\"InvalidInput\", \"age must be positive\", -1);\nlet invalid_age = error.data();",
+                },
+                StandardMethod {
+                    signature: "cause() -> Error | None",
+                    description: "Returns a related prior Error or value when one is present. Errors created directly with `Error(...)` have no cause and therefore return None.",
+                    example: "let error = Error(\"Example\", \"no prior failure\", None);\nlet previous = error.cause();",
+                },
+            ],
+        },
+        StandardType {
+            name: "Bool",
+            description: "`Bool` has exactly the values `true` and `false`. Conditions require Bool explicitly; ExS does not apply implicit truthiness to numbers, strings, collections, or None.",
+            usage: "fn main() {\n    let ready = true;\n    if ready {\n        host.call(\"println\", \"ready\");\n    }\n}",
+            methods: &[],
+        },
+        StandardType {
+            name: "Int",
+            description: "`Int` is a signed 56-bit exact integer. It supports numeric operators and reports `IntOverflowError` when an operation cannot produce a value inside the ExS integer range.",
+            usage: "fn main() -> Int {\n    let quantity = 42;\n    ret quantity + 8;\n}",
+            methods: &[StandardMethod {
+                signature: "abs() -> Int",
+                description: "Returns the non-negative magnitude of the receiver. The smallest representable Int has no representable positive counterpart, so calling `abs()` on it returns `IntOverflowError`.",
+                example: "let change = -42;\nlet magnitude = change.abs(); // 42",
+            }],
+        },
+        StandardType {
+            name: "Float",
+            description: "`Float` uses IEEE-754 binary64 values, including infinities, signed zero, and NaN. Mixed arithmetic promotes the other numeric operand to Float.",
+            usage: "fn main() -> Float {\n    let price = 19.95;\n    ret price * 1.19;\n}",
+            methods: &[
+                StandardMethod {
+                    signature: "abs() -> Float",
+                    description: "Returns the non-negative floating-point magnitude. It preserves Float semantics for signed zero, infinities, and NaN.",
+                    example: "let delta = -1.5;\nlet magnitude = delta.abs(); // 1.5",
+                },
+                StandardMethod {
+                    signature: "floor() -> Float",
+                    description: "Rounds down to the greatest integral Float that is not greater than the receiver. The result remains Float so it composes with floating-point arithmetic.",
+                    example: "let page = 3.8;\nlet first_index = page.floor(); // 3.0",
+                },
+                StandardMethod {
+                    signature: "ceil() -> Float",
+                    description: "Rounds up to the least integral Float that is not less than the receiver. The result remains Float.",
+                    example: "let pages = 3.2;\nlet required = pages.ceil(); // 4.0",
+                },
+                StandardMethod {
+                    signature: "round() -> Float",
+                    description: "Rounds to the nearest integral Float. Exact halfway values are rounded away from zero, so `1.5` becomes `2.0` and `-1.5` becomes `-2.0`.",
+                    example: "let rating = 4.5;\nlet displayed = rating.round(); // 5.0",
+                },
+            ],
+        },
+        StandardType {
+            name: "String",
+            description: "`String` is an immutable UTF-8 sequence. Indexing and `length()` operate on Unicode scalar values rather than UTF-8 byte positions.",
+            usage: "fn main() -> String {\n    let greeting = \"Hello\";\n    ret greeting[0];\n}",
+            methods: &[
+                StandardMethod {
+                    signature: "length() -> Int",
+                    description: "Returns the number of Unicode scalar values in the String. This is not the UTF-8 byte length, so a single emoji scalar counts as one.",
+                    example: "let symbol = \"🙂\";\nlet count = symbol.length(); // 1",
+                },
+                StandardMethod {
+                    signature: "is_empty() -> Bool",
+                    description: "Returns true when the String contains no Unicode scalar values and false otherwise. It does not trim or normalize the String.",
+                    example: "let input = \"\";\nif input.is_empty() {\n    host.call(\"println\", \"missing input\");\n}",
+                },
+            ],
+        },
+        StandardType {
+            name: "List",
+            description: "`List` is a mutable ordered collection. Variables and closure captures preserve List identity, so mutations through one alias are visible through every alias of the same List.",
+            usage: "fn main() -> Int {\n    let items = [\"Ada\", \"Lin\"];\n    ret items.push(\"Mia\");\n}",
+            methods: &[
+                StandardMethod {
+                    signature: "length() -> Int",
+                    description: "Returns the current number of elements. The count changes immediately after List mutations such as `push`, `pop`, `insert`, `remove`, and `clear`.",
+                    example: "let items = [\"Ada\", \"Lin\"];\nlet count = items.length(); // 2",
+                },
+                StandardMethod {
+                    signature: "is_empty() -> Bool",
+                    description: "Returns true when the List has no elements. It does not mutate the List.",
+                    example: "let queue = [];\nif queue.is_empty() {\n    host.call(\"println\", \"queue is empty\");\n}",
+                },
+                StandardMethod {
+                    signature: "push(value) -> Int",
+                    description: "Appends one value to the end of the List and returns the new element count. The operation mutates the existing List rather than allocating a replacement.",
+                    example: "let items = [\"Ada\"];\nlet count = items.push(\"Lin\"); // 2",
+                },
+                StandardMethod {
+                    signature: "pop() -> Any | None",
+                    description: "Removes and returns the final element. Calling `pop()` on an empty List leaves it unchanged and returns None.",
+                    example: "let items = [\"Ada\", \"Lin\"];\nlet last = items.pop(); // \"Lin\"",
+                },
+                StandardMethod {
+                    signature: "insert(index: Int, value) -> None | Error",
+                    description: "Inserts one value before the zero-based index and returns None. The index may equal the current length to append; invalid indexes return `IndexError`.",
+                    example: "let items = [\"Ada\", \"Mia\"];\nitems.insert(1, \"Lin\"); // [\"Ada\", \"Lin\", \"Mia\"]",
+                },
+                StandardMethod {
+                    signature: "remove(index: Int) -> Any | Error",
+                    description: "Removes and returns the element at a zero-based index. Invalid indexes return `IndexError` and leave the List unchanged.",
+                    example: "let items = [\"Ada\", \"Lin\"];\nlet removed = items.remove(0); // \"Ada\"",
+                },
+                StandardMethod {
+                    signature: "clear() -> None",
+                    description: "Removes every element from the existing List and returns None. Aliases continue to refer to the now-empty same List.",
+                    example: "let items = [1, 2, 3];\nitems.clear();\nlet empty = items.is_empty(); // true",
+                },
+            ],
+        },
+        StandardType {
+            name: "Object",
+            description: "`Object` is a mutable insertion-ordered mapping from String keys to values. Dot properties and bracket access operate on the same ordered collection.",
+            usage: "fn main() -> Object {\n    let user = { name: \"Ada\" };\n    user.role = \"admin\";\n    ret user;\n}",
+            methods: &[
+                StandardMethod {
+                    signature: "length() -> Int",
+                    description: "Returns the number of present keys. Replacing an existing key does not increase the count; creating or deleting a key does.",
+                    example: "let user = { name: \"Ada\" };\nlet count = user.length(); // 1",
+                },
+                StandardMethod {
+                    signature: "is_empty() -> Bool",
+                    description: "Returns true when the Object has no keys. It does not mutate the Object.",
+                    example: "let options = {};\nif options.is_empty() {\n    host.call(\"println\", \"using defaults\");\n}",
+                },
+                StandardMethod {
+                    signature: "has(key: String) -> Bool | Error",
+                    description: "Returns whether a String key is present. A non-String key returns `TypeError` rather than coercing the key.",
+                    example: "let user = { name: \"Ada\" };\nlet has_name = user.has(\"name\"); // true",
+                },
+                StandardMethod {
+                    signature: "delete(key: String) -> Any | None | Error",
+                    description: "Removes a String key and returns its previous value. When the key is absent, it returns None; a non-String key returns `TypeError`.",
+                    example: "let user = { name: \"Ada\" };\nlet name = user.delete(\"name\"); // \"Ada\"",
+                },
+                StandardMethod {
+                    signature: "keys() -> List",
+                    description: "Returns a new List of String keys in insertion order. Changing the returned List does not change the Object.",
+                    example: "let user = { name: \"Ada\", role: \"admin\" };\nlet keys = user.keys(); // [\"name\", \"role\"]",
+                },
+                StandardMethod {
+                    signature: "values() -> List",
+                    description: "Returns a new shallow List of values in the same insertion order as `keys()`. The values themselves retain their original identity.",
+                    example: "let user = { name: \"Ada\", role: \"admin\" };\nlet values = user.values(); // [\"Ada\", \"admin\"]",
+                },
+            ],
+        },
+        StandardType {
+            name: "Fn",
+            description: "`Fn` is the callable closure contract used in annotations. A closure captures lexical bindings and can be called with its declared parameter count.",
+            usage: "fn apply(function: Fn, value: Int) -> Int {\n    ret function(value);\n}\n\nfn main() -> Int {\n    let increment = (value) => { ret value + 1; };\n    ret apply(increment, 1);\n}",
+            methods: &[],
+        },
     ];
     let mut pages = vec![DocumentationPage {
         path: "modules/std/index.md".to_owned(),
         markdown: render_standard_index(&types),
     }];
-    for (name, description, methods) in types {
+    for type_info in &types {
         pages.push(DocumentationPage {
-            path: format!("modules/std/types/{}.md", slug(name)),
-            markdown: if name == "Error" {
-                render_standard_error_type(description)
+            path: format!("modules/std/types/{}.md", slug(type_info.name)),
+            markdown: if type_info.name == "Error" {
+                render_standard_error_type(type_info)
             } else {
-                render_standard_type(name, description, methods)
+                render_standard_type(type_info)
             },
         });
     }
@@ -537,42 +694,73 @@ fn standard_pages() -> Vec<DocumentationPage> {
         "host-call",
         "host.call",
         "host.call(name, arguments...)",
-        "Invokes a runner-registered host function. `name` must evaluate to String. A host call may suspend and returns its value or an Error.",
+        "Invokes a runner-registered host function selected by a runtime String name. Arguments are collected into a List and transported through the runner CBOR boundary. A call may complete immediately or suspend; it returns the host result or a recoverable Error such as `HostFunctionNotFound`.",
+        "fn main() {\n    let greeting = host.call(\"greet\", \"Ada\");\n    ret greeting;\n}",
     ));
     pages
 }
 
 /// Renders the synthetic standard-library module index.
-fn render_standard_index(types: &[(&str, &str, &[&str])]) -> String {
+fn render_standard_index(types: &[StandardType]) -> String {
     let mut output = String::from(
         "# Module `std`\n\nBuilt-in types are globally available in ExS source and may also be written with the `std::` qualifier. Importing `std` is not required or allowed.\n\n## Types\n\n",
     );
-    for (name, _, _) in types {
-        output.push_str(&format!("- [`{name}`](types/{}.md)\n", slug(name)));
+    for type_info in types {
+        output.push_str(&format!(
+            "- [`{}`](types/{}.md)\n",
+            type_info.name,
+            slug(type_info.name)
+        ));
     }
     output.push_str("\n## Functions\n\n- [`host.call`](fn/host-call.md)\n");
     output
 }
 
 /// Renders the Error type page with its source-level constructor.
-fn render_standard_error_type(description: &str) -> String {
-    let mut output = render_standard_type("Error", description, &[]);
-    output.push_str("\n## Constructor\n\n```exs\nError(kind, message, data)\n```\n\nConstructs a recoverable Error. `kind` and `message` must be Strings; `data` may be any value.\n");
+fn render_standard_error_type(type_info: &StandardType) -> String {
+    let mut output = render_standard_type(type_info);
+    output.push_str("\n## Constructor\n\n```exs\nError(kind, message, data)\n```\n\nConstructs a recoverable Error with a stable category, a human-readable message, and any related language value. `kind` and `message` must be Strings. The constructor does not assign a cause; `cause()` consequently returns None for directly constructed Errors.\n\n```exs\n");
+    output.push_str(&script_example(
+        "let error = Error(\"InvalidInput\", \"age must be positive\", -1);\nret error.message();",
+    ));
+    output.push_str("\n```\n");
     output
 }
 
 /// Renders one synthetic standard-library type page.
-fn render_standard_type(name: &str, description: &str, methods: &[&str]) -> String {
-    let mut output = format!("# Type `std::{name}`\n\n{description}\n\n");
+fn render_standard_type(type_info: &StandardType) -> String {
+    let mut output = format!(
+        "# Type `std::{}`\n\n{}\n\n",
+        type_info.name, type_info.description
+    );
     output.push_str("```exs\n");
-    output.push_str(&format!("type {name}\n```\n"));
-    if !methods.is_empty() {
+    output.push_str(&format!("type {}\n```\n", type_info.name));
+    output.push_str("\n## Usage\n\n```exs\n");
+    output.push_str(type_info.usage);
+    output.push_str("\n```\n");
+    if !type_info.methods.is_empty() {
         output.push_str("\n## Implemented Methods\n\n");
-        for method in methods {
-            let (signature, description) = method.split_once(" - ").unwrap_or((method, ""));
-            output.push_str(&format!("### `{signature}`\n\n{description}\n\n"));
+        for method in type_info.methods {
+            output.push_str(&format!(
+                "### `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
+                method.signature,
+                method.description,
+                script_example(method.example)
+            ));
         }
     }
+    output
+}
+
+/// Renders one method-body example as an independently runnable ExS script.
+fn script_example(body: &str) -> String {
+    let mut output = String::from("fn main() {\n");
+    for line in body.lines() {
+        output.push_str("    ");
+        output.push_str(line);
+        output.push('\n');
+    }
+    output.push('}');
     output
 }
 
@@ -582,10 +770,13 @@ fn standard_function_page(
     name: &str,
     signature: &str,
     description: &str,
+    example: &str,
 ) -> DocumentationPage {
     DocumentationPage {
         path: format!("modules/std/fn/{path}.md"),
-        markdown: format!("# Function `{name}`\n\n```exs\n{signature}\n```\n\n{description}\n"),
+        markdown: format!(
+            "# Function `{name}`\n\n```exs\n{signature}\n```\n\n{description}\n\n## Usage\n\n```exs\n{example}\n```\n"
+        ),
     }
 }
 

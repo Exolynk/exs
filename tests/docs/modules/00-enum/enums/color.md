@@ -28,3 +28,9 @@ enum Color {
 fn new_trans() -> Color { ... }
 ```
 
+#### `as_number`
+
+```exs
+fn as_number(self) -> Int { ... }
+```
+
