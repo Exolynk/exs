@@ -3,10 +3,10 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier,
-    ImplDeclaration, ImportDeclaration, Module, ObjectProperty, Parameter, Statement,
-    TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName,
-    UnaryOperator, UseDeclaration, UseItem,
+    AssignmentTarget, BinaryOperator, Block, EnumDeclaration, EnumVariant, Expression,
+    FunctionDeclaration, Identifier, ImplDeclaration, ImportDeclaration, MatchArm, MatchPattern,
+    Module, ObjectProperty, Parameter, Statement, TraitDeclaration, TraitMethodDeclaration,
+    TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator, UseDeclaration, UseItem,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{Token, TokenKind};
@@ -33,6 +33,7 @@ pub fn parse<'a>(
     let mut imports = Vec::new();
     let mut uses = Vec::new();
     let mut types = Vec::new();
+    let mut enums = Vec::new();
     let mut traits = Vec::new();
     let mut implementations = Vec::new();
     let mut functions = Vec::new();
@@ -42,6 +43,7 @@ pub fn parse<'a>(
                 Ok(declaration)
                     if types.is_empty()
                         && traits.is_empty()
+                        && enums.is_empty()
                         && implementations.is_empty()
                         && functions.is_empty() =>
                 {
@@ -61,6 +63,7 @@ pub fn parse<'a>(
                 Ok(declaration)
                     if types.is_empty()
                         && traits.is_empty()
+                        && enums.is_empty()
                         && implementations.is_empty()
                         && functions.is_empty() =>
                 {
@@ -78,6 +81,13 @@ pub fn parse<'a>(
             },
             TokenKind::Type => match parser.type_declaration() {
                 Ok(declaration) => types.push(declaration),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
+            TokenKind::Enum => match parser.enum_declaration() {
+                Ok(declaration) => enums.push(declaration),
                 Err(diagnostic) => {
                     parser.diagnostics.push(diagnostic);
                     parser.synchronize_declaration();
@@ -108,7 +118,7 @@ pub fn parse<'a>(
                 parser.diagnostics.push(parser.error(
                     parser.peek().span,
                     "E0100",
-                    "expected `type`, `trait`, `impl`, or `fn` at module level",
+                    "expected `type`, `enum`, `trait`, `impl`, or `fn` at module level",
                 ));
                 parser.synchronize_declaration();
             }
@@ -128,6 +138,7 @@ pub fn parse<'a>(
         imports,
         uses,
         types,
+        enums,
         traits,
         implementations,
         functions,
@@ -165,6 +176,69 @@ impl<'a> Parser<'a> {
         Ok(ImportDeclaration {
             path,
             alias,
+            span: start.through(end),
+        })
+    }
+
+    /// Parses one nominal enum declaration and its zero-or-more-field variants.
+    fn enum_declaration(&mut self) -> Result<EnumDeclaration<'a>, CompileDiagnostic<'a>> {
+        let start = self
+            .expect_simple(TokenKind::Enum, "expected `enum` at module level")?
+            .span;
+        let name = self.identifier("expected enum name after `enum`")?;
+        self.expect_simple(TokenKind::LeftBrace, "expected `{` after enum name")?;
+        let mut variants = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.at_end() {
+            let variant_name = self.identifier("expected enum variant name")?;
+            let mut fields = Vec::new();
+            let mut end = variant_name.span;
+            if self.matches(&TokenKind::LeftParen) {
+                while !self.check(&TokenKind::RightParen) && !self.at_end() {
+                    let field_start = self.peek().span;
+                    let field_name = self.identifier("expected variant payload field name")?;
+                    let type_annotation = if self.matches(&TokenKind::Colon) {
+                        Some(self.type_annotation()?)
+                    } else {
+                        None
+                    };
+                    let field_end = type_annotation
+                        .as_ref()
+                        .map_or(field_name.span, |annotation| annotation.span);
+                    fields.push(TypeField {
+                        name: field_name,
+                        type_annotation,
+                        span: field_start.through(field_end),
+                    });
+                    if !self.matches(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                end = self
+                    .expect_simple(TokenKind::RightParen, "expected `)` after variant fields")?
+                    .span;
+            }
+            variants.push(EnumVariant {
+                span: variant_name.span.through(end),
+                name: variant_name,
+                fields,
+            });
+            if !self.matches(&TokenKind::Comma) {
+                if !self.check(&TokenKind::RightBrace) {
+                    return Err(self.error(
+                        self.peek().span,
+                        "E0103",
+                        "expected `,` or `}` after enum variant",
+                    ));
+                }
+                break;
+            }
+        }
+        let end = self
+            .expect_simple(TokenKind::RightBrace, "expected `}` after enum variants")?
+            .span;
+        Ok(EnumDeclaration {
+            name,
+            variants,
             span: start.through(end),
         })
     }
@@ -369,7 +443,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses one inherent or trait implementation block for a nominal Object type.
+    /// Parses one inherent or trait implementation block for a nominal type.
     fn implementation(&mut self) -> Result<ImplDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::Impl, "expected `impl` at module level")?
@@ -722,6 +796,13 @@ impl<'a> Parser<'a> {
                     });
                     continue;
                 }
+                if !self.check(&TokenKind::LeftParen) {
+                    expression = Expression::Variable(Identifier {
+                        name: format!("{}::{}", type_name.name, method.name),
+                        span: type_name.span.through(method.span),
+                    });
+                    continue;
+                }
                 self.expect_simple(
                     TokenKind::LeftParen,
                     "expected `(` after static method name",
@@ -855,6 +936,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Host => self.host_call(token.span),
             TokenKind::Par => self.parallel(token.span),
+            TokenKind::Match => self.match_expression(token.span),
             TokenKind::LeftBracket => {
                 let elements = self.arguments(TokenKind::RightBracket)?;
                 let end = self
@@ -901,6 +983,82 @@ impl<'a> Parser<'a> {
             }
             _ => Err(self.error(token.span, "E0101", "expected expression")),
         }
+    }
+
+    /// Parses one enum-pattern `match` expression with expression-valued arms.
+    fn match_expression(
+        &mut self,
+        start: SourceSpan<'a>,
+    ) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
+        let value = self.expression()?;
+        self.expect_simple(TokenKind::LeftBrace, "expected `{` after match value")?;
+        let mut arms = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.at_end() {
+            let pattern = self.match_pattern()?;
+            self.expect_simple(TokenKind::FatArrow, "expected `=>` after match pattern")?;
+            let arm_value = self.expression()?;
+            let arm_span = match_pattern_span(&pattern).through(expression_span(&arm_value));
+            arms.push(MatchArm {
+                pattern,
+                value: arm_value,
+                span: arm_span,
+            });
+            if !self.matches(&TokenKind::Comma) && !self.check(&TokenKind::RightBrace) {
+                return Err(self.error(
+                    self.peek().span,
+                    "E0110",
+                    "expected `,` or `}` after match arm",
+                ));
+            }
+        }
+        let end = self
+            .expect_simple(TokenKind::RightBrace, "expected `}` after match arms")?
+            .span;
+        Ok(Expression::Match {
+            value: Box::new(value),
+            arms,
+            span: start.through(end),
+        })
+    }
+
+    /// Parses one qualified variant or wildcard match pattern.
+    fn match_pattern(&mut self) -> Result<MatchPattern<'a>, CompileDiagnostic<'a>> {
+        let first = self.identifier("expected match pattern")?;
+        if first.name == "_" {
+            return Ok(MatchPattern::Wildcard(first.span));
+        }
+        self.expect_simple(
+            TokenKind::DoubleColon,
+            "expected `::` in enum match pattern",
+        )?;
+        let pattern_start = first.span;
+        let mut type_name = first;
+        let mut component = self.identifier("expected enum type or variant name")?;
+        while self.matches(&TokenKind::DoubleColon) {
+            type_name.name.push_str("::");
+            type_name.name.push_str(&component.name);
+            type_name.span = type_name.span.through(component.span);
+            component = self.identifier("expected enum variant name after `::`")?;
+        }
+        let mut bindings = Vec::new();
+        let mut end = component.span;
+        if self.matches(&TokenKind::LeftParen) {
+            while !self.check(&TokenKind::RightParen) && !self.at_end() {
+                bindings.push(self.identifier("expected enum payload binding")?);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            end = self
+                .expect_simple(TokenKind::RightParen, "expected `)` after match bindings")?
+                .span;
+        }
+        Ok(MatchPattern::Variant {
+            type_name,
+            variant: component,
+            bindings,
+            span: pattern_start.through(end),
+        })
     }
 
     /// Parses static parallel expressions or one dynamic callable List expression.
@@ -1271,6 +1429,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         Expression::List { span, .. } => *span,
         Expression::Object { span, .. } => *span,
         Expression::TypedObject { span, .. } => *span,
+        Expression::Match { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Closure { span, .. } => *span,
         Expression::Unary { span, .. }
@@ -1284,5 +1443,12 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::Index { span, .. }
         | Expression::Property { span, .. } => *span,
         Expression::ParallelStatic { span, .. } | Expression::ParallelDynamic { span, .. } => *span,
+    }
+}
+
+/// Returns the full span of one parsed match pattern.
+fn match_pattern_span<'a>(pattern: &MatchPattern<'a>) -> SourceSpan<'a> {
+    match pattern {
+        MatchPattern::Variant { span, .. } | MatchPattern::Wildcard(span) => *span,
     }
 }

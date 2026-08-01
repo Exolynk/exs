@@ -47,6 +47,24 @@ impl<'a> SourceMap<'a> {
                 source_map.insert(field.name.span);
             }
         }
+        for declaration in &module.enums {
+            source_map.insert(declaration.span);
+            source_map.insert(declaration.name.span);
+            for variant in &declaration.variants {
+                source_map.insert(variant.span);
+                source_map.insert(variant.name.span);
+                for field in &variant.fields {
+                    source_map.insert(field.span);
+                    source_map.insert(field.name.span);
+                    if let Some(annotation) = &field.type_annotation {
+                        source_map.insert(annotation.span);
+                        for member in &annotation.members {
+                            source_map.insert(member.span);
+                        }
+                    }
+                }
+            }
+        }
         for declaration in &module.traits {
             source_map.insert(declaration.span);
             source_map.insert(declaration.name.span);
@@ -328,6 +346,30 @@ impl<'a> SourceMap<'a> {
                 self.insert(*span);
                 for property in properties {
                     self.collect_property(property);
+                }
+            }
+            Expression::Match { value, arms, span } => {
+                self.insert(*span);
+                self.collect_expression(value);
+                for arm in arms {
+                    self.insert(arm.span);
+                    match &arm.pattern {
+                        crate::ast::MatchPattern::Variant {
+                            type_name,
+                            variant,
+                            bindings,
+                            span,
+                        } => {
+                            self.insert(*span);
+                            self.insert(type_name.span);
+                            self.insert(variant.span);
+                            for binding in bindings {
+                                self.insert(binding.span);
+                            }
+                        }
+                        crate::ast::MatchPattern::Wildcard(span) => self.insert(*span),
+                    }
+                    self.collect_expression(&arm.value);
                 }
             }
             Expression::Variable(identifier) => self.insert(identifier.span),

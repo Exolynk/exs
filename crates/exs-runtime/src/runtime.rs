@@ -1,6 +1,7 @@
 //! Runtime state access, CBOR conversion, and linear-memory buffers.
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
@@ -13,7 +14,7 @@ use exs_value::{ValueRef, is_valid_int};
 use crate::gc;
 use crate::scheduler::{ExecutionContext, HostResume};
 use crate::state::{AsyncFrame, FrameContinuation, HeapSlot, RuntimeState, runtime};
-use crate::value::{RtValue, RuntimeError, RuntimeList, RuntimeObject, RuntimeString};
+use crate::value::{RtValue, RuntimeEnum, RuntimeError, RuntimeList, RuntimeObject, RuntimeString};
 
 #[link(wasm_import_module = "exs")]
 unsafe extern "C" {
@@ -74,6 +75,100 @@ pub(crate) fn allocate(value: RtValue) -> ValueRef {
     };
     state.values.push(Some(HeapSlot::new(value)));
     unsafe { ValueRef::from_runtime_index(next_index) }
+}
+
+/// Allocates one tagged enum Object after validating its runtime constructor arguments.
+pub(crate) fn enum_new(
+    type_id: u32,
+    type_identity: ValueRef,
+    variant: ValueRef,
+    fields: ValueRef,
+) -> ValueRef {
+    let type_identity = match value(type_identity) {
+        RtValue::String(value) => String::from(value.as_str()),
+        _ => {
+            return recoverable_error(
+                "TypeError",
+                "enum type identity requires a String value",
+                type_identity,
+            );
+        }
+    };
+    let variant = match value(variant) {
+        RtValue::String(value) => String::from(value.as_str()),
+        _ => {
+            return recoverable_error("TypeError", "enum variant requires a String value", variant);
+        }
+    };
+    let fields = match value(fields) {
+        RtValue::List(value) => value.elements.clone(),
+        _ => {
+            return recoverable_error("TypeError", "enum fields require a List value", fields);
+        }
+    };
+    allocate(RtValue::Object(Box::new(RuntimeObject::enumeration(
+        Some(type_id),
+        RuntimeEnum {
+            type_identity: type_identity.into_boxed_str(),
+            variant: variant.into_boxed_str(),
+            fields,
+        },
+    ))))
+}
+
+/// Returns whether one runtime value is an enum with the requested stable identity.
+pub(crate) fn enum_has_type(value_ref: ValueRef, type_identity: ValueRef) -> bool {
+    let RtValue::String(type_identity) = value(type_identity) else {
+        return false;
+    };
+    matches!(
+        value(value_ref),
+        RtValue::Object(object)
+            if object
+                .enum_data
+                .as_ref()
+                .is_some_and(|enum_data| enum_data.type_identity.as_ref() == type_identity.as_str())
+    )
+}
+
+/// Returns whether one value carries the requested enum identity and variant.
+pub(crate) fn enum_matches(
+    value_ref: ValueRef,
+    type_identity: ValueRef,
+    variant: ValueRef,
+) -> bool {
+    let (RtValue::String(type_identity), RtValue::String(variant)) =
+        (value(type_identity), value(variant))
+    else {
+        return false;
+    };
+    matches!(
+        value(value_ref),
+        RtValue::Object(object)
+            if object.enum_data.as_ref().is_some_and(|enum_data| {
+                enum_data.type_identity.as_ref() == type_identity.as_str()
+                    && enum_data.variant.as_ref() == variant.as_str()
+            })
+    )
+}
+
+/// Reads one ordered payload value from a matched enum or returns a recoverable Error.
+pub(crate) fn enum_field(value_ref: ValueRef, index: usize) -> ValueRef {
+    match value(value_ref) {
+        RtValue::Object(object) => object
+            .enum_data
+            .as_ref()
+            .and_then(|enum_data| enum_data.fields.get(index))
+            .copied()
+            .unwrap_or_else(|| {
+                recoverable_error("MatchError", "enum payload field is unavailable", value_ref)
+            }),
+        _ => recoverable_error(
+            "MatchError",
+            "enum payload field requires an enum value",
+            value_ref,
+        ),
+    }
 }
 
 /// Allocates one recoverable language Error using the active source position.
@@ -755,18 +850,33 @@ fn runtime_to_exs_value_inner(
                 trap();
             }
             active_containers.push(reference);
-            let entries = object
-                .entries
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.as_ref().into(),
-                        runtime_to_exs_value_inner(*value, active_containers),
-                    )
-                })
-                .collect();
+            let result = if let Some(enum_data) = &object.enum_data {
+                ExsValue::Enum {
+                    type_id: enum_data.type_identity.as_ref().into(),
+                    variant: enum_data.variant.as_ref().into(),
+                    fields: enum_data
+                        .fields
+                        .iter()
+                        .copied()
+                        .map(|field| runtime_to_exs_value_inner(field, active_containers))
+                        .collect(),
+                }
+            } else {
+                ExsValue::Object(
+                    object
+                        .entries
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.as_ref().into(),
+                                runtime_to_exs_value_inner(*value, active_containers),
+                            )
+                        })
+                        .collect(),
+                )
+            };
             let _removed = active_containers.pop();
-            ExsValue::Object(entries)
+            result
         }
         RtValue::Cell(_) | RtValue::Closure(_) => trap(),
         RtValue::BoxedFutureValue(_) => trap(),
@@ -800,7 +910,20 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
                 .into_iter()
                 .map(|(key, value)| (key.into_boxed_str(), exs_value_to_runtime(value)))
                 .collect(),
+            enum_data: None,
         })),
+        ExsValue::Enum {
+            type_id,
+            variant,
+            fields,
+        } => RtValue::Object(Box::new(RuntimeObject::enumeration(
+            None,
+            RuntimeEnum {
+                type_identity: type_id.into_boxed_str(),
+                variant: variant.into_boxed_str(),
+                fields: fields.into_iter().map(exs_value_to_runtime).collect(),
+            },
+        ))),
     };
     let reference = allocate(value);
     gc::push_temporary_root(reference);

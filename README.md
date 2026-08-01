@@ -127,15 +127,37 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Generate Markdown language and module API documentation through `exs docs <file.exs> -o <directory>`.
 - [x] Support every global built-in type with an optional `std::` qualifier, such as `std::Int` and `std::None`.
 
-### Phase 13: Deep clone
+### Phase 13: Enums & Pattern Matching
 
-- [ ] Implement built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits.
-- [ ] Add Clone contexts that preserve cycles and aliases.
-- [ ] Support user-defined, potentially suspendable Clone implementations.
+- [x] Add nominal `enum` declarations with zero-payload variants and zero or more named, optionally typed payload fields.
+- [x] Add qualified variant constructors such as `Color::Rgb(red, green, blue)` and `Color::Transparent`.
+- [x] Support enum names in type annotations, imports, `use`, contracts, and generated documentation; allow inherent and trait `impl` blocks for enums.
+- [x] Extend `ExsValue` and canonical CBOR with tagged enum values carrying an opaque resolver-derived type identity, variant name, and ordered fields.
+- [x] Add `match` expressions with qualified variants, comma-separated payload bindings, and `_` fallback arms.
+- [x] Require exhaustive enum matching unless a `_` arm is present.
+- [x] Lower `match` through continuation graphs so arms may suspend.
 
-### Phase 14: Runner Limits & Browser
+### Phase 14: Standard Library & Deep Clone
 
-- [ ] Add runner-enforced limits for memory, fuel, timeouts, task and host-call counts, stack depth, CBOR payloads, and results.
+- [ ] Define a deliberately small direct method API for `Int`, `Float`, `String`, `List`, `Object`, and `Error`.
+- [ ] Render built-in method signatures and behavior on the relevant `std` type pages.
+- [ ] Implement automatic deep `value.clone()` for mutable graphs.
+- [ ] Preserve aliases and cycles while cloning Lists, Objects, Errors, nominal Objects, enums, Cells, and Closures.
+- [ ] Reuse immutable values where safe and reject cloning unsupported HostResources.
+- [ ] Keep clone behavior uniform; defer user-defined clone overrides.
+
+### Phase 15: Extensible Protocols & Operators
+
+- [ ] Design standard protocols for user-extensible behavior, including the required `Self` and result-type rules.
+- [ ] Add user implementations for protocols on nominal types and enums.
+- [ ] Decide and implement operator protocols such as `Add`, `Sub`, `Mul`, `Div`, and equality.
+- [ ] Define suspension, Error, precedence, and dispatch rules for overloaded operators.
+- [ ] Add generated `std` trait pages and link every built-in and user implementation from the owning type page.
+- [ ] Reconsider user-defined `Clone` only with an explicit clone-context API that preserves aliases and cycles.
+
+### Phase 16: Runner Limits & Browser
+
+- [ ] Add runner-enforced limits for memory, fuel, timeouts, tasks, host calls, stack depth, CBOR payloads, and results.
 - [ ] Implement the equivalent TypeScript runner and synchronous/asynchronous host registry.
 
 ### Backlog: Further Ideas

@@ -13,6 +13,8 @@ use minicbor::{
 
 /// Stable CBOR tag for an ExS structured Error value.
 const ERROR_TAG: u64 = 60_001;
+/// Stable CBOR tag for an ExS nominal enum value.
+const ENUM_TAG: u64 = 60_005;
 
 /// A host-safe ExS value represented independently of the runtime heap.
 ///
@@ -36,6 +38,15 @@ pub enum ExsValue {
     List(Vec<ExsValue>),
     /// An insertion-ordered mapping from string keys to host-safe ExS values.
     Object(Vec<(String, ExsValue)>),
+    /// A nominal enum value with an opaque type identity and ordered variant fields.
+    Enum {
+        /// Resolver-derived nominal enum identity.
+        type_id: String,
+        /// Source-visible enum variant name.
+        variant: String,
+        /// Variant payload fields in declaration order.
+        fields: Vec<ExsValue>,
+    },
 }
 
 /// The severity of one ExS language Error.
@@ -168,6 +179,23 @@ fn encode_value(value: &ExsValue, encoder: &mut Encoder<Vec<u8>>) -> Result<(), 
             }
             Ok(())
         }
+        ExsValue::Enum {
+            type_id,
+            variant,
+            fields,
+        } => {
+            encoder
+                .tag(Tag::new(ENUM_TAG))
+                .and_then(|encoder| encoder.array(3))
+                .and_then(|encoder| encoder.str(type_id))
+                .and_then(|encoder| encoder.str(variant))
+                .and_then(|encoder| encoder.array(fields.len() as u64))
+                .map_err(|_| CborError::Encode)?;
+            for field in fields {
+                encode_value(field, encoder)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -182,6 +210,7 @@ fn decode_value(decoder: &mut Decoder<'_>) -> Result<ExsValue, CborError> {
             let tag = decoder.tag().map_err(|_| CborError::Malformed)?;
             match tag.as_u64() {
                 ERROR_TAG => Ok(ExsValue::Error(decode_error(decoder)?)),
+                ENUM_TAG => decode_enum(decoder),
                 _ => Err(CborError::UnsupportedType),
             }
         }
@@ -239,6 +268,34 @@ fn decode_value(decoder: &mut Decoder<'_>) -> Result<ExsValue, CborError> {
         }
         _ => Err(CborError::UnsupportedType),
     }
+}
+
+/// Decodes the fixed three-field CBOR representation of one enum value.
+fn decode_enum(decoder: &mut Decoder<'_>) -> Result<ExsValue, CborError> {
+    if decoder.array().map_err(|_| CborError::Malformed)? != Some(3) {
+        return Err(CborError::Malformed);
+    }
+    let type_id = decoder
+        .str()
+        .map(str::to_owned)
+        .map_err(|_| CborError::Malformed)?;
+    let variant = decoder
+        .str()
+        .map(str::to_owned)
+        .map_err(|_| CborError::Malformed)?;
+    let length = decoder
+        .array()
+        .map_err(|_| CborError::Malformed)?
+        .ok_or(CborError::UnsupportedType)?;
+    let mut fields = Vec::with_capacity(usize::try_from(length).map_err(|_| CborError::Malformed)?);
+    for _ in 0..length {
+        fields.push(decode_value(decoder)?);
+    }
+    Ok(ExsValue::Enum {
+        type_id,
+        variant,
+        fields,
+    })
 }
 
 /// Encodes the stable seven-field CBOR map used for one ExS Error.

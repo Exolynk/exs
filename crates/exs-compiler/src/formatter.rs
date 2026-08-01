@@ -2,8 +2,8 @@
 
 use crate::SourceInput;
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Identifier,
-    ImplDeclaration, Module, ObjectProperty, Parameter, Statement, TraitDeclaration,
+    AssignmentTarget, BinaryOperator, Block, EnumDeclaration, Expression, FunctionDeclaration,
+    Identifier, ImplDeclaration, Module, ObjectProperty, Parameter, Statement, TraitDeclaration,
     TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, UnaryOperator,
 };
 use crate::diagnostic::CompileDiagnostics;
@@ -79,6 +79,7 @@ impl Formatter {
             .types
             .iter()
             .map(Declaration::Type)
+            .chain(module.enums.iter().map(Declaration::Enum))
             .chain(module.traits.iter().map(Declaration::Trait))
             .chain(module.implementations.iter().map(Declaration::Impl))
             .chain(module.functions.iter().map(Declaration::Function))
@@ -92,6 +93,7 @@ impl Formatter {
             }
             match declaration {
                 Declaration::Type(declaration) => self.type_declaration(declaration),
+                Declaration::Enum(declaration) => self.enum_declaration(declaration),
                 Declaration::Trait(declaration) => self.trait_declaration(declaration),
                 Declaration::Impl(declaration) => self.implementation(declaration),
                 Declaration::Function(declaration) => self.function(declaration),
@@ -101,6 +103,38 @@ impl Formatter {
             self.output.push('\n');
         }
         self.output
+    }
+
+    /// Renders one nominal enum declaration.
+    fn enum_declaration(&mut self, declaration: &EnumDeclaration<'_>) {
+        if declaration.variants.is_empty() {
+            self.line(&format!("enum {} {{}}", declaration.name.name));
+            return;
+        }
+        self.line(&format!("enum {} {{", declaration.name.name));
+        self.indentation += 1;
+        for variant in &declaration.variants {
+            let fields = variant
+                .fields
+                .iter()
+                .map(|field| {
+                    field.type_annotation.as_ref().map_or_else(
+                        || field.name.name.clone(),
+                        |annotation| {
+                            format!("{}: {}", field.name.name, type_annotation(annotation))
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            let suffix = if fields.is_empty() {
+                String::new()
+            } else {
+                format!("({})", fields.join(", "))
+            };
+            self.line(&format!("{}{},", variant.name.name, suffix));
+        }
+        self.indentation -= 1;
+        self.line("}");
     }
 
     /// Renders one nominal type declaration.
@@ -276,6 +310,8 @@ impl Formatter {
 enum Declaration<'a> {
     /// Nominal object type.
     Type(&'a TypeDeclaration<'a>),
+    /// Nominal enum declaration.
+    Enum(&'a EnumDeclaration<'a>),
     /// Trait declaration.
     Trait(&'a TraitDeclaration<'a>),
     /// Implementation declaration.
@@ -365,6 +401,18 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
             properties: values,
             ..
         } => format!("{} {{{}}}", type_name.name, render_properties(values)),
+        Expression::Match { value, arms, .. } => format!(
+            "match {} {{ {} }}",
+            render_expression(value),
+            arms.iter()
+                .map(|arm| format!(
+                    "{} => {}",
+                    render_match_pattern(&arm.pattern),
+                    render_expression(&arm.value)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Expression::Closure {
             parameters, body, ..
         } => format!(
@@ -444,6 +492,34 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
         format!("({value})")
     } else {
         value
+    }
+}
+
+/// Renders one enum-variant or fallback match pattern.
+fn render_match_pattern(pattern: &crate::ast::MatchPattern<'_>) -> String {
+    match pattern {
+        crate::ast::MatchPattern::Variant {
+            type_name,
+            variant,
+            bindings,
+            ..
+        } if bindings.is_empty() => format!("{}::{}", type_name.name, variant.name),
+        crate::ast::MatchPattern::Variant {
+            type_name,
+            variant,
+            bindings,
+            ..
+        } => format!(
+            "{}::{}({})",
+            type_name.name,
+            variant.name,
+            bindings
+                .iter()
+                .map(|binding| binding.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        crate::ast::MatchPattern::Wildcard(_) => "_".to_owned(),
     }
 }
 

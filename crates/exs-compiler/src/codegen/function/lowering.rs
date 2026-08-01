@@ -5,7 +5,7 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 
 use crate::ast::{BinaryOperator, Expression, ObjectProperty, UnaryOperator};
 use crate::codegen::diagnostics;
-use crate::codegen::types::{self, TypeContract};
+use crate::codegen::types::{self, EnumVariant, NominalKind, TypeContract};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::FunctionCompiler;
@@ -51,6 +51,20 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             }
             Expression::Propagate { value, span } => self.compile_propagate(value, *span)?,
             Expression::Variable(identifier) => {
+                if let Some(variant) = self.types.enum_variant(&identifier.name) {
+                    if !variant.fields.is_empty() {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            identifier.span,
+                            format!(
+                                "enum variant `{}` expects {} arguments",
+                                variant.name,
+                                variant.fields.len()
+                            ),
+                        )));
+                    }
+                    return self.compile_enum_variant(variant, &[], identifier.span);
+                }
                 let local = self.lookup(&identifier.name).ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
                         "E0205",
@@ -85,6 +99,13 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 properties,
                 span,
             } => self.compile_typed_object(type_name, properties, *span)?,
+            Expression::Match { span, .. } => {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    *span,
+                    "match expressions require continuation lowering",
+                )));
+            }
             Expression::Unary {
                 operator,
                 operand,
@@ -145,6 +166,21 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 if callee.name == "Error" {
                     self.compile_error_builtin(arguments, *span)?;
                     return Ok(());
+                }
+                if let Some(variant) = self.types.enum_variant(&callee.name) {
+                    if variant.fields.len() != arguments.len() {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            *span,
+                            format!(
+                                "enum variant `{}` expects {} arguments but received {}",
+                                variant.name,
+                                variant.fields.len(),
+                                arguments.len()
+                            ),
+                        )));
+                    }
+                    return self.compile_enum_variant(variant, arguments, *span);
                 }
                 let signature = self.signatures.get(&callee.name).ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
@@ -233,6 +269,42 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
+    /// Constructs one enum value after validating each payload field in declaration order.
+    fn compile_enum_variant(
+        &mut self,
+        variant: &EnumVariant,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.runtime_call("__exs_rt_list_new", span)?;
+        let fields = self.store_stack_value()?;
+        for (argument, contract) in arguments.iter().zip(&variant.fields) {
+            self.compile_expression(argument)?;
+            let value = self.store_stack_value()?;
+            self.validate_local_type(value, contract, span)?;
+            self.function.instruction(&Instruction::LocalGet(fields));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.runtime_value_call("__exs_rt_append", 2, span)?;
+            self.function.instruction(&Instruction::Drop);
+            self.clear_root_slot(value)?;
+        }
+        self.compile_string(&variant.type_identity, span)?;
+        let type_identity = self.store_stack_value()?;
+        self.compile_string(&variant.name, span)?;
+        let variant_name = self.store_stack_value()?;
+        self.function
+            .instruction(&Instruction::I32Const(variant.type_id.cast_signed()));
+        self.function
+            .instruction(&Instruction::LocalGet(type_identity));
+        self.function
+            .instruction(&Instruction::LocalGet(variant_name));
+        self.function.instruction(&Instruction::LocalGet(fields));
+        self.runtime_call("__exs_rt_enum_new", span)?;
+        self.clear_root_slot(type_identity)?;
+        self.clear_root_slot(variant_name)?;
+        self.clear_root_slot(fields)
+    }
+
     /// Compiles the reserved `Error(kind, message, data)` source constructor.
     pub(super) fn compile_error_builtin(
         &mut self,
@@ -272,6 +344,22 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         arguments: &[Expression<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        let key = format!("{}::{}", type_name.name, method.name);
+        if let Some(variant) = self.types.enum_variant(&key) {
+            if variant.fields.len() != arguments.len() {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0208",
+                    span,
+                    format!(
+                        "enum variant `{}` expects {} arguments but received {}",
+                        variant.name,
+                        variant.fields.len(),
+                        arguments.len()
+                    ),
+                )));
+            }
+            return self.compile_enum_variant(variant, arguments, span);
+        }
         if self.types.get(&type_name.name).is_none() {
             return Err(diagnostics(CompileDiagnostic::new(
                 "E0216",
@@ -279,7 +367,6 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 format!("unknown type `{}`", type_name.name),
             )));
         }
-        let key = format!("{}::{}", type_name.name, method.name);
         let signature = self.signatures.get(&key).ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0225",
@@ -524,6 +611,13 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 format!("unknown type `{}`", type_name.name),
             ))
         })?;
+        if nominal.kind != NominalKind::Object {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0216",
+                type_name.span,
+                format!("enum `{}` requires a variant constructor", type_name.name),
+            )));
+        }
         for property in properties {
             if !nominal
                 .fields
@@ -720,6 +814,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.function
                 .instruction(&Instruction::I32Const(type_id.cast_signed()));
             self.runtime_call("__exs_rt_object_is_type", span)?;
+            self.function.instruction(&Instruction::I32Or);
+            self.function.instruction(&Instruction::LocalSet(matches));
+        }
+        for type_id in &contract.enum_type_ids {
+            self.function.instruction(&Instruction::LocalGet(matches));
+            self.function.instruction(&Instruction::LocalGet(local));
+            self.compile_string(type_id, span)?;
+            self.runtime_call("__exs_rt_enum_is_type", span)?;
             self.function.instruction(&Instruction::I32Or);
             self.function.instruction(&Instruction::LocalSet(matches));
         }

@@ -66,7 +66,7 @@ fn generates_markdown_api_documentation() {
     let mut resolver = TestResolver {
         sources: HashMap::from([(
             "./math.exs".to_owned(),
-            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\n/// A coordinate.\ntype Point { value: Int }\n\nimpl Point { fn coordinate(self) -> Int { ret self.value; } }".to_owned(),
+            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\n/// A coordinate.\ntype Point { value: Int }\n\nimpl Point { fn coordinate(self) -> Int { ret self.value; } }\n\n/// A display color.\nenum Color { Rgb(red: Int, green: Int, blue: Int), Transparent, }\n\nimpl Color { fn channels(self) -> Int { ret 3; } }".to_owned(),
         )]),
     };
     let documentation = match document_with_resolver(
@@ -99,6 +99,7 @@ fn generates_markdown_api_documentation() {
     assert!(math.markdown.starts_with("# Module `./math.exs`"));
     assert!(math.markdown.contains("[`add`](fn/add.md)"));
     assert!(math.markdown.contains("[`Point`](types/point.md)"));
+    assert!(math.markdown.contains("[`Color`](enums/color.md)"));
     assert!(!math.markdown.contains("## Implementations"));
     let add = documentation
         .pages
@@ -113,6 +114,17 @@ fn generates_markdown_api_documentation() {
         .unwrap_or_else(|| panic!("missing Point type page"));
     assert!(point.markdown.contains("## Implemented Methods"));
     assert!(point.markdown.contains("coordinate"));
+    let color = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/01-math/enums/color.md")
+        .unwrap_or_else(|| panic!("missing Color enum page"));
+    assert!(
+        color
+            .markdown
+            .contains("Rgb(red: Int, green: Int, blue: Int)")
+    );
+    assert!(color.markdown.contains("## Implemented Methods"));
     let host_call = documentation
         .pages
         .iter()
@@ -446,6 +458,72 @@ fn compiles_nominal_types_and_implementations() {
             text: "type User { name: String, nickname: String | None, metadata, } impl User { fn display(self) -> String { ret self.name; } fn named(name: String) -> User { ret User { name: name }; } } fn main() -> String { let user = User::named(\"Ada\"); ret user.display(); }",
         },
         CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
+}
+
+/// Compiles enum variants with ordered payloads and nominal implementations.
+#[test]
+fn compiles_enums_and_implementations() {
+    let module = compile(
+        SourceInput {
+            source_id: "enums.exs",
+            text: "enum Color { Rgb(red: Int, green: Int, blue: Int), Transparent, } trait Rank { fn rank(self) -> Int; } impl Color { fn channels(self) -> Int { ret 3; } } impl Rank for Color { fn rank(self) -> Int { ret self.channels(); } } fn main() -> Int { let color = Color::Rgb(255, 0, 128); let transparent = Color::Transparent; ret color.rank() + transparent.channels(); }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
+}
+
+/// Compiles exhaustive enum matches with ordered payload bindings.
+#[test]
+fn compiles_exhaustive_enum_match_expressions() {
+    let module = compile(
+        SourceInput {
+            source_id: "enum-match.exs",
+            text: "enum Color { Rgb(red: Int, green: Int, blue: Int), Transparent, } fn main() -> Int { let color = Color::Rgb(255, 0, 128); ret match color { Color::Rgb(red, green, blue) => red + green + blue, Color::Transparent => 0, }; }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
+}
+
+/// Rejects an enum match that omits a variant without a wildcard fallback.
+#[test]
+fn rejects_non_exhaustive_enum_match_expressions() {
+    let error = match compile(
+        SourceInput {
+            source_id: "enum-match-error.exs",
+            text: "enum Color { Red, Blue, } fn main(value: Color) -> Int { ret match value { Color::Red => 1, }; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("non-exhaustive match compiled"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("non-exhaustive match: missing `Color::Blue`")
+    );
+}
+
+/// Resolves imported enum declarations and their variants through a `use` alias.
+#[test]
+fn compiles_used_imported_enum_constructors() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./colors.exs".to_owned(),
+            "enum Color { Rgb(red: Int, green: Int, blue: Int), }".to_owned(),
+        )]),
+    };
+    let module = compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./colors.exs\" as colors; use colors::{Color}; fn main() -> Color { ret Color::Rgb(255, 0, 128); }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
     );
     assert!(module.is_ok(), "{module:?}");
 }

@@ -11,6 +11,18 @@ pub(crate) struct RuntimeObject {
     pub(crate) type_id: Option<u32>,
     /// Key-value entries in insertion order.
     pub(crate) entries: Vec<(Box<str>, ValueRef)>,
+    /// Private enum metadata, present only for nominal enum values.
+    pub(crate) enum_data: Option<RuntimeEnum>,
+}
+
+/// One tagged enum payload carried by a nominal Object allocation.
+pub(crate) struct RuntimeEnum {
+    /// Stable host-boundary identity for the owning enum declaration.
+    pub(crate) type_identity: Box<str>,
+    /// Source-visible selected variant name.
+    pub(crate) variant: Box<str>,
+    /// Payload values in declaration order.
+    pub(crate) fields: Vec<ValueRef>,
 }
 
 impl RuntimeObject {
@@ -19,6 +31,7 @@ impl RuntimeObject {
         Self {
             type_id: None,
             entries: Vec::new(),
+            enum_data: None,
         }
     }
 
@@ -27,6 +40,16 @@ impl RuntimeObject {
         Self {
             type_id: Some(type_id),
             entries: Vec::new(),
+            enum_data: None,
+        }
+    }
+
+    /// Creates one nominal enum value with its private variant payload.
+    pub(crate) fn enumeration(type_id: Option<u32>, enum_data: RuntimeEnum) -> Self {
+        Self {
+            type_id,
+            entries: Vec::new(),
+            enum_data: Some(enum_data),
         }
     }
 }

@@ -11,6 +11,8 @@ pub struct Module<'a> {
     pub uses: Vec<UseDeclaration<'a>>,
     /// Named nominal Object type declarations.
     pub types: Vec<TypeDeclaration<'a>>,
+    /// Named nominal enum declarations.
+    pub enums: Vec<EnumDeclaration<'a>>,
     /// Named trait declarations.
     pub traits: Vec<TraitDeclaration<'a>>,
     /// Type-specific direct method declarations.
@@ -72,7 +74,29 @@ pub struct TypeField<'a> {
     pub span: SourceSpan<'a>,
 }
 
-/// The inherent or trait-provided methods associated with one nominal Object type.
+/// A nominal tagged union with named variants.
+#[derive(Debug, Clone)]
+pub struct EnumDeclaration<'a> {
+    /// The source-visible enum name.
+    pub name: Identifier<'a>,
+    /// Variants in source order.
+    pub variants: Vec<EnumVariant<'a>>,
+    /// Full declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+/// One enum variant with zero or more ordered payload fields.
+#[derive(Debug, Clone)]
+pub struct EnumVariant<'a> {
+    /// The source-visible variant name.
+    pub name: Identifier<'a>,
+    /// Constructor payload fields in source order.
+    pub fields: Vec<TypeField<'a>>,
+    /// Full variant declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+/// The inherent or trait-provided methods associated with one nominal type.
 #[derive(Debug, Clone)]
 pub struct ImplDeclaration<'a> {
     /// Implemented trait name, or None for an inherent implementation block.
@@ -302,6 +326,35 @@ pub struct ObjectProperty<'a> {
     pub span: SourceSpan<'a>,
 }
 
+/// One arm of a `match` expression.
+#[derive(Debug, Clone)]
+pub struct MatchArm<'a> {
+    /// Variant or fallback pattern selecting this arm.
+    pub pattern: MatchPattern<'a>,
+    /// Expression evaluated when the pattern matches.
+    pub value: Expression<'a>,
+    /// Full arm span.
+    pub span: SourceSpan<'a>,
+}
+
+/// One enum-variant or wildcard `match` pattern.
+#[derive(Debug, Clone)]
+pub enum MatchPattern<'a> {
+    /// A qualified enum variant and its ordered payload bindings.
+    Variant {
+        /// Qualified enum type name.
+        type_name: Identifier<'a>,
+        /// Selected enum variant name.
+        variant: Identifier<'a>,
+        /// Payload bindings in declaration order.
+        bindings: Vec<Identifier<'a>>,
+        /// Full pattern span.
+        span: SourceSpan<'a>,
+    },
+    /// The fallback pattern matching every remaining value.
+    Wildcard(SourceSpan<'a>),
+}
+
 /// A Phase-1 expression.
 #[derive(Debug, Clone)]
 pub enum Expression<'a> {
@@ -349,6 +402,15 @@ pub enum Expression<'a> {
         type_name: Identifier<'a>,
         /// Properties evaluated from left to right.
         properties: Vec<ObjectProperty<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
+    /// Selects one expression arm by an enum variant or fallback pattern.
+    Match {
+        /// Value evaluated exactly once before arm selection.
+        value: Box<Expression<'a>>,
+        /// Source-order variant and fallback arms.
+        arms: Vec<MatchArm<'a>>,
         /// Full expression span.
         span: SourceSpan<'a>,
     },

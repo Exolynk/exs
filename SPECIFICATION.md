@@ -231,7 +231,7 @@ pub struct ValueRef(NonZeroU32);
 
 `ValueRef` is a nonzero, one-based index into the runtime-owned value table. It has no tag or payload and MUST NOT cross the Wasm-host boundary. The compiler only uses stable runtime ABI operations to create, pass, and operate on values; it MUST NOT inspect the value table or runtime-object layouts.
 
-`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports None, Error, Bool, Int, Float, String, and recursively nested List and Object transport values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
+`exs-abi` defines the host-safe `ExsValue` transport enum and its CBOR codec. The implemented subset supports None, Error, Bool, Int, Float, String, recursively nested List and Object values, and tagged nominal enum values. `ExsValue` is not a runtime heap value: the runtime converts between it and `RtValue` at the Wasm-host boundary.
 
 The runtime stores the actual payload in `RtValue`. Primitive payloads are inline. Every complex variant MUST be boxed so adding it cannot increase the allocation size of primitive values:
 
@@ -339,6 +339,42 @@ impl User {
 ```
 
 A first bare `self` parameter declares an instance method, invoked as `user.display()`, and is implicitly constrained to the enclosing nominal type. A method without `self` is static and is invoked as `User::named("Ada")`. `impl Trait for Type` uses the same method forms and is specified in the Traits section. Method references are not supported. Runtime method names `push`, `pop`, `insert`, `remove`, `clear`, `has`, `delete`, `keys`, and `values` are reserved and MUST NOT be declared by an `impl` block.
+
+## Enums
+
+An ExS module MAY declare a nominal enum with zero-payload variants or variants with zero or more named, optionally typed payload fields:
+
+```text
+enum Color {
+    Rgb(red: Int, green: Int, blue: Int),
+    Named(name: String),
+    Transparent,
+}
+```
+
+Variants are constructed through their qualified enum name: `Color::Rgb(255, 0, 128)`, `Color::Named("brand")`, and `Color::Transparent`. Payload arguments are evaluated and checked in declaration order. An incorrect arity or a payload that violates its declared contract produces the normal function-contract `TypeError` behavior. A payload-bearing variant cannot be referenced without its call syntax.
+
+Enums are nominal types. They are valid in function contracts, imports, and `use` declarations; `use namespace::{Color as Tone}` also makes `Tone::Rgb(...)` and other constructors available. Inherent `impl Color` and trait `impl Trait for Color` blocks use the same instance and static method rules as nominal Object types. Enum payload fields are private to their declaration until pattern matching is specified.
+
+At the host boundary, an enum encodes as CBOR tag 60005 followed by the fixed array `[type_identity, variant, fields]`. `type_identity` is an opaque resolver-derived source identity and enum name, `variant` is the source-visible variant name, and `fields` is the ordered payload array. This identity is used to validate enum contracts for runner-provided values; compiler-local nominal dispatch tags never cross the boundary.
+
+## Match
+
+`match` is an expression that selects one arm from an enum value. Variant patterns are qualified and bind their ordered payload fields by name; `_` is an optional final fallback pattern:
+
+```text
+let brightness = match color {
+    Color::Rgb(red, green, blue) => red + green + blue,
+    Color::Named(name) => 1,
+    Color::Transparent => 0,
+};
+```
+
+Every non-fallback arm MUST name a declared variant of the same enum and supply exactly its payload binding count. A variant may occur at most once. Bindings are lexical to their arm and follow the ordinary capture rules when used by a closure. Arms are checked in source order; `_`, when present, MUST be last.
+
+Without `_`, a match MUST list every declared variant of its enum. The compiler rejects non-exhaustive matches. At runtime, a value that is not one of the listed variants, including a host-provided value with an invalid variant name, produces a recoverable `MatchError`. As with every recoverable Error, an explicit enclosing result contract must permit `Error` for the Error to be returned unchanged.
+
+The matched value is evaluated exactly once. Only the selected arm expression is evaluated. Match lowering uses continuation graph branches, so an arm may call the host, invoke a suspendable function, or otherwise suspend like any other expression.
 
 ## Function and Closure
 
@@ -630,7 +666,7 @@ fn some(input: Int, offset: Float) -> String | Int | Bool | Error {
 }
 ```
 
-The current built-in names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`. Every nominal type declared by the same module is also valid in a union annotation. An omitted annotation is exactly `Any`. An annotation is checked dynamically at function entry for every parameter and at each explicit or implicit return. The compiler does not statically prove call argument types.
+The current built-in names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, and `Object`. Every nominal Object type and enum declared by the same module is also valid in a union annotation. An omitted annotation is exactly `Any`. An annotation is checked dynamically at function entry for every parameter and at each explicit or implicit return. The compiler does not statically prove call argument types.
 
 On a contract mismatch, the runtime returns a recoverable `Error { kind: "TypeError" }` when the function return annotation includes `Error` or is omitted (`Any`). If the return annotation excludes `Error`, compiler-generated contract lowering returns a fatal `TypeError` from the current function. This preserves source position and trace information while terminating the program through the normal Error-reporting path. A valid Error value satisfies an `Error` union member and is returned unchanged.
 
@@ -1294,6 +1330,7 @@ The payload for kinds 0 and 1 is canonical CBOR. Kind 2 uses a CBOR map containi
 | List                        | array              |
 | Object                      | map with text keys |
 | Error                       | tag 60001 plus map |
+| Enum                        | tag 60005 plus `[type_identity, variant, fields]` |
 | graph definition            | tag 60002          |
 | graph reference             | tag 60003          |
 | HostResource live reference | tag 60004          |
@@ -1442,7 +1479,7 @@ The Phase-1 entry point is `fn main(...)`. Before execution, the runner serializ
 
 ## Phase-1 result buffer
 
-After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one None, Error, Bool, Int, Float, String, or recursively nested acyclic List or Object CBOR item. The internal `ValueRef` never crosses this boundary.
+After COMPLETE, the runner reads the CBOR byte range given by `__exs_result_ptr` and `__exs_result_len`. The implemented subset supports exactly one None, Error, Bool, Int, Float, String, tagged enum, or recursively nested acyclic List or Object CBOR item. The internal `ValueRef` never crosses this boundary.
 
 ## Runtime intrinsics
 

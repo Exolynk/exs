@@ -277,6 +277,23 @@ fn format_result(result: &exs_runner::ExsValue) -> String {
                 .join(", ");
             format!("{{{entries}}}")
         }
+        exs_runner::ExsValue::Enum {
+            type_id,
+            variant,
+            fields,
+        } => {
+            let type_name = type_id.rsplit("::").next().unwrap_or(type_id);
+            if fields.is_empty() {
+                format!("{type_name}::{variant}")
+            } else {
+                let fields = fields
+                    .iter()
+                    .map(format_result)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{type_name}::{variant}({fields})")
+            }
+        }
     }
 }
 

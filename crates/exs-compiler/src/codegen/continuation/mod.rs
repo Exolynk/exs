@@ -119,6 +119,7 @@ pub(super) fn compile_function<'source>(
         return_contract: &signature.return_type,
         function: Function::new([(7, ValType::I32)]),
         scratch_local: 1,
+        literal_buffer_local: 3,
     };
     for (state, operation) in graph.operations.iter().enumerate() {
         let state = u32::try_from(state).map_err(|_| {

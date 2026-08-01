@@ -7,7 +7,7 @@ use exs_abi::{
     TYPE_OBJECT, TYPE_STRING,
 };
 
-use crate::ast::{Module, TypeAnnotation};
+use crate::ast::{EnumDeclaration, Module, TypeAnnotation};
 use crate::codegen::diagnostics;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
@@ -33,6 +33,50 @@ pub(super) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
                 )
                 .with_related(previous, "previous declaration is here"),
             );
+        }
+    }
+    for declaration in &module.enums {
+        if builtin_mask(&declaration.name.name).is_some() {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0219",
+                declaration.name.span,
+                format!("duplicate or reserved enum `{}`", declaration.name.name),
+            ));
+        } else if let Some(previous) =
+            declarations.insert(&declaration.name.name, declaration.name.span)
+        {
+            diagnostics.push(
+                CompileDiagnostic::new(
+                    "E0219",
+                    declaration.name.span,
+                    format!(
+                        "enum `{}` conflicts with an existing type or trait",
+                        declaration.name.name
+                    ),
+                )
+                .with_related(previous, "previous declaration is here"),
+            );
+        }
+        let mut variants = HashMap::new();
+        for variant in &declaration.variants {
+            if let Some(previous) = variants.insert(&variant.name.name, variant.name.span) {
+                diagnostics.push(
+                    CompileDiagnostic::new(
+                        "E0220",
+                        variant.name.span,
+                        format!("duplicate enum variant `{}`", variant.name.name),
+                    )
+                    .with_related(previous, "previous variant is here"),
+                );
+            }
+            for field in &variant.fields {
+                validate_annotation(
+                    module,
+                    field.type_annotation.as_ref(),
+                    field.name.span,
+                    &mut diagnostics,
+                );
+            }
         }
     }
     for declaration in &module.traits {
@@ -110,6 +154,10 @@ pub(super) fn validate_annotation<'a>(
                 .traits
                 .iter()
                 .any(|declaration| declaration.name.name == member.name)
+            && !module
+                .enums
+                .iter()
+                .any(|declaration| declaration.name.name == member.name)
         {
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
@@ -127,6 +175,8 @@ pub(super) struct TypeContract {
     pub(super) builtin_mask: u32,
     /// Accepted nominal Object type identifiers.
     pub(super) nominal_type_ids: Vec<u32>,
+    /// Accepted stable identities for nominal enum values received from a host.
+    pub(super) enum_type_ids: Vec<String>,
 }
 
 /// One resolved nominal Object field contract.
@@ -145,12 +195,39 @@ pub(super) struct NominalType {
     pub(super) id: u32,
     /// Fields in declaration order.
     pub(super) fields: Vec<NominalField>,
+    /// Whether this nominal type is an Object or enum.
+    pub(super) kind: NominalKind,
+    /// Stable host-boundary identity when this nominal type is an enum.
+    pub(super) enum_type_id: Option<String>,
+}
+
+/// The runtime construction category of one nominal type.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) enum NominalKind {
+    /// A field-keyed nominal Object.
+    Object,
+    /// A tagged enum value.
+    Enum,
+}
+
+/// One resolved enum-variant constructor.
+#[derive(Debug, Clone)]
+pub(super) struct EnumVariant {
+    /// Nominal enum type tag.
+    pub(super) type_id: u32,
+    /// Stable host-boundary type identity.
+    pub(super) type_identity: String,
+    /// Source-visible variant name.
+    pub(super) name: String,
+    /// Ordered payload contracts.
+    pub(super) fields: Vec<TypeContract>,
 }
 
 /// The nominal type registry for one compiled module.
 #[derive(Debug, Clone)]
 pub(super) struct TypeRegistry {
     types: HashMap<String, NominalType>,
+    enum_variants: HashMap<String, EnumVariant>,
     trait_implementations: HashMap<String, Vec<u32>>,
 }
 
@@ -158,7 +235,8 @@ impl TypeRegistry {
     /// Collects named types and resolves every declared field contract.
     pub(super) fn build<'a>(module: &Module<'a>) -> Result<Self, CompileDiagnostics<'a>> {
         let mut types = HashMap::new();
-        for (offset, declaration) in module.types.iter().enumerate() {
+        let mut next_id = 1_u32;
+        for declaration in &module.types {
             if builtin_mask(&declaration.name.name).is_some()
                 || types.contains_key(&declaration.name.name)
             {
@@ -168,21 +246,49 @@ impl TypeRegistry {
                     format!("duplicate or reserved type `{}`", declaration.name.name),
                 )));
             }
-            let id = u32::try_from(offset)
-                .ok()
-                .and_then(|id| id.checked_add(1))
-                .ok_or_else(|| {
-                    diagnostics(CompileDiagnostic::new(
-                        "E0212",
-                        declaration.name.span,
-                        "too many nominal types in one module",
-                    ))
-                })?;
+            let id = next_id;
+            next_id = next_id.checked_add(1).ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    declaration.name.span,
+                    "too many nominal types in one module",
+                ))
+            })?;
             types.insert(
                 declaration.name.name.clone(),
                 NominalType {
                     id,
                     fields: Vec::new(),
+                    kind: NominalKind::Object,
+                    enum_type_id: None,
+                },
+            );
+        }
+        for declaration in &module.enums {
+            if builtin_mask(&declaration.name.name).is_some()
+                || types.contains_key(&declaration.name.name)
+            {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0219",
+                    declaration.name.span,
+                    format!("duplicate or reserved enum `{}`", declaration.name.name),
+                )));
+            }
+            let id = next_id;
+            next_id = next_id.checked_add(1).ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    declaration.name.span,
+                    "too many nominal types in one module",
+                ))
+            })?;
+            types.insert(
+                declaration.name.name.clone(),
+                NominalType {
+                    id,
+                    fields: Vec::new(),
+                    kind: NominalKind::Enum,
+                    enum_type_id: Some(enum_identity(declaration)),
                 },
             );
         }
@@ -217,6 +323,7 @@ impl TypeRegistry {
         }
         let mut registry = Self {
             types,
+            enum_variants: HashMap::new(),
             trait_implementations,
         };
         for declaration in &module.types {
@@ -246,6 +353,9 @@ impl TypeRegistry {
             };
             registered.fields = fields;
         }
+        for declaration in &module.enums {
+            registry.register_enum(declaration)?;
+        }
         Ok(registry)
     }
 
@@ -259,16 +369,23 @@ impl TypeRegistry {
             return Ok(TypeContract {
                 builtin_mask: TYPE_ANY,
                 nominal_type_ids: Vec::new(),
+                enum_type_ids: Vec::new(),
             });
         };
         let mut resolved_builtin_mask = 0;
         let mut nominal_type_ids = Vec::new();
+        let mut enum_type_ids = Vec::new();
         for member in &annotation.members {
             if let Some(mask) = builtin_mask(&member.name) {
                 resolved_builtin_mask |= mask;
             } else if let Some(nominal) = self.types.get(&member.name) {
                 if !nominal_type_ids.contains(&nominal.id) {
                     nominal_type_ids.push(nominal.id);
+                }
+                if let Some(enum_type_id) = &nominal.enum_type_id
+                    && !enum_type_ids.contains(enum_type_id)
+                {
+                    enum_type_ids.push(enum_type_id.clone());
                 }
             } else if let Some(implementations) = self.trait_implementations.get(&member.name) {
                 for type_id in implementations {
@@ -287,6 +404,7 @@ impl TypeRegistry {
         Ok(TypeContract {
             builtin_mask: resolved_builtin_mask,
             nominal_type_ids,
+            enum_type_ids,
         })
     }
 
@@ -294,6 +412,67 @@ impl TypeRegistry {
     pub(super) fn get(&self, name: &str) -> Option<&NominalType> {
         self.types.get(name)
     }
+
+    /// Resolves one canonical enum constructor name.
+    pub(super) fn enum_variant(&self, name: &str) -> Option<&EnumVariant> {
+        self.enum_variants.get(name)
+    }
+
+    /// Returns every declared variant name for one canonical enum type.
+    pub(super) fn enum_variant_names(&self, type_name: &str) -> Vec<String> {
+        let prefix = format!("{type_name}::");
+        self.enum_variants
+            .keys()
+            .filter_map(|name| name.strip_prefix(&prefix).map(ToOwned::to_owned))
+            .collect()
+    }
+
+    /// Registers every constructor and payload contract for one enum declaration.
+    fn register_enum<'a>(
+        &mut self,
+        declaration: &EnumDeclaration<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let type_id = self
+            .types
+            .get(&declaration.name.name)
+            .map(|item| item.id)
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    declaration.name.span,
+                    "missing collected enum type",
+                ))
+            })?;
+        let type_identity = enum_identity(declaration);
+        for variant in &declaration.variants {
+            let fields = variant
+                .fields
+                .iter()
+                .map(|field| self.resolve(field.type_annotation.as_ref(), field.name.span))
+                .collect::<Result<Vec<_>, _>>()?;
+            self.enum_variants.insert(
+                format!("{}::{}", declaration.name.name, variant.name.name),
+                EnumVariant {
+                    type_id,
+                    type_identity: type_identity.clone(),
+                    name: variant.name.name.clone(),
+                    fields,
+                },
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Returns the resolver-derived identity used for one enum at the host boundary.
+fn enum_identity(declaration: &EnumDeclaration<'_>) -> String {
+    let type_name = declaration
+        .name
+        .name
+        .rsplit("::")
+        .next()
+        .unwrap_or(&declaration.name.name);
+    format!("{}::{type_name}", declaration.name.span.source_id)
 }
 
 /// Returns whether a function return contract permits language Error values.

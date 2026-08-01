@@ -55,7 +55,7 @@ pub struct DocumentationPage {
 pub struct Documentation {
     /// Project overview and language reference page.
     pub index: String,
-    /// Module, type, trait, and function API pages.
+    /// Module, type, enum, trait, and function API pages.
     pub pages: Vec<DocumentationPage>,
 }
 

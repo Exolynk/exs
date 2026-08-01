@@ -26,6 +26,11 @@ fn round_trips_phase_one_values() {
                 ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)]),
             ),
         ]),
+        ExsValue::Enum {
+            type_id: "colors.exs::Color".to_owned(),
+            variant: "Rgb".to_owned(),
+            fields: vec![ExsValue::Int(255), ExsValue::Int(0), ExsValue::Int(128)],
+        },
         ExsValue::Error(ExsError {
             severity: ErrorSeverity::Recoverable,
             kind: "MissingValue".to_owned(),

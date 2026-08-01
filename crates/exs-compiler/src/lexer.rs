@@ -33,6 +33,10 @@ pub enum TokenKind {
     As,
     /// The `type` keyword.
     Type,
+    /// The `enum` keyword.
+    Enum,
+    /// The `match` keyword.
+    Match,
     /// The `trait` keyword.
     Trait,
     /// The `impl` keyword.
@@ -652,6 +656,8 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
         "use" => TokenKind::Use,
         "as" => TokenKind::As,
         "type" => TokenKind::Type,
+        "enum" => TokenKind::Enum,
+        "match" => TokenKind::Match,
         "trait" => TokenKind::Trait,
         "impl" => TokenKind::Impl,
         "let" => TokenKind::Let,

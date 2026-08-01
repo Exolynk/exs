@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::ast::{
-    FunctionDeclaration, Module, Parameter, TraitDeclaration, TraitMethodDeclaration,
-    TypeAnnotation, TypeDeclaration,
+    EnumDeclaration, FunctionDeclaration, Module, Parameter, TraitDeclaration,
+    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration,
 };
 use crate::{Documentation, DocumentationPage, ModuleResolver, SourceInput, SourceSpan};
 
@@ -145,7 +145,7 @@ fn render_index(files: &[SourceFile], directories: &[String]) -> String {
     output
 }
 
-/// Generates a module index and dedicated type, trait, and function pages.
+/// Generates a module index and dedicated nominal, trait, and function pages.
 fn module_pages(
     module: &Module<'_>,
     source: &SourceFile,
@@ -162,6 +162,12 @@ fn module_pages(
         pages.push(DocumentationPage {
             path: format!("{directory}/types/{}.md", slug(&declaration.name.name)),
             markdown: render_type_page(module, declaration, source),
+        });
+    }
+    for declaration in &module.enums {
+        pages.push(DocumentationPage {
+            path: format!("{directory}/enums/{}.md", slug(&declaration.name.name)),
+            markdown: render_enum_page(module, declaration, source),
         });
     }
     for declaration in &module.traits {
@@ -228,6 +234,13 @@ fn render_module_index(
     );
     link_section(
         &mut output,
+        "Enums",
+        &module.enums,
+        |declaration| format!("enums/{}.md", slug(&declaration.name.name)),
+        |declaration| declaration.name.name.as_str(),
+    );
+    link_section(
+        &mut output,
         "Traits",
         &module.traits,
         |declaration| format!("traits/{}.md", slug(&declaration.name.name)),
@@ -240,9 +253,58 @@ fn render_module_index(
         |declaration| format!("fn/{}.md", slug(&declaration.name.name)),
         |declaration| declaration.name.name.as_str(),
     );
-    if module.types.is_empty() && module.traits.is_empty() && module.functions.is_empty() {
+    if module.types.is_empty()
+        && module.enums.is_empty()
+        && module.traits.is_empty()
+        && module.functions.is_empty()
+    {
         output.push_str("No public declarations.\n");
     }
+    output
+}
+
+/// Renders one user-defined enum and all methods implemented for it.
+fn render_enum_page(
+    module: &Module<'_>,
+    declaration: &EnumDeclaration<'_>,
+    source: &SourceFile,
+) -> String {
+    let mut output = format!("# Enum `{}`\n\n", declaration.name.name);
+    append_comment(&mut output, &source.text, declaration.span);
+    output.push_str("```exs\n");
+    output.push_str(&format!("enum {} {{\n", declaration.name.name));
+    for variant in &declaration.variants {
+        output.push_str(&format!("    {}", variant.name.name));
+        if !variant.fields.is_empty() {
+            output.push('(');
+            output.push_str(
+                &variant
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        field.type_annotation.as_ref().map_or_else(
+                            || field.name.name.clone(),
+                            |annotation| {
+                                format!("{}: {}", field.name.name, type_annotation(annotation))
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push(')');
+        }
+        output.push_str(",\n");
+    }
+    output.push_str("}\n```\n\n");
+    if !declaration.variants.is_empty() {
+        output.push_str("## Variants\n\n");
+        for variant in &declaration.variants {
+            output.push_str(&format!("### `{}`\n\n", variant.name.name));
+            append_comment(&mut output, &source.text, variant.span);
+        }
+    }
+    render_nominal_implementations(&mut output, module, &declaration.name.name, source);
     output
 }
 
@@ -292,10 +354,21 @@ fn render_type_page(
         ));
     }
     output.push_str("}\n```\n\n");
+    render_nominal_implementations(&mut output, module, &declaration.name.name, source);
+    output
+}
+
+/// Renders all inherent and trait-provided methods of one nominal declaration.
+fn render_nominal_implementations(
+    output: &mut String,
+    module: &Module<'_>,
+    name: &str,
+    source: &SourceFile,
+) {
     let implementations = module
         .implementations
         .iter()
-        .filter(|implementation| implementation.type_name.name == declaration.name.name)
+        .filter(|implementation| implementation.type_name.name == name)
         .collect::<Vec<_>>();
     if !implementations.is_empty() {
         output.push_str("## Implemented Methods\n\n");
@@ -306,11 +379,10 @@ fn render_type_page(
             );
             output.push_str(&format!("### {label}\n\n"));
             for method in &implementation.methods {
-                render_function_details(&mut output, method, &source.text, 4);
+                render_function_details(output, method, &source.text, 4);
             }
         }
     }
-    output
 }
 
 /// Renders one user-defined trait and all of its method details.

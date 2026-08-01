@@ -137,7 +137,12 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
             }
         }
         RtValue::List(list) => worklist.extend(list.elements.iter().copied()),
-        RtValue::Object(object) => worklist.extend(object.entries.iter().map(|(_, value)| *value)),
+        RtValue::Object(object) => {
+            worklist.extend(object.entries.iter().map(|(_, value)| *value));
+            if let Some(enum_data) = &object.enum_data {
+                worklist.extend(enum_data.fields.iter().copied());
+            }
+        }
         RtValue::Cell(cell) => worklist.push(cell.value),
         RtValue::Closure(closure) => worklist.extend(closure.captures.iter().copied()),
         RtValue::None

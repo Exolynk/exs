@@ -14,7 +14,7 @@ pub(crate) use cell::RuntimeCellValue;
 pub(crate) use closure::RuntimeClosure;
 pub(crate) use error::RuntimeError;
 pub(crate) use list::RuntimeList;
-pub(crate) use object::RuntimeObject;
+pub(crate) use object::{RuntimeEnum, RuntimeObject};
 pub(crate) use string::RuntimeString;
 
 use alloc::boxed::Box;

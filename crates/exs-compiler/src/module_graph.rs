@@ -116,6 +116,7 @@ pub(super) fn compile<R: ModuleResolver>(
         imports: Vec::new(),
         uses: Vec::new(),
         types: Vec::new(),
+        enums: Vec::new(),
         traits: Vec::new(),
         implementations: Vec::new(),
         functions: Vec::new(),
@@ -124,6 +125,7 @@ pub(super) fn compile<R: ModuleResolver>(
         let bindings = bindings_for(&modules[index], index, &edges[index], &exports)?;
         rewrite_module(&mut modules[index], index, &bindings);
         combined.types.append(&mut modules[index].types);
+        combined.enums.append(&mut modules[index].enums);
         combined.traits.append(&mut modules[index].traits);
         combined
             .implementations
@@ -162,11 +164,21 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<HashMap<String, 
         .iter()
         .map(|item| &item.name.name)
         .chain(module.types.iter().map(|item| &item.name.name))
+        .chain(module.enums.iter().map(|item| &item.name.name))
         .chain(module.traits.iter().map(|item| &item.name.name))
     {
         let canonical = canonical(index, name);
         if exports.insert(name.clone(), canonical).is_some() {
             return Err(format!("duplicate exported declaration `{name}`"));
+        }
+    }
+    for declaration in &module.enums {
+        for variant in &declaration.variants {
+            let name = format!("{}::{}", declaration.name.name, variant.name.name);
+            let canonical = canonical(index, &name);
+            if exports.insert(name.clone(), canonical).is_some() {
+                return Err(format!("duplicate exported declaration `{name}`"));
+            }
         }
     }
     Ok(exports)
@@ -214,6 +226,23 @@ fn bindings_for(
                     declaration.span.source_id
                 ));
             }
+            let variant_prefix = format!("{source}::");
+            let variants = bindings
+                .iter()
+                .filter_map(|(name, canonical)| {
+                    name.strip_prefix(&variant_prefix)
+                        .map(|suffix| (suffix.to_owned(), canonical.clone()))
+                })
+                .collect::<Vec<_>>();
+            for (variant, canonical) in variants {
+                let variant_local = format!("{local}::{variant}");
+                if bindings.insert(variant_local.clone(), canonical).is_some() {
+                    return Err(format!(
+                        "{}: used enum variant `{variant_local}` collides with an existing declaration",
+                        declaration.span.source_id
+                    ));
+                }
+            }
         }
     }
     Ok(bindings)
@@ -226,6 +255,16 @@ fn rewrite_module(module: &mut Module<'_>, index: usize, bindings: &HashMap<Stri
         for field in &mut declaration.fields {
             if let Some(annotation) = &mut field.type_annotation {
                 rewrite_annotation(annotation, bindings);
+            }
+        }
+    }
+    for declaration in &mut module.enums {
+        rename(&mut declaration.name, index);
+        for variant in &mut declaration.variants {
+            for field in &mut variant.fields {
+                if let Some(annotation) = &mut field.type_annotation {
+                    rewrite_annotation(annotation, bindings);
+                }
             }
         }
     }
@@ -456,6 +495,15 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
         Expression::Object { properties, .. } => {
             for property in properties {
                 rewrite_expression(&mut property.value, bindings);
+            }
+        }
+        Expression::Match { value, arms, .. } => {
+            rewrite_expression(value, bindings);
+            for arm in arms {
+                if let crate::ast::MatchPattern::Variant { type_name, .. } = &mut arm.pattern {
+                    rewrite_identifier(type_name, bindings);
+                }
+                rewrite_expression(&mut arm.value, bindings);
             }
         }
         Expression::Integer(_, _)

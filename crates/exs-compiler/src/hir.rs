@@ -152,6 +152,7 @@ pub(crate) struct HirFunction<'a> {
     callable_calls: Vec<CallableCall<'a>>,
     host_calls: Vec<HostCall<'a>>,
     parallel_calls: Vec<SourceSpan<'a>>,
+    matches: bool,
 }
 
 impl<'a> HirFunction<'a> {
@@ -171,6 +172,7 @@ impl<'a> HirFunction<'a> {
             callable_calls: lowerer.callable_calls,
             host_calls: lowerer.host_calls,
             parallel_calls: lowerer.parallel_calls,
+            matches: lowerer.matches,
         }
     }
 
@@ -208,6 +210,12 @@ impl<'a> HirFunction<'a> {
     #[must_use]
     pub(crate) fn parallel_calls(&self) -> &[SourceSpan<'a>] {
         &self.parallel_calls
+    }
+
+    /// Returns whether this function contains a match expression.
+    #[must_use]
+    pub(crate) const fn has_matches(&self) -> bool {
+        self.matches
     }
 }
 
@@ -318,6 +326,7 @@ struct FunctionLowerer<'a, 'state> {
     callable_calls: Vec<CallableCall<'a>>,
     host_calls: Vec<HostCall<'a>>,
     parallel_calls: Vec<SourceSpan<'a>>,
+    matches: bool,
     instance_targets: &'state HashMap<String, Vec<String>>,
     state: &'state LoweringState<'a>,
 }
@@ -342,6 +351,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             callable_calls: Vec::new(),
             host_calls: Vec::new(),
             parallel_calls: Vec::new(),
+            matches: false,
             instance_targets,
             state,
         };
@@ -372,6 +382,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             callable_calls: Vec::new(),
             host_calls: Vec::new(),
             parallel_calls: Vec::new(),
+            matches: false,
             instance_targets,
             state,
         };
@@ -567,6 +578,20 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             Expression::Object { properties, .. } | Expression::TypedObject { properties, .. } => {
                 for property in properties {
                     self.lower_expression(&property.value);
+                }
+            }
+            Expression::Match { value, arms, .. } => {
+                self.matches = true;
+                self.lower_expression(value);
+                for arm in arms {
+                    self.scopes.push(HashMap::new());
+                    if let crate::ast::MatchPattern::Variant { bindings, .. } = &arm.pattern {
+                        for binding in bindings {
+                            self.declare(&binding.name, binding.span);
+                        }
+                    }
+                    self.lower_expression(&arm.value);
+                    let _scope = self.scopes.pop();
                 }
             }
             Expression::Index {

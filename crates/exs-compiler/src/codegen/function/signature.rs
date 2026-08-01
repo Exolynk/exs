@@ -21,7 +21,14 @@ pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostic
         let nominal = module
             .types
             .iter()
-            .find(|declaration| declaration.name.name == implementation.type_name.name);
+            .map(|declaration| declaration.name.name.as_str())
+            .chain(
+                module
+                    .enums
+                    .iter()
+                    .map(|declaration| declaration.name.name.as_str()),
+            )
+            .find(|name| *name == implementation.type_name.name);
         if nominal.is_none() {
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
@@ -37,13 +44,7 @@ pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostic
                     format!("method `{}` is reserved by the runtime", method.name.name),
                 ));
             }
-            validate_function(
-                module,
-                method,
-                nominal.map(|declaration| declaration.name.name.as_str()),
-                &mut signatures,
-                &mut diagnostics,
-            );
+            validate_function(module, method, nominal, &mut signatures, &mut diagnostics);
         }
     }
     if !signatures.contains_key("main") {
@@ -263,6 +264,7 @@ fn insert_signature<'a>(
             parameter_types.push(TypeContract {
                 builtin_mask: 0,
                 nominal_type_ids: vec![receiver_type.unwrap_or_default()],
+                enum_type_ids: Vec::new(),
             });
         } else {
             parameter_types

@@ -106,6 +106,55 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Constructs one tagged enum variant after all payload values are evaluated.
+    Enum {
+        /// Compiler-owned nominal enum tag.
+        type_id: u32,
+        /// Stable host-boundary enum identity.
+        type_identity: String,
+        /// Selected source-visible variant name.
+        variant: String,
+        /// Ordered payload frame slots.
+        fields: Vec<u32>,
+        /// Frame slot retaining the type identity string across further allocations.
+        type_identity_slot: u32,
+        /// Frame slot retaining the variant string across further allocations.
+        variant_slot: u32,
+        /// Frame slot receiving the constructed enum value.
+        destination: u32,
+        /// Source location for this constructor invocation.
+        span: SourceSpan<'source>,
+    },
+    /// Tests one value against a nominal enum identity and variant name.
+    EnumMatches {
+        /// Frame slot holding the value under test.
+        value: u32,
+        /// Stable host-boundary enum identity.
+        type_identity: String,
+        /// Source-visible variant name.
+        variant: String,
+        /// Frame slot retaining the identity across literal allocation.
+        type_identity_slot: u32,
+        /// Frame slot retaining the variant across literal allocation.
+        variant_slot: u32,
+        /// Frame slot receiving the Boolean test result.
+        destination: u32,
+        /// Source location for this match pattern.
+        span: SourceSpan<'source>,
+    },
+    /// Reads one payload field from an enum value selected by a preceding match test.
+    EnumField {
+        value: u32,
+        index: u32,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
+    /// Creates the Error returned when no match arm accepts a runtime value.
+    MatchError {
+        value: u32,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
     /// Tests one value for the Error variant.
     IsError {
         value: u32,
@@ -446,6 +495,10 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::List { span, .. }
         | Operation::Object { span, .. }
         | Operation::TypedObject { span, .. }
+        | Operation::Enum { span, .. }
+        | Operation::EnumMatches { span, .. }
+        | Operation::EnumField { span, .. }
+        | Operation::MatchError { span, .. }
         | Operation::IsError { span, .. }
         | Operation::Propagate { span, .. }
         | Operation::Index { span, .. }
@@ -487,6 +540,7 @@ pub(super) fn expression_span<'source>(expression: &Expression<'source>) -> Sour
         | Expression::List { span, .. }
         | Expression::Object { span, .. }
         | Expression::TypedObject { span, .. }
+        | Expression::Match { span, .. }
         | Expression::Unary { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }

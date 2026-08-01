@@ -28,8 +28,10 @@ pub(super) struct StepCompiler<'source, 'context> {
     pub(super) return_contract: &'context TypeContract,
     /// Wasm function body under construction.
     pub(super) function: Function,
-    /// Reused Wasm local for host status and literal-buffer pointers.
+    /// Reused Wasm local for host status and temporary result values.
     pub(super) scratch_local: u32,
+    /// Reused Wasm local for compiler literal-buffer pointers.
+    pub(super) literal_buffer_local: u32,
 }
 
 impl<'source, 'context> StepCompiler<'source, 'context> {
@@ -236,6 +238,81 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                     .instruction(&Instruction::I32Const(type_id.cast_signed()));
                 self.call_runtime("__exs_rt_object_typed_new", *span)?;
                 self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::Enum {
+                type_id,
+                type_identity,
+                variant,
+                fields,
+                type_identity_slot,
+                variant_slot,
+                destination,
+                span,
+            } => {
+                self.string(type_identity, *span)?;
+                self.set_slot(*type_identity_slot, *span)?;
+                self.string(variant, *span)?;
+                self.set_slot(*variant_slot, *span)?;
+                self.call_runtime("__exs_rt_list_new", *span)?;
+                self.set_slot(*destination, *span)?;
+                for field in fields {
+                    self.get_slot(*destination, *span)?;
+                    self.get_slot(*field, *span)?;
+                    self.call_runtime("__exs_rt_append", *span)?;
+                    self.function.instruction(&Instruction::Drop);
+                }
+                self.function
+                    .instruction(&Instruction::I32Const(type_id.cast_signed()));
+                self.get_slot(*type_identity_slot, *span)?;
+                self.get_slot(*variant_slot, *span)?;
+                self.get_slot(*destination, *span)?;
+                self.call_runtime("__exs_rt_enum_new", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::EnumMatches {
+                value,
+                type_identity,
+                variant,
+                type_identity_slot,
+                variant_slot,
+                destination,
+                span,
+            } => {
+                self.string(type_identity, *span)?;
+                self.set_slot(*type_identity_slot, *span)?;
+                self.string(variant, *span)?;
+                self.set_slot(*variant_slot, *span)?;
+                self.get_slot(*value, *span)?;
+                self.get_slot(*type_identity_slot, *span)?;
+                self.get_slot(*variant_slot, *span)?;
+                self.call_runtime("__exs_rt_enum_matches", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::EnumField {
+                value,
+                index,
+                destination,
+                span,
+            } => {
+                self.get_slot(*value, *span)?;
+                self.function
+                    .instruction(&Instruction::I32Const(index.cast_signed()));
+                self.call_runtime("__exs_rt_enum_field", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::MatchError {
+                value,
+                destination,
+                span,
+            } => {
+                self.get_slot(*value, *span)?;
+                self.call_runtime("__exs_rt_match_error", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.complete_if_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
             Operation::IsError {

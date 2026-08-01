@@ -269,6 +269,12 @@ fn collect_closures_expression<'source, 'ast>(
                 collect_closures_expression(&property.value, closures);
             }
         }
+        Expression::Match { value, arms, .. } => {
+            collect_closures_expression(value, closures);
+            for arm in arms {
+                collect_closures_expression(&arm.value, closures);
+            }
+        }
         Expression::Integer(_, _)
         | Expression::Float(_, _)
         | Expression::String(_, _)

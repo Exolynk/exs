@@ -10,8 +10,8 @@ pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, Sour
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 17 adds scheduler-backed parallel closure execution exports.
-pub const ABI_VERSION: u32 = 17;
+/// Version 19 adds enum matching and payload access runtime exports.
+pub const ABI_VERSION: u32 = 19;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[

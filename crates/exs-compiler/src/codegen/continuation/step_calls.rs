@@ -391,6 +391,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.function.instruction(&Instruction::I32Or);
             self.function.instruction(&Instruction::LocalSet(2));
         }
+        for type_id in &contract.enum_type_ids {
+            self.function.instruction(&Instruction::LocalGet(2));
+            self.get_slot(slot, span)?;
+            self.string(type_id, span)?;
+            self.call_runtime("__exs_rt_enum_is_type", span)?;
+            self.function.instruction(&Instruction::I32Or);
+            self.function.instruction(&Instruction::LocalSet(2));
+        }
         Ok(())
     }
 
@@ -413,6 +421,15 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.function
                 .instruction(&Instruction::I32Const(type_id.cast_signed()));
             self.call_runtime("__exs_rt_object_is_type", span)?;
+            self.function.instruction(&Instruction::I32Or);
+            self.function.instruction(&Instruction::LocalSet(2));
+        }
+        for type_id in &contract.enum_type_ids {
+            self.function.instruction(&Instruction::LocalGet(2));
+            self.function
+                .instruction(&Instruction::LocalGet(self.scratch_local));
+            self.string(type_id, span)?;
+            self.call_runtime("__exs_rt_enum_is_type", span)?;
             self.function.instruction(&Instruction::I32Or);
             self.function.instruction(&Instruction::LocalSet(2));
         }
@@ -496,13 +513,13 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function.instruction(&Instruction::I32Const(length));
         self.call_runtime("__exs_rt_literal_buffer_alloc", span)?;
         self.function
-            .instruction(&Instruction::LocalTee(self.scratch_local));
+            .instruction(&Instruction::LocalTee(self.literal_buffer_local));
         self.function.instruction(&Instruction::I32Const(0));
         self.function.instruction(&Instruction::I32Const(length));
         self.function
             .instruction(&Instruction::MemoryInit { mem: 0, data_index });
         self.function
-            .instruction(&Instruction::LocalGet(self.scratch_local));
+            .instruction(&Instruction::LocalGet(self.literal_buffer_local));
         self.function.instruction(&Instruction::I32Const(length));
         self.call_runtime("__exs_rt_string_new", span)
     }

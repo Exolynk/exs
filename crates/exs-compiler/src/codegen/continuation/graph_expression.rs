@@ -1,8 +1,10 @@
 //! Expression lowering for continuation graphs.
 
-use crate::ast::{BinaryOperator, Expression};
+use std::collections::HashMap;
+
+use crate::ast::{BinaryOperator, Expression, MatchPattern};
 use crate::codegen::diagnostics;
-use crate::codegen::types::TypeContract;
+use crate::codegen::types::{NominalKind, TypeContract};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::graph::{BindingSlot, GraphBuilder, Operation, expression_span};
@@ -26,6 +28,33 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 Ok(destination)
             }
             Expression::Variable(identifier) => {
+                if let Some(variant) = self.types.enum_variant(&identifier.name) {
+                    if !variant.fields.is_empty() {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            identifier.span,
+                            format!(
+                                "enum variant `{}` expects {} arguments",
+                                variant.name,
+                                variant.fields.len()
+                            ),
+                        )));
+                    }
+                    let destination = self.temporary(identifier.span)?;
+                    let type_identity_slot = self.temporary(identifier.span)?;
+                    let variant_slot = self.temporary(identifier.span)?;
+                    self.operations.push(Operation::Enum {
+                        type_id: variant.type_id,
+                        type_identity: variant.type_identity.clone(),
+                        variant: variant.name.clone(),
+                        fields: Vec::new(),
+                        type_identity_slot,
+                        variant_slot,
+                        destination,
+                        span: identifier.span,
+                    });
+                    return Ok(destination);
+                }
                 let binding = self.lookup(&identifier.name, identifier.span)?;
                 if binding.cell {
                     let destination = self.temporary(identifier.span)?;
@@ -302,6 +331,44 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     });
                     return Ok(destination);
                 }
+                if let Some(variant) = self.types.enum_variant(&callee.name) {
+                    if variant.fields.len() != arguments.len() {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            *span,
+                            format!(
+                                "enum variant `{}` expects {} arguments but received {}",
+                                variant.name,
+                                variant.fields.len(),
+                                arguments.len()
+                            ),
+                        )));
+                    }
+                    let mut fields = Vec::with_capacity(arguments.len());
+                    for (argument, contract) in arguments.iter().zip(&variant.fields) {
+                        let field = self.lower_expression(argument)?;
+                        self.operations.push(Operation::ValidateSlot {
+                            slot: field,
+                            contract: contract.clone(),
+                            span: expression_span(argument),
+                        });
+                        fields.push(field);
+                    }
+                    let destination = self.temporary(*span)?;
+                    let type_identity_slot = self.temporary(*span)?;
+                    let variant_slot = self.temporary(*span)?;
+                    self.operations.push(Operation::Enum {
+                        type_id: variant.type_id,
+                        type_identity: variant.type_identity.clone(),
+                        variant: variant.name.clone(),
+                        fields,
+                        type_identity_slot,
+                        variant_slot,
+                        destination,
+                        span: *span,
+                    });
+                    return Ok(destination);
+                }
                 let signature = self.signatures.get(&callee.name).cloned().ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
                         "E0207",
@@ -350,6 +417,44 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 span,
             } => {
                 let key = format!("{}::{}", type_name.name, method.name);
+                if let Some(variant) = self.types.enum_variant(&key) {
+                    if variant.fields.len() != arguments.len() {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            *span,
+                            format!(
+                                "enum variant `{}` expects {} arguments but received {}",
+                                variant.name,
+                                variant.fields.len(),
+                                arguments.len()
+                            ),
+                        )));
+                    }
+                    let mut fields = Vec::with_capacity(arguments.len());
+                    for (argument, contract) in arguments.iter().zip(&variant.fields) {
+                        let field = self.lower_expression(argument)?;
+                        self.operations.push(Operation::ValidateSlot {
+                            slot: field,
+                            contract: contract.clone(),
+                            span: expression_span(argument),
+                        });
+                        fields.push(field);
+                    }
+                    let destination = self.temporary(*span)?;
+                    let type_identity_slot = self.temporary(*span)?;
+                    let variant_slot = self.temporary(*span)?;
+                    self.operations.push(Operation::Enum {
+                        type_id: variant.type_id,
+                        type_identity: variant.type_identity.clone(),
+                        variant: variant.name.clone(),
+                        fields,
+                        type_identity_slot,
+                        variant_slot,
+                        destination,
+                        span: *span,
+                    });
+                    return Ok(destination);
+                }
                 let signature = self.signatures.get(&key).cloned().ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
                         "E0225",
@@ -437,7 +542,210 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 properties,
                 span,
             } => self.lower_typed_object(type_name, properties, *span),
+            Expression::Match { value, arms, span } => self.lower_match(value, arms, *span),
         }
+    }
+
+    /// Lowers one enum-pattern match through explicit branches and durable arm bindings.
+    fn lower_match(
+        &mut self,
+        value: &'function Expression<'source>,
+        arms: &'function [crate::ast::MatchArm<'source>],
+        span: SourceSpan<'source>,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        let value = self.lower_expression(value)?;
+        let destination = self.temporary(span)?;
+        let mut exits = Vec::new();
+        let mut matched = std::collections::HashSet::new();
+        let mut enum_identity = None;
+        let mut enum_type_name = None;
+        let mut fallback = false;
+        for arm in arms {
+            if fallback {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0231",
+                    arm.span,
+                    "match arm follows wildcard fallback",
+                )));
+            }
+            match &arm.pattern {
+                MatchPattern::Wildcard(_) => {
+                    fallback = true;
+                    let arm_value = self.lower_match_arm(value, arm, &[])?;
+                    self.operations.push(Operation::Copy {
+                        source: arm_value,
+                        destination,
+                        span: arm.span,
+                    });
+                    exits.push(self.push(Operation::Goto {
+                        target: 0,
+                        checkpoint: false,
+                        span: arm.span,
+                    })?);
+                }
+                MatchPattern::Variant {
+                    type_name,
+                    variant,
+                    bindings,
+                    span: pattern_span,
+                } => {
+                    let key = format!("{}::{}", type_name.name, variant.name);
+                    let variant_data = self.types.enum_variant(&key).cloned().ok_or_else(|| {
+                        diagnostics(CompileDiagnostic::new(
+                            "E0216",
+                            *pattern_span,
+                            format!("unknown enum variant `{key}`"),
+                        ))
+                    })?;
+                    if bindings.len() != variant_data.fields.len() {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            *pattern_span,
+                            format!(
+                                "enum pattern `{key}` expects {} bindings",
+                                variant_data.fields.len()
+                            ),
+                        )));
+                    }
+                    if !matched.insert(key) {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0231",
+                            *pattern_span,
+                            "duplicate match variant arm",
+                        )));
+                    }
+                    if let Some(identity) = &enum_identity {
+                        if identity != &variant_data.type_identity {
+                            return Err(diagnostics(CompileDiagnostic::new(
+                                "E0231",
+                                *pattern_span,
+                                "match arms must belong to one enum",
+                            )));
+                        }
+                    } else {
+                        enum_identity = Some(variant_data.type_identity.clone());
+                        enum_type_name = Some(type_name.name.clone());
+                    }
+                    let condition = self.temporary(*pattern_span)?;
+                    let type_identity_slot = self.temporary(*pattern_span)?;
+                    let variant_slot = self.temporary(*pattern_span)?;
+                    self.operations.push(Operation::EnumMatches {
+                        value,
+                        type_identity: variant_data.type_identity,
+                        variant: variant_data.name,
+                        type_identity_slot,
+                        variant_slot,
+                        destination: condition,
+                        span: *pattern_span,
+                    });
+                    let checked = self.temporary(*pattern_span)?;
+                    let branch = self.push(Operation::Branch {
+                        condition,
+                        checked,
+                        when_true: 0,
+                        when_false: 0,
+                        span: *pattern_span,
+                    })?;
+                    let arm_start = self.operations.len();
+                    let arm_value = self.lower_match_arm(value, arm, bindings)?;
+                    self.operations.push(Operation::Copy {
+                        source: arm_value,
+                        destination,
+                        span: arm.span,
+                    });
+                    exits.push(self.push(Operation::Goto {
+                        target: 0,
+                        checkpoint: false,
+                        span: arm.span,
+                    })?);
+                    let next_arm = self.operations.len();
+                    self.set_branch_targets(branch, arm_start, next_arm, *pattern_span)?;
+                }
+            }
+        }
+        if !fallback {
+            let Some(type_name) = enum_type_name else {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0232",
+                    span,
+                    "match requires at least one enum variant or a wildcard arm",
+                )));
+            };
+            let missing = self
+                .types
+                .enum_variant_names(&type_name)
+                .into_iter()
+                .find(|variant| !matched.contains(&format!("{type_name}::{variant}")));
+            if let Some(variant) = missing {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0232",
+                    span,
+                    format!("non-exhaustive match: missing `{type_name}::{variant}`"),
+                )));
+            }
+            self.operations.push(Operation::MatchError {
+                value,
+                destination,
+                span,
+            });
+        }
+        let after = self.operations.len();
+        for exit in exits {
+            self.set_goto_target(exit, after, span)?;
+        }
+        Ok(destination)
+    }
+
+    /// Creates one lexical scope for arm payload bindings before lowering its expression.
+    fn lower_match_arm(
+        &mut self,
+        value: u32,
+        arm: &'function crate::ast::MatchArm<'source>,
+        bindings: &'function [crate::ast::Identifier<'source>],
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        self.scopes.push(HashMap::new());
+        let mut declared = std::collections::HashSet::new();
+        for (index, binding) in bindings.iter().enumerate() {
+            if !declared.insert(&binding.name) {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0204",
+                    binding.span,
+                    format!("duplicate match binding `{}`", binding.name),
+                )));
+            }
+            let slot = self.temporary(binding.span)?;
+            self.operations.push(Operation::EnumField {
+                value,
+                index: u32::try_from(index).map_err(|_| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0212",
+                        binding.span,
+                        "too many enum payload bindings",
+                    ))
+                })?,
+                destination: slot,
+                span: binding.span,
+            });
+            let cell = self.captured_names.contains(&binding.name);
+            if cell {
+                self.operations.push(Operation::CellNew {
+                    value: slot,
+                    destination: slot,
+                    span: binding.span,
+                });
+            }
+            let Some(scope) = self.scopes.last_mut() else {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    binding.span,
+                    "missing match binding scope",
+                )));
+            };
+            scope.insert(binding.name.clone(), BindingSlot { slot, cell });
+        }
+        let result = self.lower_expression(&arm.value)?;
+        let _scope = self.scopes.pop();
+        Ok(result)
     }
 
     /// Lowers one short-circuiting Boolean expression into explicit continuation branches.
@@ -531,6 +839,13 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 format!("unknown type `{}`", type_name.name),
             ))
         })?;
+        if nominal.kind != NominalKind::Object {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0216",
+                type_name.span,
+                format!("enum `{}` requires a variant constructor", type_name.name),
+            )));
+        }
         for property in properties {
             if !nominal
                 .fields
@@ -552,6 +867,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     contract: TypeContract {
                         builtin_mask: 0,
                         nominal_type_ids: Vec::new(),
+                        enum_type_ids: Vec::new(),
                     },
                     span: property.key_span,
                 });

@@ -1242,6 +1242,158 @@ fn executes_nominal_object_construction_and_implementation_methods() {
     );
 }
 
+/// Constructs tagged enum values, dispatches their methods, and returns them through CBOR.
+#[test]
+fn executes_enum_constructors_implementations_and_cbor_results() {
+    let source = r#"
+        enum Color {
+            Rgb(red: Int, green: Int, blue: Int),
+            Transparent,
+        }
+        trait Rank { fn rank(self) -> Int; }
+        impl Color { fn channels(self) -> Int { ret 3; } }
+        impl Rank for Color { fn rank(self) -> Int { ret self.channels(); } }
+        fn main() -> Color {
+            let color = Color::Rgb(255, 0, 128);
+            let transparent = Color::Transparent;
+            let count = color.rank() + transparent.channels();
+            if count == 6 { ret color; }
+            ret transparent;
+        }
+    "#;
+    assert_eq!(
+        execute_source_with_inputs(source, &[]),
+        ExsValue::Enum {
+            type_id: "test.exs::Color".to_owned(),
+            variant: "Rgb".to_owned(),
+            fields: vec![ExsValue::Int(255), ExsValue::Int(0), ExsValue::Int(128)],
+        }
+    );
+}
+
+/// Accepts a tagged enum supplied by a runner for its matching enum contract.
+#[test]
+fn accepts_cbor_enum_input_for_enum_contract() {
+    assert_eq!(
+        execute_source(
+            "enum Color { Transparent, } fn main(value: Color) -> Color { ret value; }",
+            ExsValue::Enum {
+                type_id: "test.exs::Color".to_owned(),
+                variant: "Transparent".to_owned(),
+                fields: vec![],
+            },
+        ),
+        ExsValue::Enum {
+            type_id: "test.exs::Color".to_owned(),
+            variant: "Transparent".to_owned(),
+            fields: vec![],
+        }
+    );
+}
+
+/// Constructs an enum after a host suspension through the continuation lowerer.
+#[test]
+fn constructs_enum_after_a_host_call() {
+    let compiled = compile_source(
+        "enum Color { Gray(value: Int), } fn main() -> Color { let value = host.call(\"value\"); ret Color::Gray(value); }",
+    );
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("value", |_| ExsValue::Int(42))
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(
+        result,
+        ExsValue::Enum {
+            type_id: "test.exs::Color".to_owned(),
+            variant: "Gray".to_owned(),
+            fields: vec![ExsValue::Int(42)],
+        }
+    );
+}
+
+/// Dispatches enum matches and exposes ordered payload values only to the selected arm.
+#[test]
+fn executes_exhaustive_enum_match_expressions() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                enum Color {
+                    Rgb(red: Int, green: Int, blue: Int),
+                    Transparent,
+                }
+                fn main() -> Int {
+                    let color = Color::Rgb(255, 0, 128);
+                    ret match color {
+                        Color::Rgb(red, green, blue) => red + green + blue,
+                        Color::Transparent => 0,
+                    };
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::Int(383)
+    );
+}
+
+/// Selects a wildcard match arm when no preceding variant arm accepts the value.
+#[test]
+fn executes_enum_match_wildcard_fallback() {
+    assert_eq!(
+        execute_source_with_inputs(
+            "enum Color { Red, Blue, } fn main() -> Int { let color = Color::Blue; ret match color { Color::Red => 1, _ => 2, }; }",
+            &[],
+        ),
+        ExsValue::Int(2)
+    );
+}
+
+/// Returns MatchError when a host enum has the expected type identity but an unknown variant.
+#[test]
+fn returns_match_error_for_unknown_host_enum_variant() {
+    let result = execute_source(
+        "enum Color { Red, Blue, } fn main(value: Color) -> Int | Error { ret match value { Color::Red => 1, Color::Blue => 2, }; }",
+        ExsValue::Enum {
+            type_id: "test.exs::Color".to_owned(),
+            variant: "Green".to_owned(),
+            fields: vec![],
+        },
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("unknown enum variant did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+    assert_eq!(error.kind, "MatchError");
+}
+
+/// Resumes a host call performed by the selected enum match arm.
+#[test]
+fn resumes_host_call_inside_enum_match_arm() {
+    let compiled = compile_source(
+        "enum Color { Red, Blue, } fn main() -> Int { let color = Color::Blue; ret match color { Color::Red => 1, Color::Blue => host.call(\"value\"), }; }",
+    );
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("value", |_| ExsValue::Int(42))
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(42));
+}
+
 /// Executes a nominal Object construction without invoking an implementation method.
 #[test]
 fn executes_nominal_object_construction() {

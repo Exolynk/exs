@@ -57,6 +57,10 @@ pub(super) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
             .types
             .iter()
             .any(|type_declaration| type_declaration.name.name == implementation.type_name.name)
+            && !module
+                .enums
+                .iter()
+                .any(|enum_declaration| enum_declaration.name.name == implementation.type_name.name)
         {
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
@@ -225,12 +229,22 @@ fn validate_exposed_method_names<'a>(
     module: &Module<'a>,
     diagnostics: &mut CompileDiagnostics<'a>,
 ) {
-    for type_declaration in &module.types {
+    for type_declaration in module
+        .types
+        .iter()
+        .map(|declaration| &declaration.name.name)
+        .chain(
+            module
+                .enums
+                .iter()
+                .map(|declaration| &declaration.name.name),
+        )
+    {
         let mut names = HashMap::new();
         for implementation in module
             .implementations
             .iter()
-            .filter(|implementation| implementation.type_name.name == type_declaration.name.name)
+            .filter(|implementation| implementation.type_name.name == *type_declaration)
         {
             let trait_methods = implementation.trait_name.as_ref().and_then(|trait_name| {
                 module

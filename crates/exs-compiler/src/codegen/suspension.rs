@@ -17,8 +17,10 @@ impl Suspendability {
         let mut functions = hir
             .functions()
             .filter_map(|(key, function)| {
-                (!function.host_calls().is_empty() || !function.parallel_calls().is_empty())
-                    .then_some(key.to_owned())
+                (!function.host_calls().is_empty()
+                    || !function.parallel_calls().is_empty()
+                    || function.has_matches())
+                .then_some(key.to_owned())
             })
             .collect::<HashSet<_>>();
         loop {

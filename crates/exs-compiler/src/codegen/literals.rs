@@ -29,6 +29,18 @@ impl LiteralPool {
                 pool.insert(&field.name.name);
             }
         }
+        for declaration in &module.enums {
+            let type_name = declaration
+                .name
+                .name
+                .rsplit("::")
+                .next()
+                .unwrap_or(&declaration.name.name);
+            pool.insert(&format!("{}::{type_name}", declaration.name.span.source_id));
+            for variant in &declaration.variants {
+                pool.insert(&variant.name.name);
+            }
+        }
         for function in &module.functions {
             collect_block_literals(&function.body, &mut pool);
         }
@@ -196,6 +208,12 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
             for property in properties {
                 pool.insert(&property.key);
                 collect_expression_literals(&property.value, pool);
+            }
+        }
+        Expression::Match { value, arms, .. } => {
+            collect_expression_literals(value, pool);
+            for arm in arms {
+                collect_expression_literals(&arm.value, pool);
             }
         }
         Expression::MethodCall {

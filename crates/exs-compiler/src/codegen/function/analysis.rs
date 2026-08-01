@@ -123,6 +123,13 @@ pub(super) fn count_expressions(expression: &Expression<'_>) -> u32 {
                 .map(|property| 1 + count_expressions(&property.value))
                 .sum::<u32>()
         }
+        Expression::Match { value, arms, .. } => {
+            1 + count_expressions(value)
+                + arms
+                    .iter()
+                    .map(|arm| count_expressions(&arm.value))
+                    .sum::<u32>()
+        }
         Expression::TypedObject { properties, .. } => {
             1 + properties
                 .iter()
@@ -175,5 +182,6 @@ pub(in crate::codegen::function) fn condition_span<'a>(
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }
         | Expression::Property { span, .. } => *span,
+        Expression::Match { span, .. } => *span,
     }
 }

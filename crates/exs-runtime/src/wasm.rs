@@ -71,6 +71,41 @@ pub extern "C" fn __exs_rt_object_is_type(value: ValueRef, type_id: i32) -> i32 
     i32::from(value::object::operations::has_type(value, type_id))
 }
 
+/// Returns whether one enum value carries the requested stable type identity.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_enum_is_type(value: ValueRef, type_identity: ValueRef) -> i32 {
+    i32::from(runtime::enum_has_type(value, type_identity))
+}
+
+/// Returns whether an enum value selects one stable identity and variant name.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_enum_matches(
+    value: ValueRef,
+    type_identity: ValueRef,
+    variant: ValueRef,
+) -> ValueRef {
+    runtime::allocate(RtValue::Bool(runtime::enum_matches(
+        value,
+        type_identity,
+        variant,
+    )))
+}
+
+/// Returns one enum payload field by zero-based declaration index.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_enum_field(value: ValueRef, index: i32) -> ValueRef {
+    let Ok(index) = usize::try_from(index) else {
+        return runtime::recoverable_error("MatchError", "enum payload index is invalid", value);
+    };
+    runtime::enum_field(value, index)
+}
+
+/// Returns the recoverable Error produced when no match arm accepts a value.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_match_error(value: ValueRef) -> ValueRef {
+    runtime::recoverable_error("MatchError", "no match arm accepted the value", value)
+}
+
 /// Creates a type-contract Error after one failed function-boundary type check.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_type_mismatch(value: ValueRef, error_allowed: i32) -> ValueRef {
@@ -362,6 +397,23 @@ pub extern "C" fn __exs_rt_object_typed_new(type_id: i32) -> ValueRef {
         runtime::trap();
     }
     value::object::operations::new_typed_value(type_id)
+}
+
+/// Allocates one nominal enum value with its selected variant and ordered payload fields.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_enum_new(
+    type_id: i32,
+    type_identity: ValueRef,
+    variant: ValueRef,
+    fields: ValueRef,
+) -> ValueRef {
+    let Ok(type_id) = u32::try_from(type_id) else {
+        runtime::trap();
+    };
+    if type_id == 0 {
+        runtime::trap();
+    }
+    runtime::enum_new(type_id, type_identity, variant, fields)
 }
 
 /// Allocates internal shared storage for one compiler-captured lexical binding.
