@@ -87,18 +87,24 @@ fn generates_markdown_documentation() {
         Ok(index) => index,
         Err(error) => panic!("could not read documentation index: {error}"),
     };
-    let module = match fs::read_to_string(output_path.join("modules/00-main.md")) {
+    let module = match fs::read_to_string(output_path.join("modules/00-main/index.md")) {
         Ok(module) => module,
         Err(error) => panic!("could not read module documentation: {error}"),
+    };
+    let function = match fs::read_to_string(output_path.join("modules/00-main/fn/main.md")) {
+        Ok(function) => function,
+        Err(error) => panic!("could not read function documentation: {error}"),
     };
     if let Err(error) = fs::remove_dir_all(&directory) {
         panic!("could not remove documentation fixture directory: {error}");
     }
     assert!(index.contains("# ExS API Documentation"));
-    assert!(index.contains("[`./main.exs`](modules/00-main.md)"));
+    assert!(index.contains("[`std`](modules/std/index.md)"));
+    assert!(index.contains("[`./main.exs`](modules/00-main/index.md)"));
     assert!(module.starts_with("# Module `./main.exs`"));
-    assert!(module.contains("Runs the program."));
-    assert!(module.contains("fn main(value: Int) -> Int"));
+    assert!(module.contains("[`main`](fn/main.md)"));
+    assert!(function.contains("Runs the program."));
+    assert!(function.contains("fn main(value: Int) -> Int"));
 }
 
 /// Prints the completed floating-point `main` result for a source program.

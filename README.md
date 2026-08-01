@@ -125,6 +125,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Support relative `.exs` file imports with canonical resolver identities, namespaces, merged namespaces, `as`, and `use` aliases.
 - [x] Create a formatter usable as a library API and through `exs fmt <file.exs>`.
 - [x] Generate Markdown language and module API documentation through `exs docs <file.exs> -o <directory>`.
+- [x] Support every global built-in type with an optional `std::` qualifier, such as `std::Int` and `std::None`.
 
 ### Phase 13: Deep clone
 
@@ -132,17 +133,14 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [ ] Add Clone contexts that preserve cycles and aliases.
 - [ ] Support user-defined, potentially suspendable Clone implementations.
 
-### Phase 14: Limits
+### Phase 14: Runner Limits & Browser
 
 - [ ] Add runner-enforced limits for memory, fuel, timeouts, task and host-call counts, stack depth, CBOR payloads, and results.
-
-### Phase 15: Browser runner
-
 - [ ] Implement the equivalent TypeScript runner and synchronous/asynchronous host registry.
 
-### Phase 16: Optimizations
+### Backlog: Further Ideas
 
-- [ ] Add host-name caching, direct-operation specialization, root-frame reduction, and safe inlining.
+- [ ] Optimizations: Add host-name caching, direct-operation specialization, root-frame reduction, and safe inlining.
 
 ## Development Rules
 

@@ -422,21 +422,30 @@ impl<'a> Parser<'a> {
 
     /// Parses one source-visible type name.
     fn type_name(&mut self) -> Result<TypeName<'a>, CompileDiagnostic<'a>> {
+        let (mut name, mut span) = self.type_name_component("expected type name")?;
+        if self.matches(&TokenKind::DoubleColon) {
+            let (member, member_span) =
+                self.type_name_component("expected type name after `::`")?;
+            name.push_str("::");
+            name.push_str(&member);
+            span = span.through(member_span);
+        }
+        Ok(TypeName { name, span })
+    }
+
+    /// Parses one identifier or reserved built-in type-name token.
+    fn type_name_component(
+        &mut self,
+        message: &str,
+    ) -> Result<(String, SourceSpan<'a>), CompileDiagnostic<'a>> {
         let token = self.advance().clone();
-        let mut name = match token.kind {
+        let name = match token.kind {
             TokenKind::Identifier(name) => name,
             TokenKind::None => "None".to_owned(),
             TokenKind::Error => "Error".to_owned(),
-            _ => return Err(self.error(token.span, "E0111", "expected type name")),
+            _ => return Err(self.error(token.span, "E0111", message)),
         };
-        let mut span = token.span;
-        if self.matches(&TokenKind::DoubleColon) {
-            let member = self.identifier("expected type name after `::`")?;
-            name.push_str("::");
-            name.push_str(&member.name);
-            span = span.through(member.span);
-        }
-        Ok(TypeName { name, span })
+        Ok((name, token.span))
     }
 
     fn block(&mut self) -> Result<Block<'a>, CompileDiagnostic<'a>> {

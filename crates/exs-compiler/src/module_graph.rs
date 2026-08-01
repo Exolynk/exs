@@ -182,6 +182,9 @@ fn bindings_for(
     let mut bindings = collect_exports(module, index)?;
     let mut namespaces: HashMap<&str, HashSet<&str>> = HashMap::new();
     for (alias, target) in edges {
+        if alias == "std" {
+            return Err("`std` is a reserved built-in type namespace".to_owned());
+        }
         let names = namespaces.entry(alias).or_default();
         for (name, canonical) in &exports[*target] {
             if !names.insert(name) {

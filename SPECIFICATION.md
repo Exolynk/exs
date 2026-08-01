@@ -894,28 +894,15 @@ Canonical output uses four spaces per block level, one statement per line, a fin
 
 ## Generated Markdown API documentation
 
-The compiler library exposes resolver-driven Markdown generation for a root source and its complete relative-import graph. It returns an `index.md` page with the general language description, implemented out-of-the-box types and operations, and links to one module page for every reachable source unit. A module page lists its imports, `use` declarations, nominal types and fields, traits and method signatures, implementation methods, and direct functions.
+The compiler library exposes resolver-driven Markdown generation for a root source and its complete relative-import graph. It returns a project `index.md` with the general language description and links to a synthetic `std` module plus every reachable source module. Built-in types remain globally available and may also use the optional `std::` qualifier; `std` is compiler-provided and cannot be imported. The module contains individual type pages for the out-of-the-box types; the `Error(kind, message, data)` constructor is documented on the `Error` type page. Its function page documents `host.call`.
 
-Source comments beginning with `///` immediately before a declaration are emitted as that declaration's Markdown description. The `exs docs <file.exs> -o <directory>` CLI command uses the filesystem resolver and writes `index.md` plus the generated module pages to the selected directory. The compiler library performs no filesystem writes.
+Every source module has an index page that lists imports, `use` declarations, types, traits, and functions as links. Each source-defined type, trait, and direct function receives its own API page. Type pages include their fields and implemented methods; implementations are not repeated on their module index. Trait pages include method signatures; function pages include their signature. Source comments beginning with `///` immediately before a declaration are emitted as that declaration's Markdown description.
+
+The `exs docs <file.exs> -o <directory>` CLI command uses the filesystem resolver and writes `index.md` plus the generated `modules/` tree to the selected directory. Function pages are stored in each module's `fn/` directory. The compiler library performs no filesystem writes.
 
 # 11 – Built-ins
 
 The following built-ins are always available and cannot be shadowed at module top level. A nested local binding MAY shadow a built-in.
-
-## `type(value)`
-
-Returns one of these Strings:
-
-```text
-"None" "Bool" "Int" "Float" "String" "List" "Object"
-"Function" "Closure" "Error" "HostResource"
-```
-
-Cells are not directly observable and are reported through the value stored in the cell.
-
-## `len(value)`
-
-Returns an Int length for String, List, or Object. Object length is its number of keys. Unsupported values return TypeError.
 
 ## `Error(kind, message, data)`
 

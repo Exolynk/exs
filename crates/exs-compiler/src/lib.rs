@@ -41,11 +41,9 @@ pub struct CompiledModule {
     pub wasm: Vec<u8>,
 }
 
-/// Generated Markdown documentation for one reachable source module.
+/// One generated Markdown documentation page.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DocumentationModule {
-    /// Canonical module identity supplied by the resolver.
-    pub source_id: String,
+pub struct DocumentationPage {
     /// Relative Markdown path within the generated documentation directory.
     pub path: String,
     /// Complete generated Markdown page.
@@ -57,8 +55,8 @@ pub struct DocumentationModule {
 pub struct Documentation {
     /// Project overview and language reference page.
     pub index: String,
-    /// One API page per reachable source module.
-    pub modules: Vec<DocumentationModule>,
+    /// Module, type, trait, and function API pages.
+    pub pages: Vec<DocumentationPage>,
 }
 
 /// One source file returned by a module resolver.

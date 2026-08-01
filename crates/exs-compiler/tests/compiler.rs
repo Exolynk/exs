@@ -66,7 +66,7 @@ fn generates_markdown_api_documentation() {
     let mut resolver = TestResolver {
         sources: HashMap::from([(
             "./math.exs".to_owned(),
-            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\n/// A coordinate.\ntype Point { value: Int }".to_owned(),
+            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\n/// A coordinate.\ntype Point { value: Int }\n\nimpl Point { fn coordinate(self) -> Int { ret self.value; } }".to_owned(),
         )]),
     };
     let documentation = match document_with_resolver(
@@ -79,28 +79,77 @@ fn generates_markdown_api_documentation() {
         Ok(documentation) => documentation,
         Err(error) => panic!("documentation generation failed: {error}"),
     };
-    assert!(documentation.index.contains("## Available Types"));
+    assert!(documentation.index.contains("## Language"));
     assert!(
         documentation
             .index
-            .contains("`host.call(name, arguments...)`")
+            .contains("[`std`](modules/std/index.md)")
     );
-    assert_eq!(documentation.modules.len(), 2);
     let main = documentation
-        .modules
+        .pages
         .iter()
-        .find(|module| module.source_id == "./main.exs")
+        .find(|page| page.path == "modules/00-main/index.md")
         .unwrap_or_else(|| panic!("missing main module page"));
-    assert!(main.markdown.contains("[module](01-math.md)"));
+    assert!(main.markdown.contains("[module](../01-math/index.md)"));
     let math = documentation
-        .modules
+        .pages
         .iter()
-        .find(|module| module.source_id == "./math.exs")
-        .unwrap_or_else(|| panic!("missing math module page"));
+        .find(|page| page.path == "modules/01-math/index.md")
+        .unwrap_or_else(|| panic!("missing math module index"));
     assert!(math.markdown.starts_with("# Module `./math.exs`"));
-    assert!(math.markdown.contains("Adds two integers."));
-    assert!(math.markdown.contains("### `add`"));
-    assert!(math.markdown.contains("### `Point`"));
+    assert!(math.markdown.contains("[`add`](fn/add.md)"));
+    assert!(math.markdown.contains("[`Point`](types/point.md)"));
+    assert!(!math.markdown.contains("## Implementations"));
+    let add = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/01-math/fn/add.md")
+        .unwrap_or_else(|| panic!("missing function page"));
+    assert!(add.markdown.contains("Adds two integers."));
+    let point = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/01-math/types/point.md")
+        .unwrap_or_else(|| panic!("missing Point type page"));
+    assert!(point.markdown.contains("## Implemented Methods"));
+    assert!(point.markdown.contains("coordinate"));
+    let host_call = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/fn/host-call.md")
+        .unwrap_or_else(|| panic!("missing std host.call page"));
+    assert!(host_call.markdown.contains("host.call(name, arguments...)"));
+    let standard = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/index.md")
+        .unwrap_or_else(|| panic!("missing std module page"));
+    assert!(!standard.markdown.contains("[`type`]"));
+    assert!(!standard.markdown.contains("[`len`]"));
+    assert!(standard.markdown.contains("`std::` qualifier"));
+    assert!(documentation.pages.iter().all(|page| !matches!(
+        page.path.as_str(),
+        "modules/std/fn/type.md" | "modules/std/fn/len.md"
+    )));
+    let error = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/error.md")
+        .unwrap_or_else(|| panic!("missing std Error type page"));
+    assert!(error.markdown.contains("## Constructor"));
+    assert!(error.markdown.contains("Error(kind, message, data)"));
+    assert!(
+        documentation
+            .pages
+            .iter()
+            .all(|page| page.path != "modules/std/fn/error.md")
+    );
+    let list = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/list.md")
+        .unwrap_or_else(|| panic!("missing standard List page"));
+    assert!(list.markdown.contains("### `push(value)`"));
 }
 
 /// Resolves compiler-test source files from an in-memory canonical source table.
@@ -142,6 +191,29 @@ fn compiles_imported_functions_and_use_aliases() {
     if let Err(error) = compiled {
         panic!("compilation failed: {error}");
     }
+}
+
+/// Rejects imports that would shadow the compiler-provided std type namespace.
+#[test]
+fn rejects_an_import_named_std() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./math.exs".to_owned(),
+            "fn add(left: Int, right: Int) -> Int { ret left + right; }".to_owned(),
+        )]),
+    };
+    let error = match compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./math.exs\" as std; fn main() -> Int { ret 0; }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    ) {
+        Ok(_) => panic!("expected the std namespace import to fail"),
+        Err(error) => error,
+    };
+    assert!(error.contains("reserved built-in type namespace"));
 }
 
 /// Preserves imported source identities in linked debug metadata.
@@ -454,6 +526,19 @@ fn compiles_typed_multi_parameter_main() {
         CompileOptions::default(),
     );
     assert!(module.is_ok());
+}
+
+/// Compiles every built-in type through its optional std namespace qualifier.
+#[test]
+fn compiles_std_qualified_builtin_type_annotations() {
+    let module = compile(
+        SourceInput {
+            source_id: "std-types.exs",
+            text: "fn main(any: std::Any, none: std::None, error: std::Error, boolean: std::Bool, integer: std::Int, float: std::Float, string: std::String, list: std::List, object: std::Object, function: std::Fn) -> std::Int { ret integer; }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
 }
 
 /// Compiles decoded string escapes into compiler-owned passive data segments.

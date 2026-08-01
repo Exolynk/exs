@@ -83,14 +83,14 @@ fn generate_docs(path: &str, output: &str) -> Result<(), String> {
             output.join("index.md").display()
         )
     })?;
-    for module in documentation.modules {
-        let path = output.join(module.path);
+    for page in documentation.pages {
+        let path = output.join(page.path);
         let parent = path
             .parent()
             .ok_or_else(|| format!("documentation path has no parent: {}", path.display()))?;
         fs::create_dir_all(parent)
             .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
-        fs::write(&path, module.markdown)
+        fs::write(&path, page.markdown)
             .map_err(|error| format!("could not write {}: {error}", path.display()))?;
     }
     Ok(())

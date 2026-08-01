@@ -303,7 +303,7 @@ pub(super) const fn permits_error(contract: &TypeContract) -> bool {
 
 /// Resolves one built-in source type spelling to its ABI mask.
 fn builtin_mask(name: &str) -> Option<u32> {
-    match name {
+    match name.strip_prefix("std::").unwrap_or(name) {
         "Any" => Some(TYPE_ANY),
         "None" => Some(TYPE_NONE),
         "Error" => Some(TYPE_ERROR),
