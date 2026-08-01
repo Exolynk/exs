@@ -148,7 +148,8 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 
 ### Phase 15: Extensible Protocols & Operators
 
-- [ ] Design standard protocols for user-extensible behavior, including the required `Self` and result-type rules.
+- [x] Add contextual `Self` annotations to existing trait declarations and `impl Trait for Type` blocks.
+- [ ] Design standard protocols for user-extensible behavior and their result-type rules.
 - [ ] Add user implementations for protocols on nominal types and enums.
 - [ ] Decide and implement operator protocols such as `Add`, `Sub`, `Mul`, `Div`, and equality.
 - [ ] Define suspension, Error, precedence, and dispatch rules for overloaded operators.

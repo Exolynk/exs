@@ -16,7 +16,7 @@ pub(super) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
     let mut diagnostics = CompileDiagnostics::new();
     let mut declarations = HashMap::new();
     for declaration in &module.types {
-        if builtin_mask(&declaration.name.name).is_some() {
+        if is_reserved_type_name(&declaration.name.name) {
             diagnostics.push(CompileDiagnostic::new(
                 "E0219",
                 declaration.name.span,
@@ -36,7 +36,7 @@ pub(super) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
         }
     }
     for declaration in &module.enums {
-        if builtin_mask(&declaration.name.name).is_some() {
+        if is_reserved_type_name(&declaration.name.name) {
             diagnostics.push(CompileDiagnostic::new(
                 "E0219",
                 declaration.name.span,
@@ -80,7 +80,7 @@ pub(super) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
         }
     }
     for declaration in &module.traits {
-        if builtin_mask(&declaration.name.name).is_some() {
+        if is_reserved_type_name(&declaration.name.name) {
             diagnostics.push(CompileDiagnostic::new(
                 "E0219",
                 declaration.name.span,
@@ -133,6 +133,17 @@ pub(super) fn validate_annotation<'a>(
     default_span: SourceSpan<'a>,
     diagnostics: &mut CompileDiagnostics<'a>,
 ) {
+    validate_annotation_with_self(module, annotation, default_span, false, diagnostics);
+}
+
+/// Validates one optional source annotation, optionally accepting contextual `Self` members.
+pub(super) fn validate_annotation_with_self<'a>(
+    module: &Module<'a>,
+    annotation: Option<&TypeAnnotation<'a>>,
+    default_span: SourceSpan<'a>,
+    allows_self: bool,
+    diagnostics: &mut CompileDiagnostics<'a>,
+) {
     let Some(annotation) = annotation else {
         return;
     };
@@ -145,6 +156,17 @@ pub(super) fn validate_annotation<'a>(
         return;
     }
     for member in &annotation.members {
+        if allows_self && member.name == "Self" {
+            continue;
+        }
+        if member.name == "Self" {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0216",
+                member.span,
+                "`Self` is valid only in trait declarations and trait implementations",
+            ));
+            continue;
+        }
         if builtin_mask(&member.name).is_none()
             && !module
                 .types
@@ -166,6 +188,11 @@ pub(super) fn validate_annotation<'a>(
             ));
         }
     }
+}
+
+/// Returns whether one declaration name is reserved by the type system.
+fn is_reserved_type_name(name: &str) -> bool {
+    name == "Self" || builtin_mask(name).is_some()
 }
 
 /// One resolved runtime type contract.

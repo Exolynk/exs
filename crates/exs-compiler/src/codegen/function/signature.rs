@@ -15,7 +15,14 @@ pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostic
     let mut diagnostics = CompileDiagnostics::new();
     let mut signatures = HashMap::new();
     for function in &module.functions {
-        validate_function(module, function, None, &mut signatures, &mut diagnostics);
+        validate_function(
+            module,
+            function,
+            None,
+            false,
+            &mut signatures,
+            &mut diagnostics,
+        );
     }
     for implementation in &module.implementations {
         let nominal = module
@@ -36,6 +43,7 @@ pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostic
                 format!("unknown type `{}`", implementation.type_name.name),
             ));
         }
+        let allows_self = implementation.trait_name.is_some();
         for method in &implementation.methods {
             if RESERVED_METHOD_NAMES.contains(&method.name.name.as_str()) {
                 diagnostics.push(CompileDiagnostic::new(
@@ -44,7 +52,14 @@ pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostic
                     format!("method `{}` is reserved by the runtime", method.name.name),
                 ));
             }
-            validate_function(module, method, nominal, &mut signatures, &mut diagnostics);
+            validate_function(
+                module,
+                method,
+                nominal,
+                allows_self,
+                &mut signatures,
+                &mut diagnostics,
+            );
         }
     }
     if !signatures.contains_key("main") {
@@ -62,6 +77,7 @@ fn validate_function<'a>(
     module: &Module<'a>,
     function: &FunctionDeclaration<'a>,
     implementation_type: Option<&str>,
+    allows_self: bool,
     signatures: &mut HashMap<String, SourceSpan<'a>>,
     diagnostics: &mut CompileDiagnostics<'a>,
 ) {
@@ -100,18 +116,20 @@ fn validate_function<'a>(
                 ));
             }
         } else {
-            crate::codegen::types::validate_annotation(
+            crate::codegen::types::validate_annotation_with_self(
                 module,
                 parameter.type_annotation.as_ref(),
                 parameter.name.span,
+                allows_self,
                 diagnostics,
             );
         }
     }
-    crate::codegen::types::validate_annotation(
+    crate::codegen::types::validate_annotation_with_self(
         module,
         function.return_type.as_ref(),
         function.name.span,
+        allows_self,
         diagnostics,
     );
 }

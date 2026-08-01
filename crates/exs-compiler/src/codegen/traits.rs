@@ -111,6 +111,14 @@ pub(super) fn apply_defaults(module: &mut Module<'_>) {
             }
         }
     }
+    for implementation in &mut module.implementations {
+        if implementation.trait_name.is_none() {
+            continue;
+        }
+        for method in &mut implementation.methods {
+            replace_self_annotations(method, &implementation.type_name.name);
+        }
+    }
 }
 
 /// Validates one trait method declaration's function-boundary annotations.
@@ -131,17 +139,19 @@ fn validate_method_signature<'a>(
                 .with_related(previous, "previous parameter declaration is here"),
             );
         }
-        types::validate_annotation(
+        types::validate_annotation_with_self(
             module,
             parameter.type_annotation.as_ref(),
             parameter.name.span,
+            true,
             diagnostics,
         );
     }
-    types::validate_annotation(
+    types::validate_annotation_with_self(
         module,
         method.return_type.as_ref(),
         method.name.span,
+        true,
         diagnostics,
     );
 }
@@ -180,7 +190,7 @@ fn validate_implementation<'a>(
             ));
             continue;
         };
-        if !same_signature(required, method) {
+        if !same_signature(required, method, &implementation.type_name.name) {
             diagnostics.push(
                 CompileDiagnostic::new(
                     "E0230",
@@ -208,17 +218,19 @@ fn validate_implementation<'a>(
     }
     for method in &implementation.methods {
         for parameter in &method.parameters {
-            types::validate_annotation(
+            types::validate_annotation_with_self(
                 module,
                 parameter.type_annotation.as_ref(),
                 parameter.name.span,
+                true,
                 diagnostics,
             );
         }
-        types::validate_annotation(
+        types::validate_annotation_with_self(
             module,
             method.return_type.as_ref(),
             method.name.span,
+            true,
             diagnostics,
         );
     }
@@ -294,6 +306,7 @@ fn insert_exposed_method<'a>(
 fn same_signature(
     method: &TraitMethodDeclaration<'_>,
     implementation: &FunctionDeclaration<'_>,
+    self_type: &str,
 ) -> bool {
     method.parameters.len() == implementation.parameters.len()
         && method
@@ -312,16 +325,22 @@ fn same_signature(
                 same_annotation(
                     required.type_annotation.as_ref(),
                     supplied.type_annotation.as_ref(),
+                    self_type,
                 )
             })
         && same_annotation(
             method.return_type.as_ref(),
             implementation.return_type.as_ref(),
+            self_type,
         )
 }
 
 /// Returns whether two optional source union annotations have the same ordered members.
-fn same_annotation(left: Option<&TypeAnnotation<'_>>, right: Option<&TypeAnnotation<'_>>) -> bool {
+fn same_annotation(
+    left: Option<&TypeAnnotation<'_>>,
+    right: Option<&TypeAnnotation<'_>>,
+    self_type: &str,
+) -> bool {
     match (left, right) {
         (None, None) => true,
         (Some(left), Some(right)) => {
@@ -330,8 +349,36 @@ fn same_annotation(left: Option<&TypeAnnotation<'_>>, right: Option<&TypeAnnotat
                     .members
                     .iter()
                     .zip(&right.members)
-                    .all(|(left, right)| left.name == right.name)
+                    .all(|(left, right)| {
+                        annotation_member_name(&left.name, self_type)
+                            == annotation_member_name(&right.name, self_type)
+                    })
         }
         _ => false,
+    }
+}
+
+/// Resolves one contextual `Self` annotation name for signature comparison.
+fn annotation_member_name<'a>(name: &'a str, self_type: &'a str) -> &'a str {
+    if name == "Self" { self_type } else { name }
+}
+
+/// Replaces contextual `Self` annotations with the concrete implementation target.
+fn replace_self_annotations(method: &mut FunctionDeclaration<'_>, self_type: &str) {
+    for parameter in &mut method.parameters {
+        replace_self_annotation(parameter.type_annotation.as_mut(), self_type);
+    }
+    replace_self_annotation(method.return_type.as_mut(), self_type);
+}
+
+/// Rewrites each contextual `Self` union member in one optional type annotation.
+fn replace_self_annotation(annotation: Option<&mut TypeAnnotation<'_>>, self_type: &str) {
+    let Some(annotation) = annotation else {
+        return;
+    };
+    for member in &mut annotation.members {
+        if member.name == "Self" {
+            member.name = self_type.to_owned();
+        }
     }
 }

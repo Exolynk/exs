@@ -1183,6 +1183,32 @@ fn executes_transitive_suspendable_trait_calls() {
     assert_eq!(result, ExsValue::Int(41));
 }
 
+/// Resolves Self in inherited trait methods to the concrete implementation target.
+#[test]
+fn executes_inherited_trait_methods_with_self_annotations() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                trait Keep {
+                    fn keep(self, other: Self) -> Self { ret self; }
+                }
+
+                type Number { value: Int, }
+                impl Keep for Number {}
+
+                fn main() -> Int {
+                    let first = Number { value: 42 };
+                    let second = Number { value: 7 };
+                    let result = first.keep(second);
+                    ret result.value;
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::Int(42)
+    );
+}
+
 /// Retains root and child language frames when a child host call returns an Error value.
 #[test]
 fn traces_errors_through_suspendable_child_frames() {

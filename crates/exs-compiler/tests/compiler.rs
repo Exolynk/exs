@@ -938,6 +938,55 @@ fn main() -> String { ret User::category(); }
     assert!(module.is_ok(), "{module:?}");
 }
 
+/// Compiles trait signatures that resolve contextual Self to the implementation target.
+#[test]
+fn compiles_trait_self_annotations() {
+    let module = compile(
+        SourceInput {
+            source_id: "trait-self.exs",
+            text: r#"
+trait Combine {
+    fn combine(self, other: Self) -> Self;
+}
+
+type Number { value: Int, }
+impl Combine for Number {
+    fn combine(self, other: Number) -> Self {
+        ret Number { value: self.value + other.value };
+    }
+}
+
+fn main() -> Int {
+    let left = Number { value: 20 };
+    let right = Number { value: 22 };
+    let result = left.combine(right);
+    ret result.value;
+}
+"#,
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
+}
+
+/// Rejects Self in a function annotation that has no trait implementation context.
+#[test]
+fn rejects_self_outside_trait_context() {
+    let error = match compile(
+        SourceInput {
+            source_id: "invalid-self.exs",
+            text: "fn main(value: Self) { ret value; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(error.diagnostics.iter().any(|diagnostic| {
+        diagnostic.message == "`Self` is valid only in trait declarations and trait implementations"
+    }));
+}
+
 /// Accepts a declared trait contract before any nominal type implements it.
 #[test]
 fn compiles_unimplemented_trait_contracts() {

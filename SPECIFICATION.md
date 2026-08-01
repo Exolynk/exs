@@ -342,7 +342,7 @@ impl User {
 }
 ```
 
-A first bare `self` parameter declares an instance method, invoked as `user.display()`, and is implicitly constrained to the enclosing nominal type. A method without `self` is static and is invoked as `User::named("Ada")`. `impl Trait for Type` uses the same method forms and is specified in the Traits section. Method references are not supported. Runtime method names `push`, `pop`, `insert`, `remove`, `clear`, `has`, `delete`, `keys`, and `values` are reserved and MUST NOT be declared by an `impl` block.
+A first bare `self` parameter declares an instance method, invoked as `user.display()`, and is implicitly constrained to the enclosing nominal type. A method without `self` is static and is invoked as `User::named("Ada")`. `impl Trait for Type` uses the same method forms and is specified in the Traits section. Method references are not supported. Runtime method names `abs`, `floor`, `ceil`, `round`, `clone`, `length`, `is_empty`, `kind`, `message`, `data`, `cause`, `push`, `pop`, `insert`, `remove`, `clear`, `has`, `delete`, `keys`, and `values` are reserved and MUST NOT be declared by an `impl` block.
 
 ## Enums
 
@@ -988,9 +988,9 @@ A trait method ends either with `;`, making it required for every implementation
 
 Every method supplied by a trait implementation MUST be declared by that trait and have the same receiver shape, arity, parameter type annotations, and return type annotation. Parameter names other than `self` do not form part of the method signature. A nominal type MUST NOT expose a method name more than once across inherent and trait implementations, including inherited defaults.
 
-A trait name is valid in every existing type annotation position. For the current nominal-trait implementation, a trait contract matches an Object whose nominal type has an `impl Trait for Type` declaration. A declared trait with no implementations is valid and matches no current value. Implementing traits for primitive values and the built-in `ToString`, `PropertyKey`, `Equality`, and `Clone` traits are deferred.
+`Self` is a contextual type name available only in a trait method signature and in a method inside `impl Trait for Type`. It resolves to the implementation target, so `fn merge(self, other: Self) -> Self` inside `impl Merge for Document` has the same signature as `fn merge(self, other: Document) -> Document`. An implementation may use either spelling; other type annotation contexts reject `Self`.
 
-The built-in traits are `ToString`, `PropertyKey`, `Equality`, and `Clone`. Equality for primitive values is by value and reference values use identity unless an applicable `Equality` implementation overrides that behavior. `PropertyKey` conversion is distinct from `ToString` conversion.
+A trait name is valid in every existing type annotation position. For the current nominal-trait implementation, a trait contract matches an Object whose nominal type has an `impl Trait for Type` declaration. A declared trait with no implementations is valid and matches no current value. Implementing traits for primitive values and defining standard language traits are deferred.
 
 Trait methods are potential suspension points unless the compiler proves their implementation non-suspendable. Trait dispatch is therefore represented explicitly in HIR and resolved through stable runtime ABI operations.
 

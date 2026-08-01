@@ -167,6 +167,9 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<HashMap<String, 
         .chain(module.enums.iter().map(|item| &item.name.name))
         .chain(module.traits.iter().map(|item| &item.name.name))
     {
+        if name == "Self" {
+            return Err("`Self` is reserved for trait type annotations".to_owned());
+        }
         let canonical = canonical(index, name);
         if exports.insert(name.clone(), canonical).is_some() {
             return Err(format!("duplicate exported declaration `{name}`"));
