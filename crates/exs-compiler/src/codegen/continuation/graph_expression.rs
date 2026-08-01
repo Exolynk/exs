@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{BinaryOperator, Expression, MatchPattern};
+use crate::ast::{BinaryOperator, Expression, MatchArmBody, MatchPattern};
 use crate::codegen::diagnostics;
 use crate::codegen::types::{NominalKind, TypeContract};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -743,7 +743,18 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             };
             scope.insert(binding.name.clone(), BindingSlot { slot, cell });
         }
-        let result = self.lower_expression(&arm.value)?;
+        let result = match &arm.body {
+            MatchArmBody::Expression(value) => self.lower_expression(value)?,
+            MatchArmBody::Block(block) => {
+                self.lower_block(block)?;
+                let destination = self.temporary(block.span)?;
+                self.operations.push(Operation::None {
+                    destination,
+                    span: block.span,
+                });
+                destination
+            }
+        };
         let _scope = self.scopes.pop();
         Ok(result)
     }

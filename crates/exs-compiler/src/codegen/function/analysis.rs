@@ -127,7 +127,10 @@ pub(super) fn count_expressions(expression: &Expression<'_>) -> u32 {
             1 + count_expressions(value)
                 + arms
                     .iter()
-                    .map(|arm| count_expressions(&arm.value))
+                    .map(|arm| match &arm.body {
+                        crate::ast::MatchArmBody::Expression(value) => count_expressions(value),
+                        crate::ast::MatchArmBody::Block(block) => count_expressions_block(block),
+                    })
                     .sum::<u32>()
         }
         Expression::TypedObject { properties, .. } => {

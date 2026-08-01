@@ -374,7 +374,7 @@ Every non-fallback arm MUST name a declared variant of the same enum and supply 
 
 Without `_`, a match MUST list every declared variant of its enum. The compiler rejects non-exhaustive matches. At runtime, a value that is not one of the listed variants, including a host-provided value with an invalid variant name, produces a recoverable `MatchError`. As with every recoverable Error, an explicit enclosing result contract must permit `Error` for the Error to be returned unchanged.
 
-The matched value is evaluated exactly once. Only the selected arm expression is evaluated. Match lowering uses continuation graph branches, so an arm may call the host, invoke a suspendable function, or otherwise suspend like any other expression.
+An arm body may instead be a normal statement block, such as `Color::Transparent => { ret -1; }`. Its `ret` returns from the enclosing function. A block that completes normally produces `None` as its match value. The matched value is evaluated exactly once. Only the selected arm body is evaluated. Match lowering uses continuation graph branches, so an arm may call the host, invoke a suspendable function, or otherwise suspend like any other expression.
 
 ## Function and Closure
 

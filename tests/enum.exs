@@ -10,8 +10,18 @@ impl Color {
     fn new_trans() -> Color {
         ret Color::Transparent;
     }
+
+    fn as_number(self) -> Int {
+        ret match self {
+            Color::Rgb(r, g, b) => r + g + b,
+            Color::Name(_) => 0,
+            Color::Transparent => {ret -1;}
+        };
+    }
 }
 
 fn main() {
-    ret Color::new_trans();
+    let c = Color::new_trans();
+
+    ret c.as_number();
 }

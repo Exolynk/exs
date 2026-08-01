@@ -590,7 +590,10 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                             self.declare(&binding.name, binding.span);
                         }
                     }
-                    self.lower_expression(&arm.value);
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expression(value) => self.lower_expression(value),
+                        crate::ast::MatchArmBody::Block(block) => self.lower_block(block),
+                    }
                     let _scope = self.scopes.pop();
                 }
             }

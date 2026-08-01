@@ -408,7 +408,10 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
                 .map(|arm| format!(
                     "{} => {}",
                     render_match_pattern(&arm.pattern),
-                    render_expression(&arm.value)
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expression(value) => render_expression(value),
+                        crate::ast::MatchArmBody::Block(block) => inline_block(block),
+                    }
                 ))
                 .collect::<Vec<_>>()
                 .join(", ")

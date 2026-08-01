@@ -60,6 +60,22 @@ fn formatter_returns_syntax_diagnostics() {
     assert!(!error.diagnostics.is_empty());
 }
 
+/// Formats statement-block match arms in their compact expression position.
+#[test]
+fn formats_match_block_arms() {
+    let formatted = match format(SourceInput {
+        source_id: "format-match.exs",
+        text: "enum Color{Transparent,}fn main(value:Color)->Int{ret match value{Color::Transparent=>{ret -1;}};}",
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert_eq!(
+        formatted,
+        "enum Color {\n    Transparent,\n}\n\nfn main(value: Color) -> Int {\n    ret match value { Color::Transparent => { ret -1; } };\n}\n"
+    );
+}
+
 /// Generates language and API pages for reachable imported modules.
 #[test]
 fn generates_markdown_api_documentation() {

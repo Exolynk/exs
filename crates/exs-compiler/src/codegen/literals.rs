@@ -213,7 +213,12 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
         Expression::Match { value, arms, .. } => {
             collect_expression_literals(value, pool);
             for arm in arms {
-                collect_expression_literals(&arm.value, pool);
+                match &arm.body {
+                    crate::ast::MatchArmBody::Expression(value) => {
+                        collect_expression_literals(value, pool);
+                    }
+                    crate::ast::MatchArmBody::Block(block) => collect_block_literals(block, pool),
+                }
             }
         }
         Expression::MethodCall {

@@ -503,7 +503,12 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
                 if let crate::ast::MatchPattern::Variant { type_name, .. } = &mut arm.pattern {
                     rewrite_identifier(type_name, bindings);
                 }
-                rewrite_expression(&mut arm.value, bindings);
+                match &mut arm.body {
+                    crate::ast::MatchArmBody::Expression(value) => {
+                        rewrite_expression(value, bindings);
+                    }
+                    crate::ast::MatchArmBody::Block(block) => rewrite_block(block, bindings),
+                }
             }
         }
         Expression::Integer(_, _)

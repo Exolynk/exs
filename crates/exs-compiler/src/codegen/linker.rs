@@ -272,7 +272,14 @@ fn collect_closures_expression<'source, 'ast>(
         Expression::Match { value, arms, .. } => {
             collect_closures_expression(value, closures);
             for arm in arms {
-                collect_closures_expression(&arm.value, closures);
+                match &arm.body {
+                    crate::ast::MatchArmBody::Expression(value) => {
+                        collect_closures_expression(value, closures);
+                    }
+                    crate::ast::MatchArmBody::Block(block) => {
+                        collect_closures_block(block, closures);
+                    }
+                }
             }
         }
         Expression::Integer(_, _)

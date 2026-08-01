@@ -4,9 +4,10 @@ use std::collections::HashSet;
 
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, EnumDeclaration, EnumVariant, Expression,
-    FunctionDeclaration, Identifier, ImplDeclaration, ImportDeclaration, MatchArm, MatchPattern,
-    Module, ObjectProperty, Parameter, Statement, TraitDeclaration, TraitMethodDeclaration,
-    TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator, UseDeclaration, UseItem,
+    FunctionDeclaration, Identifier, ImplDeclaration, ImportDeclaration, MatchArm, MatchArmBody,
+    MatchPattern, Module, ObjectProperty, Parameter, Statement, TraitDeclaration,
+    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator,
+    UseDeclaration, UseItem,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{Token, TokenKind};
@@ -996,11 +997,19 @@ impl<'a> Parser<'a> {
         while !self.check(&TokenKind::RightBrace) && !self.at_end() {
             let pattern = self.match_pattern()?;
             self.expect_simple(TokenKind::FatArrow, "expected `=>` after match pattern")?;
-            let arm_value = self.expression()?;
-            let arm_span = match_pattern_span(&pattern).through(expression_span(&arm_value));
+            let body = if self.check(&TokenKind::LeftBrace) {
+                MatchArmBody::Block(self.block()?)
+            } else {
+                MatchArmBody::Expression(self.expression()?)
+            };
+            let body_span = match &body {
+                MatchArmBody::Expression(value) => expression_span(value),
+                MatchArmBody::Block(block) => block.span,
+            };
+            let arm_span = match_pattern_span(&pattern).through(body_span);
             arms.push(MatchArm {
                 pattern,
-                value: arm_value,
+                body,
                 span: arm_span,
             });
             if !self.matches(&TokenKind::Comma) && !self.check(&TokenKind::RightBrace) {

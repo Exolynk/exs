@@ -369,7 +369,12 @@ impl<'a> SourceMap<'a> {
                         }
                         crate::ast::MatchPattern::Wildcard(span) => self.insert(*span),
                     }
-                    self.collect_expression(&arm.value);
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expression(value) => {
+                            self.collect_expression(value);
+                        }
+                        crate::ast::MatchArmBody::Block(block) => self.collect_block(block),
+                    }
                 }
             }
             Expression::Variable(identifier) => self.insert(identifier.span),

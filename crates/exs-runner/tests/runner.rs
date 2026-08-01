@@ -1343,6 +1343,37 @@ fn executes_exhaustive_enum_match_expressions() {
     );
 }
 
+/// Returns directly from a selected statement-block enum match arm.
+#[test]
+fn returns_from_a_block_enum_match_arm() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                enum Color {
+                    Rgb(r: Int, g: Int, b: Int),
+                    Name(value),
+                    Transparent,
+                }
+                impl Color {
+                    fn as_number(self) -> Int {
+                        ret match self {
+                            Color::Rgb(r, g, b) => r + g + b,
+                            Color::Name(_) => 0,
+                            Color::Transparent => { ret -1; },
+                        };
+                    }
+                }
+                fn main() -> Int {
+                    let color = Color::Transparent;
+                    ret color.as_number();
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::Int(-1)
+    );
+}
+
 /// Selects a wildcard match arm when no preceding variant arm accepts the value.
 #[test]
 fn executes_enum_match_wildcard_fallback() {

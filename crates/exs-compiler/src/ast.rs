@@ -331,10 +331,19 @@ pub struct ObjectProperty<'a> {
 pub struct MatchArm<'a> {
     /// Variant or fallback pattern selecting this arm.
     pub pattern: MatchPattern<'a>,
-    /// Expression evaluated when the pattern matches.
-    pub value: Expression<'a>,
+    /// Expression or statement block evaluated when the pattern matches.
+    pub body: MatchArmBody<'a>,
     /// Full arm span.
     pub span: SourceSpan<'a>,
+}
+
+/// The executable body selected by one `match` arm.
+#[derive(Debug, Clone)]
+pub enum MatchArmBody<'a> {
+    /// A value-producing expression.
+    Expression(Expression<'a>),
+    /// A normal statement block whose ordinary completion yields None.
+    Block(Block<'a>),
 }
 
 /// One enum-variant or wildcard `match` pattern.
