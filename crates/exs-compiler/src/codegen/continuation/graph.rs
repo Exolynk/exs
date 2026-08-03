@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{BinaryOperator, Expression, FunctionDeclaration, UnaryOperator};
 use crate::codegen::diagnostics;
 use crate::codegen::function::{FunctionSignature, InstanceMethod, LiftedFunction, MethodRegistry};
+use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types;
 use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -88,8 +89,10 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
-    /// Dispatches the standard `Add` protocol before using runtime addition as a fallback.
-    Add {
+    /// Dispatches one standard operator trait before using its runtime fallback.
+    Operator {
+        /// Source operator selecting the trait implementation.
+        operator: TraitOperator,
         left: u32,
         right: u32,
         targets: Vec<InstanceMethod>,
@@ -500,7 +503,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::Closure { span, .. }
         | Operation::Unary { span, .. }
         | Operation::Binary { span, .. }
-        | Operation::Add { span, .. }
+        | Operation::Operator { span, .. }
         | Operation::List { span, .. }
         | Operation::Object { span, .. }
         | Operation::TypedObject { span, .. }

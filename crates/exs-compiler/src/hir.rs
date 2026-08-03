@@ -9,9 +9,6 @@ use crate::ast::{
 use crate::codegen::trait_registry::{TraitOperator, TraitRegistry};
 use crate::diagnostic::SourceSpan;
 
-/// Internal call-edge key representing dynamic dispatch performed by source `+`.
-const ADD_OPERATOR_TARGETS: &str = "$operator:add";
-
 /// One compiler-assigned lexical binding identity within a source module.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct BindingId(pub(crate) u32);
@@ -507,8 +504,8 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 right,
                 span,
             } => {
-                if matches!(operator, crate::ast::BinaryOperator::Add)
-                    && let Some(targets) = self.instance_targets.get(ADD_OPERATOR_TARGETS)
+                if let Some(operator) = TraitOperator::from_binary(*operator)
+                    && let Some(targets) = self.instance_targets.get(operator.target_key())
                 {
                     self.calls.extend(
                         targets
@@ -760,19 +757,13 @@ fn instance_method_targets<'a>(
                         "{}::{}",
                         implementation.type_name.name, method.name.name
                     ));
-                if implementation
+                if let Some(operator) = implementation
                     .trait_name
                     .as_ref()
-                    .is_some_and(|trait_name| {
-                        traits.binds_operator(
-                            &trait_name.name,
-                            &method.name.name,
-                            TraitOperator::Add,
-                        )
-                    })
+                    .and_then(|trait_name| traits.operator_for(&trait_name.name, &method.name.name))
                 {
                     targets
-                        .entry(ADD_OPERATOR_TARGETS.to_owned())
+                        .entry(operator.target_key().to_owned())
                         .or_default()
                         .push(format!(
                             "{}::{}",

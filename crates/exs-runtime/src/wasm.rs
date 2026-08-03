@@ -264,13 +264,19 @@ pub extern "C" fn __exs_rt_add(left: ValueRef, right: ValueRef) -> ValueRef {
 /// Subtracts two runtime numeric values.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_sub(left: ValueRef, right: ValueRef) -> ValueRef {
-    value::numeric::arithmetic(left, right, i64::checked_sub, |left, right| left - right)
+    value::operations::subtract(left, right)
 }
 
 /// Multiplies two runtime numeric values.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_mul(left: ValueRef, right: ValueRef) -> ValueRef {
-    value::numeric::arithmetic(left, right, i64::checked_mul, |left, right| left * right)
+    value::operations::multiply(left, right)
+}
+
+/// Divides two runtime numeric values and returns a Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_div(left: ValueRef, right: ValueRef) -> ValueRef {
+    value::operations::divide(left, right)
 }
 
 /// Negates one runtime numeric value.

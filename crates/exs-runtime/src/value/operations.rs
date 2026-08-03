@@ -19,6 +19,21 @@ pub(crate) fn add(left: ValueRef, right: ValueRef) -> ValueRef {
     }
 }
 
+/// Subtracts two runtime numeric values.
+pub(crate) fn subtract(left: ValueRef, right: ValueRef) -> ValueRef {
+    numeric::arithmetic(left, right, i64::checked_sub, |left, right| left - right)
+}
+
+/// Multiplies two runtime numeric values.
+pub(crate) fn multiply(left: ValueRef, right: ValueRef) -> ValueRef {
+    numeric::arithmetic(left, right, i64::checked_mul, |left, right| left * right)
+}
+
+/// Divides two runtime numeric values and always returns a Float.
+pub(crate) fn divide(left: ValueRef, right: ValueRef) -> ValueRef {
+    numeric::divide(left, right)
+}
+
 /// Concatenates a String receiver with one supported scalar right operand.
 fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
     let right = match runtime::value(right) {
@@ -260,6 +275,18 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
     match method.as_str() {
         "add" => match list::operations::single_argument(arguments) {
             Ok(argument) => add(receiver, argument),
+            Err(error) => error,
+        },
+        "sub" => match list::operations::single_argument(arguments) {
+            Ok(argument) => subtract(receiver, argument),
+            Err(error) => error,
+        },
+        "mul" => match list::operations::single_argument(arguments) {
+            Ok(argument) => multiply(receiver, argument),
+            Err(error) => error,
+        },
+        "div" => match list::operations::single_argument(arguments) {
+            Ok(argument) => divide(receiver, argument),
             Err(error) => error,
         },
         "abs" => match list::operations::require_no_arguments(arguments) {

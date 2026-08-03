@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::ast::{BinaryOperator, Expression, MatchArmBody, MatchPattern};
 use crate::codegen::diagnostics;
+use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
@@ -178,11 +179,12 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let left = self.lower_expression(left)?;
                 let right = self.lower_expression(right)?;
                 let destination = self.temporary(*span)?;
-                if matches!(operator, BinaryOperator::Add) {
-                    self.operations.push(Operation::Add {
+                if let Some(operator_trait) = TraitOperator::from_binary(*operator) {
+                    self.operations.push(Operation::Operator {
+                        operator: operator_trait,
                         left,
                         right,
-                        targets: self.methods.standard_add().to_vec(),
+                        targets: self.methods.operator(operator_trait).to_vec(),
                         destination,
                         span: *span,
                     });

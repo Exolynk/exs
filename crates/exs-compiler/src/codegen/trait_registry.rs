@@ -2,15 +2,23 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{FunctionDeclaration, Module, TraitMethodDeclaration, TypeAnnotation};
+use crate::ast::{
+    BinaryOperator, FunctionDeclaration, Module, TraitMethodDeclaration, TypeAnnotation,
+};
 use crate::codegen::standard::{self, StandardOperator};
 use crate::diagnostic::SourceSpan;
 
 /// One source operator whose dispatch is provided by a trait method.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum TraitOperator {
     /// The binary `+` operator.
     Add,
+    /// The binary `-` operator.
+    Subtract,
+    /// The binary `*` operator.
+    Multiply,
+    /// The binary `/` operator.
+    Divide,
 }
 
 /// One trait declaration normalized independently of its source representation.
@@ -134,20 +142,60 @@ impl<'a> TraitRegistry<'a> {
         self.definitions.values()
     }
 
-    /// Returns whether one trait method supplies the given source operator binding.
-    pub(crate) fn binds_operator(
+    /// Resolves the operator binding attached to one implemented trait method.
+    pub(crate) fn operator_for(
         &self,
         trait_name: &str,
         method_name: &str,
-        operator: TraitOperator,
-    ) -> bool {
-        self.definition(trait_name).is_some_and(|definition| {
-            definition.operator == Some(operator)
-                && definition
+    ) -> Option<TraitOperator> {
+        self.definition(trait_name).and_then(|definition| {
+            definition.operator.filter(|_| {
+                definition
                     .methods
                     .iter()
                     .any(|method| method.name == method_name)
+            })
         })
+    }
+}
+
+impl TraitOperator {
+    /// Resolves one source binary operator to its standard trait dispatch binding.
+    pub(crate) const fn from_binary(operator: BinaryOperator) -> Option<Self> {
+        match operator {
+            BinaryOperator::Add => Some(Self::Add),
+            BinaryOperator::Subtract => Some(Self::Subtract),
+            BinaryOperator::Multiply => Some(Self::Multiply),
+            BinaryOperator::Divide => Some(Self::Divide),
+            BinaryOperator::Equal
+            | BinaryOperator::NotEqual
+            | BinaryOperator::LessThan
+            | BinaryOperator::LessOrEqual
+            | BinaryOperator::GreaterThan
+            | BinaryOperator::GreaterOrEqual
+            | BinaryOperator::And
+            | BinaryOperator::Or => None,
+        }
+    }
+
+    /// Returns the internal HIR call-edge key for this operator's dynamic dispatch.
+    pub(crate) const fn target_key(self) -> &'static str {
+        match self {
+            Self::Add => "$operator:add",
+            Self::Subtract => "$operator:sub",
+            Self::Multiply => "$operator:mul",
+            Self::Divide => "$operator:div",
+        }
+    }
+
+    /// Returns the runtime fallback export for this operator.
+    pub(crate) const fn runtime_export(self) -> &'static str {
+        match self {
+            Self::Add => "__exs_rt_add",
+            Self::Subtract => "__exs_rt_sub",
+            Self::Multiply => "__exs_rt_mul",
+            Self::Divide => "__exs_rt_div",
+        }
     }
 }
 
@@ -212,6 +260,9 @@ impl From<StandardOperator> for TraitOperator {
     fn from(operator: StandardOperator) -> Self {
         match operator {
             StandardOperator::Add => Self::Add,
+            StandardOperator::Subtract => Self::Subtract,
+            StandardOperator::Multiply => Self::Multiply,
+            StandardOperator::Divide => Self::Divide,
         }
     }
 }
@@ -301,7 +352,10 @@ mod tests {
                 .signature
                 .matches(combine_implementation, "Value")
         );
-        assert!(registry.binds_operator("std::Add", "add", TraitOperator::Add));
-        assert!(!registry.binds_operator("Combine", "combine", TraitOperator::Add));
+        assert_eq!(
+            registry.operator_for("std::Add", "add"),
+            Some(TraitOperator::Add)
+        );
+        assert_eq!(registry.operator_for("Combine", "combine"), None);
     }
 }

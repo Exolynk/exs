@@ -1265,6 +1265,52 @@ fn dispatches_standard_add_for_enums() {
     );
 }
 
+/// Dispatches source arithmetic operators through their standard nominal trait implementations.
+#[test]
+fn dispatches_standard_sub_mul_and_div_for_nominal_types() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            type Number { value: Int }
+
+            impl Sub for Number {
+                fn sub(self, other: Any) -> Any {
+                    ret Number { value: self.value - other.value };
+                }
+            }
+
+            impl Mul for Number {
+                fn mul(self, other: Any) -> Any {
+                    ret Number { value: self.value * other.value };
+                }
+            }
+
+            impl Div for Number {
+                fn div(self, other: Any) -> Any {
+                    ret Number { value: 42 };
+                }
+            }
+
+            fn main() -> List {
+                let left = Number { value: 84 };
+                let right = Number { value: 2 };
+                ret [
+                    (left - right).value,
+                    (left * right).value,
+                    (left / right).value,
+                ];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(82),
+            ExsValue::Int(168),
+            ExsValue::Int(42)
+        ])
+    );
+}
+
 /// Keeps an inherent method named `add` separate from the source `+` protocol.
 #[test]
 fn does_not_select_inherent_add_methods_for_source_addition() {
@@ -1326,6 +1372,43 @@ fn suspends_through_standard_add_implementations() {
         Err(error) => panic!("execution failed: {error}"),
     };
     assert_eq!(result, ExsValue::Int(42));
+}
+
+/// Routes a suspending standard `Div` implementation through its continuation child frame.
+#[test]
+fn suspends_through_standard_div_implementations() {
+    let compiled = compile_source(
+        r#"
+        type Number { value: Float }
+
+        impl Div for Number {
+            fn div(self, other: Any) -> Any {
+                let divisor = host.call("divisor");
+                ret Number { value: self.value / divisor };
+            }
+        }
+
+        fn main() -> Float {
+            let value = Number { value: 84.0 } / Number { value: 2.0 };
+            ret value.value;
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("divisor", |_arguments: Vec<ExsValue>| async move {
+                ExsValue::Int(2)
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Float(42.0));
 }
 
 /// Retains root and child language frames when a child host call returns an Error value.
@@ -1650,6 +1733,41 @@ fn dispatches_builtin_and_nominal_add_trait_contracts() {
         ),
         ExsValue::List(vec![
             ExsValue::Int(3),
+            ExsValue::Enum {
+                type_id: "test.exs::Marker".to_owned(),
+                variant: "Value".to_owned(),
+                fields: Vec::new(),
+            },
+        ])
+    );
+}
+
+/// Accepts built-in and nominal values through every standard arithmetic trait contract.
+#[test]
+fn dispatches_builtin_and_nominal_arithmetic_trait_contracts() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            enum Marker { Value, }
+
+            impl Sub for Marker { fn sub(self, other: Any) -> Any { ret self; } }
+            impl Mul for Marker { fn mul(self, other: Any) -> Any { ret self; } }
+            impl Div for Marker { fn div(self, other: Any) -> Any { ret self; } }
+
+            fn subtract(value: Sub) -> Any { ret value.sub(2); }
+            fn multiply(value: Mul) -> Any { ret value.mul(2); }
+            fn divide(value: Div) -> Any { ret value.div(2); }
+
+            fn main() -> List {
+                ret [subtract(8), multiply(21), divide(84), subtract(Marker::Value)];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(6),
+            ExsValue::Int(42),
+            ExsValue::Float(42.0),
             ExsValue::Enum {
                 type_id: "test.exs::Marker".to_owned(),
                 variant: "Value".to_owned(),
@@ -2166,6 +2284,40 @@ fn executes_builtin_add_methods_and_string_scalar_concatenation() {
             ExsValue::String("enabled=true".to_owned()),
             ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2), ExsValue::Int(3)]),
             ExsValue::String("leftright".to_owned()),
+        ])
+    );
+}
+
+/// Uses built-in arithmetic methods with the same behavior as their source operators.
+#[test]
+fn executes_builtin_sub_mul_and_div_methods() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            fn main() -> List {
+                let integer = 84;
+                let float = 1.5;
+                ret [
+                    integer.sub(42),
+                    integer.mul(2),
+                    integer.div(2),
+                    float.sub(0.5),
+                    float.mul(2.0),
+                    float.div(2.0),
+                    84 / 2,
+                ];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(42),
+            ExsValue::Int(168),
+            ExsValue::Float(42.0),
+            ExsValue::Float(1.0),
+            ExsValue::Float(3.0),
+            ExsValue::Float(0.75),
+            ExsValue::Float(42.0),
         ])
     );
 }

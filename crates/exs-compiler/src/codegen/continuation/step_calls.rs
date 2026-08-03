@@ -7,6 +7,7 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 use crate::ast::{BinaryOperator, Expression};
 use crate::codegen::diagnostics;
 use crate::codegen::function::InstanceMethod;
+use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types;
 use crate::codegen::types::TypeContract;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -16,9 +17,11 @@ use super::graph::expression_span;
 use super::step::StepCompiler;
 
 impl<'source, 'context> StepCompiler<'source, 'context> {
-    /// Emits `Add` protocol dispatch, including suspendable targets and runtime addition fallback.
-    pub(super) fn add_call(
+    /// Emits standard operator-trait dispatch, including suspendable targets and runtime fallback.
+    #[allow(clippy::too_many_arguments)] // The source operator and frame state are both required.
+    pub(super) fn operator_call(
         &mut self,
+        operator: TraitOperator,
         next: u32,
         left: u32,
         right: u32,
@@ -26,13 +29,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         destination: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.add_call_target(next, left, right, targets, 0, destination, span)
+        self.operator_call_target(operator, next, left, right, targets, 0, destination, span)
     }
 
-    /// Emits one branch of the statically known standard `Add` target chain.
+    /// Emits one branch of the statically known standard operator target chain.
     #[allow(clippy::too_many_arguments)] // Recursion keeps the generated Wasm branch chain local.
-    fn add_call_target(
+    fn operator_call_target(
         &mut self,
+        operator: TraitOperator,
         next: u32,
         left: u32,
         right: u32,
@@ -44,7 +48,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         let Some(target) = targets.get(index) else {
             self.get_slot(left, span)?;
             self.get_slot(right, span)?;
-            self.call_runtime("__exs_rt_add", span)?;
+            self.call_runtime(operator.runtime_export(), span)?;
             self.set_slot(destination, span)?;
             return self.ready(next, span);
         };
@@ -71,7 +75,16 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.ready(next, span)?;
         }
         self.function.instruction(&Instruction::Else);
-        self.add_call_target(next, left, right, targets, index + 1, destination, span)?;
+        self.operator_call_target(
+            operator,
+            next,
+            left,
+            right,
+            targets,
+            index + 1,
+            destination,
+            span,
+        )?;
         self.function.instruction(&Instruction::End);
         Ok(())
     }
@@ -624,6 +637,7 @@ pub(super) fn binary_operation(operator: BinaryOperator) -> &'static str {
         BinaryOperator::Add => "__exs_rt_add",
         BinaryOperator::Subtract => "__exs_rt_sub",
         BinaryOperator::Multiply => "__exs_rt_mul",
+        BinaryOperator::Divide => "__exs_rt_div",
         BinaryOperator::Equal => "__exs_rt_eq",
         BinaryOperator::NotEqual => "__exs_rt_ne",
         BinaryOperator::LessThan => "__exs_rt_lt",

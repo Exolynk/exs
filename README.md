@@ -152,7 +152,8 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Define the standard `Add` protocol with `fn add(self, other: Any) -> Any` for nominal types and enums.
 - [x] Dispatch `+` through matching `Add` implementations, preserving built-in numeric, String, and List behavior as its fallback.
 - [x] Allow `Add` implementations to suspend through the existing continuation child-frame path.
-- [ ] Define further standard protocols and their result-type rules, including `Sub`, `Mul`, `Div`, and equality.
+- [x] Define `Sub`, `Mul`, and `Div` as standard protocols with `Any` results, built-in numeric implementations, matching methods, and `-`, `*`, and `/` dispatch.
+- [ ] Define equality and comparison protocols with their result-type rules.
 - [ ] Add generated `std` trait pages and link every built-in and user implementation from the owning type page.
 - [ ] Reconsider user-defined `Clone` only with an explicit clone-context API that preserves aliases and cycles.
 

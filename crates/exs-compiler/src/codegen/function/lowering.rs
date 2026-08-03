@@ -5,6 +5,7 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 
 use crate::ast::{BinaryOperator, Expression, ObjectProperty, UnaryOperator};
 use crate::codegen::diagnostics;
+use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{self, EnumVariant, NominalKind, TypeContract};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
@@ -151,9 +152,16 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     let left = self.store_stack_value()?;
                     self.compile_expression(right)?;
                     let right = self.store_stack_value()?;
-                    if matches!(operator, BinaryOperator::Add) {
-                        let targets = self.methods.standard_add().to_vec();
-                        self.emit_add_dispatch(&targets, 0, left, right, *span)?;
+                    if let Some(operator_trait) = TraitOperator::from_binary(*operator) {
+                        let targets = self.methods.operator(operator_trait).to_vec();
+                        self.emit_operator_dispatch(
+                            operator_trait,
+                            &targets,
+                            0,
+                            left,
+                            right,
+                            *span,
+                        )?;
                     } else {
                         self.function.instruction(&Instruction::LocalGet(left));
                         self.function.instruction(&Instruction::LocalGet(right));
@@ -491,9 +499,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.exit_control()
     }
 
-    /// Emits nominal `Add` dispatch before preserving the runtime built-in fallback.
-    fn emit_add_dispatch(
+    /// Emits nominal trait dispatch before preserving one operator's runtime built-in fallback.
+    fn emit_operator_dispatch(
         &mut self,
+        operator: TraitOperator,
         targets: &[super::method::InstanceMethod],
         index: usize,
         left: u32,
@@ -503,7 +512,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let Some(target) = targets.get(index) else {
             self.function.instruction(&Instruction::LocalGet(left));
             self.function.instruction(&Instruction::LocalGet(right));
-            return self.runtime_value_call("__exs_rt_add", 2, span);
+            return self.runtime_value_call(operator.runtime_export(), 2, span);
         };
         self.function.instruction(&Instruction::LocalGet(left));
         self.function
@@ -518,7 +527,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function
             .instruction(&Instruction::Call(target.signature.index));
         self.function.instruction(&Instruction::Else);
-        self.emit_add_dispatch(targets, index + 1, left, right, span)?;
+        self.emit_operator_dispatch(operator, targets, index + 1, left, right, span)?;
         self.function.instruction(&Instruction::End);
         self.exit_control()
     }

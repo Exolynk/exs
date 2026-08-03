@@ -715,7 +715,13 @@ impl<'a> Parser<'a> {
     }
 
     fn factor(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.binary(Self::unary, &[(TokenKind::Star, BinaryOperator::Multiply)])
+        self.binary(
+            Self::unary,
+            &[
+                (TokenKind::Star, BinaryOperator::Multiply),
+                (TokenKind::Slash, BinaryOperator::Divide),
+            ],
+        )
     }
 
     fn binary(

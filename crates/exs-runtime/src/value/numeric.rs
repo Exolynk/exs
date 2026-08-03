@@ -95,6 +95,19 @@ pub(crate) fn arithmetic(
     }
 }
 
+/// Divides two numeric values after Bool-to-Int conversion and returns a Float.
+pub(crate) fn divide(left: ValueRef, right: ValueRef) -> ValueRef {
+    let left = match number_of_ref(left) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let right = match number_of_ref(right) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    runtime::allocate(RtValue::Float(as_float(left) / as_float(right)))
+}
+
 /// Negates one runtime numeric value.
 pub(crate) fn negate(value: ValueRef) -> ValueRef {
     match number_of_ref(value) {

@@ -685,7 +685,7 @@ fn expression_precedence(expression: &Expression<'_>) -> u8 {
             | BinaryOperator::GreaterThan
             | BinaryOperator::GreaterOrEqual => 4,
             BinaryOperator::Add | BinaryOperator::Subtract => 5,
-            BinaryOperator::Multiply => 6,
+            BinaryOperator::Multiply | BinaryOperator::Divide => 6,
         },
         Expression::IsError { .. } => 4,
         Expression::Unary { .. } => 7,
@@ -713,6 +713,7 @@ fn binary_operator(operator: BinaryOperator) -> &'static str {
         BinaryOperator::Add => "+",
         BinaryOperator::Subtract => "-",
         BinaryOperator::Multiply => "*",
+        BinaryOperator::Divide => "/",
         BinaryOperator::Equal => "==",
         BinaryOperator::NotEqual => "!=",
         BinaryOperator::LessThan => "<",

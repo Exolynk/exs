@@ -158,6 +158,9 @@ fn generates_markdown_api_documentation() {
     assert!(!standard.markdown.contains("[`len`]"));
     assert!(standard.markdown.contains("`std::` qualifier"));
     assert!(standard.markdown.contains("[`Add`](traits/add.md)"));
+    assert!(standard.markdown.contains("[`Sub`](traits/sub.md)"));
+    assert!(standard.markdown.contains("[`Mul`](traits/mul.md)"));
+    assert!(standard.markdown.contains("[`Div`](traits/div.md)"));
     assert!(documentation.pages.iter().all(|page| !matches!(
         page.path.as_str(),
         "modules/std/fn/type.md" | "modules/std/fn/len.md"
@@ -234,6 +237,24 @@ fn generates_markdown_api_documentation() {
             .markdown
             .contains("Adds the receiver to the evaluated `other` operand.")
     );
+    let div_trait = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/traits/div.md")
+        .unwrap_or_else(|| panic!("missing std Div trait page"));
+    assert!(
+        div_trait
+            .markdown
+            .contains("fn div(self, other: Any) -> Any;")
+    );
+    let integer = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/int.md")
+        .unwrap_or_else(|| panic!("missing standard Int page"));
+    assert!(integer.markdown.contains("Trait [`Sub`](../traits/sub.md)"));
+    assert!(integer.markdown.contains("Trait [`Mul`](../traits/mul.md)"));
+    assert!(integer.markdown.contains("Trait [`Div`](../traits/div.md)"));
 }
 
 /// Links a standard trait implementation and inherits its method documentation on an enum page.
@@ -1080,6 +1101,21 @@ fn compiles_standard_add_trait_implementations() {
     );
     if let Err(error) = module {
         panic!("standard Add did not compile: {error}");
+    }
+}
+
+/// Compiles the standard arithmetic trait contracts and division source syntax.
+#[test]
+fn compiles_standard_sub_mul_and_div_trait_implementations() {
+    let module = compile(
+        SourceInput {
+            source_id: "arithmetic.exs",
+            text: "type Number { value: Float } impl std::Sub for Number { fn sub(self, other: Any) -> Any { ret Number { value: self.value - other.value }; } } impl std::Mul for Number { fn mul(self, other: Any) -> Any { ret Number { value: self.value * other.value }; } } impl std::Div for Number { fn div(self, other: Any) -> Any { ret Number { value: self.value / other.value }; } } fn identity(value: Sub | Mul | Div) -> Any { ret value; } fn main() -> Float { ret (Number { value: 84.0 } / Number { value: 2.0 }).value; }",
+        },
+        CompileOptions::default(),
+    );
+    if let Err(error) = module {
+        panic!("standard arithmetic traits did not compile: {error}");
     }
 }
 

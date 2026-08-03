@@ -18,6 +18,9 @@ Built-in types are globally available in ExS source and may also be written with
 ## Traits
 
 - [`Add`](traits/add.md)
+- [`Sub`](traits/sub.md)
+- [`Mul`](traits/mul.md)
+- [`Div`](traits/div.md)
 
 ## Functions
 

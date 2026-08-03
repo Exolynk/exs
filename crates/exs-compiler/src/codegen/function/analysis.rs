@@ -12,6 +12,7 @@ pub(in crate::codegen::function) fn runtime_operation(operator: BinaryOperator) 
         BinaryOperator::Add => "__exs_rt_add",
         BinaryOperator::Subtract => "__exs_rt_sub",
         BinaryOperator::Multiply => "__exs_rt_mul",
+        BinaryOperator::Divide => "__exs_rt_div",
         BinaryOperator::Equal => "__exs_rt_eq",
         BinaryOperator::NotEqual => "__exs_rt_ne",
         BinaryOperator::LessThan => "__exs_rt_lt",

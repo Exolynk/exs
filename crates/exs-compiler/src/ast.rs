@@ -549,6 +549,8 @@ pub enum BinaryOperator {
     Subtract,
     /// Numeric multiplication.
     Multiply,
+    /// Numeric division.
+    Divide,
     /// Equality.
     Equal,
     /// Inequality.

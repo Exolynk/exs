@@ -22,7 +22,7 @@ pub(in crate::codegen) struct InstanceMethod {
 #[derive(Debug, Clone)]
 pub(in crate::codegen) struct MethodRegistry {
     instance_methods: HashMap<String, Vec<InstanceMethod>>,
-    standard_add_methods: Vec<InstanceMethod>,
+    operator_methods: HashMap<TraitOperator, Vec<InstanceMethod>>,
     static_methods: HashSet<String>,
 }
 
@@ -35,7 +35,7 @@ impl MethodRegistry {
         signatures: &HashMap<String, FunctionSignature>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
         let mut instance_methods: HashMap<String, Vec<InstanceMethod>> = HashMap::new();
-        let mut standard_add_methods = Vec::new();
+        let mut operator_methods: HashMap<TraitOperator, Vec<InstanceMethod>> = HashMap::new();
         let mut static_methods = HashSet::new();
         for implementation in &module.implementations {
             let nominal = types.get(&implementation.type_name.name).ok_or_else(|| {
@@ -67,18 +67,12 @@ impl MethodRegistry {
                         .entry(method.name.name.clone())
                         .or_default()
                         .push(target.clone());
-                    if implementation
-                        .trait_name
-                        .as_ref()
-                        .is_some_and(|trait_name| {
-                            traits.binds_operator(
-                                &trait_name.name,
-                                &method.name.name,
-                                TraitOperator::Add,
-                            )
+                    if let Some(operator) =
+                        implementation.trait_name.as_ref().and_then(|trait_name| {
+                            traits.operator_for(&trait_name.name, &method.name.name)
                         })
                     {
-                        standard_add_methods.push(target);
+                        operator_methods.entry(operator).or_default().push(target);
                     }
                 } else {
                     static_methods.insert(key);
@@ -87,7 +81,7 @@ impl MethodRegistry {
         }
         Ok(Self {
             instance_methods,
-            standard_add_methods,
+            operator_methods,
             static_methods,
         })
     }
@@ -97,9 +91,11 @@ impl MethodRegistry {
         self.instance_methods.get(name).map(Vec::as_slice)
     }
 
-    /// Returns nominal implementations selected exclusively by the `+` operator.
-    pub(in crate::codegen) fn standard_add(&self) -> &[InstanceMethod] {
-        &self.standard_add_methods
+    /// Returns nominal implementations selected exclusively by one source operator.
+    pub(in crate::codegen) fn operator(&self, operator: TraitOperator) -> &[InstanceMethod] {
+        self.operator_methods
+            .get(&operator)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Returns whether a qualified implementation method is static.
