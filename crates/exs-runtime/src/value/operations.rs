@@ -4,11 +4,14 @@ use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use exs_abi::{STANDARD_ORDERING_TYPE_ID, STANDARD_ORDERING_TYPE_IDENTITY};
 use exs_value::{ValueRef, is_valid_int};
 
 use crate::gc;
 use crate::runtime;
-use crate::value::{RtValue, RuntimeList, RuntimeString, clone, list, numeric, object};
+use crate::value::{
+    RtValue, RuntimeEnum, RuntimeList, RuntimeObject, RuntimeString, clone, list, numeric, object,
+};
 
 /// Adds two runtime values through String, List, or numeric dispatch.
 pub(crate) fn add(left: ValueRef, right: ValueRef) -> ValueRef {
@@ -56,7 +59,88 @@ fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
 
 /// Tests two runtime values for equality.
 pub(crate) fn equal(left: ValueRef, right: ValueRef) -> ValueRef {
-    let equal = match (runtime::value(left), runtime::value(right)) {
+    runtime::allocate(RtValue::Bool(values_equal(left, right)))
+}
+
+/// Compares two runtime values and returns the compiler-owned Ordering enum.
+pub(crate) fn compare(left: ValueRef, right: ValueRef) -> ValueRef {
+    let ordering = match (runtime::value(left), runtime::value(right)) {
+        (left, right) if numeric::is_numeric(left) && numeric::is_numeric(right) => {
+            match (numeric::number_of(left), numeric::number_of(right)) {
+                (Some(left), Some(right)) => match numeric::numbers_comparison(left, right) {
+                    numeric::Comparison::Less => "Less",
+                    numeric::Comparison::Equal => "Equal",
+                    numeric::Comparison::Greater => "Greater",
+                    numeric::Comparison::Unordered => "Unordered",
+                },
+                _ => "Unordered",
+            }
+        }
+        (RtValue::String(left), RtValue::String(right)) => {
+            match left.as_str().cmp(right.as_str()) {
+                core::cmp::Ordering::Less => "Less",
+                core::cmp::Ordering::Equal => "Equal",
+                core::cmp::Ordering::Greater => "Greater",
+            }
+        }
+        _ if values_equal(left, right) => "Equal",
+        _ => "Unordered",
+    };
+    ordering_value(ordering)
+}
+
+/// Interprets one compiler-owned Ordering value for a source comparison operator.
+pub(crate) fn ordering_test(ordering: ValueRef, test: i32) -> ValueRef {
+    let variant = match runtime::value(ordering) {
+        RtValue::Object(object)
+            if object.type_id == Some(STANDARD_ORDERING_TYPE_ID)
+                && object.enum_data.as_ref().is_some_and(|data| {
+                    data.type_identity.as_ref() == STANDARD_ORDERING_TYPE_IDENTITY
+                }) =>
+        {
+            object.enum_data.as_ref().map(|data| data.variant.as_ref())
+        }
+        _ => None,
+    };
+    let Some(variant) = variant else {
+        return runtime::recoverable_error(
+            "TypeError",
+            "Compare implementations must return an Ordering value",
+            ordering,
+        );
+    };
+    let result = match (variant, test) {
+        ("Equal", 0) => true,
+        ("Unordered", 1) => true,
+        ("Less" | "Greater", 1) => true,
+        ("Less", 2 | 3) => true,
+        ("Equal", 3 | 5) => true,
+        ("Greater", 4 | 5) => true,
+        ("Unordered", 0) => false,
+        ("Unordered", 2..=5) => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "ordering comparison requires comparable values",
+                ordering,
+            );
+        }
+        ("Less" | "Greater", 0) | ("Equal", 1 | 2 | 4) | ("Less", 4 | 5) | ("Greater", 2 | 3) => {
+            false
+        }
+        _ => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "invalid Ordering value or comparison operator",
+                ordering,
+            );
+        }
+    };
+    runtime::allocate(RtValue::Bool(result))
+}
+
+/// Returns whether two runtime values satisfy ExS equality semantics without allocating a Bool.
+fn values_equal(left: ValueRef, right: ValueRef) -> bool {
+    match (runtime::value(left), runtime::value(right)) {
         (RtValue::None, RtValue::None) => true,
         (left, right) if numeric::is_numeric(left) && numeric::is_numeric(right) => {
             match (numeric::number_of(left), numeric::number_of(right)) {
@@ -69,8 +153,19 @@ pub(crate) fn equal(left: ValueRef, right: ValueRef) -> ValueRef {
             left == right
         }
         _ => false,
-    };
-    runtime::allocate(RtValue::Bool(equal))
+    }
+}
+
+/// Allocates one zero-payload compiler-owned `std::Ordering` enum value.
+fn ordering_value(variant: &str) -> ValueRef {
+    runtime::allocate(RtValue::Object(Box::new(RuntimeObject::enumeration(
+        Some(STANDARD_ORDERING_TYPE_ID),
+        RuntimeEnum {
+            type_identity: Box::from(STANDARD_ORDERING_TYPE_IDENTITY),
+            variant: Box::from(variant),
+            fields: Vec::new(),
+        },
+    ))))
 }
 
 /// Tests two runtime values for inequality.
@@ -287,6 +382,10 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "div" => match list::operations::single_argument(arguments) {
             Ok(argument) => divide(receiver, argument),
+            Err(error) => error,
+        },
+        "compare" => match list::operations::single_argument(arguments) {
+            Ok(argument) => compare(receiver, argument),
             Err(error) => error,
         },
         "abs" => match list::operations::require_no_arguments(arguments) {

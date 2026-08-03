@@ -99,6 +99,17 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Converts one `Compare` result into a source comparison Bool.
+    OrderingTest {
+        /// Frame slot holding the compiler-owned `Ordering` value.
+        value: u32,
+        /// Comparison test code selected by the source operator.
+        test: i32,
+        /// Frame slot receiving the resulting Bool or Error.
+        destination: u32,
+        /// Source location for the originating operator.
+        span: SourceSpan<'source>,
+    },
     /// Constructs a List after all elements have been evaluated.
     List {
         elements: Vec<u32>,
@@ -504,6 +515,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::Unary { span, .. }
         | Operation::Binary { span, .. }
         | Operation::Operator { span, .. }
+        | Operation::OrderingTest { span, .. }
         | Operation::List { span, .. }
         | Operation::Object { span, .. }
         | Operation::TypedObject { span, .. }

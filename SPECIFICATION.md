@@ -509,11 +509,24 @@ Calling a non-callable value produces `TypeError`. Arity is checked at runtime. 
 
 ## Comparison
 
-`<`, `<=`, `>`, and `>=` accept two Bool/Int/Float numeric values or two Strings. Bool converts to Int; numeric mixed comparison converts the non-Float operand to Float. String comparison is lexicographic by Unicode scalar value.
+`Ordering` is a globally available compiler-owned enum, also available as `std::Ordering`:
+
+```text
+enum Ordering {
+    Less,
+    Equal,
+    Greater,
+    Unordered,
+}
+```
+
+`Compare` is a compiler-owned standard trait with the fixed method signature `fn compare(self, other: Any) -> Ordering`. A nominal type or enum may implement it, and the implementation is selected before the built-in fallback for `==`, `!=`, `<`, `<=`, `>`, and `>=`. `Compare` methods may suspend. Their result MUST be an `Ordering`, enforced by the normal function return contract.
+
+Built-in comparison returns `Less`, `Equal`, or `Greater` for two Bool/Int/Float numeric values or two Strings. Bool converts to Int; numeric mixed comparison converts the non-Float operand to Float. String comparison is lexicographic by Unicode scalar value. Float comparisons involving an unordered IEEE 754 value return `Unordered`. Other built-in values return `Equal` when they are equal under the equality rules below and `Unordered` otherwise.
+
+`==` is true only for `Ordering::Equal`; `!=` is true for every other variant, including `Ordering::Unordered`. `<`, `<=`, `>`, and `>=` use `Less`, `Equal`, and `Greater` in the usual way. Applying an ordering operator to `Ordering::Unordered` produces `TypeError`.
 
 ## Equality
-
-`==` and `!=` never produce an Error.
 
 - None equals only None.
 - Bool, Int, and Float compare numerically. Bool converts to Int; if either operand is Float, the other numeric operand converts to Float. Float equality uses IEEE 754 equality.
@@ -934,7 +947,7 @@ Canonical output uses four spaces per block level, one statement per line, a fin
 
 ## Generated Markdown API documentation
 
-The compiler library exposes resolver-driven Markdown generation for a root source and its complete relative-import graph. It returns a project `index.md` with the general language description and links to a synthetic `std` module plus every reachable source module. Built-in types remain globally available and may also use the optional `std::` qualifier; `std` is compiler-provided and cannot be imported. The module contains individual type pages for the out-of-the-box types; the `Error(kind, message, data)` constructor is documented on the `Error` type page. Its function page documents `host.call`.
+The compiler library exposes resolver-driven Markdown generation for a root source and its complete relative-import graph. It returns a project `index.md` with the general language description and links to a synthetic `std` module plus every reachable source module. Built-in types, standard traits, and standard enums remain globally available and may also use the optional `std::` qualifier; `std` is compiler-provided and cannot be imported. The module contains individual type pages for the out-of-the-box types; the `Error(kind, message, data)` constructor is documented on the `Error` type page. Its function page documents `host.call`.
 
 Every source module has an index page that lists imports, `use` declarations, types, traits, and functions as links. Each source-defined type, trait, and direct function receives its own API page. Type pages include their fields and implemented methods; implementations are not repeated on their module index. Trait pages include method signatures; function pages include their signature. Source comments beginning with `///` immediately before a declaration are emitted as that declaration's Markdown description.
 
@@ -990,7 +1003,7 @@ Every method supplied by a trait implementation MUST be declared by that trait a
 
 `Self` is a contextual type name available only in a trait method signature and in a method inside `impl Trait for Type`. It resolves to the implementation target, so `fn merge(self, other: Self) -> Self` inside `impl Merge for Document` has the same signature as `fn merge(self, other: Document) -> Document`. An implementation may use either spelling; other type annotation contexts reject `Self`.
 
-A trait name is valid in every existing type annotation position. For the current nominal-trait implementation, a trait contract matches an Object whose nominal type has an `impl Trait for Type` declaration. A declared trait with no implementations is valid and matches no current value. `Add`, `Sub`, `Mul`, `Div`, and their `std::`-qualified spellings are compiler-owned standard traits and are reserved from source trait declarations. `Add` matches built-in Bool, Int, Float, String, and List values; `Sub`, `Mul`, and `Div` each match built-in Bool, Int, and Float values. A nominal type or enum may implement these traits only with their fixed `fn add|sub|mul|div(self, other: Any) -> Any` method signature; parameter names other than `self` do not affect this signature. Each matching operator dispatches exclusively through its nominal implementation before using the built-in fallback. Implementing traits for primitive values and defining further standard language traits are deferred.
+A trait name is valid in every existing type annotation position. For the current nominal-trait implementation, a trait contract matches an Object whose nominal type has an `impl Trait for Type` declaration. A declared trait with no implementations is valid and matches no current value. `Add`, `Sub`, `Mul`, `Div`, `Compare`, and their `std::`-qualified spellings are compiler-owned standard traits and are reserved from source trait declarations. `Add` matches built-in Bool, Int, Float, String, and List values; `Sub`, `Mul`, and `Div` each match built-in Bool, Int, and Float values; `Compare` matches all built-in values. A nominal type or enum may implement the arithmetic traits only with their fixed `fn add|sub|mul|div(self, other: Any) -> Any` method signature, or `Compare` only with `fn compare(self, other: Any) -> Ordering`; parameter names other than `self` do not affect these signatures. Each matching operator dispatches exclusively through its nominal implementation before using the built-in fallback. Implementing traits for primitive values and defining further standard language traits are deferred.
 
 Trait methods are potential suspension points unless the compiler proves their implementation non-suspendable. Trait dispatch is therefore represented explicitly in HIR and resolved through stable runtime ABI operations.
 

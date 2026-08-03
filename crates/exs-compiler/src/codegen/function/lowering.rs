@@ -512,7 +512,8 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let Some(target) = targets.get(index) else {
             self.function.instruction(&Instruction::LocalGet(left));
             self.function.instruction(&Instruction::LocalGet(right));
-            return self.runtime_value_call(operator.runtime_export(), 2, span);
+            self.runtime_value_call(operator.runtime_export(), 2, span)?;
+            return self.emit_operator_result(operator, span);
         };
         self.function.instruction(&Instruction::LocalGet(left));
         self.function
@@ -526,10 +527,25 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.set_runtime_call_site(span)?;
         self.function
             .instruction(&Instruction::Call(target.signature.index));
+        self.emit_operator_result(operator, span)?;
         self.function.instruction(&Instruction::Else);
         self.emit_operator_dispatch(operator, targets, index + 1, left, right, span)?;
         self.function.instruction(&Instruction::End);
         self.exit_control()
+    }
+
+    /// Converts one `Compare` result into the source operator's final Bool result.
+    fn emit_operator_result(
+        &mut self,
+        operator: TraitOperator,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let Some(test) = operator.comparison_test() else {
+            return Ok(());
+        };
+        self.return_if_error(span)?;
+        self.function.instruction(&Instruction::I32Const(test));
+        self.runtime_value_call("__exs_rt_ordering_test", 2, span)
     }
 
     /// Calls the generic runtime method dispatcher using already evaluated argument locals.

@@ -47,6 +47,10 @@ pub const TYPE_ANY: u32 = TYPE_NONE
     | TYPE_LIST
     | TYPE_OBJECT
     | TYPE_FN;
+/// Reserved nominal type tag used by the compiler-owned `std::Ordering` enum.
+pub const STANDARD_ORDERING_TYPE_ID: u32 = 0;
+/// Stable host-boundary identity used by the compiler-owned `std::Ordering` enum.
+pub const STANDARD_ORDERING_TYPE_IDENTITY: &str = "std::Ordering";
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// The entry export invoked by runners.

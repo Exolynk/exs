@@ -67,12 +67,13 @@ impl MethodRegistry {
                         .entry(method.name.name.clone())
                         .or_default()
                         .push(target.clone());
-                    if let Some(operator) =
-                        implementation.trait_name.as_ref().and_then(|trait_name| {
-                            traits.operator_for(&trait_name.name, &method.name.name)
-                        })
-                    {
-                        operator_methods.entry(operator).or_default().push(target);
+                    if let Some(trait_name) = &implementation.trait_name {
+                        for operator in traits.operators_for(&trait_name.name, &method.name.name) {
+                            operator_methods
+                                .entry(*operator)
+                                .or_default()
+                                .push(target.clone());
+                        }
                     }
                 } else {
                     static_methods.insert(key);

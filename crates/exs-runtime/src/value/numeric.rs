@@ -26,6 +26,19 @@ pub(crate) enum Ordering {
     GreaterOrEqual,
 }
 
+/// One normalized numeric comparison result.
+#[derive(Clone, Copy)]
+pub(crate) enum Comparison {
+    /// The left value is less than the right value.
+    Less,
+    /// The values compare equal.
+    Equal,
+    /// The left value is greater than the right value.
+    Greater,
+    /// The values have no defined numeric ordering, such as NaN.
+    Unordered,
+}
+
 /// Returns whether a payload participates in numeric operations.
 pub(crate) fn is_numeric(value: &RtValue) -> bool {
     matches!(
@@ -149,6 +162,20 @@ pub(crate) fn compare(left: ValueRef, right: ValueRef, ordering: Ordering) -> Va
         },
     };
     runtime::allocate(RtValue::Bool(result))
+}
+
+/// Compares two already-normalized numeric values.
+pub(crate) fn numbers_comparison(left: Number, right: Number) -> Comparison {
+    let result = match (left, right) {
+        (Number::Int(left), Number::Int(right)) => Some(left.cmp(&right)),
+        (left, right) => as_float(left).partial_cmp(&as_float(right)),
+    };
+    match result {
+        Some(core::cmp::Ordering::Less) => Comparison::Less,
+        Some(core::cmp::Ordering::Equal) => Comparison::Equal,
+        Some(core::cmp::Ordering::Greater) => Comparison::Greater,
+        None => Comparison::Unordered,
+    }
 }
 
 /// Tests two numeric values for equality with Float promotion.

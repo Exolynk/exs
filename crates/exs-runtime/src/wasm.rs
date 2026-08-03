@@ -65,9 +65,6 @@ pub extern "C" fn __exs_rt_object_is_type(value: ValueRef, type_id: i32) -> i32 
     let Ok(type_id) = u32::try_from(type_id) else {
         runtime::trap();
     };
-    if type_id == 0 {
-        runtime::trap();
-    }
     i32::from(value::object::operations::has_type(value, type_id))
 }
 
@@ -297,6 +294,18 @@ pub extern "C" fn __exs_rt_ne(left: ValueRef, right: ValueRef) -> ValueRef {
     value::operations::not_equal(left, right)
 }
 
+/// Compares two runtime values and returns the compiler-owned Ordering enum.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_compare(left: ValueRef, right: ValueRef) -> ValueRef {
+    value::operations::compare(left, right)
+}
+
+/// Interprets one Ordering value for a compiler-selected source comparison operator.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_ordering_test(ordering: ValueRef, test: i32) -> ValueRef {
+    value::operations::ordering_test(ordering, test)
+}
+
 /// Compares two runtime numeric values for less-than.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_lt(left: ValueRef, right: ValueRef) -> ValueRef {
@@ -416,9 +425,6 @@ pub extern "C" fn __exs_rt_enum_new(
     let Ok(type_id) = u32::try_from(type_id) else {
         runtime::trap();
     };
-    if type_id == 0 {
-        runtime::trap();
-    }
     runtime::enum_new(type_id, type_identity, variant, fields)
 }
 

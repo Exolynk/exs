@@ -161,6 +161,12 @@ fn generates_markdown_api_documentation() {
     assert!(standard.markdown.contains("[`Sub`](traits/sub.md)"));
     assert!(standard.markdown.contains("[`Mul`](traits/mul.md)"));
     assert!(standard.markdown.contains("[`Div`](traits/div.md)"));
+    assert!(standard.markdown.contains("[`Compare`](traits/compare.md)"));
+    assert!(
+        standard
+            .markdown
+            .contains("[`Ordering`](enums/ordering.md)")
+    );
     assert!(documentation.pages.iter().all(|page| !matches!(
         page.path.as_str(),
         "modules/std/fn/type.md" | "modules/std/fn/len.md"
@@ -255,6 +261,27 @@ fn generates_markdown_api_documentation() {
     assert!(integer.markdown.contains("Trait [`Sub`](../traits/sub.md)"));
     assert!(integer.markdown.contains("Trait [`Mul`](../traits/mul.md)"));
     assert!(integer.markdown.contains("Trait [`Div`](../traits/div.md)"));
+    assert!(
+        integer
+            .markdown
+            .contains("Trait [`Compare`](../traits/compare.md)")
+    );
+    let ordering = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/enums/ordering.md")
+        .unwrap_or_else(|| panic!("missing standard Ordering enum page"));
+    assert!(ordering.markdown.contains("Ordering::Unordered"));
+    let compare_trait = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/traits/compare.md")
+        .unwrap_or_else(|| panic!("missing std Compare trait page"));
+    assert!(
+        compare_trait
+            .markdown
+            .contains("fn compare(self, other: Any) -> Ordering;")
+    );
 }
 
 /// Links a standard trait implementation and inherits its method documentation on an enum page.
@@ -1116,6 +1143,21 @@ fn compiles_standard_sub_mul_and_div_trait_implementations() {
     );
     if let Err(error) = module {
         panic!("standard arithmetic traits did not compile: {error}");
+    }
+}
+
+/// Compiles the standard Compare contract and compiler-owned Ordering enum.
+#[test]
+fn compiles_standard_compare_trait_and_ordering_enum() {
+    let module = compile(
+        SourceInput {
+            source_id: "compare.exs",
+            text: "type Version { value: Int } impl std::Compare for Version { fn compare(self, other: Any) -> Ordering { if self.value < other.value { ret Ordering::Less; } if self.value > other.value { ret Ordering::Greater; } ret Ordering::Equal; } } fn identity(value: Compare) -> Ordering { ret value.compare(value); } fn main() -> Bool { ret Version { value: 1 } < Version { value: 2 }; }",
+        },
+        CompileOptions::default(),
+    );
+    if let Err(error) = module {
+        panic!("standard Compare did not compile: {error}");
     }
 }
 

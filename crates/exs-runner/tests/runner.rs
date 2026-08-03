@@ -1311,6 +1311,42 @@ fn dispatches_standard_sub_mul_and_div_for_nominal_types() {
     );
 }
 
+/// Dispatches equality and ordering operators through one nominal Compare implementation.
+#[test]
+fn dispatches_standard_compare_for_nominal_types() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            type Version { value: Int }
+
+            impl Compare for Version {
+                fn compare(self, other: Any) -> Ordering {
+                    if self.value < other.value { ret Ordering::Less; }
+                    if self.value > other.value { ret Ordering::Greater; }
+                    ret Ordering::Equal;
+                }
+            }
+
+            fn main() -> List {
+                let first = Version { value: 1 };
+                let second = Version { value: 2 };
+                let same = Version { value: 1 };
+                ret [first < second, first <= same, second > first, second >= same, first == same, first != second];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+        ])
+    );
+}
+
 /// Keeps an inherent method named `add` separate from the source `+` protocol.
 #[test]
 fn does_not_select_inherent_add_methods_for_source_addition() {
@@ -1409,6 +1445,43 @@ fn suspends_through_standard_div_implementations() {
         Err(error) => panic!("execution failed: {error}"),
     };
     assert_eq!(result, ExsValue::Float(42.0));
+}
+
+/// Routes a suspending standard Compare implementation through its continuation child frame.
+#[test]
+fn suspends_through_standard_compare_implementations() {
+    let compiled = compile_source(
+        r#"
+        type Version { value: Int }
+
+        impl Compare for Version {
+            fn compare(self, other: Any) -> Ordering {
+                let result = host.call("ordering");
+                if result == 0 { ret Ordering::Less; }
+                ret Ordering::Greater;
+            }
+        }
+
+        fn main() -> Bool {
+            ret Version { value: 1 } < Version { value: 2 };
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("ordering", |_arguments: Vec<ExsValue>| async move {
+                ExsValue::Int(0)
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Bool(true));
 }
 
 /// Retains root and child language frames when a child host call returns an Error value.
@@ -1773,6 +1846,41 @@ fn dispatches_builtin_and_nominal_arithmetic_trait_contracts() {
                 variant: "Value".to_owned(),
                 fields: Vec::new(),
             },
+        ])
+    );
+}
+
+/// Preserves universal equality and built-in comparison through the Compare contract.
+#[test]
+fn dispatches_builtin_compare_trait_contracts() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            fn compare_self(value: Compare) -> Ordering {
+                ret value.compare(value);
+            }
+
+            fn main() -> List {
+                let values = [1];
+                ret [
+                    20 == 20,
+                    20 != 22,
+                    "Ada" < "Lin",
+                    values == values,
+                    match compare_self(20) { Ordering::Equal => true, Ordering::Less => false, Ordering::Greater => false, Ordering::Unordered => false, },
+                    match [1].compare([2]) { Ordering::Unordered => true, Ordering::Less => false, Ordering::Equal => false, Ordering::Greater => false, },
+                ];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
         ])
     );
 }

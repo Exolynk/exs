@@ -208,6 +208,19 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             } => {
                 self.operator_call(*operator, next, *left, *right, targets, *destination, *span)?
             }
+            Operation::OrderingTest {
+                value,
+                test,
+                destination,
+                span,
+            } => {
+                self.get_slot(*value, *span)?;
+                self.function.instruction(&Instruction::I32Const(*test));
+                self.call_runtime("__exs_rt_ordering_test", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.complete_if_error(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::List {
                 elements,
                 destination,

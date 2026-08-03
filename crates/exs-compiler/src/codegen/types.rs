@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use exs_abi::{
-    TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE,
-    TYPE_OBJECT, TYPE_STRING,
+    STANDARD_ORDERING_TYPE_ID, STANDARD_ORDERING_TYPE_IDENTITY, TYPE_ANY, TYPE_BOOL, TYPE_ERROR,
+    TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE, TYPE_OBJECT, TYPE_STRING,
 };
 
 use crate::ast::{EnumDeclaration, Module, TypeAnnotation};
@@ -171,6 +171,7 @@ pub(super) fn validate_annotation_with_self<'a>(
         }
         if builtin_mask(&member.name).is_none()
             && standard::canonical_trait_name(&member.name).is_none()
+            && standard::canonical_enum_name(&member.name).is_none()
             && !module
                 .types
                 .iter()
@@ -195,7 +196,10 @@ pub(super) fn validate_annotation_with_self<'a>(
 
 /// Returns whether one declaration name is reserved by the type system.
 fn is_reserved_type_name(name: &str) -> bool {
-    name == "Self" || builtin_mask(name).is_some() || standard::canonical_trait_name(name).is_some()
+    name == "Self"
+        || builtin_mask(name).is_some()
+        || standard::canonical_trait_name(name).is_some()
+        || standard::canonical_enum_name(name).is_some()
 }
 
 /// One resolved runtime type contract.
@@ -277,6 +281,17 @@ impl TypeRegistry {
         traits: &TraitRegistry<'a>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
         let mut types = HashMap::new();
+        for descriptor in standard::enums() {
+            types.insert(
+                descriptor.name.to_owned(),
+                NominalType {
+                    id: STANDARD_ORDERING_TYPE_ID,
+                    fields: Vec::new(),
+                    kind: NominalKind::Enum,
+                    enum_type_id: Some(STANDARD_ORDERING_TYPE_IDENTITY.to_owned()),
+                },
+            );
+        }
         let mut next_id = 1_u32;
         for declaration in &module.types {
             if is_reserved_type_name(&declaration.name.name)
@@ -380,6 +395,7 @@ impl TypeRegistry {
             enum_variants: HashMap::new(),
             trait_implementations,
         };
+        registry.register_standard_enums();
         for declaration in &module.types {
             let mut fields = Vec::new();
             for field in &declaration.fields {
@@ -432,7 +448,10 @@ impl TypeRegistry {
         for member in &annotation.members {
             if let Some(mask) = builtin_mask(&member.name) {
                 resolved_builtin_mask |= mask;
-            } else if let Some(nominal) = self.types.get(&member.name) {
+            } else if let Some(nominal) = self
+                .types
+                .get(standard::canonical_enum_name(&member.name).unwrap_or(&member.name))
+            {
                 if !nominal_type_ids.contains(&nominal.id) {
                     nominal_type_ids.push(nominal.id);
                 }
@@ -468,16 +487,21 @@ impl TypeRegistry {
 
     /// Returns one nominal Object declaration by its source-visible name.
     pub(super) fn get(&self, name: &str) -> Option<&NominalType> {
-        self.types.get(name)
+        self.types
+            .get(standard::canonical_enum_name(name).unwrap_or(name))
     }
 
     /// Resolves one canonical enum constructor name.
     pub(super) fn enum_variant(&self, name: &str) -> Option<&EnumVariant> {
-        self.enum_variants.get(name)
+        self.enum_variants.get(name).or_else(|| {
+            name.strip_prefix("std::")
+                .and_then(|name| self.enum_variants.get(name))
+        })
     }
 
     /// Returns every declared variant name for one canonical enum type.
     pub(super) fn enum_variant_names(&self, type_name: &str) -> Vec<String> {
+        let type_name = standard::canonical_enum_name(type_name).unwrap_or(type_name);
         let prefix = format!("{type_name}::");
         self.enum_variants
             .keys()
@@ -519,6 +543,23 @@ impl TypeRegistry {
             );
         }
         Ok(())
+    }
+
+    /// Registers every compiler-owned standard enum constructor.
+    fn register_standard_enums(&mut self) {
+        for descriptor in standard::enums() {
+            for variant in descriptor.variants {
+                self.enum_variants.insert(
+                    format!("{}::{variant}", descriptor.name),
+                    EnumVariant {
+                        type_id: STANDARD_ORDERING_TYPE_ID,
+                        type_identity: STANDARD_ORDERING_TYPE_IDENTITY.to_owned(),
+                        name: (*variant).to_owned(),
+                        fields: Vec::new(),
+                    },
+                );
+            }
+        }
     }
 }
 

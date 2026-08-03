@@ -2,11 +2,12 @@
 
 use std::collections::HashMap;
 
+use exs_abi::STANDARD_ORDERING_TYPE_IDENTITY;
 use exs_runtime::WASM_TEMPLATE;
 use wasmparser::{Parser as WasmParser, Payload};
 
 use crate::ast::{AssignmentTarget, Block, Expression, Module, Statement};
-use crate::codegen::{diagnostics, module_span};
+use crate::codegen::{diagnostics, module_span, standard};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
 
 /// Compiler-owned passive data segments for unique UTF-8 string literals.
@@ -39,6 +40,17 @@ impl LiteralPool {
             pool.insert(&format!("{}::{type_name}", declaration.name.span.source_id));
             for variant in &declaration.variants {
                 pool.insert(&variant.name.name);
+            }
+        }
+        for descriptor in standard::enums() {
+            let identity = if descriptor.name == standard::ORDERING_ENUM {
+                STANDARD_ORDERING_TYPE_IDENTITY.to_owned()
+            } else {
+                format!("std::{}", descriptor.name)
+            };
+            pool.insert(&identity);
+            for variant in descriptor.variants {
+                pool.insert(variant);
             }
         }
         for function in &module.functions {

@@ -180,14 +180,29 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let right = self.lower_expression(right)?;
                 let destination = self.temporary(*span)?;
                 if let Some(operator_trait) = TraitOperator::from_binary(*operator) {
+                    let result = self.temporary(*span)?;
                     self.operations.push(Operation::Operator {
                         operator: operator_trait,
                         left,
                         right,
                         targets: self.methods.operator(operator_trait).to_vec(),
-                        destination,
+                        destination: result,
                         span: *span,
                     });
+                    if let Some(test) = operator_trait.comparison_test() {
+                        self.operations.push(Operation::OrderingTest {
+                            value: result,
+                            test,
+                            destination,
+                            span: *span,
+                        });
+                    } else {
+                        self.operations.push(Operation::Copy {
+                            source: result,
+                            destination,
+                            span: *span,
+                        });
+                    }
                 } else {
                     self.operations.push(Operation::Binary {
                         operator: *operator,

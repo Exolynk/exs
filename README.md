@@ -153,8 +153,8 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Dispatch `+` through matching `Add` implementations, preserving built-in numeric, String, and List behavior as its fallback.
 - [x] Allow `Add` implementations to suspend through the existing continuation child-frame path.
 - [x] Define `Sub`, `Mul`, and `Div` as standard protocols with `Any` results, built-in numeric implementations, matching methods, and `-`, `*`, and `/` dispatch.
-- [ ] Define equality and comparison protocols with their result-type rules.
-- [ ] Add generated `std` trait pages and link every built-in and user implementation from the owning type page.
+- [x] Define `Compare` with `fn compare(self, other: Any) -> Ordering`, the global `std::Ordering` enum, and `==`, `!=`, `<`, `<=`, `>`, and `>=` dispatch.
+- [x] Add generated `std` trait pages and link every built-in and user implementation from the owning type page.
 - [ ] Reconsider user-defined `Clone` only with an explicit clone-context API that preserves aliases and cycles.
 
 ### Phase 16: Runner Limits & Browser

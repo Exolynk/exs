@@ -7,7 +7,7 @@ use crate::ast::{
     EnumDeclaration, FunctionDeclaration, Module, Parameter, TraitDeclaration,
     TraitMethodDeclaration, TypeAnnotation, TypeDeclaration,
 };
-use crate::codegen::standard::{self, StandardTraitDescriptor};
+use crate::codegen::standard::{self, StandardEnumDescriptor, StandardTraitDescriptor};
 use crate::{Documentation, DocumentationPage, ModuleResolver, SourceInput, SourceSpan};
 
 /// One source file retained while its module graph is documented.
@@ -734,9 +734,10 @@ fn standard_pages() -> Vec<DocumentationPage> {
         },
     ];
     let traits = standard::traits();
+    let enums = standard::enums();
     let mut pages = vec![DocumentationPage {
         path: "modules/std/index.md".to_owned(),
-        markdown: render_standard_index(&types, traits),
+        markdown: render_standard_index(&types, enums, traits),
     }];
     for type_info in &types {
         pages.push(DocumentationPage {
@@ -751,6 +752,12 @@ fn standard_pages() -> Vec<DocumentationPage> {
     for trait_info in traits {
         pages.push(standard_trait_page(trait_info));
     }
+    for enum_info in enums {
+        pages.push(DocumentationPage {
+            path: format!("modules/std/enums/{}.md", slug(enum_info.name)),
+            markdown: render_standard_enum(enum_info),
+        });
+    }
     pages.push(standard_function_page(
         "host-call",
         "host.call",
@@ -762,7 +769,11 @@ fn standard_pages() -> Vec<DocumentationPage> {
 }
 
 /// Renders the synthetic standard-library module index.
-fn render_standard_index(types: &[StandardType], traits: &[StandardTraitDescriptor]) -> String {
+fn render_standard_index(
+    types: &[StandardType],
+    enums: &[StandardEnumDescriptor],
+    traits: &[StandardTraitDescriptor],
+) -> String {
     let mut output = String::from(
         "# Module `std`\n\nBuilt-in types are globally available in ExS source and may also be written with the `std::` qualifier. Importing `std` is not required or allowed.\n\n## Types\n\n",
     );
@@ -772,6 +783,16 @@ fn render_standard_index(types: &[StandardType], traits: &[StandardTraitDescript
             type_info.name,
             slug(type_info.name)
         ));
+    }
+    if !enums.is_empty() {
+        output.push_str("\n## Enums\n\n");
+        for enum_info in enums {
+            output.push_str(&format!(
+                "- [`{}`](enums/{}.md)\n",
+                enum_info.name,
+                slug(enum_info.name)
+            ));
+        }
     }
     output.push_str("\n## Traits\n\n");
     for trait_info in traits {
@@ -790,7 +811,17 @@ fn standard_trait_page(descriptor: &StandardTraitDescriptor) -> DocumentationPag
     let implementations = descriptor
         .implemented_by
         .iter()
-        .map(|type_name| format!("- [`std::{type_name}`](../types/{}.md)", slug(type_name)))
+        .map(|type_name| {
+            let directory = if standard::enum_descriptor(type_name).is_some() {
+                "enums"
+            } else {
+                "types"
+            };
+            format!(
+                "- [`std::{type_name}`](../{directory}/{}.md)",
+                slug(type_name)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let methods = descriptor
@@ -816,6 +847,30 @@ fn standard_trait_page(descriptor: &StandardTraitDescriptor) -> DocumentationPag
             descriptor.name, descriptor.description, descriptor.usage,
         ),
     }
+}
+
+/// Renders one compiler-owned standard enum page.
+fn render_standard_enum(descriptor: &StandardEnumDescriptor) -> String {
+    let mut output = format!(
+        "# Enum `std::{}`\n\n{}\n\n```exs\nenum {} {{\n",
+        descriptor.name, descriptor.description, descriptor.name
+    );
+    for variant in descriptor.variants {
+        output.push_str(&format!("    {variant},\n"));
+    }
+    output.push_str("}\n```\n\n## Usage\n\n```exs\n");
+    output.push_str(descriptor.usage);
+    output.push_str("\n```\n");
+    let traits = standard::traits()
+        .iter()
+        .filter(|trait_info| trait_info.implemented_by.contains(&descriptor.name));
+    if traits.clone().next().is_some() {
+        output.push_str("\n## Implemented Methods\n\n");
+        for trait_info in traits {
+            render_standard_trait_implementation(&mut output, trait_info);
+        }
+    }
+    output
 }
 
 /// Renders the Error type page with its source-level constructor.

@@ -757,18 +757,16 @@ fn instance_method_targets<'a>(
                         "{}::{}",
                         implementation.type_name.name, method.name.name
                     ));
-                if let Some(operator) = implementation
-                    .trait_name
-                    .as_ref()
-                    .and_then(|trait_name| traits.operator_for(&trait_name.name, &method.name.name))
-                {
-                    targets
-                        .entry(operator.target_key().to_owned())
-                        .or_default()
-                        .push(format!(
-                            "{}::{}",
-                            implementation.type_name.name, method.name.name
-                        ));
+                if let Some(trait_name) = &implementation.trait_name {
+                    for operator in traits.operators_for(&trait_name.name, &method.name.name) {
+                        targets
+                            .entry(operator.target_key().to_owned())
+                            .or_default()
+                            .push(format!(
+                                "{}::{}",
+                                implementation.type_name.name, method.name.name
+                            ));
+                    }
                 }
             }
         }

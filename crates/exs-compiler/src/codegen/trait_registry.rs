@@ -19,6 +19,18 @@ pub(crate) enum TraitOperator {
     Multiply,
     /// The binary `/` operator.
     Divide,
+    /// The binary `==` operator.
+    Equal,
+    /// The binary `!=` operator.
+    NotEqual,
+    /// The binary `<` operator.
+    LessThan,
+    /// The binary `<=` operator.
+    LessOrEqual,
+    /// The binary `>` operator.
+    GreaterThan,
+    /// The binary `>=` operator.
+    GreaterOrEqual,
 }
 
 /// One trait declaration normalized independently of its source representation.
@@ -30,8 +42,8 @@ pub(crate) struct TraitDefinition<'a> {
     pub(crate) builtin_mask: u32,
     /// Required and default methods in declaration order.
     pub(crate) methods: Vec<TraitMethodDefinition<'a>>,
-    /// Optional source operator binding selected by one trait method.
-    pub(crate) operator: Option<TraitOperator>,
+    /// Source operator bindings selected by one trait method.
+    pub(crate) operators: Vec<TraitOperator>,
 }
 
 /// One normalized trait method declaration.
@@ -105,7 +117,12 @@ impl<'a> TraitRegistry<'a> {
                                 display_signature: Some(method.signature.to_owned()),
                             })
                             .collect(),
-                        operator: descriptor.operator.map(TraitOperator::from),
+                        operators: descriptor
+                            .operators
+                            .iter()
+                            .copied()
+                            .map(TraitOperator::from)
+                            .collect(),
                     },
                 )
             })
@@ -124,7 +141,7 @@ impl<'a> TraitRegistry<'a> {
                         .iter()
                         .map(TraitMethodDefinition::from_source)
                         .collect(),
-                    operator: None,
+                    operators: Vec::new(),
                 },
             );
         }
@@ -142,20 +159,16 @@ impl<'a> TraitRegistry<'a> {
         self.definitions.values()
     }
 
-    /// Resolves the operator binding attached to one implemented trait method.
-    pub(crate) fn operator_for(
-        &self,
-        trait_name: &str,
-        method_name: &str,
-    ) -> Option<TraitOperator> {
-        self.definition(trait_name).and_then(|definition| {
-            definition.operator.filter(|_| {
+    /// Returns every operator binding attached to one implemented trait method.
+    pub(crate) fn operators_for(&self, trait_name: &str, method_name: &str) -> &[TraitOperator] {
+        self.definition(trait_name)
+            .filter(|definition| {
                 definition
                     .methods
                     .iter()
                     .any(|method| method.name == method_name)
             })
-        })
+            .map_or(&[], |definition| definition.operators.as_slice())
     }
 }
 
@@ -167,14 +180,13 @@ impl TraitOperator {
             BinaryOperator::Subtract => Some(Self::Subtract),
             BinaryOperator::Multiply => Some(Self::Multiply),
             BinaryOperator::Divide => Some(Self::Divide),
-            BinaryOperator::Equal
-            | BinaryOperator::NotEqual
-            | BinaryOperator::LessThan
-            | BinaryOperator::LessOrEqual
-            | BinaryOperator::GreaterThan
-            | BinaryOperator::GreaterOrEqual
-            | BinaryOperator::And
-            | BinaryOperator::Or => None,
+            BinaryOperator::Equal => Some(Self::Equal),
+            BinaryOperator::NotEqual => Some(Self::NotEqual),
+            BinaryOperator::LessThan => Some(Self::LessThan),
+            BinaryOperator::LessOrEqual => Some(Self::LessOrEqual),
+            BinaryOperator::GreaterThan => Some(Self::GreaterThan),
+            BinaryOperator::GreaterOrEqual => Some(Self::GreaterOrEqual),
+            BinaryOperator::And | BinaryOperator::Or => None,
         }
     }
 
@@ -185,6 +197,12 @@ impl TraitOperator {
             Self::Subtract => "$operator:sub",
             Self::Multiply => "$operator:mul",
             Self::Divide => "$operator:div",
+            Self::Equal => "$operator:eq",
+            Self::NotEqual => "$operator:ne",
+            Self::LessThan => "$operator:lt",
+            Self::LessOrEqual => "$operator:le",
+            Self::GreaterThan => "$operator:gt",
+            Self::GreaterOrEqual => "$operator:ge",
         }
     }
 
@@ -195,6 +213,25 @@ impl TraitOperator {
             Self::Subtract => "__exs_rt_sub",
             Self::Multiply => "__exs_rt_mul",
             Self::Divide => "__exs_rt_div",
+            Self::Equal
+            | Self::NotEqual
+            | Self::LessThan
+            | Self::LessOrEqual
+            | Self::GreaterThan
+            | Self::GreaterOrEqual => "__exs_rt_compare",
+        }
+    }
+
+    /// Returns the runtime comparison-test code required after this operator dispatch.
+    pub(crate) const fn comparison_test(self) -> Option<i32> {
+        match self {
+            Self::Equal => Some(0),
+            Self::NotEqual => Some(1),
+            Self::LessThan => Some(2),
+            Self::LessOrEqual => Some(3),
+            Self::GreaterThan => Some(4),
+            Self::GreaterOrEqual => Some(5),
+            Self::Add | Self::Subtract | Self::Multiply | Self::Divide => None,
         }
     }
 }
@@ -263,6 +300,12 @@ impl From<StandardOperator> for TraitOperator {
             StandardOperator::Subtract => Self::Subtract,
             StandardOperator::Multiply => Self::Multiply,
             StandardOperator::Divide => Self::Divide,
+            StandardOperator::Equal => Self::Equal,
+            StandardOperator::NotEqual => Self::NotEqual,
+            StandardOperator::LessThan => Self::LessThan,
+            StandardOperator::LessOrEqual => Self::LessOrEqual,
+            StandardOperator::GreaterThan => Self::GreaterThan,
+            StandardOperator::GreaterOrEqual => Self::GreaterOrEqual,
         }
     }
 }
@@ -353,9 +396,9 @@ mod tests {
                 .matches(combine_implementation, "Value")
         );
         assert_eq!(
-            registry.operator_for("std::Add", "add"),
-            Some(TraitOperator::Add)
+            registry.operators_for("std::Add", "add"),
+            [TraitOperator::Add]
         );
-        assert_eq!(registry.operator_for("Combine", "combine"), None);
+        assert!(registry.operators_for("Combine", "combine").is_empty());
     }
 }
