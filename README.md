@@ -1,8 +1,8 @@
-# ExS
+# Exolynk Extension System
 
-Exolynk Script (ExS) is a dynamically typed scripting language that compiles directly to one executable WebAssembly module. It has no bytecode, interpreter, or language-level virtual machine.
+The Exolynk Extension System is a dynamic addon system, to develop custom code and execute it savely in the browser or server. The Exolynk Script (ExS) is a dynamically typed scripting language that compiles directly to one executable WebAssembly module. It's designed to support easy scripting used in the extension system. For more advanved scripting, additional langugaes are supported to generate .wasm to be executed in exs.
 
-The authoritative language and architecture definition is [SPECIFICATION.md](SPECIFICATION.md).
+The Exolynk Script and it's architecture definition is located at [SPECIFICATION.md](SPECIFICATION.md).
 
 ## Architecture
 
@@ -15,22 +15,6 @@ ExS source -> compiler + embedded exs-runtime.wasm -> final Wasm module
 ```
 
 The `exs-runtime` executes inside the final Wasm module. A runner executes outside the module, supplies the Host ABI, and enforces execution limits. The compiler and runtime communicate only through stable named ABI exports; neither relies on fixed Wasm function indices.
-
-## Planned Workspace
-
-```text
-.
-├── crates/
-│   ├── exs-value/       # shared opaque ValueRef(NonZeroU32) carrier
-│   ├── exs-abi/         # ABI versions, stable names, and ExsValue CBOR transport
-│   ├── exs-runtime/     # Rust runtime source and committed Wasm template
-│   ├── exs-compiler/    # source to linked Wasm compiler library
-│   ├── exs-runner/      # feature-gated server and browser runners
-│   └── exs-cli/         # thin compiler/runner command-line interface
-├── tests/               # conformance and end-to-end tests
-├── SPECIFICATION.md
-└── Cargo.toml
-```
 
 ## Implementation Roadmap
 
