@@ -155,7 +155,7 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 - [x] Define `Sub`, `Mul`, and `Div` as standard protocols with `Any` results, built-in numeric implementations, matching methods, and `-`, `*`, and `/` dispatch.
 - [x] Define `Compare` with `fn compare(self, other: Any) -> Ordering`, the global `std::Ordering` enum, and `==`, `!=`, `<`, `<=`, `>`, and `>=` dispatch.
 - [x] Add generated `std` trait pages and link every built-in and user implementation from the owning type page.
-- [ ] Reconsider user-defined `Clone` only with an explicit clone-context API that preserves aliases and cycles.
+- [x] Retain non-overridable runtime-owned deep cloning for every value and document `clone()` on built-in, type, and enum pages.
 
 ### Phase 16: Runner Limits & Browser
 

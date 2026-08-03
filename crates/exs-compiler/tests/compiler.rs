@@ -130,6 +130,8 @@ fn generates_markdown_api_documentation() {
         .unwrap_or_else(|| panic!("missing Point type page"));
     assert!(point.markdown.contains("## Implemented Methods"));
     assert!(point.markdown.contains("coordinate"));
+    assert!(point.markdown.contains("## Runtime Methods"));
+    assert!(point.markdown.contains("clone() -> Point | Error"));
     let color = documentation
         .pages
         .iter()
@@ -141,6 +143,7 @@ fn generates_markdown_api_documentation() {
             .contains("Rgb(red: Int, green: Int, blue: Int)")
     );
     assert!(color.markdown.contains("## Implemented Methods"));
+    assert!(color.markdown.contains("clone() -> Color | Error"));
     let host_call = documentation
         .pages
         .iter()
@@ -266,12 +269,14 @@ fn generates_markdown_api_documentation() {
             .markdown
             .contains("Trait [`Compare`](../traits/compare.md)")
     );
+    assert!(integer.markdown.contains("clone() -> Int | Error"));
     let ordering = documentation
         .pages
         .iter()
         .find(|page| page.path == "modules/std/enums/ordering.md")
         .unwrap_or_else(|| panic!("missing standard Ordering enum page"));
     assert!(ordering.markdown.contains("Ordering::Unordered"));
+    assert!(ordering.markdown.contains("clone() -> Ordering | Error"));
     let compare_trait = documentation
         .pages
         .iter()

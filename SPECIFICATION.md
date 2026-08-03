@@ -552,7 +552,7 @@ The right side MUST name a built-in runtime type. A type test returns Bool and d
 let copy = value.clone();
 ```
 
-`clone()` is a runtime-owned built-in method available on every value. It is synchronous, cannot be overridden by a type or trait implementation, and has the complete graph semantics defined in the Runtime chapter.
+`clone()` is a runtime-owned built-in method available on every value. It is synchronous, cannot be overridden by a type or trait implementation, and has the complete graph semantics defined in the Runtime chapter. User-defined nominal Objects and enums receive it automatically; their stored fields and variant payloads are cloned without requiring an `impl Clone` declaration.
 
 ## Error propagation
 
@@ -1137,7 +1137,7 @@ pub enum RtValue {
 
 ## Deep clone
 
-`value.clone()` is synchronous and runtime-owned. It does not perform trait dispatch and cannot be overridden by user code.
+`value.clone()` is synchronous and runtime-owned. It does not perform trait dispatch and cannot be overridden by user code. This deliberate automatic behavior also applies to every user-defined nominal Object and enum, avoiding a clone protocol that could break alias or cycle preservation.
 
 Clone returns a deep copy of the reachable language-value graph while preserving topology:
 

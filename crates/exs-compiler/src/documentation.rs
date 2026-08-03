@@ -328,6 +328,8 @@ fn render_enum_page(
         }
     }
     render_nominal_implementations(&mut output, module, &declaration.name.name, source);
+    output.push_str("\n## Runtime Methods\n\n");
+    render_clone_method(&mut output, &declaration.name.name);
     output
 }
 
@@ -378,6 +380,8 @@ fn render_type_page(
     }
     output.push_str("}\n```\n\n");
     render_nominal_implementations(&mut output, module, &declaration.name.name, source);
+    output.push_str("\n## Runtime Methods\n\n");
+    render_clone_method(&mut output, &declaration.name.name);
     output
 }
 
@@ -548,11 +552,7 @@ fn standard_pages() -> Vec<DocumentationPage> {
             name: "Any",
             description: "`Any` accepts every ExS value. It is the implicit contract when a parameter or return annotation is omitted, and is useful when a function deliberately forwards values without narrowing their type.",
             usage: "fn main(value: Any) -> Any {\n    ret value;\n}",
-            methods: &[StandardMethod {
-                signature: "clone() -> Any | Error",
-                description: "Creates a synchronous deep copy of the reachable mutable value graph. Lists, Objects, nominal values, enum payloads, Errors, Cells, and Closures are copied while preserving aliases and cycles inside the copy; immutable values such as None, Bool, Int, Float, and String are reused. A reachable host-owned resource returns `CloneError`, and clone never mutates the source graph.",
-                example: "let original = [[1]];\nlet copy = original.clone();\ncopy[0].push(2);\nret [original[0].length(), copy[0].length()];",
-            }],
+            methods: &[],
         },
         StandardType {
             name: "None",
@@ -870,6 +870,8 @@ fn render_standard_enum(descriptor: &StandardEnumDescriptor) -> String {
             render_standard_trait_implementation(&mut output, trait_info);
         }
     }
+    output.push_str("\n## Runtime Methods\n\n");
+    render_clone_method(&mut output, descriptor.name);
     output
 }
 
@@ -899,21 +901,27 @@ fn render_standard_type(type_info: &StandardType) -> String {
         .iter()
         .filter(|descriptor| descriptor.implemented_by.contains(&type_info.name))
         .collect::<Vec<_>>();
-    if !traits.is_empty() || !type_info.methods.is_empty() {
-        output.push_str("\n## Implemented Methods\n\n");
-        for descriptor in traits {
-            render_standard_trait_implementation(&mut output, descriptor);
-        }
-        for method in type_info.methods {
-            output.push_str(&format!(
-                "### `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
-                method.signature,
-                method.description,
-                script_example(method.example)
-            ));
-        }
+    output.push_str("\n## Implemented Methods\n\n");
+    for descriptor in traits {
+        render_standard_trait_implementation(&mut output, descriptor);
     }
+    for method in type_info.methods {
+        output.push_str(&format!(
+            "### `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
+            method.signature,
+            method.description,
+            script_example(method.example)
+        ));
+    }
+    render_clone_method(&mut output, type_info.name);
     output
+}
+
+/// Renders the automatic runtime-owned deep clone method for one source-visible type.
+fn render_clone_method(output: &mut String, type_name: &str) {
+    output.push_str(&format!(
+        "### `clone() -> {type_name} | Error`\n\nCreates a synchronous deep copy of this value's reachable mutable graph. Lists, Objects, nominal values, enum payloads, Errors, Cells, and Closures are copied while preserving aliases and cycles inside the copy; immutable values such as None, Bool, Int, Float, and String are reused. `clone()` never mutates its source, cannot be overridden, and returns `CloneError` when a reachable host-owned resource cannot be cloned.\n\n```exs\nfn main(value: {type_name}) -> {type_name} | Error {{\n    ret value.clone();\n}}\n```\n\n"
+    ));
 }
 
 /// Renders one built-in trait implementation with the same method detail as nominal pages.
