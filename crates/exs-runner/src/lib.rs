@@ -1,29 +1,53 @@
-//! Wasmtime-backed `ExS` server runner.
+//! Native and browser execution backends for compiled `ExS` modules.
+
+#[cfg(all(feature = "server", not(feature = "browser"), target_arch = "wasm32"))]
+compile_error!(
+    "the `server` feature requires a native target; use `default-features = false, features = [\"browser\"]` for browser builds"
+);
 
 use std::fmt;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use std::future::{Future, poll_fn};
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use std::pin::Pin;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use std::task::Poll;
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, INPUT_ALLOC_EXPORT, RESULT_LENGTH_EXPORT,
     RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, START_EXPORT, STATUS_CANCELLED, STATUS_COMPLETE,
     STATUS_PENDING,
 };
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
+#[cfg(all(feature = "browser", target_arch = "wasm32"))]
+mod browser;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod cancellation;
 mod cbor;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_abi;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_function;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;
 
+#[cfg(all(feature = "browser", target_arch = "wasm32"))]
+pub use self::browser::{
+    BrowserHostFunctionRegistry, BrowserRegistryError, BrowserRunner, BrowserRunnerConfig,
+};
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::cancellation::ExecutionCancellation;
 pub use self::cbor::{HostCborError, decode_arguments, encode_result};
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::host_function::{AsyncHostFunction, HostCall, HostFuture, SyncHostFunction};
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::registry::{HostFunctionRegistry, RegistryError};
 pub use exs_abi::{ErrorSeverity, ExsError, ExsValue, SourcePositionId};
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 /// A reusable Wasmtime server runner with dynamically registered host functions.
 #[derive(Default)]
 pub struct ServerRunner {
@@ -31,6 +55,7 @@ pub struct ServerRunner {
     registry: HostFunctionRegistry,
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl ServerRunner {
     /// Creates a server runner with no registered host functions.
     #[must_use]
@@ -136,7 +161,7 @@ impl ServerRunner {
 /// A technical error from Wasm loading or execution.
 #[derive(Debug)]
 pub enum RunnerError {
-    /// Wasmtime rejected the module or failed to instantiate it.
+    /// The active WebAssembly backend rejected the module or failed to instantiate it.
     Wasm(String),
     /// A mandatory ABI export was absent or incompatible.
     Abi(String),
@@ -163,6 +188,7 @@ impl fmt::Display for RunnerError {
 impl std::error::Error for RunnerError {}
 
 /// Cancels the active scheduler task in one suspended resumable module.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn cancel_execution(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
@@ -180,11 +206,13 @@ fn cancel_execution(
 /// # Errors
 ///
 /// Returns an error when the module cannot be instantiated, violates the ABI, traps, or does not complete.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub fn execute(wasm: &[u8], inputs: &[ExsValue]) -> Result<ExsValue, RunnerError> {
     execute_with_registry(wasm, inputs, HostFunctionRegistry::new())
 }
 
 /// Executes a module through the synchronous compatibility path with one registry snapshot.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn execute_with_registry(
     wasm: &[u8],
     inputs: &[ExsValue],
@@ -214,6 +242,7 @@ fn execute_with_registry(
 }
 
 /// Encodes one completed asynchronous response into the runtime-owned reusable input buffer.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn write_response(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
@@ -242,6 +271,7 @@ fn write_response(
 }
 
 /// Decodes the runtime-owned completed result without exposing its `ValueRef` to the host.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn result(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
@@ -267,6 +297,7 @@ fn result(
 }
 
 /// Encodes ordered main arguments and writes them to the runtime-owned input buffer.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn write_input(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
@@ -297,6 +328,7 @@ fn write_input(
 }
 
 /// Calls one zero-argument runtime result accessor.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn call_result_accessor<Return>(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
@@ -313,6 +345,7 @@ where
 }
 
 /// Checks the versioned ABI before starting program code.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn check_abi(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,

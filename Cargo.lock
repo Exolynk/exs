@@ -427,6 +427,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "exs-playground"
+version = "0.1.0"
+dependencies = [
+ "exs-compiler",
+ "exs-runner",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "exs-runner"
 version = "0.1.0"
 dependencies = [
@@ -434,6 +445,9 @@ dependencies = [
  "exs-compiler",
  "exs-runtime",
  "exs-value",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasmtime",
 ]
 
@@ -1326,6 +1340,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-bindgen-futures"
+version = "0.4.76"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c62df1340f32221cb9c54d6a27b030e3dba64361d4a95bed55f9aacb44da291d"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "wasm-bindgen-macro"
 version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1736,6 +1760,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7127f7f9b8f127c879991cecd35f494e4628bae1b0874c681414d8d8831e952c"
 dependencies = [
  "wast",
+]
+
+[[package]]
+name = "web-sys"
+version = "0.3.103"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8622dcb61c0bcc9fffa6938bed81210af2da9a7e4a1a834b2e37a59b6dfb6141"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]

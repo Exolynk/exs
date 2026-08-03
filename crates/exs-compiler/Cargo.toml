@@ -9,7 +9,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-exs-runtime = { path = "../exs-runtime" }
+exs-runtime = { path = "../exs-runtime", default-features = false }
 exs-abi = { path = "../exs-abi" }
 exs-value = { path = "../exs-value" }
 wasm-encoder.workspace = true

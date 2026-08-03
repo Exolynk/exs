@@ -8,9 +8,21 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["server"]
+server = ["dep:wasmtime"]
+browser = ["dep:js-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures"]
+
 [dependencies]
 exs-abi = { path = "../exs-abi" }
-wasmtime.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasmtime = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { version = "0.3.103", optional = true }
+wasm-bindgen = { version = "0.2.106", optional = true }
+wasm-bindgen-futures = { version = "0.4.56", optional = true }
 
 [dev-dependencies]
 exs-runtime = { path = "../exs-runtime" }

@@ -1,0 +1,19 @@
+[package]
+name = "exs-playground"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+exs-compiler = { path = "../../crates/exs-compiler" }
+exs-runner = { path = "../../crates/exs-runner", default-features = false, features = ["browser"] }
+wasm-bindgen = "0.2.106"
+wasm-bindgen-futures = "0.4.56"
+web-sys = { version = "0.3.103", features = ["Document", "Element", "Event", "HtmlButtonElement", "HtmlElement", "HtmlTextAreaElement", "KeyboardEvent", "Window"] }

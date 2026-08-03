@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ExS Playground</title>
+    <link data-trunk rel="rust" />
+    <style>
+      :root {
+        color: #17212b;
+        background: #f4f7f9;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        box-sizing: border-box;
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 32px 20px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      p {
+        margin: 0 0 24px;
+        color: #4a5b6a;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr);
+        gap: 16px;
+      }
+
+      section {
+        min-width: 0;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 650;
+      }
+
+      textarea,
+      pre {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 360px;
+        margin: 0;
+        padding: 14px;
+        overflow: auto;
+        border: 1px solid #b6c4cf;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #17212b;
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+      }
+
+      textarea:focus {
+        outline: 2px solid #4d89b7;
+        outline-offset: 1px;
+      }
+
+      pre {
+        background: #17212b;
+        color: #e6edf3;
+      }
+
+      button {
+        margin-top: 12px;
+        padding: 8px 15px;
+        border: 1px solid #246b99;
+        border-radius: 5px;
+        background: #2879aa;
+        color: #ffffff;
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+      }
+
+      @media (max-width: 720px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        textarea,
+        pre {
+          min-height: 260px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ExS Playground</h1>
+      <p>Compile and execute ExS locally in this browser.</p>
+      <div class="layout">
+        <section>
+          <label for="source">Source</label>
+          <textarea id="source" spellcheck="false">fn main() {
+    let value = 21 * 2;
+    host.call("println", "The result is", value);
+    ret value;
+}</textarea>
+          <button id="run" type="button">Run</button>
+        </section>
+        <section>
+          <label for="output">Output</label>
+          <pre id="output" aria-live="polite">Ready.</pre>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

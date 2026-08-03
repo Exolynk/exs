@@ -11,6 +11,10 @@ workspace = true
 [lib]
 crate-type = ["rlib"]
 
+[features]
+default = ["runtime"]
+runtime = []
+
 [dependencies]
 dlmalloc.workspace = true
 exs-abi = { path = "../exs-abi" }

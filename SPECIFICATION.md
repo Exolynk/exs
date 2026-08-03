@@ -1387,7 +1387,7 @@ The server runner owns a registry mapping dynamically resolved host names to ind
 
 The runner's public execution API is asynchronous because a loaded module may use asynchronous host functions. A purely synchronous execution path MAY complete without suspension. A normal recoverable host failure is returned as an ExS Error value; malformed Wasm, an ABI mismatch, engine failure, fuel exhaustion, and runner-internal failures are runner errors.
 
-The browser runner follows the same logical ABI with native `WebAssembly.instantiate`, synchronous registration, and Promise-backed asynchronous registration.
+The browser runner follows the same logical ABI with native `WebAssembly.instantiate`, synchronous registration, and Promise-backed asynchronous registration. In the Rust workspace it is the `browser` feature of `exs-runner`, built only for `wasm32`; it does not include Wasmtime. The feature's generated `wasm-bindgen` glue performs browser module instantiation and linear-memory byte copies, while browser host callbacks remain Rust-Wasm functions registered through `BrowserRunnerConfig`. Each browser execution instantiates a fresh ExS instance from one browser-compiled module, so no mutable runtime state crosses root executions.
 
 ## Instance pool
 

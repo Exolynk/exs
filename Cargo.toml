@@ -6,6 +6,7 @@ members = [
     "crates/exs-compiler",
     "crates/exs-runner",
     "crates/exs-cli",
+    "examples/playground",
 ]
 resolver = "3"
 
