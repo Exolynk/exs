@@ -9,6 +9,8 @@ use exs_abi::{
 
 use crate::ast::{EnumDeclaration, Module, TypeAnnotation};
 use crate::codegen::diagnostics;
+use crate::codegen::standard;
+use crate::codegen::trait_registry::TraitRegistry;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 /// Collects independent nominal type declaration and field contract diagnostics.
@@ -168,6 +170,7 @@ pub(super) fn validate_annotation_with_self<'a>(
             continue;
         }
         if builtin_mask(&member.name).is_none()
+            && standard::canonical_trait_name(&member.name).is_none()
             && !module
                 .types
                 .iter()
@@ -192,7 +195,7 @@ pub(super) fn validate_annotation_with_self<'a>(
 
 /// Returns whether one declaration name is reserved by the type system.
 fn is_reserved_type_name(name: &str) -> bool {
-    name == "Self" || builtin_mask(name).is_some()
+    name == "Self" || builtin_mask(name).is_some() || standard::canonical_trait_name(name).is_some()
 }
 
 /// One resolved runtime type contract.
@@ -255,16 +258,28 @@ pub(super) struct EnumVariant {
 pub(super) struct TypeRegistry {
     types: HashMap<String, NominalType>,
     enum_variants: HashMap<String, EnumVariant>,
-    trait_implementations: HashMap<String, Vec<u32>>,
+    trait_implementations: HashMap<String, TraitImplementations>,
+}
+
+/// Built-in and nominal implementations that satisfy one resolved trait contract.
+#[derive(Debug, Clone)]
+struct TraitImplementations {
+    /// Runtime value categories supplied by compiler-owned implementations.
+    builtin_mask: u32,
+    /// Nominal Object tags supplied by source `impl Trait for Type` blocks.
+    nominal_type_ids: Vec<u32>,
 }
 
 impl TypeRegistry {
     /// Collects named types and resolves every declared field contract.
-    pub(super) fn build<'a>(module: &Module<'a>) -> Result<Self, CompileDiagnostics<'a>> {
+    pub(super) fn build<'a>(
+        module: &Module<'a>,
+        traits: &TraitRegistry<'a>,
+    ) -> Result<Self, CompileDiagnostics<'a>> {
         let mut types = HashMap::new();
         let mut next_id = 1_u32;
         for declaration in &module.types {
-            if builtin_mask(&declaration.name.name).is_some()
+            if is_reserved_type_name(&declaration.name.name)
                 || types.contains_key(&declaration.name.name)
             {
                 return Err(diagnostics(CompileDiagnostic::new(
@@ -292,7 +307,7 @@ impl TypeRegistry {
             );
         }
         for declaration in &module.enums {
-            if builtin_mask(&declaration.name.name).is_some()
+            if is_reserved_type_name(&declaration.name.name)
                 || types.contains_key(&declaration.name.name)
             {
                 return Err(diagnostics(CompileDiagnostic::new(
@@ -319,10 +334,18 @@ impl TypeRegistry {
                 },
             );
         }
-        let mut trait_implementations = HashMap::new();
-        for declaration in &module.traits {
-            trait_implementations.insert(declaration.name.name.clone(), Vec::new());
-        }
+        let mut trait_implementations = traits
+            .definitions()
+            .map(|definition| {
+                (
+                    definition.name.clone(),
+                    TraitImplementations {
+                        builtin_mask: definition.builtin_mask,
+                        nominal_type_ids: Vec::new(),
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
         for implementation in &module.implementations {
             let Some(trait_name) = &implementation.trait_name else {
                 continue;
@@ -334,9 +357,13 @@ impl TypeRegistry {
                     "missing resolved trait implementation type",
                 ))
             })?;
+            let canonical_trait = traits.definition(&trait_name.name).map_or_else(
+                || trait_name.name.as_str(),
+                |definition| definition.name.as_str(),
+            );
             let implementations =
                 trait_implementations
-                    .get_mut(&trait_name.name)
+                    .get_mut(canonical_trait)
                     .ok_or_else(|| {
                         diagnostics(CompileDiagnostic::new(
                             "E0999",
@@ -344,8 +371,8 @@ impl TypeRegistry {
                             "missing resolved trait declaration",
                         ))
                     })?;
-            if !implementations.contains(&nominal.id) {
-                implementations.push(nominal.id);
+            if !implementations.nominal_type_ids.contains(&nominal.id) {
+                implementations.nominal_type_ids.push(nominal.id);
             }
         }
         let mut registry = Self {
@@ -414,8 +441,12 @@ impl TypeRegistry {
                 {
                     enum_type_ids.push(enum_type_id.clone());
                 }
-            } else if let Some(implementations) = self.trait_implementations.get(&member.name) {
-                for type_id in implementations {
+            } else if let Some(implementations) = self
+                .trait_implementations
+                .get(standard::canonical_trait_name(&member.name).unwrap_or(&member.name))
+            {
+                resolved_builtin_mask |= implementations.builtin_mask;
+                for type_id in &implementations.nominal_type_ids {
                     if !nominal_type_ids.contains(type_id) {
                         nominal_type_ids.push(*type_id);
                     }

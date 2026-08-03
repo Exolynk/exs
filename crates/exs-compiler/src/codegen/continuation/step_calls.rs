@@ -16,6 +16,66 @@ use super::graph::expression_span;
 use super::step::StepCompiler;
 
 impl<'source, 'context> StepCompiler<'source, 'context> {
+    /// Emits `Add` protocol dispatch, including suspendable targets and runtime addition fallback.
+    pub(super) fn add_call(
+        &mut self,
+        next: u32,
+        left: u32,
+        right: u32,
+        targets: &[InstanceMethod],
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.add_call_target(next, left, right, targets, 0, destination, span)
+    }
+
+    /// Emits one branch of the statically known standard `Add` target chain.
+    #[allow(clippy::too_many_arguments)] // Recursion keeps the generated Wasm branch chain local.
+    fn add_call_target(
+        &mut self,
+        next: u32,
+        left: u32,
+        right: u32,
+        targets: &[InstanceMethod],
+        index: usize,
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let Some(target) = targets.get(index) else {
+            self.get_slot(left, span)?;
+            self.get_slot(right, span)?;
+            self.call_runtime("__exs_rt_add", span)?;
+            self.set_slot(destination, span)?;
+            return self.ready(next, span);
+        };
+        self.get_slot(left, span)?;
+        self.function
+            .instruction(&Instruction::I32Const(target.type_id.cast_signed()));
+        self.call_runtime("__exs_rt_object_is_type", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        if let Some(layout) = self
+            .frame_layouts
+            .values()
+            .find(|layout| layout.function_id == target.signature.function_id)
+            .copied()
+        {
+            self.child_call(next, layout, &[left, right], destination, span)?;
+        } else {
+            self.get_slot(left, span)?;
+            self.get_slot(right, span)?;
+            self.set_call_site(span)?;
+            self.function
+                .instruction(&Instruction::Call(target.signature.index));
+            self.set_slot(destination, span)?;
+            self.ready(next, span)?;
+        }
+        self.function.instruction(&Instruction::Else);
+        self.add_call_target(next, left, right, targets, index + 1, destination, span)?;
+        self.function.instruction(&Instruction::End);
+        Ok(())
+    }
+
     /// Emits nominal instance dispatch, including suspendable child targets and runtime fallback.
     #[allow(clippy::too_many_arguments)] // This directly mirrors the already-evaluated source call.
     pub(super) fn instance_call(

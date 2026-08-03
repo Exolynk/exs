@@ -17,6 +17,16 @@ fn main() -> String {
 
 ## Implemented Methods
 
+### Trait [`Add`](../traits/add.md)
+
+#### `add`
+
+Adds the receiver to the evaluated `other` operand. Implementations may return any ExS value, including a recoverable Error. The `+` operator selects this method for matching nominal receivers; built-in Add implementations expose the same behavior through `value.add(other)`.
+
+```exs
+fn add(self, other: Any) -> Any { ... }
+```
+
 ### `length() -> Int`
 
 Returns the number of Unicode scalar values in the String. This is not the UTF-8 byte length, so a single emoji scalar counts as one.

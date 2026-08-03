@@ -88,6 +88,14 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Dispatches the standard `Add` protocol before using runtime addition as a fallback.
+    Add {
+        left: u32,
+        right: u32,
+        targets: Vec<InstanceMethod>,
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
     /// Constructs a List after all elements have been evaluated.
     List {
         elements: Vec<u32>,
@@ -492,6 +500,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::Closure { span, .. }
         | Operation::Unary { span, .. }
         | Operation::Binary { span, .. }
+        | Operation::Add { span, .. }
         | Operation::List { span, .. }
         | Operation::Object { span, .. }
         | Operation::TypedObject { span, .. }

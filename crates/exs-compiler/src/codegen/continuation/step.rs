@@ -198,6 +198,13 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
+            Operation::Add {
+                left,
+                right,
+                targets,
+                destination,
+                span,
+            } => self.add_call(next, *left, *right, targets, *destination, *span)?,
             Operation::List {
                 elements,
                 destination,

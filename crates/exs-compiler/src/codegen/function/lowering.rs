@@ -151,9 +151,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     let left = self.store_stack_value()?;
                     self.compile_expression(right)?;
                     let right = self.store_stack_value()?;
-                    self.function.instruction(&Instruction::LocalGet(left));
-                    self.function.instruction(&Instruction::LocalGet(right));
-                    self.runtime_value_call(runtime_operation(*operator), 2, *span)?;
+                    if matches!(operator, BinaryOperator::Add) {
+                        let targets = self.methods.standard_add().to_vec();
+                        self.emit_add_dispatch(&targets, 0, left, right, *span)?;
+                    } else {
+                        self.function.instruction(&Instruction::LocalGet(left));
+                        self.function.instruction(&Instruction::LocalGet(right));
+                        self.runtime_value_call(runtime_operation(*operator), 2, *span)?;
+                    }
                     self.clear_root_slot(left)?;
                     self.clear_root_slot(right)?;
                 }
@@ -482,6 +487,38 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         }
         self.function.instruction(&Instruction::Else);
         self.emit_instance_method_dispatch(targets, index + 1, receiver, arguments, method, span)?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()
+    }
+
+    /// Emits nominal `Add` dispatch before preserving the runtime built-in fallback.
+    fn emit_add_dispatch(
+        &mut self,
+        targets: &[super::method::InstanceMethod],
+        index: usize,
+        left: u32,
+        right: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let Some(target) = targets.get(index) else {
+            self.function.instruction(&Instruction::LocalGet(left));
+            self.function.instruction(&Instruction::LocalGet(right));
+            return self.runtime_value_call("__exs_rt_add", 2, span);
+        };
+        self.function.instruction(&Instruction::LocalGet(left));
+        self.function
+            .instruction(&Instruction::I32Const(target.type_id.cast_signed()));
+        self.runtime_call("__exs_rt_object_is_type", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.enter_control()?;
+        self.function.instruction(&Instruction::LocalGet(left));
+        self.function.instruction(&Instruction::LocalGet(right));
+        self.set_runtime_call_site(span)?;
+        self.function
+            .instruction(&Instruction::Call(target.signature.index));
+        self.function.instruction(&Instruction::Else);
+        self.emit_add_dispatch(targets, index + 1, left, right, span)?;
         self.function.instruction(&Instruction::End);
         self.exit_control()
     }

@@ -6,7 +6,9 @@ mod function;
 mod linker;
 mod literals;
 pub mod source_map;
+pub(crate) mod standard;
 mod suspension;
+pub(crate) mod trait_registry;
 mod traits;
 mod types;
 
@@ -34,15 +36,16 @@ pub fn compile_project_module<'a>(
     sources: &[crate::SourceInput<'a>],
     options: CompileOptions,
 ) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
+    let traits_registry = trait_registry::TraitRegistry::build(module);
     let mut diagnostics = types::validate(module);
-    diagnostics.extend(traits::validate(module));
+    diagnostics.extend(traits::validate(module, &traits_registry));
     diagnostics.extend(function::validate(module));
     diagnostics.sort_by_span();
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    traits::apply_defaults(module);
-    let hir = HirModule::lower(module);
+    traits::apply_defaults(module, &traits_registry);
+    let hir = HirModule::lower(module, &traits_registry);
     let mut suspendability = suspension::Suspendability::analyze(&hir);
     if hir.closures().next().is_some() {
         suspendability.include_all(hir.functions().map(|(key, _)| key));
@@ -52,7 +55,14 @@ pub fn compile_project_module<'a>(
     let lifted = linker::lifted_functions(module, &hir);
     let suspendable_functions = suspendability.functions().clone();
     drop(hir);
-    linker::link(module, sources, options, lifted, &suspendable_functions)
+    linker::link(
+        module,
+        sources,
+        options,
+        lifted,
+        &suspendable_functions,
+        &traits_registry,
+    )
 }
 
 /// Returns a diagnostic span covering the module's first function.

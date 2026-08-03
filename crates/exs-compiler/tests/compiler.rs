@@ -157,6 +157,7 @@ fn generates_markdown_api_documentation() {
     assert!(!standard.markdown.contains("[`type`]"));
     assert!(!standard.markdown.contains("[`len`]"));
     assert!(standard.markdown.contains("`std::` qualifier"));
+    assert!(standard.markdown.contains("[`Add`](traits/add.md)"));
     assert!(documentation.pages.iter().all(|page| !matches!(
         page.path.as_str(),
         "modules/std/fn/type.md" | "modules/std/fn/len.md"
@@ -199,6 +200,104 @@ fn generates_markdown_api_documentation() {
         .find(|page| page.path == "modules/std/types/float.md")
         .unwrap_or_else(|| panic!("missing standard Float page"));
     assert!(float.markdown.contains("### `round() -> Float`"));
+    let add_trait = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/traits/add.md")
+        .unwrap_or_else(|| panic!("missing std Add trait page"));
+    assert!(
+        add_trait
+            .markdown
+            .contains("fn add(self, other: Any) -> Any;")
+    );
+    assert!(
+        add_trait
+            .markdown
+            .contains("Vector { value: 20 } + Vector { value: 22 }")
+    );
+    assert!(add_trait.markdown.contains("## Built-in Implementations"));
+    assert!(
+        add_trait
+            .markdown
+            .contains("[`std::String`](../types/string.md)")
+    );
+    let string = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/string.md")
+        .unwrap_or_else(|| panic!("missing standard String page"));
+    assert!(string.markdown.contains("## Implemented Methods"));
+    assert!(string.markdown.contains("Trait [`Add`](../traits/add.md)"));
+    assert!(string.markdown.contains("#### `add`"));
+    assert!(
+        string
+            .markdown
+            .contains("Adds the receiver to the evaluated `other` operand.")
+    );
+}
+
+/// Links a standard trait implementation and inherits its method documentation on an enum page.
+#[test]
+fn documents_standard_add_implementations_on_nominal_pages() {
+    let mut resolver = TestResolver {
+        sources: HashMap::new(),
+    };
+    let documentation = match document_with_resolver(
+        SourceInput {
+            source_id: "./add.exs",
+            text: "enum Abc { A, B, } impl Add for Abc { fn add(self, other: Any) -> Any { ret self; } } fn main() { ret Abc::A; }",
+        },
+        &mut resolver,
+    ) {
+        Ok(documentation) => documentation,
+        Err(error) => panic!("documentation generation failed: {error}"),
+    };
+    let abc = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/00-add/enums/abc.md")
+        .unwrap_or_else(|| panic!("missing enum page"));
+    assert!(
+        abc.markdown
+            .contains("Trait [`Add`](../../std/traits/add.md)")
+    );
+    assert!(
+        abc.markdown
+            .contains("Adds the receiver to the evaluated `other` operand.")
+    );
+}
+
+/// Prefers an implementation method's own documentation over inherited trait documentation.
+#[test]
+fn prefers_implementation_documentation_over_standard_add_documentation() {
+    let mut resolver = TestResolver {
+        sources: HashMap::new(),
+    };
+    let documentation = match document_with_resolver(
+        SourceInput {
+            source_id: "./custom-add.exs",
+            text: "type Counter {} impl Add for Counter {\n/// Adds one application-specific count.\nfn add(self, other: Any) -> Any { ret self; } } fn main() { ret Counter {}; }",
+        },
+        &mut resolver,
+    ) {
+        Ok(documentation) => documentation,
+        Err(error) => panic!("documentation generation failed: {error}"),
+    };
+    let counter = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/00-custom-add/types/counter.md")
+        .unwrap_or_else(|| panic!("missing Counter type page"));
+    assert!(
+        counter
+            .markdown
+            .contains("Adds one application-specific count.")
+    );
+    assert!(
+        !counter
+            .markdown
+            .contains("Adds the receiver to the evaluated `other` operand.")
+    );
 }
 
 /// Resolves compiler-test source files from an in-memory canonical source table.
@@ -967,6 +1066,61 @@ fn main() -> Int {
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
+}
+
+/// Compiles the compiler-owned `Add` contract and permits it in type annotations.
+#[test]
+fn compiles_standard_add_trait_implementations() {
+    let module = compile(
+        SourceInput {
+            source_id: "add.exs",
+            text: "type Number { value: Int } impl std::Add for Number { fn add(self, other: Any) -> Any { ret Number { value: self.value + other.value }; } } fn identity(value: Add) -> Any { ret value; } fn main() -> Int { ret (Number { value: 20 } + Number { value: 22 }).value; }",
+        },
+        CompileOptions::default(),
+    );
+    if let Err(error) = module {
+        panic!("standard Add did not compile: {error}");
+    }
+}
+
+/// Rejects standard `Add` implementations that do not meet its fixed method contract.
+#[test]
+fn rejects_invalid_standard_add_signature() {
+    let error = match compile(
+        SourceInput {
+            source_id: "invalid-add.exs",
+            text: "type Number {} impl Add for Number { fn add(self, other: Int) -> Int { ret 0; } } fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("invalid Add implementation compiled"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("fn add(self, other: Any) -> Any")
+    );
+}
+
+/// Reserves the compiler-owned standard `Add` name from source trait declarations.
+#[test]
+fn rejects_standard_add_trait_redeclaration() {
+    let error = match compile(
+        SourceInput {
+            source_id: "redeclare-add.exs",
+            text: "trait Add { fn add(self, other: Any) -> Any; } fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("source Add trait declaration compiled"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate or reserved trait `Add`")
+    );
 }
 
 /// Rejects Self in a function annotation that has no trait implementation context.

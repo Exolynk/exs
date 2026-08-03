@@ -1,25 +1,32 @@
-# Type `std::Bool`
-
-`Bool` has exactly the values `true` and `false`. Conditions require Bool explicitly; ExS does not apply implicit truthiness to numbers, strings, collections, or None.
+# Enum `Abc`
 
 ```exs
-type Bool
-```
-
-## Usage
-
-```exs
-fn main() {
-    let ready = true;
-    if ready {
-        host.call("println", "ready");
-    }
+enum Abc {
+    A,
+    B,
+    C,
 }
 ```
 
+## Variants
+
+### `A`
+
+### `B`
+
+### `C`
+
 ## Implemented Methods
 
-### Trait [`Add`](../traits/add.md)
+### Inherent methods
+
+#### `ts`
+
+```exs
+fn ts(self) { ... }
+```
+
+### Trait [`Add`](../../std/traits/add.md)
 
 #### `add`
 

@@ -6,7 +6,11 @@ use std::collections::HashMap;
 use crate::ast::{
     AssignmentTarget, Block, Expression, FunctionDeclaration, Module, Parameter, Statement,
 };
+use crate::codegen::trait_registry::{TraitOperator, TraitRegistry};
 use crate::diagnostic::SourceSpan;
+
+/// Internal call-edge key representing dynamic dispatch performed by source `+`.
+const ADD_OPERATOR_TARGETS: &str = "$operator:add";
 
 /// One compiler-assigned lexical binding identity within a source module.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -25,8 +29,8 @@ pub(crate) struct HirModule<'a> {
 impl<'a> HirModule<'a> {
     /// Resolves lexical bindings and call edges without changing source execution semantics.
     #[must_use]
-    pub(crate) fn lower(module: &'a Module<'a>) -> Self {
-        let instance_targets = instance_method_targets(module);
+    pub(crate) fn lower(module: &'a Module<'a>, traits: &TraitRegistry<'a>) -> Self {
+        let instance_targets = instance_method_targets(module, traits);
         let state = LoweringState::new();
         let mut functions = HashMap::new();
         for function in &module.functions {
@@ -497,7 +501,22 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             Expression::IsError { value, .. }
             | Expression::Propagate { value, .. }
             | Expression::Unary { operand: value, .. } => self.lower_expression(value),
-            Expression::Binary { left, right, .. } => {
+            Expression::Binary {
+                operator,
+                left,
+                right,
+                span,
+            } => {
+                if matches!(operator, crate::ast::BinaryOperator::Add)
+                    && let Some(targets) = self.instance_targets.get(ADD_OPERATOR_TARGETS)
+                {
+                    self.calls.extend(
+                        targets
+                            .iter()
+                            .cloned()
+                            .map(|key| CallEdge { key, span: *span }),
+                    );
+                }
                 self.lower_expression(left);
                 self.lower_expression(right);
             }
@@ -722,7 +741,10 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
 }
 
 /// Collects every statically known implementation target for each dynamic method name.
-fn instance_method_targets<'a>(module: &'a Module<'a>) -> HashMap<String, Vec<String>> {
+fn instance_method_targets<'a>(
+    module: &'a Module<'a>,
+    traits: &TraitRegistry<'a>,
+) -> HashMap<String, Vec<String>> {
     let mut targets: HashMap<String, Vec<String>> = HashMap::new();
     for implementation in &module.implementations {
         for method in &implementation.methods {
@@ -738,6 +760,25 @@ fn instance_method_targets<'a>(module: &'a Module<'a>) -> HashMap<String, Vec<St
                         "{}::{}",
                         implementation.type_name.name, method.name.name
                     ));
+                if implementation
+                    .trait_name
+                    .as_ref()
+                    .is_some_and(|trait_name| {
+                        traits.binds_operator(
+                            &trait_name.name,
+                            &method.name.name,
+                            TraitOperator::Add,
+                        )
+                    })
+                {
+                    targets
+                        .entry(ADD_OPERATOR_TARGETS.to_owned())
+                        .or_default()
+                        .push(format!(
+                            "{}::{}",
+                            implementation.type_name.name, method.name.name
+                        ));
+                }
             }
         }
     }
@@ -763,6 +804,12 @@ mod tests {
         }
     }
 
+    /// Lowers one parsed fixture with its normalized trait declarations.
+    fn lower_module<'a>(module: &'a Module<'a>) -> HirModule<'a> {
+        let traits = crate::codegen::trait_registry::TraitRegistry::build(module);
+        HirModule::lower(module, &traits)
+    }
+
     /// Resolves one function binding by its source spelling.
     fn function_binding(hir: &HirModule<'_>, name: &str) -> super::BindingId {
         match hir.function("main").and_then(|function| {
@@ -781,7 +828,7 @@ mod tests {
         let module = parse_module(
             "fn main(input) { let first = input; let second = 2; let f = (value) => { ret value + second + first; }; ret 0; }",
         );
-        let hir = HirModule::lower(&module);
+        let hir = lower_module(&module);
         let closures = hir.closures().collect::<Vec<_>>();
 
         assert_eq!(closures.len(), 1);
@@ -806,7 +853,7 @@ mod tests {
         let module = parse_module(
             "fn main(input) { let value = input; let f = (input) => { let value = input; ret value; }; ret 0; }",
         );
-        let hir = HirModule::lower(&module);
+        let hir = lower_module(&module);
         let closure = match hir.closures().next() {
             Some(closure) => closure,
             None => panic!("missing closure"),
@@ -820,7 +867,7 @@ mod tests {
         let module = parse_module(
             "fn main(input) { let offset = input; let outer = (value) => { ret () => { ret value + offset; }; }; ret 0; }",
         );
-        let hir = HirModule::lower(&module);
+        let hir = lower_module(&module);
         let closures = hir.closures().collect::<Vec<_>>();
         let offset = function_binding(&hir, "offset");
 
@@ -842,7 +889,7 @@ mod tests {
     fn classifies_local_callee_bindings_as_dynamic_calls() {
         let module =
             parse_module("fn main(input) { let f = (value) => { ret value; }; ret f(input); }");
-        let hir = HirModule::lower(&module);
+        let hir = lower_module(&module);
         let function = match hir.function("main") {
             Some(function) => function,
             None => panic!("missing main function"),

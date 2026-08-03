@@ -17,6 +17,16 @@ fn main() -> Float {
 
 ## Implemented Methods
 
+### Trait [`Add`](../traits/add.md)
+
+#### `add`
+
+Adds the receiver to the evaluated `other` operand. Implementations may return any ExS value, including a recoverable Error. The `+` operator selects this method for matching nominal receivers; built-in Add implementations expose the same behavior through `value.add(other)`.
+
+```exs
+fn add(self, other: Any) -> Any { ... }
+```
+
 ### `abs() -> Float`
 
 Returns the non-negative floating-point magnitude. It preserves Float semantics for signed zero, infinities, and NaN.

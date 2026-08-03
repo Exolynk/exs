@@ -7,6 +7,7 @@ use crate::ast::{
     EnumDeclaration, FunctionDeclaration, Module, Parameter, TraitDeclaration,
     TraitMethodDeclaration, TypeAnnotation, TypeDeclaration,
 };
+use crate::codegen::standard::{self, StandardTraitDescriptor};
 use crate::{Documentation, DocumentationPage, ModuleResolver, SourceInput, SourceSpan};
 
 /// One source file retained while its module graph is documented.
@@ -397,14 +398,64 @@ fn render_nominal_implementations(
         for implementation in implementations {
             let label = implementation.trait_name.as_ref().map_or_else(
                 || "Inherent methods".to_owned(),
-                |trait_name| format!("Trait `{}`", trait_name.name),
+                |trait_name| {
+                    trait_documentation_link(module, &trait_name.name).map_or_else(
+                        || format!("Trait `{}`", trait_name.name),
+                        |link| format!("Trait [`{}`]({})", trait_name.name, link),
+                    )
+                },
             );
             output.push_str(&format!("### {label}\n\n"));
             for method in &implementation.methods {
-                render_function_details(output, method, &source.text, 4);
+                let fallback = implementation.trait_name.as_ref().and_then(|trait_name| {
+                    trait_method_documentation(module, &trait_name.name, &method.name.name, source)
+                });
+                render_function_details(output, method, &source.text, 4, fallback.as_deref());
             }
         }
     }
+}
+
+/// Returns the relative API-page link for one trait implemented by a local nominal declaration.
+fn trait_documentation_link(module: &Module<'_>, trait_name: &str) -> Option<String> {
+    if let Some(descriptor) = standard::trait_descriptor(trait_name) {
+        Some(format!("../../std/traits/{}.md", slug(descriptor.name)))
+    } else if module
+        .traits
+        .iter()
+        .any(|declaration| declaration.name.name == trait_name)
+    {
+        Some(format!("../traits/{}.md", slug(trait_name)))
+    } else {
+        None
+    }
+}
+
+/// Returns documentation inherited by one trait implementation method, when available.
+fn trait_method_documentation(
+    module: &Module<'_>,
+    trait_name: &str,
+    method_name: &str,
+    source: &SourceFile,
+) -> Option<String> {
+    if let Some(descriptor) = standard::trait_descriptor(trait_name) {
+        return descriptor
+            .methods
+            .iter()
+            .find(|method| method.name == method_name)
+            .map(|method| method.description.to_owned());
+    }
+    module
+        .traits
+        .iter()
+        .find(|declaration| declaration.name.name == trait_name)
+        .and_then(|declaration| {
+            declaration
+                .methods
+                .iter()
+                .find(|method| method.name.name == method_name)
+        })
+        .and_then(|method| documentation_comment(&source.text, method.span))
 }
 
 /// Renders one user-defined trait and all of its method details.
@@ -446,13 +497,19 @@ fn render_function_details(
     declaration: &FunctionDeclaration<'_>,
     source: &str,
     level: usize,
+    fallback_description: Option<&str>,
 ) {
     output.push_str(&format!(
         "{} `{}`\n\n",
         "#".repeat(level),
         declaration.name.name
     ));
-    append_comment(output, source, declaration.span);
+    if !append_comment(output, source, declaration.span)
+        && let Some(description) = fallback_description
+    {
+        output.push_str(description);
+        output.push_str("\n\n");
+    }
     output.push_str("```exs\n");
     output.push_str(&function_signature(
         &declaration.name.name,
@@ -676,9 +733,10 @@ fn standard_pages() -> Vec<DocumentationPage> {
             methods: &[],
         },
     ];
+    let traits = standard::traits();
     let mut pages = vec![DocumentationPage {
         path: "modules/std/index.md".to_owned(),
-        markdown: render_standard_index(&types),
+        markdown: render_standard_index(&types, traits),
     }];
     for type_info in &types {
         pages.push(DocumentationPage {
@@ -689,6 +747,9 @@ fn standard_pages() -> Vec<DocumentationPage> {
                 render_standard_type(type_info)
             },
         });
+    }
+    for trait_info in traits {
+        pages.push(standard_trait_page(trait_info));
     }
     pages.push(standard_function_page(
         "host-call",
@@ -701,7 +762,7 @@ fn standard_pages() -> Vec<DocumentationPage> {
 }
 
 /// Renders the synthetic standard-library module index.
-fn render_standard_index(types: &[StandardType]) -> String {
+fn render_standard_index(types: &[StandardType], traits: &[StandardTraitDescriptor]) -> String {
     let mut output = String::from(
         "# Module `std`\n\nBuilt-in types are globally available in ExS source and may also be written with the `std::` qualifier. Importing `std` is not required or allowed.\n\n## Types\n\n",
     );
@@ -712,8 +773,49 @@ fn render_standard_index(types: &[StandardType]) -> String {
             slug(type_info.name)
         ));
     }
+    output.push_str("\n## Traits\n\n");
+    for trait_info in traits {
+        output.push_str(&format!(
+            "- [`{}`](traits/{}.md)\n",
+            trait_info.name,
+            slug(trait_info.name)
+        ));
+    }
     output.push_str("\n## Functions\n\n- [`host.call`](fn/host-call.md)\n");
     output
+}
+
+/// Builds one dedicated compiler-owned standard-trait API page.
+fn standard_trait_page(descriptor: &StandardTraitDescriptor) -> DocumentationPage {
+    let implementations = descriptor
+        .implemented_by
+        .iter()
+        .map(|type_name| format!("- [`std::{type_name}`](../types/{}.md)", slug(type_name)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let methods = descriptor
+        .methods
+        .iter()
+        .map(|method| {
+            format!(
+                "### `{}`\n\n```exs\n{}\n```\n\n{}",
+                method.name, method.signature, method.description
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let method_heading = if descriptor.methods.len() == 1 {
+        "Required Method"
+    } else {
+        "Required Methods"
+    };
+    DocumentationPage {
+        path: format!("modules/std/traits/{}.md", slug(descriptor.name)),
+        markdown: format!(
+            "# Trait `std::{}`\n\n{}\n\n## {method_heading}\n\n{methods}\n\n## Built-in Implementations\n\n{implementations}\n\n## Usage\n\n```exs\n{}\n```\n",
+            descriptor.name, descriptor.description, descriptor.usage,
+        ),
+    }
 }
 
 /// Renders the Error type page with its source-level constructor.
@@ -738,8 +840,15 @@ fn render_standard_type(type_info: &StandardType) -> String {
     output.push_str("\n## Usage\n\n```exs\n");
     output.push_str(type_info.usage);
     output.push_str("\n```\n");
-    if !type_info.methods.is_empty() {
+    let traits = standard::traits()
+        .iter()
+        .filter(|descriptor| descriptor.implemented_by.contains(&type_info.name))
+        .collect::<Vec<_>>();
+    if !traits.is_empty() || !type_info.methods.is_empty() {
         output.push_str("\n## Implemented Methods\n\n");
+        for descriptor in traits {
+            render_standard_trait_implementation(&mut output, descriptor);
+        }
         for method in type_info.methods {
             output.push_str(&format!(
                 "### `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
@@ -750,6 +859,22 @@ fn render_standard_type(type_info: &StandardType) -> String {
         }
     }
     output
+}
+
+/// Renders one built-in trait implementation with the same method detail as nominal pages.
+fn render_standard_trait_implementation(output: &mut String, descriptor: &StandardTraitDescriptor) {
+    output.push_str(&format!(
+        "### Trait [`{}`](../traits/{}.md)\n\n",
+        descriptor.name,
+        slug(descriptor.name)
+    ));
+    for method in descriptor.methods {
+        output.push_str(&format!("#### `{}`\n\n", method.name));
+        output.push_str(method.description);
+        output.push_str("\n\n```exs\n");
+        output.push_str(method.signature.trim_end_matches(';'));
+        output.push_str(" { ... }\n```\n\n");
+    }
 }
 
 /// Renders one method-body example as an independently runnable ExS script.
@@ -812,8 +937,18 @@ fn type_annotation(annotation: &TypeAnnotation<'_>) -> String {
         .join(" | ")
 }
 
-/// Appends the consecutive preceding `///` documentation comment, if present.
-fn append_comment(output: &mut String, source: &str, span: SourceSpan<'_>) {
+/// Appends the consecutive preceding `///` documentation comment and reports whether one exists.
+fn append_comment(output: &mut String, source: &str, span: SourceSpan<'_>) -> bool {
+    let Some(comment) = documentation_comment(source, span) else {
+        return false;
+    };
+    output.push_str(&comment);
+    output.push_str("\n\n");
+    true
+}
+
+/// Returns the consecutive preceding `///` documentation comment, if present.
+fn documentation_comment(source: &str, span: SourceSpan<'_>) -> Option<String> {
     let start = usize::try_from(span.start_byte)
         .unwrap_or_default()
         .min(source.len());
@@ -827,8 +962,9 @@ fn append_comment(output: &mut String, source: &str, span: SourceSpan<'_>) {
     }
     if !comment.is_empty() {
         comment.reverse();
-        output.push_str(&comment.join("\n"));
-        output.push_str("\n\n");
+        Some(comment.join("\n"))
+    } else {
+        None
     }
 }
 

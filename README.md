@@ -149,10 +149,10 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 ### Phase 15: Extensible Protocols & Operators
 
 - [x] Add contextual `Self` annotations to existing trait declarations and `impl Trait for Type` blocks.
-- [ ] Design standard protocols for user-extensible behavior and their result-type rules.
-- [ ] Add user implementations for protocols on nominal types and enums.
-- [ ] Decide and implement operator protocols such as `Add`, `Sub`, `Mul`, `Div`, and equality.
-- [ ] Define suspension, Error, precedence, and dispatch rules for overloaded operators.
+- [x] Define the standard `Add` protocol with `fn add(self, other: Any) -> Any` for nominal types and enums.
+- [x] Dispatch `+` through matching `Add` implementations, preserving built-in numeric, String, and List behavior as its fallback.
+- [x] Allow `Add` implementations to suspend through the existing continuation child-frame path.
+- [ ] Define further standard protocols and their result-type rules, including `Sub`, `Mul`, `Div`, and equality.
 - [ ] Add generated `std` trait pages and link every built-in and user implementation from the owning type page.
 - [ ] Reconsider user-defined `Clone` only with an explicit clone-context API that preserves aliases and cycles.
 

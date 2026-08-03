@@ -9,4 +9,4 @@ ExS is a dynamically typed scripting language compiled to WebAssembly. Root modu
 ## Modules
 
 - [`std`](modules/std/index.md) - globally available built-in types and operations.
-- [`./enum.exs`](modules/00-enum/index.md)
+- [`./add.exs`](modules/00-add/index.md)

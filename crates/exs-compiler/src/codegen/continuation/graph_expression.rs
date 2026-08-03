@@ -178,13 +178,23 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let left = self.lower_expression(left)?;
                 let right = self.lower_expression(right)?;
                 let destination = self.temporary(*span)?;
-                self.operations.push(Operation::Binary {
-                    operator: *operator,
-                    left,
-                    right,
-                    destination,
-                    span: *span,
-                });
+                if matches!(operator, BinaryOperator::Add) {
+                    self.operations.push(Operation::Add {
+                        left,
+                        right,
+                        targets: self.methods.standard_add().to_vec(),
+                        destination,
+                        span: *span,
+                    });
+                } else {
+                    self.operations.push(Operation::Binary {
+                        operator: *operator,
+                        left,
+                        right,
+                        destination,
+                        span: *span,
+                    });
+                }
                 Ok(destination)
             }
             Expression::List { elements, span } => {

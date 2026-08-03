@@ -1209,6 +1209,125 @@ fn executes_inherited_trait_methods_with_self_annotations() {
     );
 }
 
+/// Dispatches source `+` through the compiler-owned standard `Add` trait.
+#[test]
+fn dispatches_standard_add_for_nominal_types() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            type Number { value: Int }
+
+            impl Add for Number {
+                fn add(self, other: Any) -> Any {
+                    ret Number { value: self.value + other.value };
+                }
+            }
+
+            fn main() -> Int {
+                let left = Number { value: 20 };
+                let right = Number { value: 22 };
+                ret (left + right).value;
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::Int(42)
+    );
+}
+
+/// Dispatches source `+` through a standard `Add` implementation on an enum.
+#[test]
+fn dispatches_standard_add_for_enums() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            enum Score { Value(value: Int), }
+
+            impl Add for Score {
+                fn add(self, other: Any) -> Any {
+                    ret match self {
+                        Score::Value(left) => match other {
+                            Score::Value(right) => Score::Value(left + right),
+                        },
+                    };
+                }
+            }
+
+            fn main() -> Int {
+                let left = Score::Value(20);
+                let right = Score::Value(22);
+                ret match left + right { Score::Value(value) => value, };
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::Int(42)
+    );
+}
+
+/// Keeps an inherent method named `add` separate from the source `+` protocol.
+#[test]
+fn does_not_select_inherent_add_methods_for_source_addition() {
+    let result = execute_source_with_inputs(
+        r#"
+        type Number {}
+
+        impl Number {
+            fn add(self, other: Any) -> Any { ret 42; }
+        }
+
+        fn main() -> Error {
+            let left = Number {};
+            let right = Number {};
+            ret left + right;
+        }
+        "#,
+        &[],
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("inherent add method was selected by source +");
+    };
+    assert_eq!(error.kind, "TypeError");
+}
+
+/// Routes a suspending standard `Add` implementation through its continuation child frame.
+#[test]
+fn suspends_through_standard_add_implementations() {
+    let compiled = compile_source(
+        r#"
+        type Number { value: Int }
+
+        impl Add for Number {
+            fn add(self, other: Any) -> Any {
+                let bonus = host.call("bonus");
+                ret Number { value: self.value + other.value + bonus };
+            }
+        }
+
+        fn main() -> Int {
+            let left = Number { value: 20 };
+            let right = Number { value: 21 };
+            ret (left + right).value;
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new();
+    assert!(
+        runner
+            .registry_mut()
+            .register_async("bonus", |_arguments: Vec<ExsValue>| async move {
+                ExsValue::Int(1)
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(42));
+}
+
 /// Retains root and child language frames when a child host call returns an Error value.
 #[test]
 fn traces_errors_through_suspendable_child_frames() {
@@ -1504,6 +1623,39 @@ fn dispatches_trait_instance_methods_and_validates_trait_contracts() {
             &[],
         ),
         ExsValue::String("Ada".to_owned())
+    );
+}
+
+/// Accepts built-in and nominal implementations through the unified `Add` trait contract.
+#[test]
+fn dispatches_builtin_and_nominal_add_trait_contracts() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            enum Marker { Value, }
+
+            impl Add for Marker {
+                fn add(self, value: Any) -> Any { ret self; }
+            }
+
+            fn test(input: Add) -> Any {
+                ret input.add(2);
+            }
+
+            fn main() -> List {
+                ret [test(1), test(Marker::Value)];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(3),
+            ExsValue::Enum {
+                type_id: "test.exs::Marker".to_owned(),
+                variant: "Value".to_owned(),
+                fields: Vec::new(),
+            },
+        ])
     );
 }
 
@@ -1980,6 +2132,41 @@ fn adds_lists_to_values_and_other_lists() {
                 ExsValue::Int(4),
             ]),
         ]),
+    );
+}
+
+/// Uses the built-in `Add` method with the same behavior as the `+` operator.
+#[test]
+fn executes_builtin_add_methods_and_string_scalar_concatenation() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            fn main() -> List {
+                let integer = 20;
+                let float = 1.5;
+                let identifier = "id=";
+                let enabled = "enabled=";
+                let values = [1];
+                ret [
+                    integer.add(22),
+                    float.add(0.5),
+                    identifier.add(42),
+                    enabled.add(true),
+                    values.add([2, 3]),
+                    "left" + "right",
+                ];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(42),
+            ExsValue::Float(2.0),
+            ExsValue::String("id=42".to_owned()),
+            ExsValue::String("enabled=true".to_owned()),
+            ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2), ExsValue::Int(3)]),
+            ExsValue::String("leftright".to_owned()),
+        ])
     );
 }
 

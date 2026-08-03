@@ -15,6 +15,10 @@ Built-in types are globally available in ExS source and may also be written with
 - [`Object`](types/object.md)
 - [`Fn`](types/fn.md)
 
+## Traits
+
+- [`Add`](traits/add.md)
+
 ## Functions
 
 - [`host.call`](fn/host-call.md)

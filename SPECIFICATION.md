@@ -505,7 +505,7 @@ Calling a non-callable value produces `TypeError`. Arity is checked at runtime. 
 
 `%` accepts two `Int` operands. Division by zero produces `DivisionByZeroError`. The result has the sign of the left operand.
 
-`+` also concatenates two Strings. When its left operand is a List, `list + value` returns a new shallow List with `value` appended, while `list + list` chains both Lists' elements into a new shallow List. No other implicit conversions occur.
+`+` first selects an `impl Add for Type` or `impl Add for Enum` when its left operand is a matching nominal value. The fixed standard method contract is `fn add(self, other: Any) -> Any`; it receives the evaluated right operand unchanged and may return any value, including Error. Such implementations may suspend. Built-in `Bool`, `Int`, `Float`, `String`, and `List` values also expose this method, and `value.add(other)` has the same behavior as `value + other`. When no nominal Add implementation matches, String left operands concatenate String, Bool, Int, or Float right operands using their normal source spelling. When its left operand is a List, `list + value` returns a new shallow List with `value` appended, while `list + list` chains both Lists' elements into a new shallow List. No other implicit conversions occur.
 
 ## Comparison
 
@@ -990,7 +990,7 @@ Every method supplied by a trait implementation MUST be declared by that trait a
 
 `Self` is a contextual type name available only in a trait method signature and in a method inside `impl Trait for Type`. It resolves to the implementation target, so `fn merge(self, other: Self) -> Self` inside `impl Merge for Document` has the same signature as `fn merge(self, other: Document) -> Document`. An implementation may use either spelling; other type annotation contexts reject `Self`.
 
-A trait name is valid in every existing type annotation position. For the current nominal-trait implementation, a trait contract matches an Object whose nominal type has an `impl Trait for Type` declaration. A declared trait with no implementations is valid and matches no current value. Implementing traits for primitive values and defining standard language traits are deferred.
+A trait name is valid in every existing type annotation position. For the current nominal-trait implementation, a trait contract matches an Object whose nominal type has an `impl Trait for Type` declaration. A declared trait with no implementations is valid and matches no current value. `Add` and `std::Add` are compiler-owned aliases for the standard addition protocol and are reserved from source trait declarations. Its trait contract matches built-in Bool, Int, Float, String, and List values as well as nominal types and enums that implement it. A nominal type or enum may implement it only as `fn add(self, other: Any) -> Any`; parameter names other than `self` do not affect this signature. `+` dispatches exclusively through those nominal implementations before using the built-in implementation. Implementing traits for primitive values and defining further standard language traits are deferred.
 
 Trait methods are potential suspension points unless the compiler proves their implementation non-suspendable. Trait dispatch is therefore represented explicitly in HIR and resolved through stable runtime ABI operations.
 

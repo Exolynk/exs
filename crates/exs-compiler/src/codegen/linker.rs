@@ -23,6 +23,7 @@ use super::function::{
 };
 use super::literals::{LiteralPool, TemplateDataLayout, template_data_layout};
 use super::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
+use super::trait_registry::TraitRegistry;
 use super::types::TypeRegistry;
 use super::{diagnostics, module_span};
 use crate::CompileOptions;
@@ -40,6 +41,7 @@ pub(super) fn link<'source>(
     options: CompileOptions,
     lifted: Vec<LiftedFunction<'source>>,
     suspendable_functions: &HashSet<String>,
+    traits: &TraitRegistry<'source>,
 ) -> Result<Vec<u8>, CompileDiagnostics<'source>> {
     let literal_pool = LiteralPool::collect(module);
     let template_data = template_data_layout(module)?;
@@ -51,6 +53,7 @@ pub(super) fn link<'source>(
         template_data,
         source_map,
         suspendable_functions.clone(),
+        traits,
     )?;
     let mut wasm = WasmModule::new();
     reencode::utils::parse_core_module(&mut linker, &mut wasm, WasmParser::new(0), WASM_TEMPLATE)
@@ -294,6 +297,7 @@ fn collect_closures_expression<'source, 'ast>(
 /// Reencodes the runtime template while appending generated program sections.
 struct TemplateLinker<'source, 'module> {
     module: &'module Module<'source>,
+    traits: &'module TraitRegistry<'source>,
     lifted: Vec<LiftedFunction<'source>>,
     program_types: Vec<u32>,
     signatures: Option<HashMap<String, FunctionSignature>>,
@@ -328,6 +332,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
         template_data: TemplateDataLayout,
         source_map: SourceMap<'source>,
         suspendable_functions: HashSet<String>,
+        traits: &'module TraitRegistry<'source>,
     ) -> Result<Self, CompileDiagnostics<'source>> {
         let literal_count = u32::try_from(literals.bytes.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
@@ -347,9 +352,10 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
                         "too many data segments for the Wasm data index space",
                     ))
                 })?;
-        let type_registry = TypeRegistry::build(module)?;
+        let type_registry = TypeRegistry::build(module, traits)?;
         Ok(Self {
             module,
+            traits,
             lifted,
             program_types: Vec::new(),
             signatures: None,
@@ -495,7 +501,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             build_signatures(self.module, &self.lifted, program_base, &self.type_registry)
                 .map_err(reencode::Error::UserError)?;
         self.methods = Some(
-            MethodRegistry::build(self.module, &self.type_registry, &signatures)
+            MethodRegistry::build(self.module, self.traits, &self.type_registry, &signatures)
                 .map_err(reencode::Error::UserError)?,
         );
         self.signatures = Some(signatures);

@@ -10,12 +10,33 @@ use crate::gc;
 use crate::runtime;
 use crate::value::{RtValue, RuntimeList, RuntimeString, clone, list, numeric, object};
 
-/// Adds two runtime values through List or numeric dispatch.
+/// Adds two runtime values through String, List, or numeric dispatch.
 pub(crate) fn add(left: ValueRef, right: ValueRef) -> ValueRef {
     match runtime::value(left) {
+        RtValue::String(value) => string_add(value, right),
         RtValue::List(_) => list::operations::add(left, right),
         _ => numeric::arithmetic(left, right, i64::checked_add, |left, right| left + right),
     }
+}
+
+/// Concatenates a String receiver with one supported scalar right operand.
+fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
+    let right = match runtime::value(right) {
+        RtValue::String(value) => String::from(value.as_str()),
+        RtValue::Bool(value) => value.to_string(),
+        RtValue::Int(value) => value.to_string(),
+        RtValue::Float(value) => value.to_string(),
+        _ => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "String addition requires a String, Bool, Int, or Float right operand",
+                right,
+            );
+        }
+    };
+    let mut result = String::from(left.as_str());
+    result.push_str(&right);
+    string_value_result(result)
 }
 
 /// Tests two runtime values for equality.
@@ -237,6 +258,10 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         Err(error) => return error,
     };
     match method.as_str() {
+        "add" => match list::operations::single_argument(arguments) {
+            Ok(argument) => add(receiver, argument),
+            Err(error) => error,
+        },
         "abs" => match list::operations::require_no_arguments(arguments) {
             Ok(()) => match runtime::value(receiver) {
                 RtValue::Int(_) => integer_abs(receiver),
