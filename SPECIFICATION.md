@@ -436,7 +436,7 @@ error.data()      // any value
 error.cause()     // related value or None
 ```
 
-Common Error kinds are `ArityError`, `CloneError`, `IndexError`, `IntOverflowError`, `MatchError`, `MethodNotFound`, `MissingValue`, `NotIterable`, `TypeError`, and `UnknownFunction`.
+Common Error kinds are `ArityError`, `CloneError`, `IndexError`, `IntOverflowError`, `MatchError`, `MethodNotFound`, `MissingValue`, `NotIterable`, `NotSerializable`, `TypeError`, and `HostFunctionNotFound`.
 
 # 10. Parallel Work with `par`
 
