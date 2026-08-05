@@ -719,6 +719,10 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.set_call_site(span)?;
 
         self.get_slot(closure, span)?;
+        self.call_runtime("__exs_rt_is_closure", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.get_slot(closure, span)?;
         self.call_runtime("__exs_rt_closure_arity", span)?;
         self.function.instruction(&Instruction::LocalSet(5));
         self.function.instruction(&Instruction::LocalGet(5));
@@ -802,6 +806,12 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function
             .instruction(&Instruction::I32Const(STATUS_READY));
         self.function.instruction(&Instruction::Return);
+        self.function.instruction(&Instruction::Else);
+        self.get_slot(closure, span)?;
+        self.call_runtime("__exs_rt_not_callable_error", span)?;
+        self.set_slot(destination, span)?;
+        self.ready(next, span)?;
+        self.function.instruction(&Instruction::End);
         Ok(())
     }
     /// Starts every static parallel closure task and yields execution to the scheduler.
@@ -891,8 +901,55 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.get_slot(functions, span)?;
+        self.call_runtime("__exs_rt_is_list", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.get_slot(functions, span)?;
         self.call_runtime("__exs_rt_parallel_list_count", span)?;
         self.function.instruction(&Instruction::LocalSet(7));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::LocalSet(1));
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
+        self.function
+            .instruction(&Instruction::Loop(BlockType::Empty));
+        self.function.instruction(&Instruction::LocalGet(1));
+        self.function.instruction(&Instruction::LocalGet(7));
+        self.function.instruction(&Instruction::I32GeU);
+        self.function.instruction(&Instruction::BrIf(1));
+        self.get_slot(functions, span)?;
+        self.function.instruction(&Instruction::LocalGet(1));
+        self.call_runtime("__exs_rt_parallel_list_get", span)?;
+        self.function.instruction(&Instruction::LocalSet(6));
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_is_closure", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.function.instruction(&Instruction::Else);
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_not_callable_error", span)?;
+        self.set_slot(destination, span)?;
+        self.complete(destination, span)?;
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_closure_arity", span)?;
+        self.function.instruction(&Instruction::LocalSet(5));
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::I32Ne);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.call_runtime("__exs_rt_closure_arity_error", span)?;
+        self.set_slot(destination, span)?;
+        self.complete(destination, span)?;
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::LocalGet(1));
+        self.function.instruction(&Instruction::I32Const(1));
+        self.function.instruction(&Instruction::I32Add);
+        self.function.instruction(&Instruction::LocalSet(1));
+        self.function.instruction(&Instruction::Br(0));
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::LocalGet(7));
         self.call_runtime("__exs_rt_parallel_new", span)?;
         self.set_slot(destination, span)?;
@@ -962,6 +1019,12 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.get_slot(destination, span)?;
         self.call_runtime("__exs_rt_parallel_wait", span)?;
         self.function.instruction(&Instruction::Return);
+        self.function.instruction(&Instruction::Else);
+        self.get_slot(functions, span)?;
+        self.call_runtime("__exs_rt_parallel_list_error", span)?;
+        self.set_slot(destination, span)?;
+        self.complete(destination, span)?;
+        self.function.instruction(&Instruction::End);
         Ok(())
     }
 }

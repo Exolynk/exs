@@ -258,6 +258,66 @@ fn rejects_non_function_fn_contract_arguments() {
     assert_eq!(error.severity, ErrorSeverity::Recoverable);
 }
 
+/// Returns a recoverable Error instead of trapping when a local non-closure is called.
+#[test]
+fn rejects_a_non_callable_dynamic_binding() {
+    let compiled = compile_source(
+        r#"
+        fn main() -> Error {
+            let callback = host.call("callback");
+            ret callback();
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("callback", |_| ExsValue::Int(1))
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    let ExsValue::Error(error) = result else {
+        panic!("non-callable dynamic binding did not return an Error");
+    };
+    assert_eq!(error.kind, "TypeError");
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+}
+
+/// Returns a recoverable Error instead of trapping when dynamic `par` receives a non-List.
+#[test]
+fn rejects_a_non_list_dynamic_parallel_operand() {
+    let result = execute_source_with_inputs("fn main() -> Error { ret par(1); }", &[]);
+    let ExsValue::Error(error) = result else {
+        panic!("non-List dynamic par operand did not return an Error");
+    };
+    assert_eq!(error.kind, "TypeError");
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+}
+
+/// Validates dynamic `par` elements before scheduling any child tasks.
+#[test]
+fn rejects_non_callable_and_non_zero_arity_dynamic_parallel_tasks() {
+    for (source, kind) in [
+        ("fn main() -> Error { ret par([1]); }", "TypeError"),
+        (
+            "fn main() -> Error { ret par([(value) => { ret value; }]); }",
+            "ArityError",
+        ),
+    ] {
+        let result = execute_source_with_inputs(source, &[]);
+        let ExsValue::Error(error) = result else {
+            panic!("invalid dynamic par task did not return an Error");
+        };
+        assert_eq!(error.severity, ErrorSeverity::Recoverable);
+        assert_eq!(error.kind, kind);
+    }
+}
+
 /// Returns nested closures while retaining captures through the enclosing closure environment.
 #[test]
 fn executes_returned_nested_closures() {

@@ -228,6 +228,30 @@ pub(crate) fn is_fatal_error(value_ref: ValueRef) -> bool {
     )
 }
 
+/// Returns whether one runtime value is a closure.
+pub(crate) fn is_closure(value_ref: ValueRef) -> bool {
+    matches!(value(value_ref), RtValue::Closure(_))
+}
+
+/// Returns whether one runtime value is a List.
+pub(crate) fn is_list(value_ref: ValueRef) -> bool {
+    matches!(value(value_ref), RtValue::List(_))
+}
+
+/// Creates the recoverable Error returned when source code calls a non-closure value.
+pub(crate) fn not_callable_error(value: ValueRef) -> ValueRef {
+    recoverable_error("TypeError", "value is not callable", value)
+}
+
+/// Creates the recoverable Error returned when dynamic `par` receives a non-List value.
+pub(crate) fn parallel_list_error(value: ValueRef) -> ValueRef {
+    recoverable_error(
+        "TypeError",
+        "par expects a List of zero-argument closures",
+        value,
+    )
+}
+
 /// Returns the runtime payload stored at one value-table index.
 pub(crate) fn value(reference: ValueRef) -> &'static RtValue {
     let index = reference.runtime_index() as usize - 1;

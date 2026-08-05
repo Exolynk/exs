@@ -53,6 +53,30 @@ pub extern "C" fn __exs_rt_is_fatal_error(value: ValueRef) -> i32 {
     i32::from(runtime::is_fatal_error(value))
 }
 
+/// Returns whether one runtime value is a closure.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_is_closure(value: ValueRef) -> i32 {
+    i32::from(runtime::is_closure(value))
+}
+
+/// Returns whether one runtime value is a List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_is_list(value: ValueRef) -> i32 {
+    i32::from(runtime::is_list(value))
+}
+
+/// Creates the recoverable Error returned when source code calls a non-closure value.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_not_callable_error(value: ValueRef) -> ValueRef {
+    runtime::not_callable_error(value)
+}
+
+/// Creates the recoverable Error returned when dynamic `par` receives a non-List value.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_parallel_list_error(value: ValueRef) -> ValueRef {
+    runtime::parallel_list_error(value)
+}
+
 /// Tests one function-boundary value against a compiler-emitted type mask.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_type_matches(value: ValueRef, allowed_types: i32) -> i32 {
