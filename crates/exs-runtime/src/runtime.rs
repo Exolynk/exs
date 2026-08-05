@@ -352,8 +352,16 @@ pub(crate) fn input_arity_error(arguments: ValueRef) -> ValueRef {
 
 /// Encodes a completed program result into the runtime-owned CBOR result buffer.
 pub(crate) fn set_result(value: ValueRef) {
-    let result = runtime_to_exs_value(value);
-    let encoded = result.to_cbor().unwrap_or_else(|_| trap());
+    let encoded = match runtime_to_exs_value(value) {
+        Ok(result) => result.to_cbor().unwrap_or_else(|_| {
+            boundary_serialization_error(ErrorSeverity::Fatal, BoundarySerializationError::Encoding)
+                .to_cbor()
+                .unwrap_or_else(|_| trap())
+        }),
+        Err(error) => boundary_serialization_error(ErrorSeverity::Fatal, error)
+            .to_cbor()
+            .unwrap_or_else(|_| trap()),
+    };
     unsafe {
         runtime().result_buffer = encoded;
     }
@@ -743,8 +751,14 @@ pub(crate) fn host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
             arguments,
         );
     }
-    let request = runtime_to_exs_value(arguments);
-    let encoded = request.to_cbor().unwrap_or_else(|_| trap());
+    let request = match runtime_to_exs_value(arguments) {
+        Ok(request) => request,
+        Err(error) => return ready_host_serialization_error(error),
+    };
+    let encoded = match request.to_cbor() {
+        Ok(encoded) => encoded,
+        Err(_) => return ready_host_serialization_error(BoundarySerializationError::Encoding),
+    };
     let state = unsafe { runtime() };
     let call_id = state.next_host_call_id;
     let Some(next_call_id) = call_id.checked_add(1) else {
@@ -840,6 +854,15 @@ fn ready_host_error(kind: &str, message: &str, data: ValueRef) -> i32 {
     HOST_CALL_READY
 }
 
+/// Stores one recoverable boundary-serialization Error as the ready result of a host call.
+fn ready_host_serialization_error(error: BoundarySerializationError) -> i32 {
+    ready_host_error(
+        "SerializationError",
+        error.message(),
+        allocate(RtValue::None),
+    )
+}
+
 /// Returns the active root scheduler or traps outside resumable root execution.
 fn execution(state: &mut RuntimeState) -> &mut ExecutionContext {
     state.execution.as_mut().unwrap_or_else(|| trap())
@@ -867,8 +890,46 @@ fn async_frame_slot(slot: i32) -> usize {
     usize::try_from(slot).unwrap_or_else(|_| trap())
 }
 
+/// One reason a runtime value cannot be represented at the acyclic CBOR boundary.
+#[derive(Clone, Copy)]
+enum BoundarySerializationError {
+    /// The runtime value graph contains a reference cycle.
+    Cycle,
+    /// The runtime value uses a type unavailable in the host-safe ABI.
+    UnsupportedValue,
+    /// The ABI codec rejected an otherwise converted value.
+    Encoding,
+}
+
+impl BoundarySerializationError {
+    /// Returns the stable human-readable explanation for this boundary failure.
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Cycle => "value graph contains a cycle and cannot cross the runner boundary",
+            Self::UnsupportedValue => "value type cannot cross the runner boundary",
+            Self::Encoding => "value cannot be encoded for the runner boundary",
+        }
+    }
+}
+
+/// Builds one ABI-safe Error for a failed runner-boundary conversion.
+fn boundary_serialization_error(
+    severity: ErrorSeverity,
+    error: BoundarySerializationError,
+) -> ExsValue {
+    ExsValue::Error(ExsError {
+        severity,
+        kind: "SerializationError".into(),
+        message: error.message().into(),
+        data: Box::new(ExsValue::None),
+        origin: None,
+        trace: Vec::new(),
+        cause: None,
+    })
+}
+
 /// Converts one runtime value into its host-safe ABI value.
-fn runtime_to_exs_value(reference: ValueRef) -> ExsValue {
+fn runtime_to_exs_value(reference: ValueRef) -> Result<ExsValue, BoundarySerializationError> {
     let mut active_containers = Vec::new();
     runtime_to_exs_value_inner(reference, &mut active_containers)
 }
@@ -877,73 +938,73 @@ fn runtime_to_exs_value(reference: ValueRef) -> ExsValue {
 fn runtime_to_exs_value_inner(
     reference: ValueRef,
     active_containers: &mut Vec<ValueRef>,
-) -> ExsValue {
+) -> Result<ExsValue, BoundarySerializationError> {
     match value(reference) {
-        RtValue::None => ExsValue::None,
-        RtValue::Error(error) => ExsValue::Error(ExsError {
+        RtValue::None => Ok(ExsValue::None),
+        RtValue::Error(error) => Ok(ExsValue::Error(ExsError {
             severity: error.severity,
             kind: error.kind.as_ref().into(),
             message: error.message.as_ref().into(),
-            data: Box::new(runtime_to_exs_value_inner(error.data, active_containers)),
+            data: Box::new(runtime_to_exs_value_inner(error.data, active_containers)?),
             origin: error.origin,
             trace: error.trace.clone(),
             cause: error
                 .cause
-                .map(|cause| Box::new(runtime_to_exs_value_inner(cause, active_containers))),
-        }),
-        RtValue::Bool(value) => ExsValue::Bool(*value),
-        RtValue::Int(value) => ExsValue::Int(*value),
-        RtValue::Float(value) => ExsValue::Float(*value),
-        RtValue::String(value) => ExsValue::String(value.as_str().into()),
+                .map(|cause| runtime_to_exs_value_inner(cause, active_containers).map(Box::new))
+                .transpose()?,
+        })),
+        RtValue::Bool(value) => Ok(ExsValue::Bool(*value)),
+        RtValue::Int(value) => Ok(ExsValue::Int(*value)),
+        RtValue::Float(value) => Ok(ExsValue::Float(*value)),
+        RtValue::String(value) => Ok(ExsValue::String(value.as_str().into())),
         RtValue::List(list) => {
             if active_containers.contains(&reference) {
-                trap();
+                return Err(BoundarySerializationError::Cycle);
             }
             active_containers.push(reference);
-            let elements = list
-                .elements
-                .iter()
-                .copied()
-                .map(|element| runtime_to_exs_value_inner(element, active_containers))
-                .collect();
-            let _removed = active_containers.pop();
-            ExsValue::List(elements)
-        }
-        RtValue::Object(object) => {
-            if active_containers.contains(&reference) {
-                trap();
-            }
-            active_containers.push(reference);
-            let result = if let Some(enum_data) = &object.enum_data {
-                ExsValue::Enum {
-                    type_id: enum_data.type_identity.as_ref().into(),
-                    variant: enum_data.variant.as_ref().into(),
-                    fields: enum_data
-                        .fields
-                        .iter()
-                        .copied()
-                        .map(|field| runtime_to_exs_value_inner(field, active_containers))
-                        .collect(),
+            let result = (|| {
+                let mut elements = Vec::with_capacity(list.elements.len());
+                for element in &list.elements {
+                    elements.push(runtime_to_exs_value_inner(*element, active_containers)?);
                 }
-            } else {
-                ExsValue::Object(
-                    object
-                        .entries
-                        .iter()
-                        .map(|(key, value)| {
-                            (
-                                key.as_ref().into(),
-                                runtime_to_exs_value_inner(*value, active_containers),
-                            )
-                        })
-                        .collect(),
-                )
-            };
+                Ok(ExsValue::List(elements))
+            })();
             let _removed = active_containers.pop();
             result
         }
-        RtValue::Cell(_) | RtValue::Closure(_) => trap(),
-        RtValue::BoxedFutureValue(_) => trap(),
+        RtValue::Object(object) => {
+            if active_containers.contains(&reference) {
+                return Err(BoundarySerializationError::Cycle);
+            }
+            active_containers.push(reference);
+            let result = (|| {
+                if let Some(enum_data) = &object.enum_data {
+                    let mut fields = Vec::with_capacity(enum_data.fields.len());
+                    for field in &enum_data.fields {
+                        fields.push(runtime_to_exs_value_inner(*field, active_containers)?);
+                    }
+                    Ok(ExsValue::Enum {
+                        type_id: enum_data.type_identity.as_ref().into(),
+                        variant: enum_data.variant.as_ref().into(),
+                        fields,
+                    })
+                } else {
+                    let mut entries = Vec::with_capacity(object.entries.len());
+                    for (key, value) in &object.entries {
+                        entries.push((
+                            key.as_ref().into(),
+                            runtime_to_exs_value_inner(*value, active_containers)?,
+                        ));
+                    }
+                    Ok(ExsValue::Object(entries))
+                }
+            })();
+            let _removed = active_containers.pop();
+            result
+        }
+        RtValue::Cell(_) | RtValue::Closure(_) | RtValue::BoxedFutureValue(_) => {
+            Err(BoundarySerializationError::UnsupportedValue)
+        }
     }
 }
 

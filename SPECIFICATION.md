@@ -518,6 +518,8 @@ let profile = host.call("profile.load", user_id);
 
 `host.call(name, arguments...)` invokes a host-provided operation. `name` must evaluate to a String. Arguments evaluate left to right. The host call returns its result or an Error and may suspend; it does not create an ExS task.
 
+Host-call arguments and final program results cross an acyclic, by-value runner boundary. Closures, cells, and cyclic value graphs cannot cross it; shared references are duplicated. An unserializable host call returns a recoverable `SerializationError` without invoking the host. An unserializable final program result becomes a fatal `SerializationError`.
+
 The available names, their argument contracts, capabilities, and side effects are defined by the embedding host, not by ExS.
 
 # 13. Grammar Summary

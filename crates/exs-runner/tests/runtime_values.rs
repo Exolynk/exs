@@ -46,6 +46,29 @@ fn links_against_the_committed_runtime_template() {
     );
 }
 
+/// Returns a fatal Error when the final value cannot cross the runner CBOR boundary.
+#[test]
+fn returns_fatal_serialization_errors_for_unserializable_final_values() {
+    for source in [
+        "fn main(input) -> Fn { ret () => { ret 1; }; }",
+        r#"
+        fn main(input) -> List {
+            let cycle = [];
+            cycle.push(cycle);
+            ret cycle;
+        }
+        "#,
+    ] {
+        let result = execute_source(source, ExsValue::None);
+        let ExsValue::Error(error) = result else {
+            panic!("unserializable final value did not return an Error");
+        };
+        assert_eq!(error.severity, ErrorSeverity::Fatal);
+        assert_eq!(error.kind, "SerializationError");
+        assert_eq!(error.data, Box::new(ExsValue::None));
+    }
+}
+
 /// Evaluates boolean equality inside the runtime rather than as a compiler shortcut.
 #[test]
 fn evaluates_boolean_equality_in_the_runtime() {

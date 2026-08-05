@@ -2,6 +2,8 @@
 
 mod support;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 
 use exs_abi::{ErrorSeverity, ExsValue};
@@ -56,6 +58,53 @@ fn executes_a_synchronous_dynamic_host_function() {
         Err(error) => panic!("execution failed: {error}"),
     };
     assert_eq!(result, ExsValue::Int(42));
+}
+
+/// Rejects non-serializable host arguments without invoking the registered host function.
+#[test]
+fn rejects_unserializable_host_call_arguments() {
+    for source in [
+        r#"
+        fn main() -> Error {
+            let callback = () => { ret 1; };
+            ret host.call("save", callback);
+        }
+        "#,
+        r#"
+        fn main() -> Error {
+            let cycle = [];
+            cycle.push(cycle);
+            ret host.call("save", cycle);
+        }
+        "#,
+    ] {
+        let compiled = compile_source(source);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut runner = ServerRunner::new(ExecutionLimits::default());
+        assert!(
+            runner
+                .registry_mut()
+                .register_sync("save", {
+                    let calls = Arc::clone(&calls);
+                    move |_| {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        ExsValue::None
+                    }
+                })
+                .is_ok()
+        );
+        let result =
+            match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new())) {
+                Ok(result) => result,
+                Err(error) => panic!("execution failed: {error}"),
+            };
+        let ExsValue::Error(error) = result else {
+            panic!("unserializable host arguments did not return an Error");
+        };
+        assert_eq!(error.severity, ErrorSeverity::Recoverable);
+        assert_eq!(error.kind, "SerializationError");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
 }
 
 /// Suspends and resumes the same generated frame for an asynchronous host function.
