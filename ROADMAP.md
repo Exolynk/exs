@@ -1,5 +1,9 @@
 ## Implementation Roadmap
 
+### Documentation Boundary
+
+The [language reference](SPECIFICATION.md) defines only the ExS source language and its observable behavior. It is the document to give an authoring tool or LLM that needs to write ExS code. Compiler, runtime, runner, WebAssembly, CBOR, and ABI implementation details belong in crate documentation and this roadmap.
+
 ### Phase 1: Minimal compiler
 
 - [x] Create the final Rust workspace and shared `exs-value` and `exs-abi` crates.
@@ -25,12 +29,14 @@
 - [x] Add insertion-ordered boxed Objects with literals, generic bracket/dot access, mutation, member dispatch, and recursive CBOR input/output.
 - [x] Complete generic List operations: `push`, `pop`, `insert`, `remove`, `clear`, and shallow `List + value` / `List + List`.
 - [x] Add `for item in iterable` with runtime-owned shallow List snapshots and Unicode-scalar String snapshots.
+- [x] Limit the current host boundary to acyclic nested Lists and Objects; graph-reference CBOR is not implemented.
 
 ### Phase 4: Garbage collection
 
 - [x] Implement stop-the-world mark-and-sweep collection with reusable value-table slots.
 - [x] Add compiler-generated root frames, temporary runtime roots, and List/Object heap scanning.
 - [x] Test aliasing, cycles, and allocation-triggered collection, including allocation-heavy loops.
+- [x] Use stop-the-world mark-and-sweep before language-value allocation, with reusable value-table slots and compiler/runtime root tracking.
 
 ### Phase 5: Errors, Options, and source maps
 
@@ -109,7 +115,7 @@
 - [x] Render built-in method signatures and behavior on the relevant `std` type pages.
 - [x] Implement automatic deep `value.clone()` for mutable graphs.
 - [x] Preserve aliases and cycles while cloning Lists, Objects, Errors, nominal Objects, enums, Cells, and Closures.
-- [x] Reuse immutable values where safe and reject cloning unsupported HostResources.
+- [x] Reuse immutable values where safe and reserve future host-owned runtime values as non-cloneable.
 - [x] Keep clone behavior uniform; defer user-defined clone overrides.
 
 ### Phase 15: Extensible Protocols & Operators
@@ -131,7 +137,11 @@
   - [x] Enforce native Wasmtime memory, fuel, wall-clock timeout, and Wasm stack limits.
   - [x] Enforce generic runner task permits plus total and concurrent pending host-call limits in the native runner.
   - [x] Document browser main-thread execution as application-owned isolation; applications that execute untrusted source must place their runner in a Worker.
+- [x] Execute each native root in a fresh Wasmtime store and instance; instance pooling is not implemented.
 
 ### Backlog: Further Ideas
 
 - [ ] Optimizations: Add host-name caching, direct-operation specialization, root-frame reduction, and safe inlining.
+- [ ] Add CBOR graph-reference encoding for cyclic and aliased Lists and Objects.
+- [ ] Add host-resource capability values and lifecycle management.
+- [ ] Add reusable runner instance pooling when a reset strategy is available.
