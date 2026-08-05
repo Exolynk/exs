@@ -47,6 +47,12 @@ pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> ValueRef {
     )))
 }
 
+/// Returns whether one runtime value is a fatal language Error.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_is_fatal_error(value: ValueRef) -> i32 {
+    i32::from(runtime::is_fatal_error(value))
+}
+
 /// Tests one function-boundary value against a compiler-emitted type mask.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_type_matches(value: ValueRef, allowed_types: i32) -> i32 {

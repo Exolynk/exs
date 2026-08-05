@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
 use exs_abi::{
-    ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY, STATUS_PENDING,
-    STATUS_READY,
+    ErrorSeverity, ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY,
+    STATUS_PENDING, STATUS_READY,
 };
 use exs_value::{ValueRef, is_valid_int};
 
@@ -218,6 +218,14 @@ pub(crate) fn fatal_error(kind: &str, message: &str, data: ValueRef) -> ValueRef
     ))));
     gc::restore_temporary_roots(checkpoint);
     error
+}
+
+/// Returns whether one runtime value is a fatal language Error.
+pub(crate) fn is_fatal_error(value_ref: ValueRef) -> bool {
+    matches!(
+        value(value_ref),
+        RtValue::Error(error) if error.severity == ErrorSeverity::Fatal
+    )
 }
 
 /// Returns the runtime payload stored at one value-table index.
@@ -650,6 +658,13 @@ pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
         trap();
     };
     state.free_async_frames.push(free_index);
+    if is_fatal_error(value) {
+        if execution(state).complete_current_task(value) {
+            state.completed_async_result = Some(value);
+            return 1;
+        }
+        return if execution(state).has_current() { 0 } else { 2 };
+    }
     if let Some(continuation) = completed.caller {
         let caller_index = usize::try_from(continuation.frame - 1).unwrap_or_else(|_| trap());
         let Some(caller) = state

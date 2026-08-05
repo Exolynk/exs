@@ -72,6 +72,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.function
                 .instruction(&Instruction::Call(target.signature.index));
             self.set_slot(destination, span)?;
+            self.complete_if_fatal_error(destination, span)?;
             self.ready(next, span)?;
         }
         self.function.instruction(&Instruction::Else);
@@ -170,6 +171,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.function
                 .instruction(&Instruction::Call(target.signature.index));
             self.set_slot(destination, span)?;
+            self.complete_if_fatal_error(destination, span)?;
             self.ready(next, span)?;
         }
         self.function.instruction(&Instruction::Else);
@@ -366,6 +368,24 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.complete(value, span)?;
+        self.function.instruction(&Instruction::End);
+        Ok(())
+    }
+
+    /// Completes the current task when one durable slot contains a fatal language Error.
+    pub(super) fn complete_if_fatal_error(
+        &mut self,
+        value: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.get_slot(value, span)?;
+        self.call_runtime("__exs_rt_is_fatal_error", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.get_slot(value, span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.scratch_local));
+        self.complete_local(span)?;
         self.function.instruction(&Instruction::End);
         Ok(())
     }

@@ -427,6 +427,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             Operation::HostResume { destination, span } => {
                 self.call_runtime("__exs_rt_host_call_take_ready", *span)?;
                 self.set_slot(*destination, *span)?;
+                self.complete_if_fatal_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
             Operation::DirectCall {
@@ -442,6 +443,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.function
                     .instruction(&Instruction::Call(signature.index));
                 self.set_slot(*destination, *span)?;
+                self.complete_if_fatal_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
             Operation::ChildCall {
@@ -632,6 +634,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .instruction(&Instruction::If(BlockType::Empty));
         self.call_runtime("__exs_rt_host_call_take_ready", span)?;
         self.set_slot(destination, span)?;
+        self.complete_if_fatal_error(destination, span)?;
         self.ready(after_resume, span)?;
         self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::LocalGet(2));

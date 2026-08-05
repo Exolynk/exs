@@ -292,6 +292,10 @@ impl ExecutionContext {
         let Some(task_id) = self.current else {
             crate::runtime::trap();
         };
+        if crate::runtime::is_fatal_error(value) {
+            self.cancel();
+            return true;
+        }
         let parallel = self.current_task().parallel;
         self.transition(task_id, TaskState::Completed);
         self.current = None;

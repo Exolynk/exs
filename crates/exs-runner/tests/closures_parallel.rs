@@ -95,6 +95,28 @@ fn continues_parallel_siblings_after_a_recoverable_error() {
     assert_eq!(values.get(1), Some(&ExsValue::Int(42)));
 }
 
+/// Terminates the root execution when one parallel child returns a fatal Error.
+#[test]
+fn terminates_parallel_execution_after_a_fatal_contract_failure() {
+    let result = execute_source_with_inputs(
+        r#"
+        fn wrong() -> Int { ret "invalid"; }
+        fn main() -> List {
+            ret par {
+                wrong();
+                6 * 7;
+            };
+        }
+        "#,
+        &[],
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("fatal parallel contract failure did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Fatal);
+    assert_eq!(error.kind, "TypeError");
+}
+
 /// Executes each closure supplied by dynamic `par(list)` and retains source order.
 #[test]
 fn executes_dynamic_parallel_closure_lists() {

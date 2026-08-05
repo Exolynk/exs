@@ -117,6 +117,26 @@ fn returns_a_fatal_error_for_a_strict_function_type_contract_violation() {
     assert_eq!(error.trace.len(), 2);
 }
 
+/// Does not allow a fatal strict-contract Error to be discarded by the caller.
+#[test]
+fn terminates_after_a_discarded_strict_contract_failure() {
+    let result = execute_source(
+        r#"
+        fn wrong() -> Int { ret "invalid"; }
+        fn main(input) -> Int {
+            wrong();
+            ret 42;
+        }
+        "#,
+        ExsValue::None,
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("discarded strict contract failure did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Fatal);
+    assert_eq!(error.kind, "TypeError");
+}
+
 /// Preserves direct values and propagates Error values unchanged with question mark.
 #[test]
 fn propagates_option_and_result_values() {

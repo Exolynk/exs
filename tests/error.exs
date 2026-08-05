@@ -1,19 +1,15 @@
-fn depth0() {
+fn custom() {
     let data = {info1: "Hello", info2: "World"};
     ret Error("UserError", "This is a manual created user error", data);
 }
 
-fn depth1() {
-    ret depth2();
-}
-
-fn depth2() {
-    ret None?;
+fn type_panic() -> Int {
+    ret "String";
 }
 
 fn main(input) {
     let a = "Test"?;
-    let b = Ok("Test")?;
+    type_panic();
 
-    ret depth0()?;
+    ret custom()?;
 }

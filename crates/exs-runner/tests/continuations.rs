@@ -256,6 +256,38 @@ fn executes_sequential_continuation_states_for_synchronous_host_calls() {
     assert_eq!(result, ExsValue::Int(7));
 }
 
+/// Terminates a resumable caller after a direct callee violates a strict return contract.
+#[test]
+fn terminates_continuation_after_a_fatal_direct_call_result() {
+    let compiled = compile_source(
+        r#"
+        fn wrong() -> Int { ret "invalid"; }
+        fn main() -> Int {
+            host.call("ready");
+            wrong();
+            ret 42;
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("ready", |_| ExsValue::None)
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    let ExsValue::Error(error) = result else {
+        panic!("fatal direct call result was discarded by the continuation");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Fatal);
+    assert_eq!(error.kind, "TypeError");
+}
+
 /// Resumes nested host-call states and propagates their completed values through `?`.
 #[test]
 fn executes_sequential_continuation_states_for_asynchronous_host_calls() {

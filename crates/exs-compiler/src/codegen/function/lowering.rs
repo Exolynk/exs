@@ -225,6 +225,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.set_runtime_call_site(*span)?;
                 self.function
                     .instruction(&Instruction::Call(signature.index));
+                self.return_if_fatal_error(*span)?;
                 for local in argument_locals {
                     self.clear_root_slot(local)?;
                 }
@@ -424,6 +425,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.set_runtime_call_site(span)?;
         self.function
             .instruction(&Instruction::Call(signature.index));
+        self.return_if_fatal_error(span)?;
         for local in argument_locals {
             self.clear_root_slot(local)?;
         }
@@ -489,6 +491,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.set_runtime_call_site(span)?;
             self.function
                 .instruction(&Instruction::Call(target.signature.index));
+            self.return_if_fatal_error(span)?;
         } else {
             self.function.instruction(&Instruction::LocalGet(receiver));
             self.runtime_value_call("__exs_rt_method_arity_error", 1, span)?;
@@ -527,6 +530,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.set_runtime_call_site(span)?;
         self.function
             .instruction(&Instruction::Call(target.signature.index));
+        self.return_if_fatal_error(span)?;
         self.emit_operator_result(operator, span)?;
         self.function.instruction(&Instruction::Else);
         self.emit_operator_dispatch(operator, targets, index + 1, left, right, span)?;
@@ -836,6 +840,25 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function.instruction(&Instruction::LocalGet(outcome));
         let return_type = self.return_type.clone();
         self.validate_local_type(outcome, &return_type, span)?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.return_stack_value()?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.clear_root_slot(outcome)
+    }
+
+    /// Returns a fatal language Error from the current function or leaves the value on stack.
+    pub(super) fn return_if_fatal_error(
+        &mut self,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let outcome = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        self.runtime_call("__exs_rt_is_fatal_error", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.enter_control()?;
         self.function.instruction(&Instruction::LocalGet(outcome));
         self.return_stack_value()?;
         self.function.instruction(&Instruction::End);
