@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::Waker;
 
-use crate::{ExsValue, HostFuture};
+use crate::{ExsValue, HostFuture, deadline::ExecutionDeadline};
 
 /// Cloneable cancellation control supplied to one runner execution.
 #[derive(Clone, Default)]
@@ -114,8 +114,12 @@ pub(crate) struct CancellableHostFuture<'cancellation> {
     future: HostFuture,
     /// Caller-owned cancellation control for this execution.
     cancellation: &'cancellation ExecutionCancellation,
+    /// Runner-owned wall-clock deadline for this root execution.
+    deadline: &'cancellation ExecutionDeadline,
     /// Registered wake-up slot for this future, when it is pending.
     registration: Option<u64>,
+    /// Registered wake-up slot for the root deadline, when this future is pending.
+    deadline_registration: Option<u64>,
 }
 
 impl<'cancellation> CancellableHostFuture<'cancellation> {
@@ -123,11 +127,14 @@ impl<'cancellation> CancellableHostFuture<'cancellation> {
     pub(crate) fn new(
         future: HostFuture,
         cancellation: &'cancellation ExecutionCancellation,
+        deadline: &'cancellation ExecutionDeadline,
     ) -> Self {
         Self {
             future,
             cancellation,
+            deadline,
             registration: None,
+            deadline_registration: None,
         }
     }
 }
@@ -142,17 +149,37 @@ impl std::future::Future for CancellableHostFuture<'_> {
     ) -> std::task::Poll<Self::Output> {
         if self.cancellation.is_cancelled() {
             self.cancellation.unregister_waker(&mut self.registration);
+            self.deadline
+                .unregister_waker(&mut self.deadline_registration);
+            return std::task::Poll::Ready(Err(()));
+        }
+        if self.deadline.is_expired() {
+            self.cancellation.unregister_waker(&mut self.registration);
+            self.deadline
+                .unregister_waker(&mut self.deadline_registration);
             return std::task::Poll::Ready(Err(()));
         }
         self.cancellation
             .register_waker(&mut self.registration, context.waker());
+        self.deadline
+            .register_waker(&mut self.deadline_registration, context.waker());
         if self.cancellation.is_cancelled() {
             self.cancellation.unregister_waker(&mut self.registration);
+            self.deadline
+                .unregister_waker(&mut self.deadline_registration);
+            return std::task::Poll::Ready(Err(()));
+        }
+        if self.deadline.is_expired() {
+            self.cancellation.unregister_waker(&mut self.registration);
+            self.deadline
+                .unregister_waker(&mut self.deadline_registration);
             return std::task::Poll::Ready(Err(()));
         }
         match self.future.as_mut().poll(context) {
             std::task::Poll::Ready(value) => {
                 self.cancellation.unregister_waker(&mut self.registration);
+                self.deadline
+                    .unregister_waker(&mut self.deadline_registration);
                 std::task::Poll::Ready(Ok(value))
             }
             std::task::Poll::Pending => std::task::Poll::Pending,
@@ -164,5 +191,7 @@ impl Drop for CancellableHostFuture<'_> {
     /// Releases the registered waker when the runner drops an unfinished execution.
     fn drop(&mut self) {
         self.cancellation.unregister_waker(&mut self.registration);
+        self.deadline
+            .unregister_waker(&mut self.deadline_registration);
     }
 }

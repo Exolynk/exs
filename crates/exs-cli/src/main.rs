@@ -14,7 +14,7 @@ use exs_compiler::{
     CompileOptions, ModuleDebugInfo, ModuleResolver, ResolvedSource, SourceInput,
     compile_with_resolver, document_with_resolver, format, read_debug_info,
 };
-use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
+use exs_runner::{ExecutionCancellation, ExecutionLimits, ExsValue, ServerRunner};
 
 /// Runs the `ExS` command-line interface.
 fn main() -> ExitCode {
@@ -190,7 +190,7 @@ fn run_program(path: &str, inputs: &[exs_runner::ExsValue]) -> Result<(), String
 
 /// Creates the CLI runner with its standard synchronous output host functions.
 fn cli_runner() -> Result<ServerRunner, String> {
-    let mut runner = ServerRunner::new();
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
     runner
         .registry_mut()
         .register_sync("print", |arguments: Vec<ExsValue>| {

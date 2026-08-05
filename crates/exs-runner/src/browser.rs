@@ -352,6 +352,7 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
         async execute(input) {
             const ready = new Map();
             const pending = new Map();
+            let activeTasks = 0;
             let memory;
             const imports = {
                 exs: {
@@ -385,6 +386,22 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
                         }
                         write(memory, pointer, response, "host response destination");
                         ready.delete(callId);
+                        return 0;
+                    },
+                },
+                runner: {
+                    __runner_task_acquire() {
+                        if (activeTasks >= Number.MAX_SAFE_INTEGER) {
+                            throw new RangeError("browser task counter overflow");
+                        }
+                        activeTasks += 1;
+                        return 0;
+                    },
+                    __runner_task_release() {
+                        if (activeTasks === 0) {
+                            return 1;
+                        }
+                        activeTasks -= 1;
                         return 0;
                     },
                 },

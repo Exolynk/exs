@@ -1,6 +1,6 @@
 //! Integration tests for the shared ExS CBOR boundary representation.
 
-use exs_abi::{CborError, ErrorSeverity, ExsError, ExsValue};
+use exs_abi::{CborError, CborLimits, ErrorSeverity, ExsError, ExsValue};
 
 /// Round-trips primitive and nested list values through the shared codec.
 #[test]
@@ -68,5 +68,42 @@ fn rejects_unsupported_cbor_values() {
     assert_eq!(
         ExsValue::from_cbor(&[0x40]),
         Err(CborError::UnsupportedType)
+    );
+}
+
+/// Applies collection limits before allocating from a declared CBOR collection length.
+#[test]
+fn rejects_declared_collections_over_the_configured_limit() {
+    assert_eq!(
+        ExsValue::from_cbor_with_limits(
+            &[0x98, 100],
+            CborLimits {
+                max_nesting: 8,
+                max_collection_entries: 4,
+            },
+        ),
+        Err(CborError::CollectionLimitExceeded)
+    );
+}
+
+/// Rejects nested values that cross the configured structural depth.
+#[test]
+fn rejects_values_over_the_configured_nesting_limit() {
+    let value = ExsValue::List(vec![ExsValue::List(vec![ExsValue::Int(1)])]);
+    let bytes = match value.to_cbor() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("could not encode test value: {error}"),
+    };
+    let limits = CborLimits {
+        max_nesting: 1,
+        max_collection_entries: 8,
+    };
+    assert_eq!(
+        value.to_cbor_with_limits(limits),
+        Err(CborError::NestingLimitExceeded)
+    );
+    assert_eq!(
+        ExsValue::from_cbor_with_limits(&bytes, limits),
+        Err(CborError::NestingLimitExceeded)
     );
 }

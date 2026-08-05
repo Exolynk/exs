@@ -15,12 +15,13 @@ use std::task::Poll;
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, INPUT_ALLOC_EXPORT, RESULT_LENGTH_EXPORT,
-    RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, START_EXPORT, STATUS_CANCELLED, STATUS_COMPLETE,
-    STATUS_PENDING,
+    ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, CborError, INPUT_ALLOC_EXPORT,
+    RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, RUNNER_IMPORT_MODULE,
+    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, START_EXPORT, STATUS_CANCELLED,
+    STATUS_COMPLETE, STATUS_PENDING,
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-use wasmtime::{Engine, Instance, Linker, Module, Store};
+use wasmtime::{Config, Engine, Instance, Linker, Module, Store};
 
 #[cfg(all(feature = "browser", target_arch = "wasm32"))]
 mod browser;
@@ -28,9 +29,12 @@ mod browser;
 mod cancellation;
 mod cbor;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod deadline;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_abi;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_function;
+mod limits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;
 
@@ -40,27 +44,41 @@ pub use self::browser::{
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::cancellation::ExecutionCancellation;
-pub use self::cbor::{HostCborError, decode_arguments, encode_result};
+pub use self::cbor::{
+    HostCborError, decode_arguments, decode_arguments_with_limits, encode_result,
+    encode_result_with_limits,
+};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::host_function::{AsyncHostFunction, HostCall, HostFuture, SyncHostFunction};
+pub use self::limits::{ExecutionLimits, LimitKind};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::registry::{HostFunctionRegistry, RegistryError};
 pub use exs_abi::{ErrorSeverity, ExsError, ExsValue, SourcePositionId};
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 /// A reusable Wasmtime server runner with dynamically registered host functions.
-#[derive(Default)]
 pub struct ServerRunner {
     /// Runner-owned host implementations used for every execution.
     registry: HostFunctionRegistry,
+    /// Resource policy applied to every native root execution.
+    limits: ExecutionLimits,
 }
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl ServerRunner {
-    /// Creates a server runner with no registered host functions.
+    /// Creates a server runner with one explicit resource policy and no host functions.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(limits: ExecutionLimits) -> Self {
+        Self {
+            registry: HostFunctionRegistry::new(),
+            limits,
+        }
+    }
+
+    /// Returns the resource policy applied to each execution.
+    #[must_use]
+    pub fn limits(&self) -> &ExecutionLimits {
+        &self.limits
     }
 
     /// Returns mutable access to the runner-owned dynamic host-function registry.
@@ -83,33 +101,56 @@ impl ServerRunner {
         if cancellation.is_cancelled() {
             return Err(RunnerError::Cancelled);
         }
-        let engine = Engine::default();
+        let engine = limited_engine(&self.limits)?;
         let module =
             Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
-        let mut store = Store::new(&engine, host_abi::HostAbiState::new(self.registry.clone()));
+        check_task_metering_imports(&module)?;
+        let mut store = Store::new(
+            &engine,
+            host_abi::HostAbiState::new(self.registry.clone(), self.limits.clone()),
+        );
+        store.limiter(host_abi::HostAbiState::store_limits);
+        store
+            .set_fuel(self.limits.max_fuel)
+            .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        store.set_epoch_deadline(1);
+        let deadline = deadline::ExecutionDeadline::new(engine.clone(), self.limits.timeout)
+            .map_err(|error| {
+                RunnerError::Wasm(format!("could not start execution deadline: {error}"))
+            })?;
         let mut linker = Linker::new(&engine);
         host_abi::define(&mut linker).map_err(|error| RunnerError::Wasm(error.to_string()))?;
         let instance = linker
             .instantiate(&mut store, &module)
-            .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+            .map_err(wasmtime_error)?;
         check_abi(&mut store, &instance)?;
-        let (input_pointer, input_length) = write_input(&mut store, &instance, inputs)?;
+        let (input_pointer, input_length) =
+            write_input(&mut store, &instance, inputs, &self.limits)?;
         let start = instance
             .get_typed_func::<(i32, i32), i32>(&mut store, START_EXPORT)
             .map_err(|error| RunnerError::Abi(error.to_string()))?;
         let mut status = start
             .call(&mut store, (input_pointer, input_length))
-            .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+            .map_err(|error| execution_error(&mut store, error))?;
         let mut pending = Vec::new();
         loop {
             match status {
-                STATUS_COMPLETE => return result(&mut store, &instance),
+                STATUS_COMPLETE => {
+                    if deadline.is_expired() {
+                        return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
+                    }
+                    return result(&mut store, &instance, &self.limits);
+                }
                 STATUS_PENDING => {
                     pending.extend(store.data_mut().take_pending_all().into_iter().map(
                         |(call_id, future)| {
                             (
                                 call_id,
-                                cancellation::CancellableHostFuture::new(future, cancellation),
+                                cancellation::CancellableHostFuture::new(
+                                    future,
+                                    cancellation,
+                                    &deadline,
+                                ),
                             )
                         },
                     ));
@@ -135,21 +176,30 @@ impl ServerRunner {
                     {
                         Ok(response) => response,
                         Err(()) => {
+                            if deadline.is_expired() {
+                                return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
+                            }
                             cancel_execution(&mut store, &instance)?;
                             return Err(RunnerError::Cancelled);
                         }
                     };
+                    if !store.data_mut().complete_pending_host_call() {
+                        return Err(RunnerError::Abi(
+                            "runner completed an untracked pending host call".to_owned(),
+                        ));
+                    }
                     if cancellation.is_cancelled() {
                         cancel_execution(&mut store, &instance)?;
                         return Err(RunnerError::Cancelled);
                     }
-                    let (pointer, length) = write_response(&mut store, &instance, &response)?;
+                    let (pointer, length) =
+                        write_response(&mut store, &instance, &response, &self.limits)?;
                     let resume = instance
                         .get_typed_func::<(i64, i32, i32), i32>(&mut store, RESUME_HOST_EXPORT)
                         .map_err(|error| RunnerError::Abi(error.to_string()))?;
                     status = resume
                         .call(&mut store, (call_id, pointer, length))
-                        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+                        .map_err(|error| execution_error(&mut store, error))?;
                 }
                 STATUS_CANCELLED => return Err(RunnerError::Cancelled),
                 status => return Err(RunnerError::Status(status)),
@@ -158,9 +208,21 @@ impl ServerRunner {
     }
 }
 
+/// Creates a native Wasmtime engine instrumented for one explicit runner policy.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+fn limited_engine(limits: &ExecutionLimits) -> Result<Engine, RunnerError> {
+    let mut configuration = Config::new();
+    configuration.consume_fuel(true);
+    configuration.epoch_interruption(true);
+    configuration.max_wasm_stack(limits.max_wasm_stack_bytes);
+    Engine::new(&configuration).map_err(|error| RunnerError::Wasm(error.to_string()))
+}
+
 /// A technical error from Wasm loading or execution.
 #[derive(Debug)]
 pub enum RunnerError {
+    /// The root execution exceeded one configured hard resource limit.
+    LimitExceeded(LimitKind),
     /// The active WebAssembly backend rejected the module or failed to instantiate it.
     Wasm(String),
     /// A mandatory ABI export was absent or incompatible.
@@ -176,6 +238,7 @@ pub enum RunnerError {
 impl fmt::Display for RunnerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::LimitExceeded(kind) => write!(formatter, "execution limit exceeded: {kind}"),
             Self::Wasm(message) => write!(formatter, "WebAssembly error: {message}"),
             Self::Abi(message) => write!(formatter, "ABI error: {message}"),
             Self::Deadlock(message) => write!(formatter, "scheduler deadlock: {message}"),
@@ -196,49 +259,87 @@ fn cancel_execution(
     let cancel = instance
         .get_typed_func::<(), ()>(&mut *store, CANCEL_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;
-    cancel
-        .call(&mut *store, ())
-        .map_err(|error| RunnerError::Wasm(error.to_string()))
+    cancel.call(&mut *store, ()).map_err(wasmtime_error)
 }
 
-/// Executes a linked `ExS` module using the supplied ordered main arguments.
-///
-/// # Errors
-///
-/// Returns an error when the module cannot be instantiated, violates the ABI, traps, or does not complete.
+/// Converts a failed native Wasm call into a recorded limit error or technical runner error.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-pub fn execute(wasm: &[u8], inputs: &[ExsValue]) -> Result<ExsValue, RunnerError> {
-    execute_with_registry(wasm, inputs, HostFunctionRegistry::new())
-}
-
-/// Executes a module through the synchronous compatibility path with one registry snapshot.
-#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn execute_with_registry(
-    wasm: &[u8],
-    inputs: &[ExsValue],
-    registry: HostFunctionRegistry,
-) -> Result<ExsValue, RunnerError> {
-    let engine = Engine::default();
-    let module =
-        Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
-    let mut store = Store::new(&engine, host_abi::HostAbiState::new(registry));
-    let mut linker = Linker::new(&engine);
-    host_abi::define(&mut linker).map_err(|error| RunnerError::Wasm(error.to_string()))?;
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
-    check_abi(&mut store, &instance)?;
-    let (input_pointer, input_length) = write_input(&mut store, &instance, inputs)?;
-    let start = instance
-        .get_typed_func::<(i32, i32), i32>(&mut store, START_EXPORT)
-        .map_err(|error| RunnerError::Abi(error.to_string()))?;
-    let status = start
-        .call(&mut store, (input_pointer, input_length))
-        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
-    if status != STATUS_COMPLETE {
-        return Err(RunnerError::Status(status));
+fn execution_error(
+    store: &mut Store<host_abi::HostAbiState>,
+    error: wasmtime::Error,
+) -> RunnerError {
+    match store.data_mut().take_limit_violation() {
+        Some(kind) => RunnerError::LimitExceeded(kind),
+        None => wasmtime_error(error),
     }
-    result(&mut store, &instance)
+}
+
+/// Converts a Wasmtime resource trap into the corresponding runner limit error.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+fn wasmtime_error(error: wasmtime::Error) -> RunnerError {
+    let limit = match error.downcast_ref::<wasmtime::Trap>() {
+        Some(wasmtime::Trap::OutOfFuel) => Some(LimitKind::Fuel),
+        Some(wasmtime::Trap::Interrupt) => Some(LimitKind::Timeout),
+        Some(wasmtime::Trap::StackOverflow) => Some(LimitKind::WasmStack),
+        _ if error
+            .to_string()
+            .contains("forcing trap when growing memory") =>
+        {
+            Some(LimitKind::Memory)
+        }
+        _ => None,
+    };
+    match limit {
+        Some(kind) => RunnerError::LimitExceeded(kind),
+        None => RunnerError::Wasm(error.to_string()),
+    }
+}
+
+/// Verifies that a module can be held to the generic runner active-task budget.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+fn check_task_metering_imports(module: &Module) -> Result<(), RunnerError> {
+    let has_acquire = module.imports().any(|import| {
+        import.module() == RUNNER_IMPORT_MODULE && import.name() == RUNNER_TASK_ACQUIRE_IMPORT
+    });
+    let has_release = module.imports().any(|import| {
+        import.module() == RUNNER_IMPORT_MODULE && import.name() == RUNNER_TASK_RELEASE_IMPORT
+    });
+    if has_acquire && has_release {
+        Ok(())
+    } else {
+        Err(RunnerError::Abi(
+            "module does not import the required runner task-metering ABI".to_owned(),
+        ))
+    }
+}
+
+/// Encodes one runner-owned CBOR value and applies its configured byte and structural limits.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+fn encode_limited_cbor(
+    value: &ExsValue,
+    limits: &ExecutionLimits,
+    size_kind: LimitKind,
+    label: &str,
+) -> Result<Vec<u8>, RunnerError> {
+    let bytes = value
+        .to_cbor_with_limits(limits.cbor_limits())
+        .map_err(|error| cbor_error(error, &format!("could not encode {label} CBOR")))?;
+    if bytes.len() > limits.max_cbor_payload_bytes {
+        return Err(RunnerError::LimitExceeded(size_kind));
+    }
+    Ok(bytes)
+}
+
+/// Maps a bounded CBOR failure to a typed runner limit or an ABI diagnostic.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+fn cbor_error(error: CborError, context: &str) -> RunnerError {
+    match error {
+        CborError::NestingLimitExceeded => RunnerError::LimitExceeded(LimitKind::CborNesting),
+        CborError::CollectionLimitExceeded => {
+            RunnerError::LimitExceeded(LimitKind::CborCollectionEntries)
+        }
+        error => RunnerError::Abi(format!("{context}: {error}")),
+    }
 }
 
 /// Encodes one completed asynchronous response into the runtime-owned reusable input buffer.
@@ -247,18 +348,15 @@ fn write_response(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     response: &ExsValue,
+    limits: &ExecutionLimits,
 ) -> Result<(i32, i32), RunnerError> {
-    let bytes = encode_result(response).map_err(|error| {
-        RunnerError::Abi(format!("could not encode host response CBOR: {error}"))
-    })?;
+    let bytes = encode_limited_cbor(response, limits, LimitKind::CborPayload, "host response")?;
     let length = i32::try_from(bytes.len())
         .map_err(|_| RunnerError::Abi("host response exceeds Wasm i32 length".to_owned()))?;
     let allocate = instance
         .get_typed_func::<i32, i32>(&mut *store, INPUT_ALLOC_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;
-    let pointer = allocate
-        .call(&mut *store, length)
-        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+    let pointer = allocate.call(&mut *store, length).map_err(wasmtime_error)?;
     let pointer_usize = usize::try_from(pointer)
         .map_err(|_| RunnerError::Abi("negative response pointer".to_owned()))?;
     let memory = instance
@@ -275,6 +373,7 @@ fn write_response(
 fn result(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
+    limits: &ExecutionLimits,
 ) -> Result<ExsValue, RunnerError> {
     let pointer = call_result_accessor::<i32>(store, instance, RESULT_POINTER_EXPORT)?;
     let length = call_result_accessor::<i32>(store, instance, RESULT_LENGTH_EXPORT)?;
@@ -285,6 +384,9 @@ fn result(
         .map_err(|_| RunnerError::Abi("negative result pointer".to_owned()))?;
     let length = usize::try_from(length)
         .map_err(|_| RunnerError::Abi("negative result length".to_owned()))?;
+    if length > limits.max_result_bytes {
+        return Err(RunnerError::LimitExceeded(LimitKind::Result));
+    }
     let end = pointer
         .checked_add(length)
         .ok_or_else(|| RunnerError::Abi("result buffer range overflow".to_owned()))?;
@@ -292,8 +394,8 @@ fn result(
         .data(&*store)
         .get(pointer..end)
         .ok_or_else(|| RunnerError::Abi("result buffer lies outside linear memory".to_owned()))?;
-    ExsValue::from_cbor(bytes)
-        .map_err(|error| RunnerError::Abi(format!("invalid result CBOR: {error}")))
+    ExsValue::from_cbor_with_limits(bytes, limits.cbor_limits())
+        .map_err(|error| cbor_error(error, "invalid result CBOR"))
 }
 
 /// Encodes ordered main arguments and writes them to the runtime-owned input buffer.
@@ -302,18 +404,16 @@ fn write_input(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     inputs: &[ExsValue],
+    limits: &ExecutionLimits,
 ) -> Result<(i32, i32), RunnerError> {
-    let bytes = ExsValue::List(inputs.to_vec())
-        .to_cbor()
-        .map_err(|error| RunnerError::Abi(format!("could not encode input CBOR: {error}")))?;
+    let input = ExsValue::List(inputs.to_vec());
+    let bytes = encode_limited_cbor(&input, limits, LimitKind::CborPayload, "input")?;
     let length = i32::try_from(bytes.len())
         .map_err(|_| RunnerError::Abi("input CBOR exceeds Wasm i32 length".to_owned()))?;
     let allocate = instance
         .get_typed_func::<i32, i32>(&mut *store, INPUT_ALLOC_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;
-    let pointer = allocate
-        .call(&mut *store, length)
-        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+    let pointer = allocate.call(&mut *store, length).map_err(wasmtime_error)?;
     let pointer = usize::try_from(pointer)
         .map_err(|_| RunnerError::Abi("negative input pointer".to_owned()))?;
     let memory = instance
@@ -341,7 +441,7 @@ where
         .get_typed_func::<(), Return>(&mut *store, name)
         .map_err(|error| RunnerError::Abi(error.to_string()))?
         .call(&mut *store, ())
-        .map_err(|error| RunnerError::Wasm(error.to_string()))
+        .map_err(wasmtime_error)
 }
 
 /// Checks the versioned ABI before starting program code.
@@ -354,7 +454,7 @@ fn check_abi(
         .get_typed_func::<(), i32>(&mut *store, ABI_VERSION_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?
         .call(&mut *store, ())
-        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        .map_err(wasmtime_error)?;
     if version != ABI_VERSION.cast_signed() {
         return Err(RunnerError::Abi(format!(
             "expected ABI version {ABI_VERSION}, received {version}"

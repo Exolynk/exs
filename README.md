@@ -144,7 +144,11 @@ The `exs-runtime` executes inside the final Wasm module. A runner executes outsi
 ### Phase 16: Runner Limits & Browser
 
 - [x] Add an `exs-runner` browser feature that executes compiled `.wasm` modules through the browser engine and routes host calls into Rust-Wasm callbacks.
-- [ ] Add runner-enforced limits for memory, fuel, timeouts, tasks, host calls, stack depth, CBOR payloads, and results.
+- [x] Add runner-enforced limits for memory, fuel, timeouts, tasks, host calls, stack depth, CBOR payloads, and results.
+  - [x] Define `ExecutionLimits` and typed runner limit errors; bound main, host, and result CBOR payloads by byte size, nesting, and collection entries.
+  - [x] Enforce native Wasmtime memory, fuel, wall-clock timeout, and Wasm stack limits.
+  - [x] Enforce generic runner task permits plus total and concurrent pending host-call limits in the native runner.
+  - [x] Document browser main-thread execution as application-owned isolation; applications that execute untrusted source must place their runner in a Worker.
 
 ### Backlog: Further Ideas
 

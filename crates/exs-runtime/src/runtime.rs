@@ -42,6 +42,31 @@ unsafe extern "C" {
     ) -> i32;
 }
 
+#[link(wasm_import_module = "runner")]
+unsafe extern "C" {
+    /// Acquires one runner-enforced active task permit.
+    #[link_name = "__runner_task_acquire"]
+    fn task_acquire_import() -> i32;
+
+    /// Releases one runner-enforced active task permit.
+    #[link_name = "__runner_task_release"]
+    fn task_release_import() -> i32;
+}
+
+/// Acquires one active language-task permit from the language-neutral runner ABI.
+pub(crate) fn task_acquire() {
+    if unsafe { task_acquire_import() } != 0 {
+        trap();
+    }
+}
+
+/// Releases one active language-task permit through the language-neutral runner ABI.
+pub(crate) fn task_release() {
+    if unsafe { task_release_import() } != 0 {
+        trap();
+    }
+}
+
 /// Appends one runtime value and returns its one-based table index.
 pub(crate) fn allocate(value: RtValue) -> ValueRef {
     gc::collect();

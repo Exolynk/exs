@@ -227,6 +227,7 @@ impl ExecutionContext {
             let task = self.task_mut(task_id);
             task.host_call = None;
             task.ready_host_result = None;
+            crate::runtime::task_release();
         }
         self.runnable.clear();
         self.current = None;
@@ -294,6 +295,7 @@ impl ExecutionContext {
         let parallel = self.current_task().parallel;
         self.transition(task_id, TaskState::Completed);
         self.current = None;
+        crate::runtime::task_release();
         let Some((handle, index)) = parallel else {
             return true;
         };
@@ -336,6 +338,7 @@ impl ExecutionContext {
         let Some(next_task_id) = self.next_task_id.checked_add(1) else {
             crate::runtime::trap();
         };
+        crate::runtime::task_acquire();
         self.next_task_id = next_task_id;
         self.tasks.push(RuntimeTask {
             id: task_id,

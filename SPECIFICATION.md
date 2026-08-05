@@ -1410,27 +1410,59 @@ A runtime trap, ABI violation, failed cancellation, or internal runtime failure 
 
 ## Limits
 
-The runner MUST support configurable limits for:
+The server runner exposes one `ExecutionLimits` policy per reusable runner. A hard-limit failure
+terminates the root execution and returns `RunnerError::LimitExceeded(LimitKind)` outside the ExS
+value domain. It MUST NOT become an ExS Error value or expose a Wasm pointer, runtime handle, or
+engine-specific trap detail.
 
-- WebAssembly memory;
-- total allocations when measurable;
-- fuel;
+The implemented native policy covers:
+
+- WebAssembly linear memory;
+- Wasmtime fuel;
 - wall-clock timeout;
-- task count;
-- outstanding hostcall count;
-- call depth or stack;
-- clone work/size;
-- CBOR payload size;
-- result size; and
-- host capability count.
+- active task count;
+- total and concurrently pending hostcall count;
+- Wasm stack size;
+- CBOR payload size, nesting, and collection entries; and
+- result size.
 
 Exceeding a hard limit terminates the entire root execution and returns RunnerError outside the ExS value domain.
 
 Fuel exhaustion never yields and is never resumable.
 
+The implemented boundary layer applies conservative defaults and enforces the configured
+CBOR byte limit for main inputs, host-call requests and responses, and final results. It also
+applies configured nesting and direct-collection-entry limits while decoding or encoding CBOR.
+The decoder checks declared collection lengths before allocating, so a short malicious CBOR item
+cannot request an oversized host allocation.
+
+The native runner enforces total and concurrently pending host-call limits directly at its Host
+ABI imports. It enforces active task limits through the language-neutral `runner` import module:
+an instrumented language runtime calls `__runner_task_acquire()` before creating a task and
+`__runner_task_release()` when that task completes or is cancelled. The runner rejects an acquire
+that exceeds the configured active-task budget. This metering ABI is not ExS source syntax and may
+be adopted by other Wasm language runtimes.
+
+The native Wasmtime runner configures a per-instance linear-memory limiter, instruction fuel, and
+a maximum Wasm stack. It starts one root-execution deadline that advances the isolated engine epoch
+when the wall-clock limit elapses. The resulting memory-growth failure, fuel exhaustion, epoch
+interrupt, and stack-overflow traps map to their corresponding `LimitKind` values without exposing
+engine trap details. The deadline also wakes a pending asynchronous host future so an idle suspended
+execution cannot wait past its timeout. A runner cannot safely preempt arbitrary synchronous Rust
+inside a host callback; such callbacks MUST return or enforce their own timeout.
+
+The browser runner intentionally has no hard CPU or memory isolation guarantees on the browser
+main thread. A browser application that executes untrusted ExS source MUST create and terminate a
+dedicated Worker around its runner; worker ownership and host-capability message routing belong to
+that application rather than `exs-runner`.
+
 ## Timeout and cancellation
 
-On timeout or external cancellation, the runner cancels outstanding host operations where supported, invalidates their call IDs, invokes runtime cancellation, and stops executing user code.
+On external cancellation, the runner invokes runtime cancellation before dropping the isolated
+instance. On timeout, the Wasmtime epoch trap is terminal: the runner drops the instance and all
+pending host futures without running further guest code. Host implementations that own external
+work MUST make future drop cancel that work when possible. Both outcomes stop executing user code
+and invalidate the associated runtime state.
 
 ## Result categories
 
@@ -1454,7 +1486,7 @@ The runner MUST NOT expose raw WebAssembly memory addresses or runtime heap iden
 
 ## Version
 
-This chapter defines compiler/runtime ABI `10`.
+This chapter defines compiler/runtime ABI `20`.
 
 ## Phase-1 required exports
 
@@ -1470,6 +1502,22 @@ __exs_result_len() -> i32
 
 The runtime owns both input and result buffers in linear memory. The runner calls `__exs_input_alloc`, copies one CBOR array of ordered `ExsValue` arguments into the returned buffer, and passes that pointer-length pair to `__exs_start`. The completed result is one `ExsValue` CBOR item in the byte range returned by `__exs_result_ptr` and `__exs_result_len`. Later hostcall phases extend this export set with initialization, resume, and cancellation operations.
 
+## Generic runner metering imports
+
+Instrumented language runtimes that create concurrent language tasks import these functions from
+the `runner` module:
+
+```text
+__runner_task_acquire() -> i32
+__runner_task_release() -> i32
+```
+
+An acquire result of `0` grants one active-task permit. Any nonzero result denies the permit; the
+runtime MUST terminate its root execution rather than create an unmetered task. A release result
+of `0` confirms one permit was returned. Runtimes MUST release each acquired permit exactly once
+when its task completes or is cancelled. A runner enforcing an active-task limit MUST reject a
+module that omits either import, and treats an unmatched release as an ABI failure.
+
 ## ABI version value
 
 `__exs_abi_version()` returns:
@@ -1478,7 +1526,7 @@ The runtime owns both input and result buffers in linear memory. The runner call
 (major << 16) | minor
 ```
 
-For this specification the value is `0x0000000A`.
+For this specification the value is `0x00000014`.
 
 ## Run status
 

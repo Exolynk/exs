@@ -6,12 +6,14 @@ extern crate alloc;
 
 pub mod cbor;
 
-pub use cbor::{CborError, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, SourcePositionId};
+pub use cbor::{
+    CborError, CborLimits, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, SourcePositionId,
+};
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 19 adds enum matching and payload access runtime exports.
-pub const ABI_VERSION: u32 = 19;
+/// Version 20 adds generic runner task-acquire and task-release imports.
+pub const ABI_VERSION: u32 = 20;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
@@ -65,12 +67,18 @@ pub const RESULT_POINTER_EXPORT: &str = "__exs_result_ptr";
 pub const RESULT_LENGTH_EXPORT: &str = "__exs_result_len";
 /// The module name containing runner-provided Host ABI imports.
 pub const HOST_IMPORT_MODULE: &str = "exs";
+/// The language-neutral module name containing runner resource-metering imports.
+pub const RUNNER_IMPORT_MODULE: &str = "runner";
 /// The generic runner import that starts one host call.
 pub const HOST_CALL_START_IMPORT: &str = "__exs_host_call_start";
 /// The runner import returning one ready host response byte length.
 pub const HOST_CALL_RESPONSE_LENGTH_IMPORT: &str = "__exs_host_call_response_len";
 /// The runner import copying one ready host response into Wasm linear memory.
 pub const HOST_CALL_RESPONSE_COPY_IMPORT: &str = "__exs_host_call_response_copy";
+/// The runner import that acquires one active language-task permit.
+pub const RUNNER_TASK_ACQUIRE_IMPORT: &str = "__runner_task_acquire";
+/// The runner import that releases one active language-task permit.
+pub const RUNNER_TASK_RELEASE_IMPORT: &str = "__runner_task_release";
 /// The compiler-generated export used by runners to resume a completed host call.
 pub const RESUME_HOST_EXPORT: &str = "__exs_resume_host";
 /// The compiler-generated export used by runners to cancel a suspended root execution.
