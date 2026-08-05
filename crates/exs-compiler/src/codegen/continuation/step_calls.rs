@@ -1,7 +1,6 @@
 //! Call-boundary and utility Wasm emission for continuation frames.
 
 use exs_abi::{STATUS_COMPLETE, STATUS_PENDING, STATUS_READY};
-use exs_value::is_valid_int;
 use wasm_encoder::{BlockType, Instruction, ValType};
 
 use crate::ast::{BinaryOperator, Expression};
@@ -535,14 +534,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     ) -> Result<(), CompileDiagnostics<'source>> {
         match expression {
             Expression::Integer(value, span) => {
-                if !is_valid_int(*value) {
-                    return Err(diagnostics(CompileDiagnostic::new(
+                let value = i64::try_from(*value).map_err(|_| {
+                    diagnostics(CompileDiagnostic::new(
                         "E0206",
                         *span,
-                        "integer literal is outside the ExS 56-bit range",
-                    )));
-                }
-                self.function.instruction(&Instruction::I64Const(*value));
+                        "integer literal is outside the ExS signed 64-bit range",
+                    ))
+                })?;
+                self.function.instruction(&Instruction::I64Const(value));
                 self.call_runtime("__exs_rt_int_new", *span)
             }
             Expression::Float(value, span) => {
@@ -565,19 +564,12 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         }
     }
 
-    /// Emits one checked ExS integer construction.
+    /// Emits one i64 ExS integer construction.
     pub(super) fn integer(
         &mut self,
         value: i64,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        if !is_valid_int(value) {
-            return Err(diagnostics(CompileDiagnostic::new(
-                "E0206",
-                span,
-                "integer literal is outside the ExS 56-bit range",
-            )));
-        }
         self.function.instruction(&Instruction::I64Const(value));
         self.call_runtime("__exs_rt_int_new", span)
     }

@@ -8,7 +8,7 @@ use exs_abi::{
     TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE,
     TYPE_OBJECT, TYPE_STRING,
 };
-use exs_value::{ValueRef, is_valid_int};
+use exs_value::ValueRef;
 
 use crate::gc;
 use crate::runtime;
@@ -267,12 +267,9 @@ pub extern "C" fn __exs_rt_bool_new(value: i32) -> ValueRef {
     }
 }
 
-/// Allocates an ExS integer when it lies in the language range.
+/// Allocates one signed 64-bit ExS integer.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_int_new(value: i64) -> ValueRef {
-    if !is_valid_int(value) {
-        runtime::trap();
-    }
     runtime::allocate(RtValue::Int(value))
 }
 

@@ -595,7 +595,7 @@ fn standard_pages() -> Vec<DocumentationPage> {
         },
         StandardType {
             name: "Int",
-            description: "`Int` is a signed 56-bit exact integer. It supports numeric operators and reports `IntOverflowError` when an operation cannot produce a value inside the ExS integer range.",
+            description: "`Int` is a signed 64-bit exact integer. It supports numeric operators and reports `IntOverflowError` when an operation overflows the ExS integer range.",
             usage: "fn main() -> Int {\n    let quantity = 42;\n    ret quantity + 8;\n}",
             methods: &[StandardMethod {
                 signature: "abs() -> Int",

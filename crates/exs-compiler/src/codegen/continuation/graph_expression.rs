@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{BinaryOperator, Expression, MatchArmBody, MatchPattern};
+use crate::ast::{BinaryOperator, Expression, MatchArmBody, MatchPattern, UnaryOperator};
 use crate::codegen::diagnostics;
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
@@ -152,6 +152,27 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 operand,
                 span,
             } => {
+                if matches!(operator, UnaryOperator::Negate)
+                    && let Expression::Integer(value, operand_span) = operand.as_ref()
+                {
+                    let value = value
+                        .checked_neg()
+                        .and_then(|value| i64::try_from(value).ok())
+                        .ok_or_else(|| {
+                            diagnostics(CompileDiagnostic::new(
+                                "E0206",
+                                *operand_span,
+                                "integer literal is outside the ExS signed 64-bit range",
+                            ))
+                        })?;
+                    let destination = self.temporary(*span)?;
+                    self.operations.push(Operation::Integer {
+                        value,
+                        destination,
+                        span: *span,
+                    });
+                    return Ok(destination);
+                }
                 let operand = self.lower_expression(operand)?;
                 let destination = self.temporary(*span)?;
                 self.operations.push(Operation::Unary {

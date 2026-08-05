@@ -17,8 +17,8 @@ pub struct Token<'a> {
 pub enum TokenKind {
     /// An identifier spelling.
     Identifier(String),
-    /// A parsed decimal integer.
-    Integer(i64),
+    /// A parsed decimal integer magnitude, widened so unary negation can produce `i64::MIN`.
+    Integer(i128),
     /// A parsed binary64 floating-point literal.
     Float(f64),
     /// A decoded UTF-8 string literal.
@@ -250,7 +250,7 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                 };
                 TokenKind::Float(value)
             } else {
-                let value = match numeric.parse::<i64>() {
+                let value = match numeric.parse::<i128>() {
                     Ok(value) => value,
                     Err(_) => {
                         diagnostics.push(diagnostic(
@@ -258,7 +258,7 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                             start,
                             index,
                             "E0004",
-                            "integer literal is outside i64 range",
+                            "integer literal is outside the supported literal range",
                         ));
                         continue;
                     }

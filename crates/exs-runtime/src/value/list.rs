@@ -24,7 +24,7 @@ pub(crate) mod operations {
 
     use alloc::boxed::Box;
 
-    use exs_value::{ValueRef, is_valid_int};
+    use exs_value::ValueRef;
 
     use crate::runtime;
     use crate::value::{RtValue, RuntimeList};
@@ -226,14 +226,11 @@ pub(crate) mod operations {
         }
     }
 
-    /// Allocates a checked ExS integer containing one collection length.
+    /// Allocates one signed 64-bit ExS integer containing one collection length.
     pub(crate) fn length_value(length: usize) -> ValueRef {
         let Ok(length) = i64::try_from(length) else {
             runtime::trap();
         };
-        if !is_valid_int(length) {
-            runtime::trap();
-        }
         runtime::allocate(RtValue::Int(length))
     }
 

@@ -1,6 +1,5 @@
 //! Expression lowering and function contract validation.
 
-use exs_value::is_valid_int;
 use wasm_encoder::{BlockType, Instruction, ValType};
 
 use crate::ast::{BinaryOperator, Expression, ObjectProperty, UnaryOperator};
@@ -20,14 +19,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         match expression {
             Expression::Integer(value, span) => {
-                if !is_valid_int(*value) {
-                    return Err(diagnostics(CompileDiagnostic::new(
+                let value = i64::try_from(*value).map_err(|_| {
+                    diagnostics(CompileDiagnostic::new(
                         "E0206",
                         *span,
-                        "integer literal is outside the ExS 56-bit range",
-                    )));
-                }
-                self.function.instruction(&Instruction::I64Const(*value));
+                        "integer literal is outside the ExS signed 64-bit range",
+                    ))
+                })?;
+                self.function.instruction(&Instruction::I64Const(value));
                 self.runtime_call("__exs_rt_int_new", *span)?;
             }
             Expression::Float(value, span) => {
@@ -117,12 +116,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 {
                     let negative = value
                         .checked_neg()
-                        .filter(|value| is_valid_int(*value))
+                        .and_then(|value| i64::try_from(value).ok())
                         .ok_or_else(|| {
                             diagnostics(CompileDiagnostic::new(
                                 "E0206",
                                 *operand_span,
-                                "integer literal is outside the ExS 56-bit range",
+                                "integer literal is outside the ExS signed 64-bit range",
                             ))
                         })?;
                     self.function.instruction(&Instruction::I64Const(negative));

@@ -5,7 +5,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use exs_abi::{STANDARD_ORDERING_TYPE_ID, STANDARD_ORDERING_TYPE_IDENTITY};
-use exs_value::{ValueRef, is_valid_int};
+use exs_value::ValueRef;
 
 use crate::gc;
 use crate::runtime;
@@ -273,14 +273,14 @@ pub(crate) fn is_empty(value: ValueRef) -> ValueRef {
     runtime::allocate(RtValue::Bool(empty))
 }
 
-/// Returns the absolute value of one Int while preserving the ExS integer range.
+/// Returns the absolute value of one Int when it fits in the ExS signed 64-bit range.
 pub(crate) fn integer_abs(receiver: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Int(value) => match value.checked_abs().filter(|value| is_valid_int(*value)) {
+        RtValue::Int(value) => match value.checked_abs() {
             Some(result) => runtime::allocate(RtValue::Int(result)),
             None => runtime::recoverable_error(
                 "IntOverflowError",
-                "absolute value is outside the ExS integer range",
+                "absolute value is outside the ExS signed 64-bit range",
                 receiver,
             ),
         },

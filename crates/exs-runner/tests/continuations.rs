@@ -256,6 +256,32 @@ fn executes_sequential_continuation_states_for_synchronous_host_calls() {
     assert_eq!(result, ExsValue::Int(7));
 }
 
+/// Preserves the minimum signed 64-bit literal through continuation lowering.
+#[test]
+fn executes_the_minimum_signed_64_bit_literal_in_a_continuation() {
+    let compiled = compile_source(
+        r#"
+        fn main() -> Int {
+            host.call("ready");
+            ret -9223372036854775808;
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("ready", |_| ExsValue::None)
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(i64::MIN));
+}
+
 /// Terminates a resumable caller after a direct callee violates a strict return contract.
 #[test]
 fn terminates_continuation_after_a_fatal_direct_call_result() {

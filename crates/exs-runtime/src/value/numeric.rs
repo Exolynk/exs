@@ -1,6 +1,6 @@
 //! Numeric, comparison, and Boolean runtime operations.
 
-use exs_value::{ValueRef, is_valid_int};
+use exs_value::ValueRef;
 
 use crate::runtime;
 use crate::value::RtValue;
@@ -94,10 +94,10 @@ pub(crate) fn arithmetic(
     };
     match (left, right) {
         (Number::Int(left), Number::Int(right)) => match integer_operation(left, right) {
-            Some(value) if is_valid_int(value) => runtime::allocate(RtValue::Int(value)),
+            Some(value) => runtime::allocate(RtValue::Int(value)),
             _ => runtime::recoverable_error(
                 "IntOverflowError",
-                "integer arithmetic overflowed the ExS integer range",
+                "integer arithmetic overflowed the ExS signed 64-bit range",
                 left_value,
             ),
         },
@@ -125,10 +125,10 @@ pub(crate) fn divide(left: ValueRef, right: ValueRef) -> ValueRef {
 pub(crate) fn negate(value: ValueRef) -> ValueRef {
     match number_of_ref(value) {
         Ok(Number::Int(number)) => match number.checked_neg() {
-            Some(value) if is_valid_int(value) => runtime::allocate(RtValue::Int(value)),
+            Some(value) => runtime::allocate(RtValue::Int(value)),
             _ => runtime::recoverable_error(
                 "IntOverflowError",
-                "integer negation overflowed the ExS integer range",
+                "integer negation overflowed the ExS signed 64-bit range",
                 value,
             ),
         },

@@ -119,7 +119,7 @@ ExS is dynamically typed. Types describe values, not variable bindings. The sour
 | --- | --- |
 | `None` | The only absence value. |
 | `Bool` | `true` or `false`. |
-| `Int` | A signed 56-bit integer. |
+| `Int` | A signed 64-bit integer. |
 | `Float` | An IEEE 754 binary64 value. |
 | `String` | An immutable Unicode-scalar sequence. |
 | `List` | A mutable ordered sequence of values. |

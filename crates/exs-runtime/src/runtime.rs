@@ -9,7 +9,7 @@ use exs_abi::{
     ErrorSeverity, ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY,
     STATUS_PENDING, STATUS_READY,
 };
-use exs_value::{ValueRef, is_valid_int};
+use exs_value::ValueRef;
 
 use crate::gc;
 use crate::scheduler::{ExecutionContext, HostResume};
@@ -1022,8 +1022,7 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
             cause: error.cause.map(|cause| exs_value_to_runtime(*cause)),
         })),
         ExsValue::Bool(value) => RtValue::Bool(value),
-        ExsValue::Int(value) if is_valid_int(value) => RtValue::Int(value),
-        ExsValue::Int(_) => trap(),
+        ExsValue::Int(value) => RtValue::Int(value),
         ExsValue::Float(value) => RtValue::Float(value),
         ExsValue::String(value) => RtValue::String(Box::new(RuntimeString::from_string(value))),
         ExsValue::List(elements) => RtValue::List(Box::new(RuntimeList {

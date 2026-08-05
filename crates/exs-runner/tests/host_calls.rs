@@ -52,12 +52,12 @@ fn executes_a_synchronous_dynamic_host_function() {
             .is_ok()
     );
     let cancellation = ExecutionCancellation::new();
-    let result = match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(42)], &cancellation))
-    {
-        Ok(result) => result,
-        Err(error) => panic!("execution failed: {error}"),
-    };
-    assert_eq!(result, ExsValue::Int(42));
+    let result =
+        match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(i64::MAX)], &cancellation)) {
+            Ok(result) => result,
+            Err(error) => panic!("execution failed: {error}"),
+        };
+    assert_eq!(result, ExsValue::Int(i64::MAX));
 }
 
 /// Rejects non-serializable host arguments without invoking the registered host function.
@@ -122,13 +122,13 @@ fn executes_an_asynchronous_dynamic_host_function() {
     );
     let result = match block_on(runner.execute(
         &compiled.wasm,
-        &[ExsValue::String("Ada".to_owned())],
+        &[ExsValue::Int(i64::MIN)],
         &ExecutionCancellation::new(),
     )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
-    assert_eq!(result, ExsValue::String("Ada".to_owned()));
+    assert_eq!(result, ExsValue::Int(i64::MIN));
 }
 
 /// Cancels a suspended execution and invalidates its pending host-call continuation.

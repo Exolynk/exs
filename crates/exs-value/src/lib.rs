@@ -4,11 +4,6 @@
 
 use core::num::NonZeroU32;
 
-/// The inclusive lower bound of an `ExS` integer.
-pub const MIN_INT: i64 = -(1_i64 << 55);
-/// The inclusive upper bound of an `ExS` integer.
-pub const MAX_INT: i64 = (1_i64 << 55) - 1;
-
 /// An opaque reference to one runtime-allocated `ExS` value.
 ///
 /// The contained index addresses one slot in the runtime-owned value table. Only `exs-runtime`
@@ -36,10 +31,4 @@ impl ValueRef {
     pub const fn runtime_index(self) -> u32 {
         self.0.get()
     }
-}
-
-/// Returns whether `value` fits in `ExS`'s 56-bit integer range.
-#[must_use]
-pub const fn is_valid_int(value: i64) -> bool {
-    value >= MIN_INT && value <= MAX_INT
 }

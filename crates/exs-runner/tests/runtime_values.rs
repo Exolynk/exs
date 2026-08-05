@@ -28,13 +28,51 @@ fn executes_calls_assignments_conditionals_and_booleans() {
     );
 }
 
-/// Preserves the inclusive lower integer bound in compiled code.
+/// Preserves both signed 64-bit integer bounds in compiled source literals.
 #[test]
-fn executes_the_minimum_exs_integer_literal() {
+fn executes_signed_64_bit_integer_literals() {
     assert_eq!(
-        execute_source("fn main(input) { ret -36028797018963968; }", ExsValue::None,),
-        ExsValue::Int(exs_value::MIN_INT)
+        execute_source(
+            "fn main(input) { ret 9223372036854775807; }",
+            ExsValue::None,
+        ),
+        ExsValue::Int(i64::MAX)
     );
+    assert_eq!(
+        execute_source(
+            "fn main(input) { ret -9223372036854775808; }",
+            ExsValue::None,
+        ),
+        ExsValue::Int(i64::MIN)
+    );
+}
+
+/// Round-trips signed 64-bit runner input and result values.
+#[test]
+fn round_trips_signed_64_bit_runner_values() {
+    for value in [i64::MIN, i64::MAX] {
+        assert_eq!(
+            execute_source(
+                "fn main(input: Int) -> Int { ret input; }",
+                ExsValue::Int(value)
+            ),
+            ExsValue::Int(value)
+        );
+    }
+}
+
+/// Reports overflow only when integer arithmetic exceeds the signed 64-bit range.
+#[test]
+fn reports_signed_64_bit_integer_overflow() {
+    let result = execute_source(
+        "fn main(input) -> Error { ret 9223372036854775807 + 1; }",
+        ExsValue::None,
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("signed 64-bit overflow did not return an Error");
+    };
+    assert_eq!(error.kind, "IntOverflowError");
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
 }
 
 /// Links the compiler's committed runtime template into an executable module.

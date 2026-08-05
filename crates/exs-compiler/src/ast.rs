@@ -367,8 +367,8 @@ pub enum MatchPattern<'a> {
 /// A Phase-1 expression.
 #[derive(Debug, Clone)]
 pub enum Expression<'a> {
-    /// An integer literal.
-    Integer(i64, SourceSpan<'a>),
+    /// An integer literal magnitude, validated as an i64 during lowering.
+    Integer(i128, SourceSpan<'a>),
     /// A binary64 floating-point literal.
     Float(f64, SourceSpan<'a>),
     /// A decoded UTF-8 string literal.
