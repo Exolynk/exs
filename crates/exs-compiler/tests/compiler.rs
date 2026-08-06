@@ -1066,6 +1066,33 @@ fn collects_multiple_lexical_diagnostics() {
     );
 }
 
+/// Rejects non-ASCII spellings in every source position that requires an identifier.
+#[test]
+fn rejects_non_ascii_identifiers() {
+    let error = match compile(
+        SourceInput {
+            source_id: "unicode-identifiers.exs",
+            text: concat!(
+                "import \"./math.exs\" as caf\u{00e9};\n",
+                "fn main() {\n",
+                "    let object = {caf\u{00e9}: 1};\n",
+                "    let caf\u{00e9} = object[\"caf\u{00e9}\"];\n",
+                "    ret caf\u{00e9};\n",
+                "}\n",
+            ),
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics.len(), 4, "{error:?}");
+    assert!(error.diagnostics.iter().all(|diagnostic| {
+        diagnostic.category == exs_compiler::CompileDiagnosticCategory::Lexical
+            && diagnostic.message.contains("identifiers use ASCII letters")
+    }));
+}
+
 /// Compiles trait contracts, required methods, and inherited default methods.
 #[test]
 fn compiles_traits_and_default_methods() {

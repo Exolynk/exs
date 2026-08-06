@@ -283,13 +283,13 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                 }
             }
         } else if let Some(character) = source.text[index..].chars().next() {
-            if character == '_' || character.is_alphabetic() {
+            if character == '_' || character.is_ascii_alphabetic() {
                 index += character.len_utf8();
                 while index < bytes.len() {
                     let Some(next) = source.text[index..].chars().next() else {
                         break;
                     };
-                    if next == '_' || next.is_alphanumeric() {
+                    if next == '_' || next.is_ascii_alphanumeric() {
                         index += next.len_utf8();
                     } else {
                         break;
@@ -297,7 +297,19 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                 }
                 keyword_or_identifier(&source.text[start..index])
             } else {
-                index += 1;
+                index += character.len_utf8();
+                if !character.is_ascii() {
+                    diagnostics.push(diagnostic(
+                        source,
+                        start,
+                        index,
+                        "E0001",
+                        format!(
+                            "non-ASCII character `{character}` is not allowed outside string literals; identifiers use ASCII letters, digits, and underscores"
+                        ),
+                    ));
+                    continue;
+                }
                 match byte {
                     b'(' => TokenKind::LeftParen,
                     b')' => TokenKind::RightParen,

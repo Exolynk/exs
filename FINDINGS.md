@@ -1,7 +1,5 @@
 **Findings**
 
-6. **Medium: Unicode identifiers are accepted by the lexer but rejected in imports and reformatted as quoted Object keys.** The language reference permits Unicode identifiers, while module aliases and formatter identifier checks are ASCII-only. [lexer](/Users/roba/Code/exs/crates/exs-compiler/src/lexer.rs:285), [module graph](/Users/roba/Code/exs/crates/exs-compiler/src/module_graph.rs:65), [formatter](/Users/roba/Code/exs/crates/exs-compiler/src/formatter.rs:669). Share one Unicode-aware identifier predicate.
-
 7. **Low: The specification contradicts the implementation and itself.** It still limits literals to 55 bits although `Int` is otherwise defined and implemented as signed 64-bit; it also lists `NotSerializable` while the documented and emitted error is `SerializationError`. [number rule](/Users/roba/Code/exs/SPECIFICATION.md:66), [error list](/Users/roba/Code/exs/SPECIFICATION.md:439), [boundary behavior](/Users/roba/Code/exs/SPECIFICATION.md:521).
 
 8. **Low: Target-wide Wasm linting/testing is broken.** `cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings` fails with duplicate `panic_impl`, because the runtime’s panic handler is included with Cargo’s std test harness. [panic handler](/Users/roba/Code/exs/crates/exs-runtime/src/wasm.rs:833). Gate it outside tests or disable the unsupported runtime test target, then add the target-wide command to CI.
