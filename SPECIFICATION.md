@@ -42,7 +42,7 @@ Source files are UTF-8. `LF` and `CRLF` line endings are equivalent. Whitespace 
 
 Line comments begin with `//` and continue to the end of the line. Block comments begin with `/*` and end at the next `*/`; they do not nest.
 
-Identifiers begin with `_` or a Unicode alphabetic character. Later characters may also be digits. Identifiers are case-sensitive.
+Identifiers begin with `_` or an ASCII letter. Later characters may also be ASCII digits or `_`. Identifiers are case-sensitive.
 
 The following words are reserved and cannot be used as identifiers:
 
@@ -63,7 +63,7 @@ Integer literals are decimal digits with optional `_` separators:
 1_000_000
 ```
 
-An `Int` literal must be in the range `-2^55 .. 2^55 - 1`; an out-of-range literal is a compile error. A leading minus is the unary `-` operator, not part of the literal.
+An `Int` literal must be in the inclusive range `-2^63 .. 2^63 - 1`; an out-of-range literal is a compile error. A leading minus is the unary `-` operator, not part of the literal.
 
 Float literals contain a decimal point, an exponent, or both:
 
@@ -436,7 +436,7 @@ error.data()      // any value
 error.cause()     // related value or None
 ```
 
-Common Error kinds are `ArityError`, `CloneError`, `IndexError`, `IntOverflowError`, `MatchError`, `MethodNotFound`, `MissingValue`, `NotIterable`, `NotSerializable`, `TypeError`, and `HostFunctionNotFound`.
+Common Error kinds are `ArityError`, `CloneError`, `IndexError`, `IntOverflowError`, `MatchError`, `MethodNotFound`, `MissingValue`, `NotIterable`, `SerializationError`, `TypeError`, and `HostFunctionNotFound`.
 
 # 10. Parallel Work with `par`
 
@@ -524,7 +524,7 @@ The available names, their argument contracts, capabilities, and side effects ar
 
 # 13. Grammar Summary
 
-This grammar summarizes the source syntax. Lexical rules, including string forms and Unicode identifiers, are defined earlier in this document.
+This grammar summarizes the source syntax. Lexical rules, including string forms and ASCII identifiers, are defined earlier in this document.
 
 ```ebnf
 module          = { moduleDecl } { item } ;
