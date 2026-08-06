@@ -1,7 +1,5 @@
 **Findings**
 
-5. **Medium: CI does not verify that the committed runtime Wasm matches runtime source.** The compiler embeds `exs-runtime.wasm`, but regeneration is a manual copy step and CI never runs it or checks for a diff. Runtime source can drift from the binary actually linked into every program. [regeneration script](/Users/roba/Code/exs/crates/exs-runtime/build-runtime.nu:1), [embedded artifact](/Users/roba/Code/exs/crates/exs-runtime/src/lib.rs:27), [CI](/Users/roba/Code/exs/.github/workflows/ci.yml:30). Add a CI job that rebuilds the template and fails on `git diff`.
-
 6. **Medium: Unicode identifiers are accepted by the lexer but rejected in imports and reformatted as quoted Object keys.** The language reference permits Unicode identifiers, while module aliases and formatter identifier checks are ASCII-only. [lexer](/Users/roba/Code/exs/crates/exs-compiler/src/lexer.rs:285), [module graph](/Users/roba/Code/exs/crates/exs-compiler/src/module_graph.rs:65), [formatter](/Users/roba/Code/exs/crates/exs-compiler/src/formatter.rs:669). Share one Unicode-aware identifier predicate.
 
 7. **Low: The specification contradicts the implementation and itself.** It still limits literals to 55 bits although `Int` is otherwise defined and implemented as signed 64-bit; it also lists `NotSerializable` while the documented and emitted error is `SerializationError`. [number rule](/Users/roba/Code/exs/SPECIFICATION.md:66), [error list](/Users/roba/Code/exs/SPECIFICATION.md:439), [boundary behavior](/Users/roba/Code/exs/SPECIFICATION.md:521).
