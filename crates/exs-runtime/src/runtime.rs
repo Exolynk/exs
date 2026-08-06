@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
 use exs_abi::{
-    ErrorSeverity, ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY,
-    STATUS_PENDING, STATUS_READY,
+    CborLimits, ErrorSeverity, ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING,
+    HOST_CALL_READY, STATUS_PENDING, STATUS_READY,
 };
 use exs_value::ValueRef;
 
@@ -836,7 +836,10 @@ pub(crate) fn host_call_take_ready() -> ValueRef {
         trap();
     }
     let checkpoint = gc::temporary_root_checkpoint();
-    let value = exs_value_to_runtime(ExsValue::from_cbor(buffer).unwrap_or_else(|_| trap()));
+    let value = exs_value_to_runtime(
+        ExsValue::from_cbor_with_limits(buffer, CborLimits::unrestricted())
+            .unwrap_or_else(|_| trap()),
+    );
     gc::restore_temporary_roots(checkpoint);
     execution(unsafe { runtime() }).finish_current_host_call();
     value
@@ -1081,7 +1084,7 @@ fn decode_input(pointer_value: i32, length: i32) -> ExsValue {
     if pointer_value != expected_pointer || length != buffer.len() {
         trap();
     }
-    ExsValue::from_cbor(buffer).unwrap_or_else(|_| trap())
+    ExsValue::from_cbor_with_limits(buffer, CborLimits::unrestricted()).unwrap_or_else(|_| trap())
 }
 
 /// Converts one linear-memory pointer to the signed Wasm ABI representation.

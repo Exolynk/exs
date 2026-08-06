@@ -81,10 +81,11 @@ pub struct ExecutionLimits {
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl ExecutionLimits {
-    /// Returns the structural CBOR limits derived from this runner policy.
+    /// Returns the CBOR resource limits derived from this runner policy.
     #[must_use]
     pub(crate) const fn cbor_limits(&self) -> CborLimits {
         CborLimits {
+            max_payload_bytes: self.max_cbor_payload_bytes,
             max_nesting: self.max_cbor_nesting,
             max_collection_entries: self.max_cbor_collection_entries,
         }

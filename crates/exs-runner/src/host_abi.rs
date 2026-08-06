@@ -370,6 +370,11 @@ fn store_ready_response(
 /// Converts a host-boundary CBOR failure into a technical Wasmtime failure.
 fn host_cbor_error(caller: &mut Caller<'_, HostAbiState>, error: HostCborError) -> wasmtime::Error {
     match error {
+        HostCborError::Invalid(exs_abi::CborError::PayloadLimitExceeded) => {
+            caller
+                .data_mut()
+                .report_limit_violation(LimitKind::CborPayload);
+        }
         HostCborError::Invalid(exs_abi::CborError::NestingLimitExceeded) => {
             caller
                 .data_mut()
@@ -382,5 +387,5 @@ fn host_cbor_error(caller: &mut Caller<'_, HostAbiState>, error: HostCborError) 
         }
         _ => {}
     }
-    wasmtime::Error::msg(format!("could not encode host response: {error}"))
+    wasmtime::Error::msg(format!("could not process host CBOR: {error}"))
 }

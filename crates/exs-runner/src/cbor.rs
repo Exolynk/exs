@@ -32,7 +32,7 @@ impl std::error::Error for HostCborError {}
 ///
 /// Returns an error when the payload is not a valid ExS CBOR List.
 pub fn decode_arguments(bytes: &[u8]) -> Result<Vec<ExsValue>, HostCborError> {
-    decode_arguments_with_limits(bytes, CborLimits::unrestricted())
+    decode_arguments_with_limits(bytes, CborLimits::default())
 }
 
 /// Decodes one host request with structural CBOR limits.

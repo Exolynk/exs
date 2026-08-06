@@ -342,6 +342,7 @@ fn encode_limited_cbor(
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn cbor_error(error: CborError, context: &str) -> RunnerError {
     match error {
+        CborError::PayloadLimitExceeded => RunnerError::LimitExceeded(LimitKind::CborPayload),
         CborError::NestingLimitExceeded => RunnerError::LimitExceeded(LimitKind::CborNesting),
         CborError::CollectionLimitExceeded => {
             RunnerError::LimitExceeded(LimitKind::CborCollectionEntries)

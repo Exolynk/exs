@@ -78,11 +78,43 @@ fn rejects_declared_collections_over_the_configured_limit() {
         ExsValue::from_cbor_with_limits(
             &[0x98, 100],
             CborLimits {
+                max_payload_bytes: 1024,
                 max_nesting: 8,
                 max_collection_entries: 4,
             },
         ),
         Err(CborError::CollectionLimitExceeded)
+    );
+}
+
+/// Applies the default collection limit before allocating from hostile input.
+#[test]
+fn default_limits_reject_hostile_declared_collection() {
+    assert_eq!(
+        ExsValue::from_cbor(&[0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+        Err(CborError::CollectionLimitExceeded)
+    );
+}
+
+/// Rejects impossible collection headers even when callers opt out of resource limits.
+#[test]
+fn unrestricted_limits_reject_impossible_collection_length_without_allocating() {
+    assert_eq!(
+        ExsValue::from_cbor_with_limits(
+            &[0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+            CborLimits::unrestricted(),
+        ),
+        Err(CborError::Malformed)
+    );
+}
+
+/// Applies the default payload size limit before parsing input.
+#[test]
+fn default_limits_reject_oversized_payloads() {
+    let bytes = vec![0xf6; 2 * 1024 * 1024 + 1];
+    assert_eq!(
+        ExsValue::from_cbor(&bytes),
+        Err(CborError::PayloadLimitExceeded)
     );
 }
 
@@ -95,6 +127,7 @@ fn rejects_values_over_the_configured_nesting_limit() {
         Err(error) => panic!("could not encode test value: {error}"),
     };
     let limits = CborLimits {
+        max_payload_bytes: 1024,
         max_nesting: 1,
         max_collection_entries: 8,
     };

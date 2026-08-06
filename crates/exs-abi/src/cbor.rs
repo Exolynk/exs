@@ -15,6 +15,12 @@ use minicbor::{
 const ERROR_TAG: u64 = 60_001;
 /// Stable CBOR tag for an ExS nominal enum value.
 const ENUM_TAG: u64 = 60_005;
+/// Default maximum size of one decoded CBOR payload.
+const DEFAULT_MAX_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
+/// Default maximum recursive depth of one decoded CBOR value.
+const DEFAULT_MAX_NESTING: usize = 64;
+/// Default maximum direct entries in one decoded CBOR collection.
+const DEFAULT_MAX_COLLECTION_ENTRIES: usize = 65_536;
 
 /// A host-safe ExS value represented independently of the runtime heap.
 ///
@@ -105,6 +111,10 @@ pub enum CborError {
     NestingLimitExceeded,
     /// The value exceeded the configured collection-entry limit.
     CollectionLimitExceeded,
+    /// The encoded payload exceeded the configured byte limit.
+    PayloadLimitExceeded,
+    /// The decoder could not reserve memory for a validated collection.
+    AllocationFailed,
 }
 
 impl fmt::Display for CborError {
@@ -118,13 +128,17 @@ impl fmt::Display for CborError {
             Self::CollectionLimitExceeded => {
                 formatter.write_str("CBOR collection-entry limit exceeded")
             }
+            Self::PayloadLimitExceeded => formatter.write_str("CBOR payload limit exceeded"),
+            Self::AllocationFailed => formatter.write_str("could not allocate decoded CBOR value"),
         }
     }
 }
 
-/// Structural limits applied while encoding or decoding one CBOR value.
+/// Structural limits applied while encoding or decoding, and a payload limit while decoding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CborLimits {
+    /// Maximum encoded bytes accepted for one CBOR value.
+    pub max_payload_bytes: usize,
     /// Maximum recursive value depth, including the root value.
     pub max_nesting: usize,
     /// Maximum direct entries in any List, Object, enum payload, or Error trace.
@@ -132,10 +146,11 @@ pub struct CborLimits {
 }
 
 impl CborLimits {
-    /// Returns limits that preserve the historical unrestricted codec behavior.
+    /// Returns limits that explicitly disable every CBOR resource bound.
     #[must_use]
     pub const fn unrestricted() -> Self {
         Self {
+            max_payload_bytes: usize::MAX,
             max_nesting: usize::MAX,
             max_collection_entries: usize::MAX,
         }
@@ -143,9 +158,13 @@ impl CborLimits {
 }
 
 impl Default for CborLimits {
-    /// Creates unrestricted structural limits for compatibility callers.
+    /// Creates conservative limits suitable for one untrusted host-boundary value.
     fn default() -> Self {
-        Self::unrestricted()
+        Self {
+            max_payload_bytes: DEFAULT_MAX_PAYLOAD_BYTES,
+            max_nesting: DEFAULT_MAX_NESTING,
+            max_collection_entries: DEFAULT_MAX_COLLECTION_ENTRIES,
+        }
     }
 }
 
@@ -170,13 +189,14 @@ impl ExsValue {
         Ok(encoder.into_writer())
     }
 
-    /// Decodes exactly one Phase-1 ExS CBOR value.
+    /// Decodes exactly one Phase-1 ExS CBOR value with conservative resource limits.
     ///
     /// # Errors
     ///
-    /// Returns an error if the input is malformed, unsupported, or contains trailing data.
+    /// Returns an error if the input is malformed, unsupported, contains trailing data, or
+    /// exceeds a default limit.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, CborError> {
-        Self::from_cbor_with_limits(bytes, CborLimits::unrestricted())
+        Self::from_cbor_with_limits(bytes, CborLimits::default())
     }
 
     /// Decodes exactly one Phase-1 ExS CBOR value with structural resource limits.
@@ -185,8 +205,11 @@ impl ExsValue {
     ///
     /// Returns an error when the input is malformed, unsupported, trailing, or exceeds a limit.
     pub fn from_cbor_with_limits(bytes: &[u8], limits: CborLimits) -> Result<Self, CborError> {
+        if bytes.len() > limits.max_payload_bytes {
+            return Err(CborError::PayloadLimitExceeded);
+        }
         let mut decoder = Decoder::new(bytes);
-        let value = decode_value(&mut decoder, limits, 1)?;
+        let value = decode_value(&mut decoder, bytes.len(), limits, 1)?;
         if decoder.position() != bytes.len() {
             return Err(CborError::TrailingData);
         }
@@ -264,6 +287,7 @@ fn encode_value(
 /// Decodes one host-safe ExS value from the current CBOR item position.
 fn decode_value(
     decoder: &mut Decoder<'_>,
+    input_length: usize,
     limits: CborLimits,
     depth: usize,
 ) -> Result<ExsValue, CborError> {
@@ -276,8 +300,13 @@ fn decode_value(
         Type::Tag => {
             let tag = decoder.tag().map_err(|_| CborError::Malformed)?;
             match tag.as_u64() {
-                ERROR_TAG => Ok(ExsValue::Error(decode_error(decoder, limits, depth)?)),
-                ENUM_TAG => decode_enum(decoder, limits, depth),
+                ERROR_TAG => Ok(ExsValue::Error(decode_error(
+                    decoder,
+                    input_length,
+                    limits,
+                    depth,
+                )?)),
+                ENUM_TAG => decode_enum(decoder, input_length, limits, depth),
                 _ => Err(CborError::UnsupportedType),
             }
         }
@@ -308,9 +337,18 @@ fn decode_value(
                 .ok_or(CborError::UnsupportedType)?;
             let capacity = usize::try_from(length).map_err(|_| CborError::Malformed)?;
             check_collection_length(limits, capacity)?;
-            let mut values = Vec::with_capacity(capacity);
+            check_declared_entries(decoder, input_length, length, 1)?;
+            let mut values = Vec::new();
+            values
+                .try_reserve_exact(capacity)
+                .map_err(|_| CborError::AllocationFailed)?;
             for _ in 0..length {
-                values.push(decode_value(decoder, limits, next_depth(depth)?)?);
+                values.push(decode_value(
+                    decoder,
+                    input_length,
+                    limits,
+                    next_depth(depth)?,
+                )?);
             }
             Ok(ExsValue::List(values))
         }
@@ -321,13 +359,17 @@ fn decode_value(
                 .ok_or(CborError::UnsupportedType)?;
             let capacity = usize::try_from(length).map_err(|_| CborError::Malformed)?;
             check_collection_length(limits, capacity)?;
-            let mut entries = Vec::with_capacity(capacity);
+            check_declared_entries(decoder, input_length, length, 2)?;
+            let mut entries = Vec::new();
+            entries
+                .try_reserve_exact(capacity)
+                .map_err(|_| CborError::AllocationFailed)?;
             for _ in 0..length {
                 let key = match decoder.datatype().map_err(|_| CborError::Malformed)? {
                     Type::String => decoder.str().map_err(|_| CborError::Malformed)?.into(),
                     _ => return Err(CborError::UnsupportedType),
                 };
-                let value = decode_value(decoder, limits, next_depth(depth)?)?;
+                let value = decode_value(decoder, input_length, limits, next_depth(depth)?)?;
                 if entries.iter().any(|(entry_key, _)| entry_key == &key) {
                     return Err(CborError::Malformed);
                 }
@@ -342,6 +384,7 @@ fn decode_value(
 /// Decodes the fixed three-field CBOR representation of one enum value.
 fn decode_enum(
     decoder: &mut Decoder<'_>,
+    input_length: usize,
     limits: CborLimits,
     depth: usize,
 ) -> Result<ExsValue, CborError> {
@@ -362,9 +405,18 @@ fn decode_enum(
         .ok_or(CborError::UnsupportedType)?;
     let capacity = usize::try_from(length).map_err(|_| CborError::Malformed)?;
     check_collection_length(limits, capacity)?;
-    let mut fields = Vec::with_capacity(capacity);
+    check_declared_entries(decoder, input_length, length, 1)?;
+    let mut fields = Vec::new();
+    fields
+        .try_reserve_exact(capacity)
+        .map_err(|_| CborError::AllocationFailed)?;
     for _ in 0..length {
-        fields.push(decode_value(decoder, limits, next_depth(depth)?)?);
+        fields.push(decode_value(
+            decoder,
+            input_length,
+            limits,
+            next_depth(depth)?,
+        )?);
     }
     Ok(ExsValue::Enum {
         type_id,
@@ -427,6 +479,7 @@ fn encode_error(
 /// Decodes the stable seven-field CBOR map used for one ExS Error.
 fn decode_error(
     decoder: &mut Decoder<'_>,
+    input_length: usize,
     limits: CborLimits,
     depth: usize,
 ) -> Result<ExsError, CborError> {
@@ -457,7 +510,12 @@ fn decode_error(
             .map_err(|_| CborError::Malformed)
     })?;
     decode_error_key(decoder, 3)?;
-    let data = Box::new(decode_value(decoder, limits, next_depth(depth)?)?);
+    let data = Box::new(decode_value(
+        decoder,
+        input_length,
+        limits,
+        next_depth(depth)?,
+    )?);
     decode_error_key(decoder, 4)?;
     let origin = if decoder.datatype().map_err(|_| CborError::Malformed)? == Type::Null {
         decoder.null().map_err(|_| CborError::Malformed)?;
@@ -474,7 +532,11 @@ fn decode_error(
         .ok_or(CborError::UnsupportedType)?;
     let trace_capacity = usize::try_from(trace_length).map_err(|_| CborError::Malformed)?;
     check_collection_length(limits, trace_capacity)?;
-    let mut trace = Vec::with_capacity(trace_capacity);
+    check_declared_entries(decoder, input_length, trace_length, 1)?;
+    let mut trace = Vec::new();
+    trace
+        .try_reserve_exact(trace_capacity)
+        .map_err(|_| CborError::AllocationFailed)?;
     for _ in 0..trace_length {
         if decoder.array().map_err(|_| CborError::Malformed)? != Some(2) {
             return Err(CborError::Malformed);
@@ -489,7 +551,12 @@ fn decode_error(
         decoder.null().map_err(|_| CborError::Malformed)?;
         None
     } else {
-        Some(Box::new(decode_value(decoder, limits, next_depth(depth)?)?))
+        Some(Box::new(decode_value(
+            decoder,
+            input_length,
+            limits,
+            next_depth(depth)?,
+        )?))
     };
     Ok(ExsError {
         severity,
@@ -529,6 +596,24 @@ fn next_depth(depth: usize) -> Result<usize, CborError> {
 fn check_collection_length(limits: CborLimits, length: usize) -> Result<(), CborError> {
     if length > limits.max_collection_entries {
         Err(CborError::CollectionLimitExceeded)
+    } else {
+        Ok(())
+    }
+}
+
+/// Rejects a collection header whose declared entries cannot fit in the remaining input.
+fn check_declared_entries(
+    decoder: &Decoder<'_>,
+    input_length: usize,
+    entries: u64,
+    minimum_bytes_per_entry: usize,
+) -> Result<(), CborError> {
+    let remaining = input_length
+        .checked_sub(decoder.position())
+        .ok_or(CborError::Malformed)?;
+    let maximum_entries = remaining / minimum_bytes_per_entry;
+    if entries > maximum_entries as u64 {
+        Err(CborError::Malformed)
     } else {
         Ok(())
     }

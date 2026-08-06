@@ -2,6 +2,7 @@
 
 use std::task::{Context, Poll, Waker};
 
+use exs_abi::CborError;
 use exs_runner::{
     ErrorSeverity, ExsError, ExsValue, HostCall, HostCborError, HostFunctionRegistry,
     RegistryError, decode_arguments, encode_result,
@@ -39,6 +40,15 @@ fn rejects_non_list_host_arguments() {
     assert_eq!(
         decode_arguments(&bytes),
         Err(HostCborError::ArgumentsMustBeList)
+    );
+}
+
+/// Applies default CBOR limits before allocating host-call arguments.
+#[test]
+fn rejects_hostile_declared_argument_collection_by_default() {
+    assert_eq!(
+        decode_arguments(&[0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+        Err(HostCborError::Invalid(CborError::CollectionLimitExceeded))
     );
 }
 
