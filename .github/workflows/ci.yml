@@ -31,6 +31,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Lint Wasm runtime
+        run: cargo clippy -p exs-runtime --lib --target wasm32-unknown-unknown -- -D warnings
       - name: Test workspace
         run: cargo test --workspace
       - name: Verify committed runtime Wasm template
