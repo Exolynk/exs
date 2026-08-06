@@ -48,6 +48,33 @@ fn executes_static_parallel_tasks_in_source_order() {
     );
 }
 
+/// Reuses completed child frames across sequential parallel blocks.
+#[test]
+fn reuses_parallel_child_frames_within_a_constrained_memory_budget() {
+    let compiled = compile_source(
+        r#"
+        fn main() -> Int {
+            let count = 0;
+            while count < 20_000 {
+                par { 1; };
+                count = count + 1;
+            }
+            ret count;
+        }
+        "#,
+    );
+    let runner = ServerRunner::new(ExecutionLimits {
+        max_memory_bytes: 2 * 1024 * 1024,
+        max_fuel: u64::MAX,
+        ..ExecutionLimits::default()
+    });
+    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    match result {
+        Ok(result) => assert_eq!(result, ExsValue::Int(20_000)),
+        Err(error) => panic!("execution failed: {error}"),
+    }
+}
+
 /// Preserves raw literal bytes and removes shared indentation from dedented multiline literals.
 #[test]
 fn executes_hash_delimited_multiline_strings() {

@@ -466,14 +466,28 @@ pub(crate) fn async_frame_new_parallel(
     let mut slots = Vec::new();
     slots.resize(slot_count, None);
     let state = unsafe { runtime() };
-    let index_frame = state.async_frames.len();
-    state.async_frames.push(Some(AsyncFrame {
+    let frame = AsyncFrame {
         function_id,
         state: 0,
         slots,
         caller: None,
         traced: false,
-    }));
+    };
+    let index_frame = if let Some(index) = state.free_async_frames.pop() {
+        let index = index as usize;
+        let Some(slot) = state.async_frames.get_mut(index) else {
+            trap();
+        };
+        if slot.is_some() {
+            trap();
+        }
+        *slot = Some(frame);
+        index
+    } else {
+        let index = state.async_frames.len();
+        state.async_frames.push(Some(frame));
+        index
+    };
     let identifier = u32::try_from(index_frame)
         .ok()
         .and_then(|value| value.checked_add(1))

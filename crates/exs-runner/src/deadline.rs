@@ -3,7 +3,7 @@
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::task::Waker;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wasmtime::Engine;
 
@@ -33,6 +33,10 @@ impl Default for DeadlineState {
 
 /// Interrupts guest Wasm and wakes pending host futures when one execution expires.
 pub(crate) struct ExecutionDeadline {
+    /// Monotonic instant from which the execution timeout is measured.
+    started_at: Instant,
+    /// Configured duration after which the execution must not report success.
+    timeout: Duration,
     /// Shared expiry state and pending host-future wakers.
     state: Arc<(Mutex<DeadlineState>, Condvar)>,
     /// Timer thread joined after the root execution finishes.
@@ -42,6 +46,7 @@ pub(crate) struct ExecutionDeadline {
 impl ExecutionDeadline {
     /// Starts a deadline that interrupts `engine` after `timeout`.
     pub(crate) fn new(engine: Engine, timeout: Duration) -> std::io::Result<Self> {
+        let started_at = Instant::now();
         let state = Arc::new((Mutex::new(DeadlineState::default()), Condvar::new()));
         let timer_state = Arc::clone(&state);
         let timer = thread::Builder::new()
@@ -65,6 +70,8 @@ impl ExecutionDeadline {
                 }
             })?;
         Ok(Self {
+            started_at,
+            timeout,
             state,
             timer: Some(timer),
         })
@@ -72,6 +79,9 @@ impl ExecutionDeadline {
 
     /// Returns whether the configured wall-clock deadline has elapsed.
     pub(crate) fn is_expired(&self) -> bool {
+        if self.started_at.elapsed() >= self.timeout {
+            return true;
+        }
         let (lock, _) = &*self.state;
         lock_state(lock).expired
     }

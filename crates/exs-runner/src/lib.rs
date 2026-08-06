@@ -131,7 +131,7 @@ impl ServerRunner {
             .map_err(|error| RunnerError::Abi(error.to_string()))?;
         let mut status = start
             .call(&mut store, (input_pointer, input_length))
-            .map_err(|error| execution_error(&mut store, error))?;
+            .map_err(|error| execution_error(&mut store, &deadline, error))?;
         let mut pending = Vec::new();
         loop {
             match status {
@@ -139,7 +139,11 @@ impl ServerRunner {
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
-                    return result(&mut store, &instance, &self.limits);
+                    let result = result(&mut store, &instance, &self.limits)?;
+                    if deadline.is_expired() {
+                        return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
+                    }
+                    return Ok(result);
                 }
                 STATUS_PENDING => {
                     pending.extend(store.data_mut().take_pending_all().into_iter().map(
@@ -199,7 +203,7 @@ impl ServerRunner {
                         .map_err(|error| RunnerError::Abi(error.to_string()))?;
                     status = resume
                         .call(&mut store, (call_id, pointer, length))
-                        .map_err(|error| execution_error(&mut store, error))?;
+                        .map_err(|error| execution_error(&mut store, &deadline, error))?;
                 }
                 STATUS_CANCELLED => return Err(RunnerError::Cancelled),
                 status => return Err(RunnerError::Status(status)),
@@ -266,8 +270,12 @@ fn cancel_execution(
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn execution_error(
     store: &mut Store<host_abi::HostAbiState>,
+    deadline: &deadline::ExecutionDeadline,
     error: wasmtime::Error,
 ) -> RunnerError {
+    if deadline.is_expired() {
+        return RunnerError::LimitExceeded(LimitKind::Timeout);
+    }
     match store.data_mut().take_limit_violation() {
         Some(kind) => RunnerError::LimitExceeded(kind),
         None => wasmtime_error(error),

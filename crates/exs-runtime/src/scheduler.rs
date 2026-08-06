@@ -9,7 +9,7 @@ use exs_value::ValueRef;
 /// Number of scheduler checkpoints a task may consume before yielding.
 const TASK_QUANTUM: u32 = 64;
 
-/// One execution-local task identifier.
+/// One one-based reusable slot identifier for a live execution task.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct TaskId(u64);
 
@@ -44,7 +44,7 @@ pub(crate) enum TaskState {
 
 /// One scheduler-owned language task.
 struct RuntimeTask {
-    /// Monotonic execution-local task identity.
+    /// One-based identifier of this task's reusable scheduler slot.
     id: TaskId,
     /// Current lifecycle state.
     state: TaskState,
@@ -73,13 +73,13 @@ struct ParallelGroup {
 /// Mutable scheduler state for one root invocation.
 pub(crate) struct ExecutionContext {
     /// All tasks created within this root execution.
-    tasks: Vec<RuntimeTask>,
+    tasks: Vec<Option<RuntimeTask>>,
+    /// Reusable zero-based slots whose completed or cancelled tasks were removed.
+    free_task_slots: Vec<u32>,
     /// Runnable task identifiers in deterministic first-in, first-out order.
     runnable: VecDeque<TaskId>,
     /// The only task currently allowed to execute Wasm instructions.
     current: Option<TaskId>,
-    /// The next nonzero task identifier to allocate.
-    next_task_id: u64,
     /// Host-call identifiers cancelled before their runner completions arrived.
     invalidated_host_calls: Vec<u64>,
     /// Active parent-owned parallel task groups.
@@ -91,9 +91,9 @@ impl ExecutionContext {
     pub(crate) fn start() -> Self {
         let mut context = Self {
             tasks: Vec::new(),
+            free_task_slots: Vec::new(),
             runnable: VecDeque::new(),
             current: None,
-            next_task_id: 1,
             invalidated_host_calls: Vec::new(),
             parallel_groups: Vec::new(),
         };
@@ -108,6 +108,7 @@ impl ExecutionContext {
     pub(crate) fn is_complete(&self) -> bool {
         self.tasks
             .iter()
+            .flatten()
             .all(|task| matches!(task.state, TaskState::Completed | TaskState::Cancelled))
     }
 
@@ -198,6 +199,7 @@ impl ExecutionContext {
         let Some(task) = self
             .tasks
             .iter_mut()
+            .flatten()
             .find(|task| task.host_call == Some(call_id))
         else {
             crate::runtime::trap();
@@ -215,18 +217,29 @@ impl ExecutionContext {
     /// Cancels every nonterminal task and invalidates any pending host-call identifiers.
     pub(crate) fn cancel(&mut self) {
         for index in 0..self.tasks.len() {
-            let task_id = self.tasks[index].id;
-            let state = self.tasks[index].state;
+            let Some((task_id, state, host_call)) = self.tasks[index]
+                .as_ref()
+                .map(|task| (task.id, task.state, task.host_call))
+            else {
+                continue;
+            };
             if matches!(state, TaskState::Completed | TaskState::Cancelled) {
                 continue;
             }
-            if let Some(call_id) = self.tasks[index].host_call {
+            if let Some(call_id) = host_call {
                 self.invalidated_host_calls.push(call_id);
             }
             self.transition(task_id, TaskState::Cancelled);
-            let task = self.task_mut(task_id);
-            task.host_call = None;
-            task.ready_host_result = None;
+            let Some(task) = self.tasks[index].take() else {
+                crate::runtime::trap();
+            };
+            if task.id != task_id {
+                crate::runtime::trap();
+            }
+            let Ok(index) = u32::try_from(index) else {
+                crate::runtime::trap();
+            };
+            self.free_task_slots.push(index);
             crate::runtime::task_release();
         }
         self.runnable.clear();
@@ -299,6 +312,7 @@ impl ExecutionContext {
         let parallel = self.current_task().parallel;
         self.transition(task_id, TaskState::Completed);
         self.current = None;
+        self.remove_task(task_id);
         crate::runtime::task_release();
         let Some((handle, index)) = parallel else {
             return true;
@@ -323,6 +337,7 @@ impl ExecutionContext {
     pub(crate) fn roots(&self) -> impl Iterator<Item = ValueRef> + '_ {
         self.tasks
             .iter()
+            .flatten()
             .filter_map(|task| task.ready_host_result)
             .chain(
                 self.parallel_groups
@@ -336,15 +351,33 @@ impl ExecutionContext {
         self.runnable.push_back(task_id);
     }
 
-    /// Allocates one Created task with the next execution-local identifier.
+    /// Allocates one Created task in a reusable scheduler slot.
     fn create_task(&mut self) -> TaskId {
-        let task_id = TaskId(self.next_task_id);
-        let Some(next_task_id) = self.next_task_id.checked_add(1) else {
+        crate::runtime::task_acquire();
+        let index = if let Some(index) = self.free_task_slots.pop() {
+            let index = index as usize;
+            let Some(slot) = self.tasks.get_mut(index) else {
+                crate::runtime::trap();
+            };
+            if slot.is_some() {
+                crate::runtime::trap();
+            }
+            index
+        } else {
+            self.tasks.push(None);
+            self.tasks.len() - 1
+        };
+        let Some(identifier) = u64::try_from(index)
+            .ok()
+            .and_then(|index| index.checked_add(1))
+        else {
             crate::runtime::trap();
         };
-        crate::runtime::task_acquire();
-        self.next_task_id = next_task_id;
-        self.tasks.push(RuntimeTask {
+        let task_id = TaskId(identifier);
+        let Some(slot) = self.tasks.get_mut(index) else {
+            crate::runtime::trap();
+        };
+        *slot = Some(RuntimeTask {
             id: task_id,
             state: TaskState::Created,
             frame: None,
@@ -407,20 +440,41 @@ impl ExecutionContext {
         self.task_mut(task_id)
     }
 
-    /// Returns one task by its one-based monotonic identifier.
+    /// Returns one task by its one-based scheduler slot identifier.
     fn task(&self, task_id: TaskId) -> &RuntimeTask {
         let index = usize::try_from(task_id.0 - 1).unwrap_or_else(|_| crate::runtime::trap());
         self.tasks
             .get(index)
+            .and_then(Option::as_ref)
             .unwrap_or_else(|| crate::runtime::trap())
     }
 
-    /// Returns one task mutably by its one-based monotonic identifier.
+    /// Returns one task mutably by its one-based scheduler slot identifier.
     fn task_mut(&mut self, task_id: TaskId) -> &mut RuntimeTask {
         let index = usize::try_from(task_id.0 - 1).unwrap_or_else(|_| crate::runtime::trap());
         self.tasks
             .get_mut(index)
+            .and_then(Option::as_mut)
             .unwrap_or_else(|| crate::runtime::trap())
+    }
+
+    /// Removes one terminal task and records its slot for reuse.
+    fn remove_task(&mut self, task_id: TaskId) {
+        let index = usize::try_from(task_id.0 - 1).unwrap_or_else(|_| crate::runtime::trap());
+        let Some(slot) = self.tasks.get_mut(index) else {
+            crate::runtime::trap();
+        };
+        let Some(task) = slot.take() else {
+            crate::runtime::trap();
+        };
+        if task.id != task_id || !matches!(task.state, TaskState::Completed | TaskState::Cancelled)
+        {
+            crate::runtime::trap();
+        }
+        let Ok(index) = u32::try_from(index) else {
+            crate::runtime::trap();
+        };
+        self.free_task_slots.push(index);
     }
 
     /// Validates and applies one state transition.

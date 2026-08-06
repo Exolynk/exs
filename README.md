@@ -43,3 +43,5 @@ let result = runner.execute(&inputs).await?;
 ```
 
 The browser feature uses the application's `wasm-bindgen` JavaScript glue to instantiate the separate ExS module with native `WebAssembly` APIs. Each `execute` call receives a fresh ExS instance from one browser-compiled module, preserving execution isolation. Synchronous host callbacks use the ready path; asynchronous Rust futures resolve through browser Promises and resume the ExS task through the existing Host ABI.
+
+`BrowserRunner` executes Wasm on the calling JavaScript thread and does not enforce fuel, wall-clock, memory, task, host-call, or CBOR limits. It must therefore run untrusted ExS source inside a dedicated Web Worker. The embedding application owns the Worker lifecycle and should terminate it when its resource policy is exceeded; executing untrusted code on the main thread can freeze the user interface.

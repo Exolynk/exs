@@ -66,6 +66,27 @@ fn rejects_guest_execution_after_the_configured_timeout() {
     ));
 }
 
+/// Rejects a completed guest call when elapsed time exceeds the deadline before its timer runs.
+#[test]
+fn rejects_completed_execution_after_a_zero_timeout() {
+    let compiled = compile_source(
+        r#"
+        fn main() -> Int {
+            ret 1;
+        }
+        "#,
+    );
+    let runner = ServerRunner::new(ExecutionLimits {
+        timeout: Duration::ZERO,
+        ..ExecutionLimits::default()
+    });
+    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    assert!(matches!(
+        result,
+        Err(RunnerError::LimitExceeded(LimitKind::Timeout))
+    ));
+}
+
 /// Interrupts a pending asynchronous host call once the root execution reaches its deadline.
 #[test]
 fn rejects_pending_host_call_after_the_configured_timeout() {
