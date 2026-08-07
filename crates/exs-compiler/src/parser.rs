@@ -550,8 +550,11 @@ impl<'a> Parser<'a> {
         if self.matches(&TokenKind::Let) {
             let start = self.previous().span;
             let name = self.identifier("expected binding name after `let`")?;
-            self.expect_simple(TokenKind::Equal, "Phase 1 requires a `let` initializer")?;
-            let value = self.expression()?;
+            let value = if self.matches(&TokenKind::Equal) {
+                self.expression()?
+            } else {
+                Expression::None(name.span)
+            };
             let end = self.expect_statement_semicolon(
                 expression_span(&value),
                 "expected `;` after let declaration",

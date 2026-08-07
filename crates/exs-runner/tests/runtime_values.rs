@@ -28,6 +28,18 @@ fn executes_calls_assignments_conditionals_and_booleans() {
     );
 }
 
+/// Initializes an omitted local binding value to None.
+#[test]
+fn initializes_omitted_local_bindings_to_none() {
+    assert_eq!(
+        execute_source(
+            "fn main(input) -> None { let later; ret later; }",
+            ExsValue::None,
+        ),
+        ExsValue::None
+    );
+}
+
 /// Preserves both signed 64-bit integer bounds in compiled source literals.
 #[test]
 fn executes_signed_64_bit_integer_literals() {
