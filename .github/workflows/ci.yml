@@ -20,8 +20,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.95.0 toolchain
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
@@ -63,8 +63,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.95.0 toolchain
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: wasm32-unknown-unknown
       - name: Cache Rust build artifacts
