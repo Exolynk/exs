@@ -1,16 +1,16 @@
-//! Integration tests for executable ExS scripts in the workspace root.
+//! Integration tests for executable ExS example scripts.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Executes root scripts through the public CLI, including the expected Error fixture.
+/// Executes example scripts through the public CLI, including the expected Error fixture.
 #[test]
-fn executes_root_test_scripts() {
-    let scripts = root_test_scripts();
+fn executes_example_scripts() {
+    let scripts = example_scripts();
     assert!(
         !scripts.is_empty(),
-        "the workspace root tests directory must contain at least one .exs script"
+        "the examples/scripts directory must contain at least one .exs script"
     );
     for script in scripts {
         let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
@@ -28,18 +28,18 @@ fn executes_root_test_scripts() {
         if expected_error {
             assert!(
                 !output.status.success(),
-                "root Error script {} unexpectedly succeeded",
+                "example Error script {} unexpectedly succeeded",
                 script.display(),
             );
             assert!(
                 String::from_utf8_lossy(&output.stderr).contains("exs:"),
-                "root Error script {} did not print its language Error",
+                "example Error script {} did not print its language Error",
                 script.display(),
             );
         } else {
             assert!(
                 output.status.success(),
-                "root test script {} failed\nstdout:\n{}\nstderr:\n{}",
+                "example script {} failed\nstdout:\n{}\nstderr:\n{}",
                 script.display(),
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr),
@@ -48,14 +48,14 @@ fn executes_root_test_scripts() {
     }
 }
 
-/// Returns all `.exs` scripts in the workspace root test directory in a stable order.
-fn root_test_scripts() -> Vec<PathBuf> {
-    let tests_directory = workspace_root().join("tests");
-    let entries = match fs::read_dir(&tests_directory) {
+/// Returns all `.exs` scripts in the workspace examples directory in a stable order.
+fn example_scripts() -> Vec<PathBuf> {
+    let scripts_directory = workspace_root().join("examples/scripts");
+    let entries = match fs::read_dir(&scripts_directory) {
         Ok(entries) => entries,
         Err(error) => panic!(
-            "could not read root test directory {}: {error}",
-            tests_directory.display()
+            "could not read example scripts directory {}: {error}",
+            scripts_directory.display()
         ),
     };
     let mut scripts = entries
