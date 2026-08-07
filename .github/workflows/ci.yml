@@ -37,7 +37,9 @@ jobs:
         run: cargo test --workspace
       - name: Verify committed runtime Wasm template
         run: |
-          cargo rustc -p exs-runtime --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }--remap-path-prefix=${cargo_home}=/cargo" \
+            cargo rustc -p exs-runtime --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory
           if ! cmp --silent target/wasm32-unknown-unknown/release/exs_runtime.wasm crates/exs-runtime/exs-runtime.wasm; then
             echo "The committed runtime template is stale. Run: nu crates/exs-runtime/build-runtime.nu"
             exit 1
