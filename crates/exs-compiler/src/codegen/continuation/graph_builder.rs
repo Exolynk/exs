@@ -263,12 +263,17 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             destination: item,
             span,
         });
+        let cell = self.captured_names.contains(&binding.name);
+        if cell {
+            self.operations.push(Operation::CellNew {
+                value: item,
+                destination: item,
+                span: binding.span,
+            });
+        }
         self.scopes.push(HashMap::from([(
             binding.name.clone(),
-            BindingSlot {
-                slot: item,
-                cell: self.captured_names.contains(&binding.name),
-            },
+            BindingSlot { slot: item, cell },
         )]));
         self.loops.push(LoopBuilderContext {
             continues: Vec::new(),

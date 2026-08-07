@@ -837,6 +837,30 @@ fn iterates_a_shallow_list_snapshot() {
     );
 }
 
+/// Gives closures created in separate for-loop iterations distinct captured bindings.
+#[test]
+fn preserves_for_loop_closure_captures_per_iteration() {
+    assert_eq!(
+        execute_source(
+            r#"
+                fn main(input) -> List {
+                    let callbacks = [];
+                    for item in [1, 2] {
+                        callbacks.push(() => {
+                            ret item;
+                        });
+                    }
+                    let first = callbacks[0];
+                    let second = callbacks[1];
+                    ret [first(), second()];
+                }
+            "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)])
+    );
+}
+
 /// Iterates UTF-8 strings as individual Unicode scalar runtime Strings.
 #[test]
 fn iterates_string_unicode_scalars() {
