@@ -7,122 +7,268 @@
     <link data-trunk rel="rust" />
     <style>
       :root {
-        color: #17212b;
-        background: #f4f7f9;
-        font-family: ui-sans-serif, system-ui, sans-serif;
+        color: #1c252d;
+        background: #f3f5f6;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
       }
 
       body {
         margin: 0;
       }
 
-      main {
+      .playground-shell {
         box-sizing: border-box;
-        max-width: 1120px;
+        max-width: 1440px;
+        min-height: 100vh;
         margin: 0 auto;
-        padding: 32px 20px;
+        padding: 28px;
       }
 
-      h1 {
-        margin: 0 0 8px;
-        font-size: 28px;
-      }
-
-      p {
-        margin: 0 0 24px;
-        color: #4a5b6a;
-      }
-
-      .layout {
-        display: grid;
-        grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr);
+      .playground-header,
+      .panel-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         gap: 16px;
       }
 
-      section {
-        min-width: 0;
-      }
-
-      label {
-        display: block;
-        margin-bottom: 8px;
-        font-weight: 650;
-      }
-
-      textarea,
-      pre {
-        box-sizing: border-box;
-        width: 100%;
-        min-height: 360px;
+      h1,
+      h2,
+      p {
         margin: 0;
-        padding: 14px;
-        overflow: auto;
-        border: 1px solid #b6c4cf;
-        border-radius: 6px;
+      }
+
+      h1 {
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      h2 {
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .playground-header p {
+        margin-top: 5px;
+        color: #5c6975;
+        font-size: 14px;
+      }
+
+      .playground-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+        gap: 18px;
+        margin-top: 24px;
+      }
+
+      .editor-panel,
+      .output-panel,
+      .documentation-panel {
+        min-width: 0;
+        border: 1px solid #cbd2d8;
         background: #ffffff;
-        color: #17212b;
-        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-        white-space: pre-wrap;
       }
 
-      textarea:focus {
-        outline: 2px solid #4d89b7;
-        outline-offset: 1px;
+      .editor-panel,
+      .side-panel {
+        min-height: 0;
       }
 
-      pre {
-        background: #17212b;
-        color: #e6edf3;
+      .editor-panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 680px;
       }
 
-      button {
-        margin-top: 12px;
-        padding: 8px 15px;
-        border: 1px solid #246b99;
-        border-radius: 5px;
-        background: #2879aa;
-        color: #ffffff;
-        font: inherit;
-        font-weight: 650;
+      .side-panel {
+        display: flex;
+        min-height: 680px;
+        flex-direction: column;
+      }
+
+      .output-panel,
+      .documentation-panel {
+        min-height: 0;
+        flex-direction: column;
+      }
+
+      .side-tabs {
+        display: flex;
+        gap: 0;
+        border: 1px solid #cbd2d8;
+        border-bottom: 0;
+        background: #f8fafb;
+      }
+
+      .side-tab {
+        min-height: 40px;
+        border: 0;
+        border-right: 1px solid #d9dfe3;
+        background: transparent;
+        color: #5c6975;
+        font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif;
         cursor: pointer;
       }
 
-      button:disabled {
+      .side-tab--active {
+        background: #ffffff;
+        color: #176f5b;
+        box-shadow: inset 0 -2px #17816a;
+      }
+
+      .side-panel-content {
+        display: none;
+        flex: 1;
+      }
+
+      .side-panel-content--active {
+        display: flex;
+      }
+
+      .panel-heading {
+        min-height: 42px;
+        padding: 0 14px;
+        border-bottom: 1px solid #d9dfe3;
+        background: #f8fafb;
+      }
+
+      .editor-status,
+      .documentation-error {
+        color: #b54708;
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+
+      .editor-status {
+        max-width: 58%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .editor-surface {
+        min-height: 0;
+        flex: 1;
+      }
+
+      .editor-surface .birei-code-editor {
+        height: 100%;
+        border: 0;
+      }
+
+      .run-button {
+        min-width: 76px;
+        min-height: 36px;
+        border: 1px solid #176f5b;
+        border-radius: 4px;
+        background: #17816a;
+        color: #ffffff;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .run-button:disabled {
         cursor: wait;
         opacity: 0.65;
       }
 
-      @media (max-width: 720px) {
-        .layout {
+      .output-content {
+        box-sizing: border-box;
+        min-height: 0;
+        margin: 0;
+        padding: 14px;
+        overflow: auto;
+        font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+      }
+
+      .output-content {
+        flex: 1;
+        background: #17212b;
+        color: #e7edf2;
+      }
+
+      .documentation-error {
+        padding: 8px 14px 0;
+      }
+
+      .documentation-content {
+        box-sizing: border-box;
+        min-height: 0;
+        flex: 1;
+        padding: 14px;
+        overflow: auto;
+        color: #33414c;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .documentation-content h1,
+      .documentation-content h2,
+      .documentation-content h3 {
+        margin: 20px 0 8px;
+        color: #1c252d;
+      }
+
+      .documentation-content h1 { font-size: 21px; }
+      .documentation-content h2 { font-size: 17px; }
+      .documentation-content h3 { font-size: 15px; }
+
+      .documentation-content p,
+      .documentation-content ul,
+      .documentation-content ol,
+      .documentation-content blockquote {
+        margin: 0 0 12px;
+      }
+
+      .documentation-content pre {
+        overflow: auto;
+        padding: 10px;
+        background: #eef2f4;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .documentation-content code {
+        padding: 1px 3px;
+        background: #eef2f4;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .documentation-content a {
+        color: #176f5b;
+        text-decoration: underline;
+      }
+
+      .documentation-content table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .documentation-content th,
+      .documentation-content td {
+        padding: 6px;
+        border: 1px solid #cbd2d8;
+        text-align: left;
+      }
+
+      @media (max-width: 900px) {
+        .playground-shell {
+          padding: 18px;
+        }
+
+        .playground-layout {
           grid-template-columns: 1fr;
         }
 
-        textarea,
-        pre {
-          min-height: 260px;
+        .editor-panel {
+          min-height: 520px;
+        }
+
+        .side-panel {
+          min-height: 480px;
         }
       }
     </style>
   </head>
-  <body>
-    <main>
-      <h1>ExS Playground</h1>
-      <p>Compile and execute ExS locally in this browser.</p>
-      <div class="layout">
-        <section>
-          <label for="source">Source</label>
-          <textarea id="source" spellcheck="false">fn main() {
-    let value = 21 * 2;
-    host.call("println", "The result is", value);
-    ret value;
-}</textarea>
-          <button id="run" type="button">Run</button>
-        </section>
-        <section>
-          <label for="output">Output</label>
-          <pre id="output" aria-live="polite">Ready.</pre>
-        </section>
-      </div>
-    </main>
-  </body>
+  <body></body>
 </html>
