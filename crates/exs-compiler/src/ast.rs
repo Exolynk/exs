@@ -238,6 +238,13 @@ pub enum Statement<'a> {
         /// Full statement span.
         span: SourceSpan<'a>,
     },
+    /// A standalone lexical scope.
+    Block {
+        /// Statements evaluated within the scope.
+        block: Block<'a>,
+        /// Full statement span.
+        span: SourceSpan<'a>,
+    },
     /// A conditional statement.
     If {
         /// Boolean condition.

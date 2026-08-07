@@ -74,6 +74,33 @@ fn formats_else_if_chains() {
     );
 }
 
+/// Formats standalone lexical blocks without treating them as object expressions.
+#[test]
+fn formats_standalone_lexical_blocks() {
+    let source = "fn main(input)->Int{let value=1;{let value=2;}ret value;}";
+    let formatted = match format(SourceInput {
+        source_id: "format-block.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert_eq!(
+        formatted,
+        "fn main(input) -> Int {\n    let value = 1;\n    {\n        let value = 2;\n    }\n    ret value;\n}\n"
+    );
+    assert!(
+        compile(
+            SourceInput {
+                source_id: "format-block.exs",
+                text: &formatted,
+            },
+            CompileOptions::default(),
+        )
+        .is_ok()
+    );
+}
+
 /// Rejects malformed source instead of attempting a best-effort rewrite.
 #[test]
 fn formatter_returns_syntax_diagnostics() {

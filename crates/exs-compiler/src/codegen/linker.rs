@@ -172,6 +172,7 @@ fn collect_closures_statement<'source, 'ast>(
                 collect_closures_expression(value, closures);
             }
         }
+        Statement::Block { block, .. } => collect_closures_block(block, closures),
         Statement::If {
             condition,
             then_block,

@@ -119,6 +119,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             Statement::Expression { expression, .. } => {
                 let _value = self.lower_expression(expression)?;
             }
+            Statement::Block { block, .. } => self.lower_block(block)?,
             Statement::If {
                 condition,
                 then_block,

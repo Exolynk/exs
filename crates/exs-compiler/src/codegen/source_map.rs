@@ -255,6 +255,10 @@ impl<'a> SourceMap<'a> {
                     self.collect_expression(value);
                 }
             }
+            Statement::Block { block, span } => {
+                self.insert(*span);
+                self.collect_block(block);
+            }
             Statement::If {
                 condition,
                 then_block,

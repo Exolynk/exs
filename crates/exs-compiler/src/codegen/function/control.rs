@@ -123,6 +123,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.compile_expression(expression)?;
                 self.function.instruction(&Instruction::Drop);
             }
+            Statement::Block { block, .. } => self.compile_block(block, true)?,
             Statement::If {
                 condition,
                 then_block,

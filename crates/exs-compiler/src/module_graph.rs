@@ -379,6 +379,7 @@ fn rewrite_statement(statement: &mut Statement<'_>, bindings: &HashMap<String, S
                 rewrite_expression(value, bindings);
             }
         }
+        Statement::Block { block, .. } => rewrite_block(block, bindings),
         Statement::If {
             condition,
             then_block,

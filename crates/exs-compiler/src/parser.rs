@@ -547,6 +547,13 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> Result<Statement<'a>, CompileDiagnostic<'a>> {
+        if self.check(&TokenKind::LeftBrace) {
+            let block = self.block()?;
+            return Ok(Statement::Block {
+                span: block.span,
+                block,
+            });
+        }
         if self.matches(&TokenKind::Let) {
             let start = self.previous().span;
             let name = self.identifier("expected binding name after `let`")?;

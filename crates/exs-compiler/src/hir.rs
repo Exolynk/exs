@@ -436,6 +436,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                     self.lower_expression(value);
                 }
             }
+            Statement::Block { block, .. } => self.lower_block(block),
             Statement::If {
                 condition,
                 then_block,

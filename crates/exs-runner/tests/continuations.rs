@@ -359,7 +359,9 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
                 } else if item == 2 {
                     break;
                 }
-                total = total + host.call("echo", item);
+                {
+                    total = total + host.call("echo", item);
+                }
             }
             while total < 5 {
                 total = total + host.call("echo", 1);

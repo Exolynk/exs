@@ -30,6 +30,7 @@ pub(super) fn count_lets(block: &Block<'_>) -> u32 {
         .iter()
         .map(|statement| match statement {
             Statement::Let { .. } => 1,
+            Statement::Block { block, .. } => count_lets(block),
             Statement::If {
                 then_block,
                 else_branch,
@@ -52,6 +53,7 @@ pub(super) fn count_lets(block: &Block<'_>) -> u32 {
 fn count_lets_statement(statement: &Statement<'_>) -> u32 {
     match statement {
         Statement::Let { .. } => 1,
+        Statement::Block { block, .. } => count_lets(block),
         Statement::If {
             then_block,
             else_branch,
@@ -89,6 +91,7 @@ pub(super) fn count_expressions_statement(statement: &Statement<'_>) -> u32 {
             count_assignment_target_expressions(target) + count_expressions(value)
         }
         Statement::Return { value, .. } => value.as_ref().map_or(0, count_expressions),
+        Statement::Block { block, .. } => count_expressions_block(block),
         Statement::If {
             condition,
             then_block,

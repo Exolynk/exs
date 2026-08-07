@@ -146,6 +146,7 @@ fn collect_statement_literals(statement: &Statement<'_>, pool: &mut LiteralPool)
                 collect_expression_literals(value, pool);
             }
         }
+        Statement::Block { block, .. } => collect_block_literals(block, pool),
         Statement::If {
             condition,
             then_block,

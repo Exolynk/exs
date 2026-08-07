@@ -247,6 +247,7 @@ impl Formatter {
                 || "ret;".to_owned(),
                 |value| format!("ret {};", render_expression(value)),
             )),
+            Statement::Block { block, .. } => self.standalone_block(block),
             Statement::If {
                 condition,
                 then_block,
@@ -276,6 +277,17 @@ impl Formatter {
                 expression: value, ..
             } => self.line(&format!("{};", render_expression(value))),
         }
+    }
+
+    /// Renders a standalone lexical block.
+    fn standalone_block(&mut self, block: &Block<'_>) {
+        self.line("{");
+        self.indentation += 1;
+        for statement in &block.statements {
+            self.statement(statement);
+        }
+        self.indentation -= 1;
+        self.line("}");
     }
 
     /// Renders a conditional statement's false path.
@@ -632,6 +644,7 @@ fn expression_from_statement(statement: &Statement<'_>) -> String {
             render_expression(iterable),
             inline_block(body)
         ),
+        Statement::Block { block, .. } => inline_block(block),
         Statement::Break { .. } => "break;".to_owned(),
         Statement::Continue { .. } => "continue;".to_owned(),
         Statement::Let { .. }
