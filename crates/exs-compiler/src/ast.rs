@@ -245,7 +245,7 @@ pub enum Statement<'a> {
         /// Selected when true.
         then_block: Block<'a>,
         /// Selected when false.
-        else_block: Option<Block<'a>>,
+        else_branch: Option<ElseBranch<'a>>,
         /// Full statement span.
         span: SourceSpan<'a>,
     },
@@ -286,6 +286,15 @@ pub enum Statement<'a> {
         /// Full statement span.
         span: SourceSpan<'a>,
     },
+}
+
+/// A conditional statement's false path.
+#[derive(Debug, Clone)]
+pub enum ElseBranch<'a> {
+    /// A final block selected when every preceding condition is false.
+    Block(Block<'a>),
+    /// A nested conditional selected when the preceding condition is false.
+    If(Box<Statement<'a>>),
 }
 
 /// A source location that can receive an assignment.

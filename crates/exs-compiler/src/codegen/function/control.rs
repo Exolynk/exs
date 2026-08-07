@@ -126,7 +126,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             Statement::If {
                 condition,
                 then_block,
-                else_block,
+                else_branch,
                 ..
             } => {
                 self.compile_expression(condition)?;
@@ -135,9 +135,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     .instruction(&Instruction::If(BlockType::Empty));
                 self.enter_control()?;
                 self.compile_block(then_block, true)?;
-                if let Some(else_block) = else_block {
+                if let Some(else_branch) = else_branch {
                     self.function.instruction(&Instruction::Else);
-                    self.compile_block(else_block, true)?;
+                    match else_branch {
+                        crate::ast::ElseBranch::Block(block) => self.compile_block(block, true)?,
+                        crate::ast::ElseBranch::If(statement) => {
+                            self.compile_statement(statement)?
+                        }
+                    }
                 }
                 self.function.instruction(&Instruction::End);
                 self.exit_control()?;

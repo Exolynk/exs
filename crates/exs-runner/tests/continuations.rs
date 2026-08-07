@@ -356,8 +356,7 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
             for item in host.call("values", input) {
                 if item > 2 {
                     continue;
-                }
-                if item == 2 {
+                } else if item == 2 {
                     break;
                 }
                 total = total + host.call("echo", item);

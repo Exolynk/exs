@@ -439,13 +439,16 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             Statement::If {
                 condition,
                 then_block,
-                else_block,
+                else_branch,
                 ..
             } => {
                 self.lower_expression(condition);
                 self.lower_block(then_block);
-                if let Some(else_block) = else_block {
-                    self.lower_block(else_block);
+                if let Some(else_branch) = else_branch {
+                    match else_branch {
+                        crate::ast::ElseBranch::Block(block) => self.lower_block(block),
+                        crate::ast::ElseBranch::If(statement) => self.lower_statement(statement),
+                    }
                 }
             }
             Statement::While {

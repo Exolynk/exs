@@ -126,44 +126,54 @@ pub(super) fn template_data_layout<'a>(
 /// Collects literals recursively from one statement block.
 fn collect_block_literals(block: &Block<'_>, pool: &mut LiteralPool) {
     for statement in &block.statements {
-        match statement {
-            Statement::Let { value, .. }
-            | Statement::Expression {
-                expression: value, ..
-            } => collect_expression_literals(value, pool),
-            Statement::Assign { target, value, .. } => {
-                collect_assignment_target_literals(target, pool);
+        collect_statement_literals(statement, pool);
+    }
+}
+
+/// Collects literals recursively from one statement.
+fn collect_statement_literals(statement: &Statement<'_>, pool: &mut LiteralPool) {
+    match statement {
+        Statement::Let { value, .. }
+        | Statement::Expression {
+            expression: value, ..
+        } => collect_expression_literals(value, pool),
+        Statement::Assign { target, value, .. } => {
+            collect_assignment_target_literals(target, pool);
+            collect_expression_literals(value, pool);
+        }
+        Statement::Return { value, .. } => {
+            if let Some(value) = value {
                 collect_expression_literals(value, pool);
             }
-            Statement::Return { value, .. } => {
-                if let Some(value) = value {
-                    collect_expression_literals(value, pool);
-                }
-            }
-            Statement::If {
-                condition,
-                then_block,
-                else_block,
-                ..
-            } => {
-                collect_expression_literals(condition, pool);
-                collect_block_literals(then_block, pool);
-                if let Some(else_block) = else_block {
-                    collect_block_literals(else_block, pool);
-                }
-            }
-            Statement::While {
-                condition, body, ..
-            } => {
-                collect_expression_literals(condition, pool);
-                collect_block_literals(body, pool);
-            }
-            Statement::For { iterable, body, .. } => {
-                collect_expression_literals(iterable, pool);
-                collect_block_literals(body, pool);
-            }
-            Statement::Break { .. } | Statement::Continue { .. } => {}
         }
+        Statement::If {
+            condition,
+            then_block,
+            else_branch,
+            ..
+        } => {
+            collect_expression_literals(condition, pool);
+            collect_block_literals(then_block, pool);
+            if let Some(else_branch) = else_branch {
+                match else_branch {
+                    crate::ast::ElseBranch::Block(block) => collect_block_literals(block, pool),
+                    crate::ast::ElseBranch::If(statement) => {
+                        collect_statement_literals(statement, pool)
+                    }
+                }
+            }
+        }
+        Statement::While {
+            condition, body, ..
+        } => {
+            collect_expression_literals(condition, pool);
+            collect_block_literals(body, pool);
+        }
+        Statement::For { iterable, body, .. } => {
+            collect_expression_literals(iterable, pool);
+            collect_block_literals(body, pool);
+        }
+        Statement::Break { .. } | Statement::Continue { .. } => {}
     }
 }
 

@@ -2,9 +2,9 @@
 
 use crate::SourceInput;
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Block, EnumDeclaration, Expression, FunctionDeclaration,
-    Identifier, ImplDeclaration, Module, ObjectProperty, Parameter, Statement, TraitDeclaration,
-    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, UnaryOperator,
+    AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, Expression,
+    FunctionDeclaration, Identifier, ImplDeclaration, Module, ObjectProperty, Parameter, Statement,
+    TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, UnaryOperator,
 };
 use crate::diagnostic::CompileDiagnostics;
 
@@ -250,18 +250,12 @@ impl Formatter {
             Statement::If {
                 condition,
                 then_block,
-                else_block,
+                else_branch,
                 ..
             } => {
                 self.block_after(&format!("if {}", render_expression(condition)), then_block);
-                if let Some(else_block) = else_block {
-                    self.line("else {");
-                    self.indentation += 1;
-                    for statement in &else_block.statements {
-                        self.statement(statement);
-                    }
-                    self.indentation -= 1;
-                    self.line("}");
+                if let Some(else_branch) = else_branch {
+                    self.else_branch(else_branch);
                 }
             }
             Statement::While {
@@ -281,6 +275,42 @@ impl Formatter {
             Statement::Expression {
                 expression: value, ..
             } => self.line(&format!("{};", render_expression(value))),
+        }
+    }
+
+    /// Renders a conditional statement's false path.
+    fn else_branch(&mut self, branch: &ElseBranch<'_>) {
+        match branch {
+            ElseBranch::Block(block) => {
+                self.line("else {");
+                self.indentation += 1;
+                for statement in &block.statements {
+                    self.statement(statement);
+                }
+                self.indentation -= 1;
+                self.line("}");
+            }
+            ElseBranch::If(statement) => self.else_if_statement(statement),
+        }
+    }
+
+    /// Renders one nested conditional using the `else if` spelling.
+    fn else_if_statement(&mut self, statement: &Statement<'_>) {
+        let Statement::If {
+            condition,
+            then_block,
+            else_branch,
+            ..
+        } = statement
+        else {
+            unreachable!("an ElseBranch::If must contain a conditional statement");
+        };
+        self.block_after(
+            &format!("else if {}", render_expression(condition)),
+            then_block,
+        );
+        if let Some(else_branch) = else_branch {
+            self.else_branch(else_branch);
         }
     }
 
@@ -574,18 +604,15 @@ fn expression_from_statement(statement: &Statement<'_>) -> String {
         Statement::If {
             condition,
             then_block,
-            else_block,
+            else_branch,
             ..
         } => format!(
             "if {} {}{}",
             render_expression(condition),
             inline_block(then_block),
-            else_block
+            else_branch
                 .as_ref()
-                .map_or_else(String::new, |block| format!(
-                    " else {}",
-                    inline_block(block)
-                ))
+                .map_or_else(String::new, inline_else_branch)
         ),
         Statement::While {
             condition, body, ..
@@ -611,6 +638,14 @@ fn expression_from_statement(statement: &Statement<'_>) -> String {
         | Statement::Assign { .. }
         | Statement::Return { .. }
         | Statement::Expression { .. } => String::new(),
+    }
+}
+
+/// Renders a conditional false path inside an inline statement block.
+fn inline_else_branch(branch: &ElseBranch<'_>) -> String {
+    match branch {
+        ElseBranch::Block(block) => format!(" else {}", inline_block(block)),
+        ElseBranch::If(statement) => format!(" else {}", expression_from_statement(statement)),
     }
 }
 

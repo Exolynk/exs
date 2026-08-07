@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Block, EnumDeclaration, EnumVariant, Expression,
+    AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, EnumVariant, Expression,
     FunctionDeclaration, Identifier, ImplDeclaration, ImportDeclaration, MatchArm, MatchArmBody,
     MatchPattern, Module, ObjectProperty, Parameter, Statement, TraitDeclaration,
     TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator,
@@ -585,18 +585,24 @@ impl<'a> Parser<'a> {
             let start = self.previous().span;
             let condition = self.expression()?;
             let then_block = self.block()?;
-            let else_block = if self.matches(&TokenKind::Else) {
-                Some(self.block()?)
+            let else_branch = if self.matches(&TokenKind::Else) {
+                if self.check(&TokenKind::If) {
+                    Some(ElseBranch::If(Box::new(self.statement()?)))
+                } else {
+                    Some(ElseBranch::Block(self.block()?))
+                }
             } else {
                 None
             };
-            let end = else_block
-                .as_ref()
-                .map_or(then_block.span, |block| block.span);
+            let end = if else_branch.is_some() {
+                self.previous().span
+            } else {
+                then_block.span
+            };
             return Ok(Statement::If {
                 condition,
                 then_block,
-                else_block,
+                else_branch,
                 span: start.through(end),
             });
         }

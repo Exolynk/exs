@@ -1,6 +1,6 @@
 //! Local-slot analysis and small source-lowering helpers.
 
-use crate::ast::{AssignmentTarget, BinaryOperator, Block, Expression, Statement};
+use crate::ast::{AssignmentTarget, BinaryOperator, Block, ElseBranch, Expression, Statement};
 use crate::diagnostic::SourceSpan;
 
 /// Extra compiler locals reserved for root-frame return and operand-spill bookkeeping.
@@ -32,14 +32,41 @@ pub(super) fn count_lets(block: &Block<'_>) -> u32 {
             Statement::Let { .. } => 1,
             Statement::If {
                 then_block,
-                else_block,
+                else_branch,
                 ..
-            } => count_lets(then_block) + else_block.as_ref().map_or(0, count_lets),
+            } => {
+                count_lets(then_block)
+                    + else_branch.as_ref().map_or(0, |branch| match branch {
+                        ElseBranch::Block(block) => count_lets(block),
+                        ElseBranch::If(statement) => count_lets_statement(statement),
+                    })
+            }
             Statement::While { body, .. } => count_lets(body),
             Statement::For { body, .. } => 1 + count_lets(body),
             _ => 0,
         })
         .sum()
+}
+
+/// Counts local declarations in one statement and nested blocks.
+fn count_lets_statement(statement: &Statement<'_>) -> u32 {
+    match statement {
+        Statement::Let { .. } => 1,
+        Statement::If {
+            then_block,
+            else_branch,
+            ..
+        } => {
+            count_lets(then_block)
+                + else_branch.as_ref().map_or(0, |branch| match branch {
+                    ElseBranch::Block(block) => count_lets(block),
+                    ElseBranch::If(statement) => count_lets_statement(statement),
+                })
+        }
+        Statement::While { body, .. } => count_lets(body),
+        Statement::For { body, .. } => 1 + count_lets(body),
+        _ => 0,
+    }
 }
 
 /// Counts expression scratch-local requirements in one block.
@@ -65,12 +92,15 @@ pub(super) fn count_expressions_statement(statement: &Statement<'_>) -> u32 {
         Statement::If {
             condition,
             then_block,
-            else_block,
+            else_branch,
             ..
         } => {
             count_expressions(condition)
                 + count_expressions_block(then_block)
-                + else_block.as_ref().map_or(0, count_expressions_block)
+                + else_branch.as_ref().map_or(0, |branch| match branch {
+                    ElseBranch::Block(block) => count_expressions_block(block),
+                    ElseBranch::If(statement) => count_expressions_statement(statement),
+                })
         }
         Statement::While {
             condition, body, ..

@@ -122,9 +122,9 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             Statement::If {
                 condition,
                 then_block,
-                else_block,
+                else_branch,
                 span,
-            } => self.lower_if(condition, then_block, else_block.as_ref(), *span)?,
+            } => self.lower_if(condition, then_block, else_branch.as_ref(), *span)?,
             Statement::While {
                 condition,
                 body,
@@ -147,7 +147,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         &mut self,
         condition: &'function Expression<'source>,
         then_block: &'function crate::ast::Block<'source>,
-        else_block: Option<&'function crate::ast::Block<'source>>,
+        else_branch: Option<&'function crate::ast::ElseBranch<'source>>,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         let condition = self.lower_expression(condition)?;
@@ -167,8 +167,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             span,
         })?;
         let else_start = self.operations.len();
-        if let Some(else_block) = else_block {
-            self.lower_block(else_block)?;
+        if let Some(else_branch) = else_branch {
+            match else_branch {
+                crate::ast::ElseBranch::Block(block) => self.lower_block(block)?,
+                crate::ast::ElseBranch::If(statement) => self.lower_statement(statement)?,
+            }
         }
         let after = self.operations.len();
         self.set_branch_targets(branch, then_start, else_start, span)?;

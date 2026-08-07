@@ -175,13 +175,18 @@ fn collect_closures_statement<'source, 'ast>(
         Statement::If {
             condition,
             then_block,
-            else_block,
+            else_branch,
             ..
         } => {
             collect_closures_expression(condition, closures);
             collect_closures_block(then_block, closures);
-            if let Some(else_block) = else_block {
-                collect_closures_block(else_block, closures);
+            if let Some(else_branch) = else_branch {
+                match else_branch {
+                    crate::ast::ElseBranch::Block(block) => collect_closures_block(block, closures),
+                    crate::ast::ElseBranch::If(statement) => {
+                        collect_closures_statement(statement, closures)
+                    }
+                }
             }
         }
         Statement::While {

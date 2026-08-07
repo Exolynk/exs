@@ -258,14 +258,17 @@ impl<'a> SourceMap<'a> {
             Statement::If {
                 condition,
                 then_block,
-                else_block,
+                else_branch,
                 span,
             } => {
                 self.insert(*span);
                 self.collect_expression(condition);
                 self.collect_block(then_block);
-                if let Some(else_block) = else_block {
-                    self.collect_block(else_block);
+                if let Some(else_branch) = else_branch {
+                    match else_branch {
+                        crate::ast::ElseBranch::Block(block) => self.collect_block(block),
+                        crate::ast::ElseBranch::If(statement) => self.collect_statement(statement),
+                    }
                 }
             }
             Statement::While {

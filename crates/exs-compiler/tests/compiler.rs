@@ -47,6 +47,33 @@ fn formats_source_into_canonical_layout() {
     assert_eq!(reformatted, formatted);
 }
 
+/// Preserves conditional chains instead of converting them into nested else blocks.
+#[test]
+fn formats_else_if_chains() {
+    let source = "fn main(value:Int)->Int{if value>0{ret 1;}else if value<0{ret -1;}else{ret 0;}}";
+    let formatted = match format(SourceInput {
+        source_id: "format-else-if.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert_eq!(
+        formatted,
+        "fn main(value: Int) -> Int {\n    if value > 0 {\n        ret 1;\n    }\n    else if value < 0 {\n        ret -1;\n    }\n    else {\n        ret 0;\n    }\n}\n"
+    );
+    assert!(
+        compile(
+            SourceInput {
+                source_id: "format-else-if.exs",
+                text: &formatted,
+            },
+            CompileOptions::default(),
+        )
+        .is_ok()
+    );
+}
+
 /// Rejects malformed source instead of attempting a best-effort rewrite.
 #[test]
 fn formatter_returns_syntax_diagnostics() {

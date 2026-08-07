@@ -382,13 +382,16 @@ fn rewrite_statement(statement: &mut Statement<'_>, bindings: &HashMap<String, S
         Statement::If {
             condition,
             then_block,
-            else_block,
+            else_branch,
             ..
         } => {
             rewrite_expression(condition, bindings);
             rewrite_block(then_block, bindings);
-            if let Some(block) = else_block {
-                rewrite_block(block, bindings);
+            if let Some(else_branch) = else_branch {
+                match else_branch {
+                    crate::ast::ElseBranch::Block(block) => rewrite_block(block, bindings),
+                    crate::ast::ElseBranch::If(statement) => rewrite_statement(statement, bindings),
+                }
             }
         }
         Statement::While {
