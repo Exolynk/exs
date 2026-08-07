@@ -454,6 +454,62 @@ fn preserves_list_identity_and_returns_push_length() {
     );
 }
 
+/// Uses identity equality for Errors.
+#[test]
+fn preserves_error_identity_equality() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List {
+                    let first_error = Error("First", "first", None);
+                    let second_error = Error("Second", "second", None);
+                    ret [
+                        first_error == first_error,
+                        first_error != first_error,
+                        first_error == second_error,
+                        first_error != second_error,
+                    ];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            ExsValue::Bool(false),
+            ExsValue::Bool(false),
+            ExsValue::Bool(true),
+        ])
+    );
+}
+
+/// Uses identity equality for closures.
+#[test]
+fn preserves_closure_identity_equality() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List {
+                    let first = () => { ret None; };
+                    let second = () => { ret None; };
+                    ret [
+                        first == first,
+                        first != first,
+                        first == second,
+                        first != second,
+                    ];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            ExsValue::Bool(false),
+            ExsValue::Bool(false),
+            ExsValue::Bool(true),
+        ])
+    );
+}
+
 /// Decodes a host list for the root input and returns a nested list result.
 #[test]
 fn passes_list_cbor_input_to_main() {

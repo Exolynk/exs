@@ -28,6 +28,7 @@ Rust
 - Avoid unnecessary cloning and allocations.
 - Avoid unwrap() and expect() outside tests.
 - Do not introduce new dependencies without approval.
+- Build the new exs-runtime.wasm whenever necessary
 
 Validation
 

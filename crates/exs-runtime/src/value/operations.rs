@@ -149,9 +149,10 @@ fn values_equal(left: ValueRef, right: ValueRef) -> bool {
             }
         }
         (RtValue::String(left), RtValue::String(right)) => left.as_str() == right.as_str(),
-        (RtValue::List(_), RtValue::List(_)) | (RtValue::Object(_), RtValue::Object(_)) => {
-            left == right
-        }
+        (RtValue::List(_), RtValue::List(_))
+        | (RtValue::Object(_), RtValue::Object(_))
+        | (RtValue::Error(_), RtValue::Error(_))
+        | (RtValue::Closure(_), RtValue::Closure(_)) => left == right,
         _ => false,
     }
 }
