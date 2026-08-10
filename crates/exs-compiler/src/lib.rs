@@ -5,6 +5,8 @@ mod codegen;
 mod diagnostic;
 mod documentation;
 mod formatter;
+mod formatter_trivia;
+mod highlighting;
 mod hir;
 mod lexer;
 mod module_graph;
@@ -16,6 +18,15 @@ pub use codegen::source_map::{
 };
 pub use diagnostic::{
     CompileDiagnostic, CompileDiagnosticCategory, CompileDiagnostics, RelatedSpan, SourceSpan,
+};
+pub use documentation::{
+    StandardEnum, StandardFunction, StandardMethod, StandardTrait, StandardType,
+    standard_library_enums, standard_library_functions, standard_library_traits,
+    standard_library_types,
+};
+pub use highlighting::{
+    HighlightKind, HighlightSpan, SourceComment, SourceLex, SourceToken, SourceTokenKind,
+    highlight, source_lex, tokens,
 };
 
 /// Immutable source input supplied to the compiler.

@@ -1,0 +1,17 @@
+[package]
+name = "exs-autocomplete"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+birei = ["dep:birei"]
+
+[dependencies]
+birei = { git = "https://github.com/Exolynk/birei", branch = "main", optional = true }
+exs-compiler = { path = "../exs-compiler" }

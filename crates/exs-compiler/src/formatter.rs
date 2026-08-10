@@ -6,7 +6,8 @@ use crate::ast::{
     FunctionDeclaration, Identifier, ImplDeclaration, Module, ObjectProperty, Parameter, Statement,
     TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, UnaryOperator,
 };
-use crate::diagnostic::CompileDiagnostics;
+use crate::diagnostic::{CompileDiagnostics, SourceSpan};
+use crate::formatter_trivia::{Trivia, TriviaKind};
 
 /// Formats one lexically and syntactically valid ExS source unit.
 pub(super) fn format<'a>(source: SourceInput<'a>) -> Result<String, CompileDiagnostics<'a>> {
@@ -24,7 +25,7 @@ pub(super) fn format<'a>(source: SourceInput<'a>) -> Result<String, CompileDiagn
         diagnostics.sort_by_span();
         return Err(diagnostics);
     }
-    Ok(Formatter::new().module(&module))
+    Ok(Formatter::new(source.text).module(&module))
 }
 
 /// Stateful canonical ExS source writer.
@@ -33,20 +34,27 @@ struct Formatter {
     output: String,
     /// Current indentation level in four-space units.
     indentation: usize,
+    /// Comments and blank source lines waiting to be replayed.
+    trivia: Vec<Trivia>,
+    /// Index of the next unrendered trivia item.
+    trivia_index: usize,
 }
 
 impl Formatter {
     /// Creates an empty canonical source writer.
-    fn new() -> Self {
+    fn new(source: &str) -> Self {
         Self {
             output: String::new(),
             indentation: 0,
+            trivia: crate::formatter_trivia::collect(source),
+            trivia_index: 0,
         }
     }
 
     /// Renders one complete parsed source module.
     fn module(mut self, module: &Module<'_>) -> String {
         for import in &module.imports {
+            self.trivia_before(import.span.start_byte as usize);
             self.line(&format!(
                 "import {}{};",
                 quote_string(&import.path),
@@ -57,6 +65,7 @@ impl Formatter {
             ));
         }
         for declaration in &module.uses {
+            self.trivia_before(declaration.span.start_byte as usize);
             let items = declaration
                 .items
                 .iter()
@@ -84,11 +93,19 @@ impl Formatter {
             .chain(module.implementations.iter().map(Declaration::Impl))
             .chain(module.functions.iter().map(Declaration::Function))
             .collect::<Vec<_>>();
-        if has_prelude && !declarations.is_empty() {
-            self.blank_line();
-        }
         for (index, declaration) in declarations.iter().enumerate() {
-            if index > 0 {
+            let declaration_start = declaration.span().start_byte as usize;
+            let needs_separator = (has_prelude && index == 0) || index > 0;
+            let has_documentation = self.has_documentation_before(declaration_start);
+            if has_documentation {
+                if needs_separator {
+                    self.blank_line();
+                }
+                self.trivia_before_without_blank_lines(declaration_start);
+            } else {
+                self.trivia_before(declaration_start);
+            }
+            if needs_separator && !has_documentation {
                 self.blank_line();
             }
             match declaration {
@@ -99,6 +116,7 @@ impl Formatter {
                 Declaration::Function(declaration) => self.function(declaration),
             }
         }
+        self.trivia_before(usize::MAX);
         if !self.output.is_empty() && !self.output.ends_with('\n') {
             self.output.push('\n');
         }
@@ -114,6 +132,7 @@ impl Formatter {
         self.line(&format!("enum {} {{", declaration.name.name));
         self.indentation += 1;
         for variant in &declaration.variants {
+            self.trivia_before(variant.span.start_byte as usize);
             let fields = variant
                 .fields
                 .iter()
@@ -133,6 +152,7 @@ impl Formatter {
             };
             self.line(&format!("{}{},", variant.name.name, suffix));
         }
+        self.trivia_before(closing_brace_offset(declaration.span));
         self.indentation -= 1;
         self.line("}");
     }
@@ -146,12 +166,14 @@ impl Formatter {
         self.line(&format!("type {} {{", declaration.name.name));
         self.indentation += 1;
         for field in &declaration.fields {
+            self.trivia_before(field.span.start_byte as usize);
             let annotation = field
                 .type_annotation
                 .as_ref()
                 .map_or_else(String::new, |value| format!(": {}", type_annotation(value)));
             self.line(&format!("{}{},", field.name.name, annotation));
         }
+        self.trivia_before(closing_brace_offset(declaration.span));
         self.indentation -= 1;
         self.line("}");
     }
@@ -161,11 +183,13 @@ impl Formatter {
         self.line(&format!("trait {} {{", declaration.name.name));
         self.indentation += 1;
         for (index, method) in declaration.methods.iter().enumerate() {
+            self.trivia_before(method.span.start_byte as usize);
             if index > 0 {
                 self.blank_line();
             }
             self.trait_method(method);
         }
+        self.trivia_before(closing_brace_offset(declaration.span));
         self.indentation -= 1;
         self.line("}");
     }
@@ -198,11 +222,13 @@ impl Formatter {
         self.line(&format!("{header} {{"));
         self.indentation += 1;
         for (index, method) in declaration.methods.iter().enumerate() {
+            self.trivia_before(method.span.start_byte as usize);
             if index > 0 {
                 self.blank_line();
             }
             self.function(method);
         }
+        self.trivia_before(closing_brace_offset(declaration.span));
         self.indentation -= 1;
         self.line("}");
     }
@@ -221,11 +247,14 @@ impl Formatter {
 
     /// Renders one block after its already formatted opening header.
     fn block_after(&mut self, header: &str, block: &Block<'_>) {
+        if self.is_blank_only_block(block) {
+            self.discard_trivia_before(closing_brace_offset(block.span));
+            self.line(&format!("{header} {{}}"));
+            return;
+        }
         self.line(&format!("{header} {{"));
         self.indentation += 1;
-        for statement in &block.statements {
-            self.statement(statement);
-        }
+        self.block_contents(block);
         self.indentation -= 1;
         self.line("}");
     }
@@ -281,11 +310,14 @@ impl Formatter {
 
     /// Renders a standalone lexical block.
     fn standalone_block(&mut self, block: &Block<'_>) {
+        if self.is_blank_only_block(block) {
+            self.discard_trivia_before(closing_brace_offset(block.span));
+            self.line("{}");
+            return;
+        }
         self.line("{");
         self.indentation += 1;
-        for statement in &block.statements {
-            self.statement(statement);
-        }
+        self.block_contents(block);
         self.indentation -= 1;
         self.line("}");
     }
@@ -294,11 +326,15 @@ impl Formatter {
     fn else_branch(&mut self, branch: &ElseBranch<'_>) {
         match branch {
             ElseBranch::Block(block) => {
+                self.trivia_before(block.span.start_byte as usize);
+                if self.is_blank_only_block(block) {
+                    self.discard_trivia_before(closing_brace_offset(block.span));
+                    self.line("else {}");
+                    return;
+                }
                 self.line("else {");
                 self.indentation += 1;
-                for statement in &block.statements {
-                    self.statement(statement);
-                }
+                self.block_contents(block);
                 self.indentation -= 1;
                 self.line("}");
             }
@@ -326,6 +362,20 @@ impl Formatter {
         }
     }
 
+    /// Renders a block's statements and any trivia contained by its braces.
+    fn block_contents(&mut self, block: &Block<'_>) {
+        for statement in &block.statements {
+            self.trivia_before(statement_span(statement).start_byte as usize);
+            self.statement(statement);
+        }
+        self.trivia_before(closing_brace_offset(block.span));
+    }
+
+    /// Reports whether a block contains neither statements nor retained comments.
+    fn is_blank_only_block(&self, block: &Block<'_>) -> bool {
+        block.statements.is_empty() && !self.has_comment_before(closing_brace_offset(block.span))
+    }
+
     /// Appends one indented line and a trailing line feed.
     fn line(&mut self, text: &str) {
         self.indentation_line(text);
@@ -346,6 +396,100 @@ impl Formatter {
             self.output.push('\n');
         }
     }
+
+    /// Emits every retained source fragment occurring before one source offset.
+    fn trivia_before(&mut self, offset: usize) {
+        while self
+            .trivia
+            .get(self.trivia_index)
+            .is_some_and(|item| item.start < offset)
+        {
+            let kind = self.trivia[self.trivia_index].kind.clone();
+            let skip_blank_line = matches!(kind, TriviaKind::BlankLine) && self.output.is_empty();
+            self.trivia_index += 1;
+            match kind {
+                TriviaKind::Comment(comment) | TriviaKind::DocumentationComment(comment) => {
+                    self.comment(&comment)
+                }
+                TriviaKind::BlankLine if !skip_blank_line => self.preserved_blank_line(),
+                TriviaKind::BlankLine => {}
+            }
+        }
+    }
+
+    /// Emits retained comments before an offset while consuming intervening blank source lines.
+    fn trivia_before_without_blank_lines(&mut self, offset: usize) {
+        while self
+            .trivia
+            .get(self.trivia_index)
+            .is_some_and(|item| item.start < offset)
+        {
+            let kind = self.trivia[self.trivia_index].kind.clone();
+            self.trivia_index += 1;
+            if let TriviaKind::Comment(comment) | TriviaKind::DocumentationComment(comment) = kind {
+                self.comment(&comment);
+            }
+        }
+    }
+
+    /// Reports whether unrendered trivia before an offset contains a comment.
+    fn has_comment_before(&self, offset: usize) -> bool {
+        self.trivia[self.trivia_index..]
+            .iter()
+            .take_while(|item| item.start < offset)
+            .any(|item| {
+                matches!(
+                    item.kind,
+                    TriviaKind::Comment(_) | TriviaKind::DocumentationComment(_)
+                )
+            })
+    }
+
+    /// Reports whether pending trivia before an offset contains documentation.
+    fn has_documentation_before(&self, offset: usize) -> bool {
+        self.trivia[self.trivia_index..]
+            .iter()
+            .take_while(|item| item.start < offset)
+            .any(|item| matches!(item.kind, TriviaKind::DocumentationComment(_)))
+    }
+
+    /// Consumes retained trivia before an offset without emitting it.
+    fn discard_trivia_before(&mut self, offset: usize) {
+        while self
+            .trivia
+            .get(self.trivia_index)
+            .is_some_and(|item| item.start < offset)
+        {
+            self.trivia_index += 1;
+        }
+    }
+
+    /// Emits one retained source comment at the active canonical indentation.
+    fn comment(&mut self, comment: &str) {
+        for line in comment.lines() {
+            let line = line.trim();
+            let prefix_and_text = line
+                .strip_prefix("///")
+                .map(|text| ("///", text))
+                .or_else(|| line.strip_prefix("//").map(|text| ("//", text)));
+            if let Some((prefix, text)) = prefix_and_text
+                && !text.is_empty()
+                && !text.chars().next().is_some_and(char::is_whitespace)
+            {
+                self.line(&format!("{prefix} {text}"));
+            } else {
+                self.line(line);
+            }
+        }
+    }
+
+    /// Emits one source-requested blank line without collapsing existing blank runs.
+    fn preserved_blank_line(&mut self) {
+        if !self.output.ends_with('\n') {
+            self.output.push('\n');
+        }
+        self.output.push('\n');
+    }
 }
 
 /// A module declaration viewed without allocating a second AST representation.
@@ -360,6 +504,40 @@ enum Declaration<'a> {
     Impl(&'a ImplDeclaration<'a>),
     /// Direct function declaration.
     Function(&'a FunctionDeclaration<'a>),
+}
+
+impl Declaration<'_> {
+    /// Returns the full source span of this top-level declaration.
+    fn span(&self) -> SourceSpan<'_> {
+        match self {
+            Self::Type(declaration) => declaration.span,
+            Self::Enum(declaration) => declaration.span,
+            Self::Trait(declaration) => declaration.span,
+            Self::Impl(declaration) => declaration.span,
+            Self::Function(declaration) => declaration.span,
+        }
+    }
+}
+
+/// Returns the source position of a block's closing brace.
+fn closing_brace_offset(span: SourceSpan<'_>) -> usize {
+    span.end_byte.saturating_sub(1) as usize
+}
+
+/// Returns the full source span of one parsed statement.
+fn statement_span<'source>(statement: &Statement<'source>) -> SourceSpan<'source> {
+    match statement {
+        Statement::Let { span, .. }
+        | Statement::Assign { span, .. }
+        | Statement::Return { span, .. }
+        | Statement::Block { span, .. }
+        | Statement::If { span, .. }
+        | Statement::While { span, .. }
+        | Statement::For { span, .. }
+        | Statement::Break { span, .. }
+        | Statement::Continue { span, .. }
+        | Statement::Expression { span, .. } => *span,
+    }
 }
 
 /// Renders one direct function header without its body.

@@ -806,6 +806,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "exs-autocomplete"
+version = "0.1.0"
+dependencies = [
+ "birei",
+ "exs-compiler",
+]
+
+[[package]]
 name = "exs-cli"
 version = "0.1.0"
 dependencies = [
@@ -829,6 +837,7 @@ name = "exs-playground"
 version = "0.1.0"
 dependencies = [
  "birei",
+ "exs-autocomplete",
  "exs-compiler",
  "exs-runner",
  "leptos",

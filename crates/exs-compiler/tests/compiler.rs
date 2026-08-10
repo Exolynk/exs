@@ -47,6 +47,56 @@ fn formats_source_into_canonical_layout() {
     assert_eq!(reformatted, formatted);
 }
 
+/// Retains comments and empty source lines while canonicalizing ExS syntax.
+#[test]
+fn formatter_preserves_comments_and_blank_lines() {
+    let source = "//file\n\nfn main(){\n//before\nlet value=1; //trailing\n\n//between\nret value;\n//last\n}";
+    let formatted = match format(SourceInput {
+        source_id: "format-trivia.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert_eq!(
+        formatted,
+        "// file\n\nfn main() {\n    // before\n    let value = 1;\n    // trailing\n\n    // between\n    ret value;\n    // last\n}\n"
+    );
+    let reformatted = match format(SourceInput {
+        source_id: "format-trivia.exs",
+        text: &formatted,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert_eq!(reformatted, formatted);
+}
+
+/// Canonicalizes empty functions and documentation-declaration boundaries on reformatting.
+#[test]
+fn formatter_normalizes_empty_blocks_and_preserves_declaration_spacing() {
+    let source = "\n\n///asdasdasd\nfn main() {\n    let value = 21 * 2;\n    host.call(\"println\", \"The result is\", value);\n    //lala\n    ret value;\n}\n\n\n///Hallo\n\nfn test() {\n\n\n}\n";
+    let formatted = match format(SourceInput {
+        source_id: "format-empty-block.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert_eq!(
+        formatted,
+        "/// asdasdasd\nfn main() {\n    let value = 21 * 2;\n    host.call(\"println\", \"The result is\", value);\n    // lala\n    ret value;\n}\n\n/// Hallo\nfn test() {}\n"
+    );
+    let reformatted = match format(SourceInput {
+        source_id: "format-empty-block.exs",
+        text: &formatted,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("reformatting failed: {error}"),
+    };
+    assert_eq!(reformatted, formatted);
+}
+
 /// Preserves conditional chains instead of converting them into nested else blocks.
 #[test]
 fn formats_else_if_chains() {
@@ -989,6 +1039,19 @@ fn validates_the_error_constructor_arity() {
         Err(error) => error,
     };
     assert_eq!(error.diagnostics[0].code, "E0208");
+}
+
+/// Compiles the Error constructor when a host call requires continuation lowering.
+#[test]
+fn compiles_error_constructor_in_a_suspendable_function() {
+    let module = compile(
+        SourceInput {
+            source_id: "suspendable-error.exs",
+            text: "fn main() { host.call(\"noop\"); Error(\"test\", \"lala\", {}); }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok());
 }
 
 /// Reports a missing statement terminator at the source level.

@@ -28,26 +28,99 @@ struct ImportEdge {
     target: usize,
 }
 
-/// One synthetic standard-library type page and its source-level usage guidance.
-struct StandardType {
+/// One source-visible standard-library type and its documentation metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardType {
     /// Source-visible built-in type name.
-    name: &'static str,
+    pub name: &'static str,
     /// Overview rendered before the type declaration.
-    description: &'static str,
+    pub description: &'static str,
     /// Short valid ExS example that introduces the type.
-    usage: &'static str,
+    pub usage: &'static str,
     /// Runtime-owned methods exposed by this type.
-    methods: &'static [StandardMethod],
+    pub methods: &'static [StandardMethod],
 }
 
 /// One documented runtime-owned standard-library method.
-struct StandardMethod {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardMethod {
     /// Source-level method signature.
-    signature: &'static str,
+    pub signature: &'static str,
     /// Detailed observable behavior and error conditions.
-    description: &'static str,
+    pub description: &'static str,
     /// Short valid ExS example of a call to the method.
-    example: &'static str,
+    pub example: &'static str,
+}
+
+/// One globally callable standard-library function and its documentation metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardFunction {
+    /// Source-visible function name.
+    pub name: &'static str,
+    /// Source-level call signature.
+    pub signature: &'static str,
+    /// Detailed observable behavior and error conditions.
+    pub description: &'static str,
+    /// Short valid ExS example of a call to the function.
+    pub example: &'static str,
+}
+
+/// One source-visible standard-library trait.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardTrait {
+    /// Source-visible trait name.
+    pub name: &'static str,
+}
+
+/// One source-visible standard-library enum and its variants.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardEnum {
+    /// Source-visible enum name.
+    pub name: &'static str,
+    /// Source-visible variants in declaration order.
+    pub variants: &'static [&'static str],
+}
+
+/// Returns every globally callable standard-library function.
+#[must_use]
+pub fn standard_library_functions() -> &'static [StandardFunction] {
+    &[
+        StandardFunction {
+            name: "Error",
+            signature: "Error(kind, message, data)",
+            description: "Constructs a recoverable Error with a stable category, a human-readable message, and any related language value. `kind` and `message` must be Strings. The constructor does not assign a cause; `cause()` consequently returns None for directly constructed Errors.",
+            example: "let error = Error(\"InvalidInput\", \"age must be positive\", -1);\nret error.message();",
+        },
+        StandardFunction {
+            name: "host.call",
+            signature: "host.call(name, arguments...)",
+            description: "Invokes a runner-registered host function selected by a runtime String name. Arguments are collected into a List and transported through the runner CBOR boundary. A call may complete immediately or suspend; it returns the host result or a recoverable Error such as `HostFunctionNotFound`.",
+            example: "fn main() {\n    let greeting = host.call(\"greet\", \"Ada\");\n    ret greeting;\n}",
+        },
+    ]
+}
+
+/// Returns every documented source-visible standard-library trait.
+#[must_use]
+pub fn standard_library_traits() -> Vec<StandardTrait> {
+    standard::traits()
+        .iter()
+        .map(|descriptor| StandardTrait {
+            name: descriptor.name,
+        })
+        .collect()
+}
+
+/// Returns every documented source-visible standard-library enum.
+#[must_use]
+pub fn standard_library_enums() -> Vec<StandardEnum> {
+    standard::enums()
+        .iter()
+        .map(|descriptor| StandardEnum {
+            name: descriptor.name,
+            variants: descriptor.variants,
+        })
+        .collect()
 }
 
 /// Generates Markdown documentation for one root source and its import graph.
@@ -545,9 +618,10 @@ fn render_trait_method_details(
     output.push_str("```\n\n");
 }
 
-/// Generates the synthetic standard-library module and its declaration pages.
-fn standard_pages() -> Vec<DocumentationPage> {
-    let types = [
+/// Returns every documented source-visible standard-library type.
+#[must_use]
+pub fn standard_library_types() -> Vec<StandardType> {
+    vec![
         StandardType {
             name: "Any",
             description: "`Any` accepts every ExS value. It is the implicit contract when a parameter or return annotation is omitted, and is useful when a function deliberately forwards values without narrowing their type.",
@@ -732,7 +806,12 @@ fn standard_pages() -> Vec<DocumentationPage> {
             usage: "fn apply(function: Fn, value: Int) -> Int {\n    ret function(value);\n}\n\nfn main() -> Int {\n    let increment = (value) => { ret value + 1; };\n    ret apply(increment, 1);\n}",
             methods: &[],
         },
-    ];
+    ]
+}
+
+/// Generates the synthetic standard-library module and its declaration pages.
+fn standard_pages() -> Vec<DocumentationPage> {
+    let types = standard_library_types();
     let traits = standard::traits();
     let enums = standard::enums();
     let mut pages = vec![DocumentationPage {
@@ -758,13 +837,18 @@ fn standard_pages() -> Vec<DocumentationPage> {
             markdown: render_standard_enum(enum_info),
         });
     }
-    pages.push(standard_function_page(
-        "host-call",
-        "host.call",
-        "host.call(name, arguments...)",
-        "Invokes a runner-registered host function selected by a runtime String name. Arguments are collected into a List and transported through the runner CBOR boundary. A call may complete immediately or suspend; it returns the host result or a recoverable Error such as `HostFunctionNotFound`.",
-        "fn main() {\n    let greeting = host.call(\"greet\", \"Ada\");\n    ret greeting;\n}",
-    ));
+    if let Some(host_call) = standard_library_functions()
+        .iter()
+        .find(|function| function.name == "host.call")
+    {
+        pages.push(standard_function_page(
+            "host-call",
+            host_call.name,
+            host_call.signature,
+            host_call.description,
+            host_call.example,
+        ));
+    }
     pages
 }
 
@@ -878,11 +962,18 @@ fn render_standard_enum(descriptor: &StandardEnumDescriptor) -> String {
 /// Renders the Error type page with its source-level constructor.
 fn render_standard_error_type(type_info: &StandardType) -> String {
     let mut output = render_standard_type(type_info);
-    output.push_str("\n## Constructor\n\n```exs\nError(kind, message, data)\n```\n\nConstructs a recoverable Error with a stable category, a human-readable message, and any related language value. `kind` and `message` must be Strings. The constructor does not assign a cause; `cause()` consequently returns None for directly constructed Errors.\n\n```exs\n");
-    output.push_str(&script_example(
-        "let error = Error(\"InvalidInput\", \"age must be positive\", -1);\nret error.message();",
-    ));
-    output.push_str("\n```\n");
+    if let Some(constructor) = standard_library_functions()
+        .iter()
+        .find(|function| function.name == "Error")
+    {
+        output.push_str("\n## Constructor\n\n```exs\n");
+        output.push_str(constructor.signature);
+        output.push_str("\n```\n\n");
+        output.push_str(constructor.description);
+        output.push_str("\n\n```exs\n");
+        output.push_str(&script_example(constructor.example));
+        output.push_str("\n```\n");
+    }
     output
 }
 

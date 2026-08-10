@@ -420,7 +420,6 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
             const inputPointer = allocate(inputBytes.length);
             write(memory, inputPointer, inputBytes, "ExS input");
             const start = exportedFunction(instance.exports, "__exs_start");
-            const resume = exportedFunction(instance.exports, "__exs_resume_host");
             const resultPointer = exportedFunction(instance.exports, "__exs_result_ptr");
             const resultLength = exportedFunction(instance.exports, "__exs_result_len");
             let status = start(inputPointer, inputBytes.length);
@@ -441,6 +440,7 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
                 pending.delete(callId);
                 const responsePointer = allocate(value.length);
                 write(memory, responsePointer, value, "host response");
+                const resume = exportedFunction(instance.exports, "__exs_resume_host");
                 status = resume(callId, responsePointer, value.length);
             }
         },

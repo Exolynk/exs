@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 birei = { git = "https://github.com/Exolynk/birei", branch = "main", features = ["embedded"] }
+exs-autocomplete = { path = "../../crates/exs-autocomplete", features = ["birei"] }
 exs-compiler = { path = "../../crates/exs-compiler" }
 exs-runner = { path = "../../crates/exs-runner", default-features = false, features = ["browser"] }
 leptos = { version = "0.7", features = ["csr"] }

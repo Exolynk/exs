@@ -122,6 +122,19 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Constructs one language Error from its kind, message, and data values.
+    Error {
+        /// Frame slot holding the stable error kind String.
+        kind: u32,
+        /// Frame slot holding the human-readable error message String.
+        message: u32,
+        /// Frame slot holding related source data.
+        data: u32,
+        /// Frame slot receiving the constructed Error value.
+        destination: u32,
+        /// Source location for this constructor invocation.
+        span: SourceSpan<'source>,
+    },
     /// Constructs an empty nominal Object with a compiler-resolved type tag.
     TypedObject {
         type_id: u32,
@@ -518,6 +531,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::OrderingTest { span, .. }
         | Operation::List { span, .. }
         | Operation::Object { span, .. }
+        | Operation::Error { span, .. }
         | Operation::TypedObject { span, .. }
         | Operation::Enum { span, .. }
         | Operation::EnumMatches { span, .. }

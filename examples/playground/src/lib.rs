@@ -10,7 +10,8 @@ mod browser {
     use std::sync::Arc;
 
     use birei::CodeEditor;
-    use birei::code_editor::{CodeLanguageService, PlainTextCodeLanguageService};
+    use birei::code_editor::CodeLanguageService;
+    use exs_autocomplete::ExsBireiLanguageService;
     use exs_compiler::{CompileOptions, DocumentationPage, SourceInput, compile, format};
     use exs_runner::{BrowserRunner, BrowserRunnerConfig, ExsValue};
     use leptos::prelude::*;
@@ -66,7 +67,8 @@ mod browser {
         let output = RwSignal::new(String::from("Ready.\n"));
         let running = RwSignal::new(false);
         let active_panel = RwSignal::new(SidePanel::Documentation);
-        let language_service: Arc<dyn CodeLanguageService> = Arc::new(PlainTextCodeLanguageService);
+        let language_service: Arc<dyn CodeLanguageService> =
+            Arc::new(ExsBireiLanguageService::default());
 
         let refresh_documentation = move |next_source: &str| {
             refresh_documentation_pages(

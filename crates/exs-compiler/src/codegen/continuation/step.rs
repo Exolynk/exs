@@ -252,6 +252,20 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 }
                 self.ready(next, *span)?;
             }
+            Operation::Error {
+                kind,
+                message,
+                data,
+                destination,
+                span,
+            } => {
+                self.get_slot(*kind, *span)?;
+                self.get_slot(*message, *span)?;
+                self.get_slot(*data, *span)?;
+                self.call_runtime("__exs_rt_error_new", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::TypedObject {
                 type_id,
                 destination,

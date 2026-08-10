@@ -139,6 +139,8 @@ pub enum TokenKind {
 pub struct Lexed<'a> {
     /// Tokens recognized after malformed source fragments were skipped.
     pub tokens: Vec<Token<'a>>,
+    /// Comment spans skipped while tokenizing the source.
+    pub comments: Vec<SourceSpan<'a>>,
     /// All lexical diagnostics encountered while tokenizing the source.
     pub diagnostics: CompileDiagnostics<'a>,
 }
@@ -147,6 +149,7 @@ pub struct Lexed<'a> {
 pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
     let bytes = source.text.as_bytes();
     let mut tokens = Vec::new();
+    let mut comments = Vec::new();
     let mut diagnostics = CompileDiagnostics::new();
     let mut index = 0;
 
@@ -157,10 +160,12 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
             continue;
         }
         if bytes[index..].starts_with(b"//") {
+            let start = index;
             index += 2;
             while index < bytes.len() && bytes[index] != b'\n' {
                 index += 1;
             }
+            comments.push(span(source, start, index));
             continue;
         }
         if bytes[index..].starts_with(b"/*") {
@@ -169,7 +174,8 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
             while index + 1 < bytes.len() && !bytes[index..].starts_with(b"*/") {
                 index += 1;
             }
-            if index + 1 == bytes.len() {
+            if index + 1 >= bytes.len() {
+                comments.push(span(source, start, bytes.len()));
                 diagnostics.push(diagnostic(
                     source,
                     start,
@@ -180,6 +186,7 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                 break;
             }
             index += 2;
+            comments.push(span(source, start, index));
             continue;
         }
 
@@ -394,6 +401,7 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
     });
     Lexed {
         tokens,
+        comments,
         diagnostics,
     }
 }

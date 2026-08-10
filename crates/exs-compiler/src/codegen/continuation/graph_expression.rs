@@ -354,6 +354,30 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 arguments,
                 span,
             } => {
+                if callee.name == "Error" {
+                    if arguments.len() != 3 {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            *span,
+                            format!(
+                                "constructor `Error` expects 3 arguments but received {}",
+                                arguments.len()
+                            ),
+                        )));
+                    }
+                    let kind = self.lower_expression(&arguments[0])?;
+                    let message = self.lower_expression(&arguments[1])?;
+                    let data = self.lower_expression(&arguments[2])?;
+                    let destination = self.temporary(*span)?;
+                    self.operations.push(Operation::Error {
+                        kind,
+                        message,
+                        data,
+                        destination,
+                        span: *span,
+                    });
+                    return Ok(destination);
+                }
                 if let Some(binding) = self.lookup_optional(&callee.name) {
                     let closure = if binding.cell {
                         let destination = self.temporary(callee.span)?;

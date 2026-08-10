@@ -4,6 +4,7 @@ members = [
     "crates/exs-abi",
     "crates/exs-runtime",
     "crates/exs-compiler",
+    "crates/exs-autocomplete",
     "crates/exs-runner",
     "crates/exs-cli",
     "examples/playground",

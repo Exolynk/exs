@@ -9,7 +9,7 @@ fn type_panic() -> Int {
 
 fn main(input) {
     let a = "Test"?;
-    type_panic();
+    //type_panic();
 
     ret custom()?;
 }
