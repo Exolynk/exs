@@ -833,6 +833,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "exs-guest"
+version = "0.1.0"
+dependencies = [
+ "dlmalloc",
+ "exs-abi",
+]
+
+[[package]]
 name = "exs-playground"
 version = "0.1.0"
 dependencies = [
@@ -868,6 +876,13 @@ dependencies = [
  "exs-abi",
  "exs-value",
  "libm",
+]
+
+[[package]]
+name = "exs-rust-guest"
+version = "0.1.0"
+dependencies = [
+ "exs-guest",
 ]
 
 [[package]]

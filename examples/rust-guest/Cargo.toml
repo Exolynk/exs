@@ -1,0 +1,15 @@
+[package]
+name = "exs-rust-guest"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+exs-guest = { path = "../../crates/exs-guest" }

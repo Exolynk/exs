@@ -1,0 +1,18 @@
+[package]
+name = "exs-guest"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+std = []
+no-std = []
+
+[dependencies]
+dlmalloc.workspace = true
+exs-abi = { path = "../exs-abi" }

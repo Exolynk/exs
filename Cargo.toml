@@ -3,11 +3,13 @@ members = [
     "crates/exs-value",
     "crates/exs-abi",
     "crates/exs-runtime",
+    "crates/exs-guest",
     "crates/exs-compiler",
     "crates/exs-autocomplete",
     "crates/exs-runner",
     "crates/exs-cli",
     "examples/playground",
+    "examples/rust-guest",
 ]
 resolver = "3"
 
