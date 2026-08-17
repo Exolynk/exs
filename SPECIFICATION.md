@@ -187,7 +187,7 @@ List indexes must be nonnegative `Int` values. Object indexes must be Strings. I
 
 String indexing is not supported. Use `for` to iterate a String by Unicode scalar.
 
-Direct calls use a declared function name, an imported function name, or a local binding containing an `Fn` value. Method calls evaluate the receiver before their arguments. Arguments evaluate left to right. Calling a non-callable value produces `TypeError`; a wrong argument count produces `ArityError`.
+Direct calls use a declared function name, an imported function name, or a local binding containing an `Fn` value. Method calls evaluate the receiver before their arguments. Arguments evaluate left to right. Calling a non-callable value produces `TypeError`; a call with fewer than its required parameters, or any count other than the declaration allows, produces `ArityError`.
 
 ## Unary operators
 
@@ -305,9 +305,23 @@ fn add(left: Int, right: Int) -> Int {
 }
 ```
 
-Parameters are positional. ExS has no default, named, keyword, or variadic parameters. Duplicate parameter names are compile errors. Named functions are visible throughout their enclosing module, enabling recursion.
+Parameters are positional. ExS has no default, named, or keyword parameters. Duplicate parameter names are compile errors. Named functions are visible throughout their enclosing module, enabling recursion.
 
-The root `main` function may have zero or more parameters. Hosts may supply fewer input values, in which case missing `main` parameters receive `None`. Supplying more values than `main` declares is a fatal `ArityError`.
+A function, method, trait method, or closure may declare one trailing variadic parameter with `...` after its name or type annotation:
+
+```exs
+fn total(prefix: Int, values: Int...) -> Int {
+    let result = prefix;
+    for value in values {
+        result = result + value;
+    }
+    ret result;
+}
+```
+
+The variadic binding is always a `List` and may be empty. It must be the final parameter. A type annotation applies independently to every supplied trailing value, not to the `List` itself. Calls must provide every non-variadic parameter and may then provide any number of trailing values. A non-variadic declaration still requires its exact argument count. Trait implementations must declare the same variadic position as their trait method.
+
+The root `main` function may have zero or more parameters. Hosts may supply fewer input values, in which case missing fixed `main` parameters receive `None`. When `main` has a trailing variadic parameter, all remaining host input values are packed into its List. Supplying more values than a non-variadic `main` declares is a fatal `ArityError`.
 
 ## Closures
 
@@ -451,7 +465,7 @@ let results = par {
 
 Each semicolon-terminated expression in a static `par` block becomes a task. The expressions are not evaluated before task creation. An empty block returns an empty List.
 
-The dynamic form accepts a List of zero-argument closures:
+The dynamic form accepts a List of closures callable with zero arguments, including variadic closures with no required parameters:
 
 ```exs
 let results = par([first, second]);
@@ -546,8 +560,9 @@ traitMethod     = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] ( ";" |
 implDecl        = "impl" identifier [ "for" identifier ] "{" { functionDecl } "}" ;
 closure         = "(" closureParameters? ")" "=>" block ;
 parameters      = parameter { "," parameter } [ "," ] ;
-closureParameters = identifier { "," identifier } [ "," ] ;
-parameter       = identifier [ ":" typeUnion ] ;
+closureParameters = closureParameter { "," closureParameter } [ "," ] ;
+closureParameter = identifier [ "..." ] ;
+parameter       = identifier [ ":" typeUnion ] [ "..." ] ;
 typeUnion       = typeName { "|" typeName } ;
 typeName        = qualifiedName | "None" | "Error" ;
 

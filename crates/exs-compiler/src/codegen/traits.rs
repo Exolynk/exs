@@ -113,7 +113,7 @@ fn validate_method_signature<'a>(
     diagnostics: &mut CompileDiagnostics<'a>,
 ) {
     let mut parameters = HashMap::new();
-    for parameter in &method.parameters {
+    for (index, parameter) in method.parameters.iter().enumerate() {
         if let Some(previous) = parameters.insert(&parameter.name.name, parameter.name.span) {
             diagnostics.push(
                 CompileDiagnostic::new(
@@ -123,6 +123,13 @@ fn validate_method_signature<'a>(
                 )
                 .with_related(previous, "previous parameter declaration is here"),
             );
+        }
+        if parameter.variadic && index + 1 != method.parameters.len() {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0217",
+                parameter.name.span,
+                "a variadic parameter must be the final parameter",
+            ));
         }
         types::validate_annotation_with_self(
             module,

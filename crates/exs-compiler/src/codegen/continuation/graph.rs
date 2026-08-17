@@ -70,6 +70,7 @@ pub(super) enum Operation<'source, 'function> {
     Closure {
         layout: FrameLayout,
         arity: usize,
+        variadic: bool,
         captures: Vec<u32>,
         destination: u32,
         span: SourceSpan<'source>,
@@ -300,6 +301,12 @@ pub(super) enum Operation<'source, 'function> {
         offset: u32,
         span: SourceSpan<'source>,
     },
+    /// Validates every element in one packed variadic parameter List.
+    ValidateVariadicParameter {
+        slot: u32,
+        contract: TypeContract,
+        span: SourceSpan<'source>,
+    },
     /// Validates one durable slot against a source type contract.
     ValidateSlot {
         slot: u32,
@@ -478,7 +485,12 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
             lifted,
         };
         builder.operations.push(Operation::ValidateParameters {
-            contracts: signature.parameter_types.clone(),
+            contracts: signature
+                .parameter_types
+                .iter()
+                .take(signature.arity)
+                .cloned()
+                .collect(),
             offset: u32::try_from(capture_count).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(
                     "E0212",
@@ -488,6 +500,40 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
             })?,
             span: declaration.span,
         });
+        if signature.variadic {
+            let slot = u32::try_from(capture_count)
+                .ok()
+                .and_then(|offset| {
+                    u32::try_from(signature.arity)
+                        .ok()
+                        .and_then(|arity| offset.checked_add(arity))
+                })
+                .ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0212",
+                        declaration.span,
+                        "too many continuation parameter slots",
+                    ))
+                })?;
+            let contract = signature
+                .parameter_types
+                .get(signature.arity)
+                .cloned()
+                .ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0999",
+                        declaration.span,
+                        "missing variadic parameter contract during lowering",
+                    ))
+                })?;
+            builder
+                .operations
+                .push(Operation::ValidateVariadicParameter {
+                    slot,
+                    contract,
+                    span: declaration.span,
+                });
+        }
         for parameter in cell_parameters {
             builder.operations.push(Operation::CellNew {
                 value: parameter.slot,
@@ -553,6 +599,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::ParallelTake { span, .. }
         | Operation::InstanceCall { span, .. }
         | Operation::ValidateParameters { span, .. }
+        | Operation::ValidateVariadicParameter { span, .. }
         | Operation::ValidateSlot { span, .. }
         | Operation::Branch { span, .. }
         | Operation::Goto { span, .. }

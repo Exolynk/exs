@@ -15,7 +15,14 @@ pub(super) fn compile_start<'a>(
     main: &FunctionSignature,
     runtime: &HashMap<String, u32>,
 ) -> Result<Function, CompileDiagnostics<'a>> {
-    let parameter_count = u32::try_from(main.arity).map_err(|_| {
+    let fixed_parameter_count = u32::try_from(main.arity).map_err(|_| {
+        diagnostics(CompileDiagnostic::new(
+            "E0212",
+            module_span(module),
+            "too many main parameters for the Wasm i32 ABI",
+        ))
+    })?;
+    let parameter_count = u32::try_from(main.wasm_arity()).map_err(|_| {
         diagnostics(CompileDiagnostic::new(
             "E0212",
             module_span(module),
@@ -29,7 +36,7 @@ pub(super) fn compile_start<'a>(
             "too many main root slots",
         ))
     })?;
-    let local_count = parameter_count.checked_add(4).ok_or_else(|| {
+    let local_count = parameter_count.checked_add(6).ok_or_else(|| {
         diagnostics(CompileDiagnostic::new(
             "E0212",
             module_span(module),
@@ -49,6 +56,8 @@ pub(super) fn compile_start<'a>(
                 "too many main parameters for the Wasm i32 ABI",
             ))
         })?;
+    let variadic_list_local = result_local + 1;
+    let variadic_index_local = result_local + 2;
     let mut function = Function::new([(local_count, ValType::I32)]);
 
     function.instruction(&Instruction::LocalGet(0));
@@ -76,30 +85,32 @@ pub(super) fn compile_start<'a>(
         module,
     )?;
     function.instruction(&Instruction::LocalSet(argument_count_local));
-    function.instruction(&Instruction::LocalGet(argument_count_local));
-    function.instruction(&Instruction::I32Const(parameter_count.cast_signed()));
-    function.instruction(&Instruction::I32GtU);
-    function.instruction(&Instruction::If(BlockType::Empty));
-    function.instruction(&Instruction::LocalGet(arguments_local));
-    call_runtime(&mut function, runtime, "__exs_rt_input_arity_error", module)?;
-    function.instruction(&Instruction::LocalSet(result_local));
-    set_root_slot(
-        &mut function,
-        runtime,
-        module,
-        root_frame_local,
-        root_slot_count - 1,
-        result_local,
-    )?;
-    function.instruction(&Instruction::LocalGet(result_local));
-    call_runtime(&mut function, runtime, "__exs_rt_set_result", module)?;
-    function.instruction(&Instruction::LocalGet(root_frame_local));
-    call_runtime(&mut function, runtime, "__exs_rt_root_pop", module)?;
-    function.instruction(&Instruction::I32Const(exs_abi::STATUS_COMPLETE));
-    function.instruction(&Instruction::Return);
-    function.instruction(&Instruction::End);
+    if !main.variadic {
+        function.instruction(&Instruction::LocalGet(argument_count_local));
+        function.instruction(&Instruction::I32Const(fixed_parameter_count.cast_signed()));
+        function.instruction(&Instruction::I32GtU);
+        function.instruction(&Instruction::If(BlockType::Empty));
+        function.instruction(&Instruction::LocalGet(arguments_local));
+        call_runtime(&mut function, runtime, "__exs_rt_input_arity_error", module)?;
+        function.instruction(&Instruction::LocalSet(result_local));
+        set_root_slot(
+            &mut function,
+            runtime,
+            module,
+            root_frame_local,
+            root_slot_count - 1,
+            result_local,
+        )?;
+        function.instruction(&Instruction::LocalGet(result_local));
+        call_runtime(&mut function, runtime, "__exs_rt_set_result", module)?;
+        function.instruction(&Instruction::LocalGet(root_frame_local));
+        call_runtime(&mut function, runtime, "__exs_rt_root_pop", module)?;
+        function.instruction(&Instruction::I32Const(exs_abi::STATUS_COMPLETE));
+        function.instruction(&Instruction::Return);
+        function.instruction(&Instruction::End);
+    }
 
-    for index in 0..parameter_count {
+    for index in 0..fixed_parameter_count {
         let parameter_local = first_parameter_local + index;
         function.instruction(&Instruction::LocalGet(arguments_local));
         function.instruction(&Instruction::I32Const(index.cast_signed()));
@@ -111,6 +122,58 @@ pub(super) fn compile_start<'a>(
             module,
             root_frame_local,
             index + 1,
+            parameter_local,
+        )?;
+    }
+    if main.variadic {
+        function.instruction(&Instruction::Call(
+            *runtime.get("__exs_rt_list_new").ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0209",
+                    module_span(module),
+                    "missing runtime List constructor",
+                ))
+            })?,
+        ));
+        function.instruction(&Instruction::LocalSet(variadic_list_local));
+        set_root_slot(
+            &mut function,
+            runtime,
+            module,
+            root_frame_local,
+            fixed_parameter_count + 1,
+            variadic_list_local,
+        )?;
+        function.instruction(&Instruction::I32Const(fixed_parameter_count.cast_signed()));
+        function.instruction(&Instruction::LocalSet(variadic_index_local));
+        function.instruction(&Instruction::Block(BlockType::Empty));
+        function.instruction(&Instruction::Loop(BlockType::Empty));
+        function.instruction(&Instruction::LocalGet(variadic_index_local));
+        function.instruction(&Instruction::LocalGet(argument_count_local));
+        function.instruction(&Instruction::I32GeU);
+        function.instruction(&Instruction::BrIf(1));
+        function.instruction(&Instruction::LocalGet(variadic_list_local));
+        function.instruction(&Instruction::LocalGet(arguments_local));
+        function.instruction(&Instruction::LocalGet(variadic_index_local));
+        call_runtime(&mut function, runtime, "__exs_rt_input_argument", module)?;
+        call_runtime(&mut function, runtime, "__exs_rt_append", module)?;
+        function.instruction(&Instruction::Drop);
+        function.instruction(&Instruction::LocalGet(variadic_index_local));
+        function.instruction(&Instruction::I32Const(1));
+        function.instruction(&Instruction::I32Add);
+        function.instruction(&Instruction::LocalSet(variadic_index_local));
+        function.instruction(&Instruction::Br(0));
+        function.instruction(&Instruction::End);
+        function.instruction(&Instruction::End);
+        let parameter_local = first_parameter_local + fixed_parameter_count;
+        function.instruction(&Instruction::LocalGet(variadic_list_local));
+        function.instruction(&Instruction::LocalSet(parameter_local));
+        set_root_slot(
+            &mut function,
+            runtime,
+            module,
+            root_frame_local,
+            fixed_parameter_count + 1,
             parameter_local,
         )?;
     }

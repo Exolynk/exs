@@ -18,12 +18,14 @@ pub(crate) fn compile_start<'a>(
     dispatcher: u32,
     runtime: &HashMap<String, u32>,
 ) -> Result<Function, CompileDiagnostics<'a>> {
-    let mut function = Function::new([(5, ValType::I32)]);
+    let mut function = Function::new([(7, ValType::I32)]);
     let frame = 2_u32;
     let arguments = 3_u32;
     let count = 4_u32;
     let result = 5_u32;
     let status = 6_u32;
+    let variadic_list = 7_u32;
+    let variadic_index = 8_u32;
     let parameter_count = i32::try_from(main.arity).map_err(|_| {
         diagnostics(CompileDiagnostic::new(
             "E0212",
@@ -56,28 +58,30 @@ pub(crate) fn compile_start<'a>(
         module_span(module),
     )?;
     function.instruction(&Instruction::LocalSet(count));
-    function.instruction(&Instruction::LocalGet(count));
-    function.instruction(&Instruction::I32Const(parameter_count));
-    function.instruction(&Instruction::I32GtU);
-    function.instruction(&Instruction::If(BlockType::Empty));
-    function.instruction(&Instruction::LocalGet(arguments));
-    call_runtime(
-        &mut function,
-        runtime,
-        "__exs_rt_input_arity_error",
-        module_span(module),
-    )?;
-    function.instruction(&Instruction::LocalSet(result));
-    function.instruction(&Instruction::LocalGet(result));
-    call_runtime(
-        &mut function,
-        runtime,
-        "__exs_rt_set_result",
-        module_span(module),
-    )?;
-    function.instruction(&Instruction::I32Const(STATUS_COMPLETE));
-    function.instruction(&Instruction::Return);
-    function.instruction(&Instruction::End);
+    if !main.variadic {
+        function.instruction(&Instruction::LocalGet(count));
+        function.instruction(&Instruction::I32Const(parameter_count));
+        function.instruction(&Instruction::I32GtU);
+        function.instruction(&Instruction::If(BlockType::Empty));
+        function.instruction(&Instruction::LocalGet(arguments));
+        call_runtime(
+            &mut function,
+            runtime,
+            "__exs_rt_input_arity_error",
+            module_span(module),
+        )?;
+        function.instruction(&Instruction::LocalSet(result));
+        function.instruction(&Instruction::LocalGet(result));
+        call_runtime(
+            &mut function,
+            runtime,
+            "__exs_rt_set_result",
+            module_span(module),
+        )?;
+        function.instruction(&Instruction::I32Const(STATUS_COMPLETE));
+        function.instruction(&Instruction::Return);
+        function.instruction(&Instruction::End);
+    }
 
     call_runtime(
         &mut function,
@@ -118,6 +122,62 @@ pub(crate) fn compile_start<'a>(
             "__exs_rt_async_frame_set_slot",
             module_span(module),
         )?;
+    }
+    if main.variadic {
+        call_runtime(
+            &mut function,
+            runtime,
+            "__exs_rt_list_new",
+            module_span(module),
+        )?;
+        function.instruction(&Instruction::LocalSet(variadic_list));
+        function.instruction(&Instruction::LocalGet(frame));
+        function.instruction(&Instruction::I32Const(parameter_count));
+        function.instruction(&Instruction::LocalGet(variadic_list));
+        call_runtime(
+            &mut function,
+            runtime,
+            "__exs_rt_async_frame_set_slot",
+            module_span(module),
+        )?;
+        function.instruction(&Instruction::I32Const(parameter_count));
+        function.instruction(&Instruction::LocalSet(variadic_index));
+        function.instruction(&Instruction::Block(BlockType::Empty));
+        function.instruction(&Instruction::Loop(BlockType::Empty));
+        function.instruction(&Instruction::LocalGet(variadic_index));
+        function.instruction(&Instruction::LocalGet(count));
+        function.instruction(&Instruction::I32GeU);
+        function.instruction(&Instruction::BrIf(1));
+        function.instruction(&Instruction::LocalGet(frame));
+        function.instruction(&Instruction::I32Const(parameter_count));
+        call_runtime(
+            &mut function,
+            runtime,
+            "__exs_rt_async_frame_get_slot",
+            module_span(module),
+        )?;
+        function.instruction(&Instruction::LocalGet(arguments));
+        function.instruction(&Instruction::LocalGet(variadic_index));
+        call_runtime(
+            &mut function,
+            runtime,
+            "__exs_rt_input_argument",
+            module_span(module),
+        )?;
+        call_runtime(
+            &mut function,
+            runtime,
+            "__exs_rt_append",
+            module_span(module),
+        )?;
+        function.instruction(&Instruction::Drop);
+        function.instruction(&Instruction::LocalGet(variadic_index));
+        function.instruction(&Instruction::I32Const(1));
+        function.instruction(&Instruction::I32Add);
+        function.instruction(&Instruction::LocalSet(variadic_index));
+        function.instruction(&Instruction::Br(0));
+        function.instruction(&Instruction::End);
+        function.instruction(&Instruction::End);
     }
     function.instruction(&Instruction::LocalGet(frame));
     call_runtime(

@@ -180,6 +180,8 @@ pub struct Parameter<'a> {
     pub name: Identifier<'a>,
     /// Optional declared accepted value types.
     pub type_annotation: Option<TypeAnnotation<'a>>,
+    /// Whether this trailing parameter receives every remaining call argument as a List.
+    pub variadic: bool,
 }
 
 /// One optional function-boundary union type annotation.

@@ -22,6 +22,90 @@ fn executes_compiled_integer_program() {
     );
 }
 
+/// Packs root and direct-call variadic arguments into Lists visible to ExS bodies.
+#[test]
+fn executes_variadic_functions() {
+    let source = "fn total(values: Int...) -> Int { let sum = 0; for value in values { sum = sum + value; } ret sum; } fn main(inputs: Int...) -> Int { ret total(inputs[0], inputs[1], inputs[2]); }";
+    assert_eq!(
+        execute_source_with_inputs(
+            source,
+            &[ExsValue::Int(10), ExsValue::Int(20), ExsValue::Int(12)],
+        ),
+        ExsValue::Int(42)
+    );
+}
+
+/// Invokes a variadic closure through dynamic callable dispatch.
+#[test]
+fn executes_variadic_closures() {
+    let source = "fn main() -> Int { let total = (values...) => { let sum = 0; for value in values { sum = sum + value; } ret sum; }; ret total(10, 20, 12); }";
+    assert_eq!(execute_source_with_inputs(source, &[]), ExsValue::Int(42));
+}
+
+/// Dispatches a variadic trait method through its nominal implementation.
+#[test]
+fn executes_variadic_instance_methods() {
+    let source = "type Total {} trait Sum { fn sum(self, values: Int...) -> Int; } impl Sum for Total { fn sum(self, values: Int...) -> Int { let total = 0; for value in values { total = total + value; } ret total; } } fn main() -> Int { ret Total {}.sum(10, 20, 12); }";
+    assert_eq!(execute_source_with_inputs(source, &[]), ExsValue::Int(42));
+}
+
+/// Dispatches a variadic static method through its nominal implementation.
+#[test]
+fn executes_variadic_static_methods() {
+    let source = "type Total {} impl Total { fn sum(values: Int...) -> Int { let total = 0; for value in values { total = total + value; } ret total; } } fn main() -> Int { ret Total::sum(10, 20, 12); }";
+    assert_eq!(execute_source_with_inputs(source, &[]), ExsValue::Int(42));
+}
+
+/// Preserves packed variadic arguments across resumable function, closure, and method calls.
+#[test]
+fn executes_resumable_variadic_calls() {
+    let compiled = compile_source(
+        r#"
+        type Total {}
+        trait Sum {
+            fn sum(self, values: Int...) -> Int;
+        }
+        impl Sum for Total {
+            fn sum(self, values: Int...) -> Int {
+                ret host.call("echo", values[0]) + values[1];
+            }
+        }
+        fn echo_first(values: Int...) -> Int {
+            ret host.call("echo", values[0]);
+        }
+        fn main() -> Int {
+            let from_function = echo_first(40, 0);
+            let echo = (values...) => { ret host.call("echo", values[0]); };
+            let from_closure = echo(from_function);
+            ret Total {}.sum(from_closure, 2);
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("echo", |arguments: Vec<ExsValue>| arguments
+                .into_iter()
+                .next()
+                .unwrap_or(ExsValue::None))
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(42));
+}
+
+/// Starts variadic closures without arguments through dynamic parallel execution.
+#[test]
+fn executes_zero_argument_variadic_parallel_closures() {
+    let source = "fn main() -> Int { let closure = (values...) => { ret values.length(); }; let results = par([closure]); ret results[0]; }";
+    assert_eq!(execute_source_with_inputs(source, &[]), ExsValue::Int(0));
+}
+
 /// Delivers a synchronous dynamic Host ABI lookup through the resumable main frame.
 #[test]
 fn returns_a_language_error_for_an_unregistered_dynamic_host_function() {

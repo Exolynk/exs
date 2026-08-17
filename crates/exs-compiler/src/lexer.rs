@@ -87,6 +87,8 @@ pub enum TokenKind {
     RightBracket,
     /// `.`.
     Dot,
+    /// `...`.
+    Ellipsis,
     /// `:`.
     Colon,
     /// `::`.
@@ -324,6 +326,12 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                     b'}' => TokenKind::RightBrace,
                     b'[' => TokenKind::LeftBracket,
                     b']' => TokenKind::RightBracket,
+                    b'.' if bytes.get(index) == Some(&b'.')
+                        && bytes.get(index + 1) == Some(&b'.') =>
+                    {
+                        index += 2;
+                        TokenKind::Ellipsis
+                    }
                     b'.' => TokenKind::Dot,
                     b':' if bytes.get(index) == Some(&b':') => {
                         index += 1;

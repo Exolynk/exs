@@ -549,10 +549,15 @@ fn function_header(
     let parameters = parameters
         .iter()
         .map(|parameter| {
-            parameter.type_annotation.as_ref().map_or_else(
+            let rendered = parameter.type_annotation.as_ref().map_or_else(
                 || parameter.name.name.clone(),
                 |annotation| format!("{}: {}", parameter.name.name, type_annotation(annotation)),
-            )
+            );
+            if parameter.variadic {
+                format!("{rendered}...")
+            } else {
+                rendered
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");

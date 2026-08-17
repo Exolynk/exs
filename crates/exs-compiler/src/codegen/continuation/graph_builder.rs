@@ -4,11 +4,33 @@ use std::collections::HashMap;
 
 use crate::ast::{AssignmentTarget, Expression, Statement};
 use crate::codegen::diagnostics;
+use crate::codegen::function::FunctionSignature;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::graph::{BindingSlot, GraphBuilder, LoopBuilderContext, Operation, operation_span};
 
 impl<'source, 'function> GraphBuilder<'source, 'function> {
+    /// Replaces a variadic source argument tail with one compiler-owned List slot.
+    pub(super) fn pack_variadic_tail(
+        &mut self,
+        arguments: &mut Vec<u32>,
+        signature: &FunctionSignature,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        if !signature.variadic {
+            return Ok(());
+        }
+        let elements = arguments.split_off(signature.arity);
+        let destination = self.temporary(span)?;
+        self.operations.push(Operation::List {
+            elements,
+            destination,
+            span,
+        });
+        arguments.push(destination);
+        Ok(())
+    }
+
     /// Lowers one source statement into contiguous graph states and explicit branch edges.
     pub(super) fn lower_statement(
         &mut self,

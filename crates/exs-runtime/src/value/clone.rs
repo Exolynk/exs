@@ -67,6 +67,7 @@ impl CloneContext {
                 closure.function_id,
                 closure.slot_count,
                 closure.arity,
+                closure.variadic,
                 closure.captures.clone(),
             ),
             RtValue::Error(error) => self.clone_error(source, error),
@@ -166,6 +167,7 @@ impl CloneContext {
         function_id: u32,
         slot_count: u32,
         arity: u32,
+        variadic: bool,
         captures: Vec<ValueRef>,
     ) -> Result<ValueRef, ()> {
         if let Some(clone) = self.existing_clone(source) {
@@ -175,6 +177,7 @@ impl CloneContext {
             function_id,
             slot_count,
             arity,
+            variadic,
             Vec::new(),
         ))));
         self.register_shell(source, clone);

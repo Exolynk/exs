@@ -3,7 +3,7 @@
 mod support;
 
 use exs_abi::{ErrorSeverity, ExsError, ExsValue};
-use support::execute_source;
+use support::{execute_source, execute_source_with_inputs};
 
 /// Enforces annotated argument and return types at direct function boundaries.
 #[test]
@@ -59,6 +59,27 @@ fn validates_function_type_contracts() {
         "#,
         "TypeError",
     );
+}
+
+/// Validates each supplied value against a typed variadic parameter contract.
+#[test]
+fn validates_variadic_function_type_contracts() {
+    let result = execute_source_with_inputs(
+        r#"
+        fn select(values: Int...) -> Int | Error {
+            ret values[1];
+        }
+        fn main(input) {
+            ret select(1, input);
+        }
+        "#,
+        &[ExsValue::String("invalid".to_owned())],
+    );
+    let ExsValue::Error(error) = result else {
+        panic!("source did not return an Error");
+    };
+    assert_eq!(error.severity, ErrorSeverity::Recoverable);
+    assert_eq!(error.kind, "TypeError");
 }
 
 /// Preserves direct Error values that are explicitly accepted by a return union.

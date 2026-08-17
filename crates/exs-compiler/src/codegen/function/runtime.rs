@@ -3,11 +3,48 @@
 use wasm_encoder::Instruction;
 
 use crate::codegen::diagnostics;
+use crate::codegen::function::FunctionSignature;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::FunctionCompiler;
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
+    /// Emits fixed call arguments followed by one packed List for a variadic tail.
+    pub(super) fn emit_call_arguments(
+        &mut self,
+        arguments: &[u32],
+        signature: &FunctionSignature,
+        span: SourceSpan<'a>,
+    ) -> Result<Option<u32>, CompileDiagnostics<'a>> {
+        for argument in arguments.iter().take(signature.arity) {
+            self.function.instruction(&Instruction::LocalGet(*argument));
+        }
+        self.emit_variadic_tail(arguments, signature.arity, signature.variadic, span)
+    }
+
+    /// Packs a source argument suffix into one rooted List when a call target is variadic.
+    pub(super) fn emit_variadic_tail(
+        &mut self,
+        arguments: &[u32],
+        fixed_arity: usize,
+        variadic: bool,
+        span: SourceSpan<'a>,
+    ) -> Result<Option<u32>, CompileDiagnostics<'a>> {
+        if !variadic {
+            return Ok(None);
+        }
+        self.runtime_call("__exs_rt_list_new", span)?;
+        let list = self.store_stack_value()?;
+        for argument in arguments.iter().skip(fixed_arity) {
+            self.function.instruction(&Instruction::LocalGet(list));
+            self.function.instruction(&Instruction::LocalGet(*argument));
+            self.runtime_call("__exs_rt_append", span)?;
+            self.function.instruction(&Instruction::Drop);
+        }
+        self.function.instruction(&Instruction::LocalGet(list));
+        Ok(Some(list))
+    }
+
     /// Emits one named runtime ABI call after resolving its template function index.
     pub(super) fn runtime_call(
         &mut self,
@@ -201,7 +238,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 "missing function signature during parameter validation",
             ))
         })?;
-        for (parameter, types) in signature.parameter_types.iter().enumerate() {
+        for (parameter, types) in signature
+            .parameter_types
+            .iter()
+            .take(signature.arity)
+            .enumerate()
+        {
             let parameter = u32::try_from(parameter).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(
                     "E0212",
@@ -216,6 +258,69 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.declaration.parameters[parameter as usize].name.span,
             )?;
         }
+        if signature.variadic {
+            let parameter = u32::try_from(signature.arity).map_err(|_| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    self.declaration.span,
+                    "too many parameters for one function",
+                ))
+            })?;
+            let contract = signature
+                .parameter_types
+                .get(signature.arity)
+                .ok_or_else(|| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0999",
+                        self.declaration.span,
+                        "missing variadic parameter contract during lowering",
+                    ))
+                })?;
+            self.set_root_slot(parameter)?;
+            self.validate_variadic_parameter(
+                parameter,
+                contract,
+                self.declaration.parameters[parameter as usize].name.span,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Validates every value carried by one packed variadic parameter List.
+    fn validate_variadic_parameter(
+        &mut self,
+        parameter: u32,
+        contract: &crate::codegen::types::TypeContract,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let length = self.allocate_local();
+        let index = self.allocate_local();
+        self.function.instruction(&Instruction::LocalGet(parameter));
+        self.runtime_call("__exs_rt_list_length", span)?;
+        self.function.instruction(&Instruction::LocalSet(length));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::LocalSet(index));
+        self.function
+            .instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+        self.function
+            .instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+        self.function.instruction(&Instruction::LocalGet(index));
+        self.function.instruction(&Instruction::LocalGet(length));
+        self.function.instruction(&Instruction::I32GeU);
+        self.function.instruction(&Instruction::BrIf(1));
+        self.function.instruction(&Instruction::LocalGet(parameter));
+        self.function.instruction(&Instruction::LocalGet(index));
+        self.runtime_call("__exs_rt_list_get", span)?;
+        let value = self.store_stack_value()?;
+        self.validate_local_type(value, contract, span)?;
+        self.clear_root_slot(value)?;
+        self.function.instruction(&Instruction::LocalGet(index));
+        self.function.instruction(&Instruction::I32Const(1));
+        self.function.instruction(&Instruction::I32Add);
+        self.function.instruction(&Instruction::LocalSet(index));
+        self.function.instruction(&Instruction::Br(0));
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
         Ok(())
     }
 

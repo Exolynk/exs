@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY, STATUS_READY};
-use wasm_encoder::{BlockType, Function, Instruction};
+use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use crate::ast::UnaryOperator;
 use crate::codegen::diagnostics;
@@ -32,6 +32,10 @@ pub(super) struct StepCompiler<'source, 'context> {
     pub(super) scratch_local: u32,
     /// Reused Wasm local for compiler literal-buffer pointers.
     pub(super) literal_buffer_local: u32,
+    /// Reused Wasm local holding one variadic List length during boundary validation.
+    pub(super) variadic_length_local: u32,
+    /// Reused Wasm local holding one variadic List index during boundary validation.
+    pub(super) variadic_index_local: u32,
 }
 
 impl<'source, 'context> StepCompiler<'source, 'context> {
@@ -139,6 +143,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             Operation::Closure {
                 layout,
                 arity,
+                variadic,
                 captures,
                 destination,
                 span,
@@ -163,6 +168,8 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                     ))
                 })?;
                 self.function.instruction(&Instruction::I32Const(arity));
+                self.function
+                    .instruction(&Instruction::I32Const(i32::from(*variadic)));
                 self.get_slot(*destination, *span)?;
                 self.call_runtime("__exs_rt_closure_new", *span)?;
                 self.set_slot(*destination, *span)?;
@@ -538,6 +545,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 }
                 self.ready(next, *span)?;
             }
+            Operation::ValidateVariadicParameter {
+                slot,
+                contract,
+                span,
+            } => {
+                self.validate_variadic_slot_or_complete(*slot, contract, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::ValidateSlot {
                 slot,
                 contract,
@@ -739,7 +754,24 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.get_slot(closure, span)?;
         self.call_runtime("__exs_rt_closure_arity", span)?;
         self.function.instruction(&Instruction::LocalSet(5));
+        self.get_slot(closure, span)?;
+        self.call_runtime("__exs_rt_closure_is_variadic", span)?;
+        self.function.instruction(&Instruction::LocalSet(6));
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.function.instruction(&Instruction::I32Const(
+            i32::try_from(arguments.len()).map_err(|_| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0212",
+                    span,
+                    "too many closure function arguments",
+                ))
+            })?,
+        ));
         self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::I32LtU);
+        self.function.instruction(&Instruction::Else);
         let argument_count = i32::try_from(arguments.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
                 "E0212",
@@ -747,14 +779,23 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 "too many closure function arguments",
             ))
         })?;
+        self.function.instruction(&Instruction::LocalGet(5));
         self.function
             .instruction(&Instruction::I32Const(argument_count));
         self.function.instruction(&Instruction::I32Ne);
+        self.function.instruction(&Instruction::End);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.call_runtime("__exs_rt_closure_arity_error", span)?;
         self.set_slot(destination, span)?;
         self.ready(next, span)?;
+        self.function.instruction(&Instruction::End);
+
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.call_runtime("__exs_rt_list_new", span)?;
+        self.set_slot(destination, span)?;
         self.function.instruction(&Instruction::End);
 
         self.get_slot(closure, span)?;
@@ -804,13 +845,34 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                     "too many closure function arguments",
                 ))
             })?;
+            self.function.instruction(&Instruction::I32Const(index));
+            self.function.instruction(&Instruction::LocalGet(5));
+            self.function.instruction(&Instruction::I32LtU);
+            self.function
+                .instruction(&Instruction::If(BlockType::Empty));
             self.function.instruction(&Instruction::LocalGet(2));
             self.function.instruction(&Instruction::LocalGet(4));
             self.function.instruction(&Instruction::I32Const(index));
             self.function.instruction(&Instruction::I32Add);
             self.get_slot(*argument, span)?;
             self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
+            self.function.instruction(&Instruction::Else);
+            self.get_slot(destination, span)?;
+            self.get_slot(*argument, span)?;
+            self.call_runtime("__exs_rt_append", span)?;
+            self.function.instruction(&Instruction::Drop);
+            self.function.instruction(&Instruction::End);
         }
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.function.instruction(&Instruction::LocalGet(2));
+        self.function.instruction(&Instruction::LocalGet(4));
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::I32Add);
+        self.get_slot(destination, span)?;
+        self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
+        self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::LocalGet(2));
         self.function.instruction(&Instruction::LocalGet(0));
         self.function
@@ -892,6 +954,22 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.function.instruction(&Instruction::Br(0));
             self.function.instruction(&Instruction::End);
             self.function.instruction(&Instruction::End);
+            self.get_slot(*task, span)?;
+            self.call_runtime("__exs_rt_closure_is_variadic", span)?;
+            self.function
+                .instruction(&Instruction::If(BlockType::Empty));
+            self.get_slot(*task, span)?;
+            self.call_runtime("__exs_rt_closure_arity", span)?;
+            self.function.instruction(&Instruction::LocalSet(5));
+            self.call_runtime("__exs_rt_list_new", span)?;
+            self.function.instruction(&Instruction::LocalSet(6));
+            self.function.instruction(&Instruction::LocalGet(2));
+            self.function.instruction(&Instruction::LocalGet(4));
+            self.function.instruction(&Instruction::LocalGet(5));
+            self.function.instruction(&Instruction::I32Add);
+            self.function.instruction(&Instruction::LocalGet(6));
+            self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
+            self.function.instruction(&Instruction::End);
         }
         self.function.instruction(&Instruction::LocalGet(0));
         self.function
@@ -953,9 +1031,15 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function.instruction(&Instruction::I32Ne);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_closure_is_variadic", span)?;
+        self.function.instruction(&Instruction::I32Eqz);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
         self.call_runtime("__exs_rt_closure_arity_error", span)?;
         self.set_slot(destination, span)?;
         self.complete(destination, span)?;
+        self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::LocalGet(1));
         self.function.instruction(&Instruction::I32Const(1));
@@ -1018,6 +1102,22 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function.instruction(&Instruction::LocalSet(5));
         self.function.instruction(&Instruction::Br(0));
         self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_closure_is_variadic", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.function.instruction(&Instruction::LocalGet(6));
+        self.call_runtime("__exs_rt_closure_arity", span)?;
+        self.function.instruction(&Instruction::LocalSet(5));
+        self.call_runtime("__exs_rt_list_new", span)?;
+        self.function.instruction(&Instruction::LocalSet(3));
+        self.function.instruction(&Instruction::LocalGet(2));
+        self.function.instruction(&Instruction::LocalGet(4));
+        self.function.instruction(&Instruction::LocalGet(5));
+        self.function.instruction(&Instruction::I32Add);
+        self.function.instruction(&Instruction::LocalGet(3));
+        self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
         self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::LocalGet(1));
         self.function.instruction(&Instruction::I32Const(1));

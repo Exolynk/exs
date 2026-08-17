@@ -537,6 +537,25 @@ pub(crate) fn parallel_list_count(list: ValueRef) -> i32 {
     i32::try_from(list.elements.len()).unwrap_or_else(|_| trap())
 }
 
+/// Returns the number of elements stored in one runtime List.
+pub(crate) fn list_length(list: ValueRef) -> i32 {
+    let RtValue::List(list) = value(list) else {
+        trap()
+    };
+    i32::try_from(list.elements.len()).unwrap_or_else(|_| trap())
+}
+
+/// Returns one element of a runtime List by zero-based index.
+pub(crate) fn list_get(list: ValueRef, index: i32) -> ValueRef {
+    let Ok(index) = usize::try_from(index) else {
+        trap()
+    };
+    let RtValue::List(list) = value(list) else {
+        trap()
+    };
+    *list.elements.get(index).unwrap_or_else(|| trap())
+}
+
 /// Returns one closure candidate from a source List for dynamic `par`.
 pub(crate) fn parallel_list_get(list: ValueRef, index: i32) -> ValueRef {
     let Ok(index) = usize::try_from(index) else {

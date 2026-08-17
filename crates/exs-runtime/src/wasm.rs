@@ -488,6 +488,7 @@ pub extern "C" fn __exs_rt_closure_new(
     function_id: i32,
     slot_count: i32,
     arity: i32,
+    variadic: i32,
     captures: ValueRef,
 ) -> ValueRef {
     let Ok(function_id) = u32::try_from(function_id) else {
@@ -498,6 +499,11 @@ pub extern "C" fn __exs_rt_closure_new(
     };
     let Ok(arity) = u32::try_from(arity) else {
         runtime::trap();
+    };
+    let variadic = match variadic {
+        0 => false,
+        1 => true,
+        _ => runtime::trap(),
     };
     let RtValue::List(captures) = runtime::value(captures) else {
         runtime::trap();
@@ -513,6 +519,7 @@ pub extern "C" fn __exs_rt_closure_new(
         function_id,
         slot_count,
         arity,
+        variadic,
         captures,
     ))))
 }
@@ -563,6 +570,15 @@ pub extern "C" fn __exs_rt_closure_arity(closure: ValueRef) -> i32 {
         Ok(arity) => arity,
         Err(_) => runtime::trap(),
     }
+}
+
+/// Returns whether one callable closure accepts a variadic source argument tail.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_closure_is_variadic(closure: ValueRef) -> i32 {
+    let RtValue::Closure(closure) = runtime::value(closure) else {
+        runtime::trap();
+    };
+    i32::from(closure.variadic)
 }
 
 /// Creates the recoverable Error returned when a dynamic closure receives the wrong arity.
@@ -732,6 +748,18 @@ pub extern "C" fn __exs_rt_parallel_take_results(group: ValueRef) -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_parallel_list_count(list: ValueRef) -> i32 {
     runtime::parallel_list_count(list)
+}
+
+/// Returns the number of elements in one runtime List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_list_length(list: ValueRef) -> i32 {
+    runtime::list_length(list)
+}
+
+/// Returns one element of a runtime List by zero-based index.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_list_get(list: ValueRef, index: i32) -> ValueRef {
+    runtime::list_get(list, index)
 }
 
 /// Returns one source List element supplied to dynamic `par`.

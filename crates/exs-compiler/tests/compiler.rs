@@ -22,6 +22,47 @@ fn compiles_a_minimal_main_function() {
     assert!(module.is_ok());
 }
 
+/// Compiles a typed trailing variadic parameter into a packed List call boundary.
+#[test]
+fn compiles_variadic_function_parameters() {
+    let source = "fn total(values: Int...) -> Int { let sum = 0; for value in values { sum = sum + value; } ret sum; } fn main(inputs: Int...) -> Int { ret total(1, 2, 3); }";
+    let compiled = match compile(
+        SourceInput {
+            source_id: "variadic.exs",
+            text: source,
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    if let Err(error) = Validator::new().validate_all(&compiled.wasm) {
+        panic!("generated Wasm is invalid: {error}");
+    }
+}
+
+/// Rejects a rest parameter that is followed by another parameter.
+#[test]
+fn rejects_non_final_variadic_parameter() {
+    let error = match compile(
+        SourceInput {
+            source_id: "invalid-variadic.exs",
+            text: "fn main(values..., tail) { ret tail; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "E0217"),
+        "{error:?}"
+    );
+}
+
 /// Formats valid source into a stable, reparsable canonical layout.
 #[test]
 fn formats_source_into_canonical_layout() {

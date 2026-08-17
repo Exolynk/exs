@@ -1,4 +1,3 @@
-
 /// A user which is doing and storing some awesome stuff
 type User {
     name: String,
@@ -29,7 +28,6 @@ impl Test for User {
         ret "Manual test";
     }
 }
-
 
 fn main() {
     let u = User {

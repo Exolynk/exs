@@ -12,6 +12,8 @@ pub(crate) struct RuntimeClosure {
     pub(crate) slot_count: u32,
     /// Number of source arguments accepted by the lifted function invocation.
     pub(crate) arity: u32,
+    /// Whether trailing source arguments are packed into the final List parameter.
+    pub(crate) variadic: bool,
     /// Captured lexical Cells in compiler-defined first-use order.
     pub(crate) captures: Vec<ValueRef>,
 }
@@ -22,12 +24,14 @@ impl RuntimeClosure {
         function_id: u32,
         slot_count: u32,
         arity: u32,
+        variadic: bool,
         captures: Vec<ValueRef>,
     ) -> Self {
         Self {
             function_id,
             slot_count,
             arity,
+            variadic,
             captures,
         }
     }

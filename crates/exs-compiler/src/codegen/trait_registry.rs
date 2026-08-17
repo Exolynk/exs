@@ -68,6 +68,8 @@ pub(crate) struct TraitMethodSignature {
     pub(crate) has_receiver: bool,
     /// Ordered parameter annotation members, including the receiver when present.
     parameter_types: Vec<Option<Vec<String>>>,
+    /// Whether the final parameter accepts an arbitrary source argument tail.
+    variadic: bool,
     /// Optional ordered result annotation members.
     return_types: Option<Vec<String>>,
 }
@@ -104,6 +106,7 @@ impl<'a> TraitRegistry<'a> {
                                             annotation.map(|name| vec![name.to_owned()])
                                         })
                                         .collect(),
+                                    variadic: false,
                                     return_types: Some(
                                         method
                                             .return_types
@@ -251,6 +254,10 @@ impl<'a> TraitMethodDefinition<'a> {
                     .iter()
                     .map(|parameter| annotation_members(parameter.type_annotation.as_ref()))
                     .collect(),
+                variadic: method
+                    .parameters
+                    .last()
+                    .is_some_and(|parameter| parameter.variadic),
                 return_types: annotation_members(method.return_type.as_ref()),
             },
             default_implementation: method.default_implementation(),
@@ -273,6 +280,11 @@ impl TraitMethodSignature {
                 .first()
                 .is_some_and(|parameter| parameter.name.name == "self")
             && self.parameter_types.len() == implementation.parameters.len()
+            && self.variadic
+                == implementation
+                    .parameters
+                    .last()
+                    .is_some_and(|parameter| parameter.variadic)
             && self
                 .parameter_types
                 .iter()

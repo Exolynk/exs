@@ -16,6 +16,64 @@ use super::graph::expression_span;
 use super::step::StepCompiler;
 
 impl<'source, 'context> StepCompiler<'source, 'context> {
+    /// Validates every value in one frame-backed packed variadic parameter List.
+    pub(super) fn validate_variadic_slot_or_complete(
+        &mut self,
+        slot: u32,
+        contract: &TypeContract,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.get_slot(slot, span)?;
+        self.call_runtime("__exs_rt_list_length", span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.variadic_length_local));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function
+            .instruction(&Instruction::LocalSet(self.variadic_index_local));
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
+        self.function
+            .instruction(&Instruction::Loop(BlockType::Empty));
+        self.function
+            .instruction(&Instruction::LocalGet(self.variadic_index_local));
+        self.function
+            .instruction(&Instruction::LocalGet(self.variadic_length_local));
+        self.function.instruction(&Instruction::I32GeU);
+        self.function.instruction(&Instruction::BrIf(1));
+        self.get_slot(slot, span)?;
+        self.function
+            .instruction(&Instruction::LocalGet(self.variadic_index_local));
+        self.call_runtime("__exs_rt_list_get", span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.scratch_local));
+        self.validate_scratch_matches(contract, span)?;
+        self.function.instruction(&Instruction::LocalGet(2));
+        self.function.instruction(&Instruction::I32Eqz);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.function
+            .instruction(&Instruction::LocalGet(self.scratch_local));
+        self.function
+            .instruction(&Instruction::I32Const(i32::from(types::permits_error(
+                self.return_contract,
+            ))));
+        self.call_runtime("__exs_rt_type_mismatch", span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.scratch_local));
+        self.complete_local(span)?;
+        self.function.instruction(&Instruction::End);
+        self.function
+            .instruction(&Instruction::LocalGet(self.variadic_index_local));
+        self.function.instruction(&Instruction::I32Const(1));
+        self.function.instruction(&Instruction::I32Add);
+        self.function
+            .instruction(&Instruction::LocalSet(self.variadic_index_local));
+        self.function.instruction(&Instruction::Br(0));
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
+        Ok(())
+    }
+
     /// Emits standard operator-trait dispatch, including suspendable targets and runtime fallback.
     #[allow(clippy::too_many_arguments)] // The source operator and frame state are both required.
     pub(super) fn operator_call(
@@ -146,7 +204,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.call_runtime("__exs_rt_object_is_type", span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
-        if target.signature.arity != arguments.len() + 1 {
+        if !target.signature.accepts_arity(arguments.len() + 1) {
             self.get_slot(receiver, span)?;
             self.call_runtime("__exs_rt_method_arity_error", span)?;
             self.set_slot(destination, span)?;
@@ -157,14 +215,24 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .find(|layout| layout.function_id == target.signature.function_id)
             .copied()
         {
-            let mut child_arguments = Vec::with_capacity(arguments.len() + 1);
+            let fixed_arity = target.signature.arity.saturating_sub(1);
+            let mut child_arguments = Vec::with_capacity(target.signature.wasm_arity());
             child_arguments.push(receiver);
-            child_arguments.extend_from_slice(arguments);
+            child_arguments.extend(arguments.iter().take(fixed_arity));
+            if target.signature.variadic {
+                self.pack_variadic_tail(arguments, fixed_arity, destination, span)?;
+                child_arguments.push(destination);
+            }
             self.child_call(next, layout, &child_arguments, destination, span)?;
         } else {
+            let fixed_arity = target.signature.arity.saturating_sub(1);
             self.get_slot(receiver, span)?;
-            for argument in arguments {
+            for argument in arguments.iter().take(fixed_arity) {
                 self.get_slot(*argument, span)?;
+            }
+            if target.signature.variadic {
+                self.pack_variadic_tail(arguments, fixed_arity, destination, span)?;
+                self.get_slot(destination, span)?;
             }
             self.set_call_site(span)?;
             self.function
@@ -186,6 +254,25 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             span,
         )?;
         self.function.instruction(&Instruction::End);
+        Ok(())
+    }
+
+    /// Packs a source argument suffix into a durable List slot for one variadic child call.
+    fn pack_variadic_tail(
+        &mut self,
+        arguments: &[u32],
+        fixed_arity: usize,
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.call_runtime("__exs_rt_list_new", span)?;
+        self.set_slot(destination, span)?;
+        for argument in arguments.iter().skip(fixed_arity) {
+            self.get_slot(destination, span)?;
+            self.get_slot(*argument, span)?;
+            self.call_runtime("__exs_rt_append", span)?;
+            self.function.instruction(&Instruction::Drop);
+        }
         Ok(())
     }
 

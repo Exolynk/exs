@@ -107,7 +107,22 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let destination = self.temporary(*span)?;
                 self.operations.push(Operation::Closure {
                     layout,
-                    arity: lifted.declaration.parameters.len(),
+                    arity: lifted
+                        .declaration
+                        .parameters
+                        .len()
+                        .saturating_sub(usize::from(
+                            lifted
+                                .declaration
+                                .parameters
+                                .last()
+                                .is_some_and(|parameter| parameter.variadic),
+                        )),
+                    variadic: lifted
+                        .declaration
+                        .parameters
+                        .last()
+                        .is_some_and(|parameter| parameter.variadic),
                     captures,
                     destination,
                     span: *span,
@@ -448,14 +463,14 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         format!("unknown function `{}`", callee.name),
                     ))
                 })?;
-                if signature.arity != arguments.len() {
+                if !signature.accepts_arity(arguments.len()) {
                     return Err(diagnostics(CompileDiagnostic::new(
                         "E0208",
                         *span,
                         format!(
                             "function `{}` expects {} arguments but received {}",
                             callee.name,
-                            signature.arity,
+                            signature.expected_arity_description(),
                             arguments.len()
                         ),
                     )));
@@ -464,6 +479,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 for argument in arguments {
                     slots.push(self.lower_expression(argument)?);
                 }
+                self.pack_variadic_tail(&mut slots, &signature, *span)?;
                 let destination = self.temporary(*span)?;
                 if let Some(layout) = self.frame_layouts.get(&callee.name).copied() {
                     self.operations.push(Operation::ChildCall {
@@ -547,7 +563,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         ),
                     )));
                 }
-                if signature.arity != arguments.len() {
+                if !signature.accepts_arity(arguments.len()) {
                     return Err(diagnostics(CompileDiagnostic::new(
                         "E0208",
                         *span,
@@ -555,7 +571,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                             "static method `{}::{}` expects {} arguments but received {}",
                             type_name.name,
                             method.name,
-                            signature.arity,
+                            signature.expected_arity_description(),
                             arguments.len()
                         ),
                     )));
@@ -564,6 +580,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 for argument in arguments {
                     slots.push(self.lower_expression(argument)?);
                 }
+                self.pack_variadic_tail(&mut slots, &signature, *span)?;
                 let destination = self.temporary(*span)?;
                 if let Some(layout) = self.frame_layouts.get(&key).copied() {
                     self.operations.push(Operation::ChildCall {

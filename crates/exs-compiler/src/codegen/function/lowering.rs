@@ -194,21 +194,21 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     }
                     return self.compile_enum_variant(variant, arguments, *span);
                 }
-                let signature = self.signatures.get(&callee.name).ok_or_else(|| {
+                let signature = self.signatures.get(&callee.name).cloned().ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
                         "E0207",
                         callee.span,
                         format!("unknown function `{}`", callee.name),
                     ))
                 })?;
-                if signature.arity != arguments.len() {
+                if !signature.accepts_arity(arguments.len()) {
                     return Err(diagnostics(CompileDiagnostic::new(
                         "E0208",
                         *span,
                         format!(
                             "function `{}` expects {} arguments but received {}",
                             callee.name,
-                            signature.arity,
+                            signature.expected_arity_description(),
                             arguments.len()
                         ),
                     )));
@@ -218,13 +218,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.compile_expression(argument)?;
                     argument_locals.push(self.store_stack_value()?);
                 }
-                for local in &argument_locals {
-                    self.function.instruction(&Instruction::LocalGet(*local));
-                }
+                let packed_tail = self.emit_call_arguments(&argument_locals, &signature, *span)?;
                 self.set_runtime_call_site(*span)?;
                 self.function
                     .instruction(&Instruction::Call(signature.index));
                 self.return_if_fatal_error(*span)?;
+                if let Some(list) = packed_tail {
+                    self.clear_root_slot(list)?;
+                }
                 for local in argument_locals {
                     self.clear_root_slot(local)?;
                 }
@@ -380,7 +381,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 format!("unknown type `{}`", type_name.name),
             )));
         }
-        let signature = self.signatures.get(&key).ok_or_else(|| {
+        let signature = self.signatures.get(&key).cloned().ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0225",
                 method.span,
@@ -400,7 +401,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 ),
             )));
         }
-        if signature.arity != arguments.len() {
+        if !signature.accepts_arity(arguments.len()) {
             return Err(diagnostics(CompileDiagnostic::new(
                 "E0208",
                 span,
@@ -408,7 +409,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     "static method `{}::{}` expects {} arguments but received {}",
                     type_name.name,
                     method.name,
-                    signature.arity,
+                    signature.expected_arity_description(),
                     arguments.len()
                 ),
             )));
@@ -418,13 +419,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.compile_expression(argument)?;
             argument_locals.push(self.store_stack_value()?);
         }
-        for local in &argument_locals {
-            self.function.instruction(&Instruction::LocalGet(*local));
-        }
+        let packed_tail = self.emit_call_arguments(&argument_locals, &signature, span)?;
         self.set_runtime_call_site(span)?;
         self.function
             .instruction(&Instruction::Call(signature.index));
         self.return_if_fatal_error(span)?;
+        if let Some(list) = packed_tail {
+            self.clear_root_slot(list)?;
+        }
         for local in argument_locals {
             self.clear_root_slot(local)?;
         }
@@ -482,15 +484,21 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function
             .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
         self.enter_control()?;
-        if target.signature.arity == arguments.len() + 1 {
+        if target.signature.accepts_arity(arguments.len() + 1) {
             self.function.instruction(&Instruction::LocalGet(receiver));
-            for argument in arguments {
+            let fixed_arity = target.signature.arity.saturating_sub(1);
+            for argument in arguments.iter().take(fixed_arity) {
                 self.function.instruction(&Instruction::LocalGet(*argument));
             }
+            let packed_tail =
+                self.emit_variadic_tail(arguments, fixed_arity, target.signature.variadic, span)?;
             self.set_runtime_call_site(span)?;
             self.function
                 .instruction(&Instruction::Call(target.signature.index));
             self.return_if_fatal_error(span)?;
+            if let Some(list) = packed_tail {
+                self.clear_root_slot(list)?;
+            }
         } else {
             self.function.instruction(&Instruction::LocalGet(receiver));
             self.runtime_value_call("__exs_rt_method_arity_error", 1, span)?;

@@ -340,9 +340,11 @@ impl<'a> Parser<'a> {
                 } else {
                     None
                 };
+                let variadic = self.matches(&TokenKind::Ellipsis);
                 parameters.push(Parameter {
                     name,
                     type_annotation,
+                    variadic,
                 });
                 if !self.matches(&TokenKind::Comma) {
                     break;
@@ -1151,9 +1153,11 @@ impl<'a> Parser<'a> {
                     return None;
                 };
                 let span = self.advance().span;
+                let variadic = self.matches(&TokenKind::Ellipsis);
                 parameters.push(Parameter {
                     name: Identifier { name, span },
                     type_annotation: None,
+                    variadic,
                 });
                 if self.check(&TokenKind::RightParen) {
                     self.advance();

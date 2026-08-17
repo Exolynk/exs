@@ -107,12 +107,19 @@ fn validate_function<'a>(
                 .with_related(previous, "previous parameter declaration is here"),
             );
         }
+        if parameter.variadic && index + 1 != function.parameters.len() {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0217",
+                parameter.name.span,
+                "a variadic parameter must be the final parameter",
+            ));
+        }
         if index == 0 && implementation_type.is_some() && parameter.name.name == "self" {
-            if parameter.type_annotation.is_some() {
+            if parameter.type_annotation.is_some() || parameter.variadic {
                 diagnostics.push(CompileDiagnostic::new(
                     "E0224",
                     parameter.name.span,
-                    "the implicit impl receiver `self` cannot have a type annotation",
+                    "the implicit impl receiver `self` cannot have a type annotation or be variadic",
                 ));
             }
         } else {
@@ -138,11 +145,39 @@ fn validate_function<'a>(
 #[derive(Debug, Clone)]
 pub(in crate::codegen) struct FunctionSignature {
     pub(in crate::codegen) index: u32,
+    /// Number of required source arguments before an optional variadic tail.
     pub(in crate::codegen) arity: usize,
+    /// Whether the final Wasm parameter receives a packed List of trailing source arguments.
+    pub(in crate::codegen) variadic: bool,
     pub(in crate::codegen) capture_count: usize,
     pub(in crate::codegen) function_id: u32,
     pub(in crate::codegen) parameter_types: Vec<TypeContract>,
     pub(in crate::codegen) return_type: TypeContract,
+}
+
+impl FunctionSignature {
+    /// Returns whether this signature accepts a call with the supplied source argument count.
+    pub(in crate::codegen) fn accepts_arity(&self, count: usize) -> bool {
+        if self.variadic {
+            count >= self.arity
+        } else {
+            count == self.arity
+        }
+    }
+
+    /// Returns the fixed Wasm parameter count after packing an optional variadic tail.
+    pub(in crate::codegen) fn wasm_arity(&self) -> usize {
+        self.arity + usize::from(self.variadic)
+    }
+
+    /// Renders the source-level argument count accepted by this signature.
+    pub(in crate::codegen) fn expected_arity_description(&self) -> String {
+        if self.variadic {
+            format!("at least {}", self.arity)
+        } else {
+            self.arity.to_string()
+        }
+    }
 }
 
 /// One compiler-private function lifted from a source closure expression.
@@ -261,6 +296,22 @@ fn insert_signature<'a>(
             format!("duplicate function `{key}`"),
         )));
     }
+    let variadic = function
+        .parameters
+        .last()
+        .is_some_and(|parameter| parameter.variadic);
+    if function
+        .parameters
+        .iter()
+        .take(function.parameters.len().saturating_sub(1))
+        .any(|parameter| parameter.variadic)
+    {
+        return Err(diagnostics(CompileDiagnostic::new(
+            "E0217",
+            function.span,
+            "a variadic parameter must be the final parameter",
+        )));
+    }
     let mut parameters = HashMap::new();
     let mut parameter_types = Vec::new();
     for (index, parameter) in function.parameters.iter().enumerate() {
@@ -293,7 +344,8 @@ fn insert_signature<'a>(
         key.to_owned(),
         FunctionSignature {
             index: program_base + function_id,
-            arity: function.parameters.len(),
+            arity: function.parameters.len() - usize::from(variadic),
+            variadic,
             capture_count,
             function_id,
             parameter_types,
