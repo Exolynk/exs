@@ -612,6 +612,7 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
             }
         }
         Expression::String(value, _) => quote_string(value),
+        Expression::FormattedString { kind, parts, .. } => formatted_string(*kind, parts),
         Expression::Bool(value, _) => value.to_string(),
         Expression::None(_) => "None".to_owned(),
         Expression::Variable(identifier) => identifier.name.clone(),
@@ -721,6 +722,45 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
     } else {
         value
     }
+}
+
+/// Renders one formatted string while preserving its delimiter form.
+fn formatted_string(
+    kind: crate::ast::FormattedStringKind,
+    parts: &[crate::ast::FormattedStringPart<'_>],
+) -> String {
+    let raw = !matches!(kind, crate::ast::FormattedStringKind::Standard);
+    let body = parts
+        .iter()
+        .map(|part| match part {
+            crate::ast::FormattedStringPart::Text(value) => {
+                let value = value.replace('{', "{{").replace('}', "}}");
+                if raw {
+                    value
+                } else {
+                    let quoted = quote_string(&value);
+                    quoted[1..quoted.len() - 1].to_owned()
+                }
+            }
+            crate::ast::FormattedStringPart::Expression(expression) => {
+                format!("{{{}}}", render_expression(expression))
+            }
+        })
+        .collect::<String>();
+    if !raw {
+        return format!("f\"{body}\"");
+    }
+    let mut hash_count = 1_usize;
+    while body.contains(&format!("\"{}", "#".repeat(hash_count))) {
+        hash_count += 1;
+    }
+    let hashes = "#".repeat(hash_count);
+    let prefix = if matches!(kind, crate::ast::FormattedStringKind::Dedented) {
+        "fd"
+    } else {
+        "f"
+    };
+    format!("{prefix}{hashes}\"{body}\"{hashes}")
 }
 
 /// Renders one enum-variant or fallback match pattern.

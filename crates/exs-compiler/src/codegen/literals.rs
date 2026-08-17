@@ -200,6 +200,17 @@ fn collect_assignment_target_literals(target: &AssignmentTarget<'_>, pool: &mut 
 fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPool) {
     match expression {
         Expression::String(value, _) => pool.insert(value),
+        Expression::FormattedString { parts, .. } => {
+            pool.insert("");
+            for part in parts {
+                match part {
+                    crate::ast::FormattedStringPart::Text(value) => pool.insert(value),
+                    crate::ast::FormattedStringPart::Expression(expression) => {
+                        collect_expression_literals(expression, pool);
+                    }
+                }
+            }
+        }
         Expression::Unary { operand, .. }
         | Expression::IsError { value: operand, .. }
         | Expression::Propagate { value: operand, .. } => {

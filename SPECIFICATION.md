@@ -84,11 +84,27 @@ Ordinary strings use double quotes and support `\"`, `\\`, `\n`, `\r`, `\t`, `\0
 "smile: \u{1f642}"
 ```
 
+Formatted strings use an `f` prefix and evaluate normal ExS expressions inside `{...}`. Interpolated values use the same conversion rules as `String + value`: `String`, `Bool`, `Int`, and `Float` are accepted; every other value produces `TypeError`. Use `{{` and `}}` for literal braces.
+
+```exs
+f"Hello {name}; next: {count + 1}"
+```
+
 Raw strings use an `r` prefix and one or more `#` delimiters. Their contents are not escape-decoded.
 
 ```exs
 r#"C:\\temp\\file"#
 r##"a "# character is ordinary text"##
+```
+
+Formatted raw strings use `f` before the hash delimiters. They support interpolation but do not decode escapes, so they may span multiple lines. Formatted dedented raw strings use `fd` and apply the same indentation removal as `d` strings.
+
+```exs
+f#"path: {path}\n"#
+fd#"
+    Hello {name}
+    Next line
+"#
 ```
 
 Dedented raw strings use `d` instead of `r`. For multiline content, ExS removes delimiter-only outer lines and the common leading spaces-and-tabs indentation of nonblank lines.

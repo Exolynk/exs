@@ -79,6 +79,15 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.set_slot(*destination, operation_span(operation))?;
                 self.ready(next, operation_span(operation))?;
             }
+            Operation::String {
+                value,
+                destination,
+                span,
+            } => {
+                self.string(value, *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::Integer {
                 value,
                 destination,

@@ -2,7 +2,7 @@
 
 use wasm_encoder::{BlockType, Instruction, ValType};
 
-use crate::ast::{BinaryOperator, Expression, ObjectProperty, UnaryOperator};
+use crate::ast::{BinaryOperator, Expression, FormattedStringPart, ObjectProperty, UnaryOperator};
 use crate::codegen::diagnostics;
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{self, EnumVariant, NominalKind, TypeContract};
@@ -36,6 +36,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             }
             Expression::String(value, span) => {
                 self.compile_string(value, *span)?;
+            }
+            Expression::FormattedString { parts, span, .. } => {
+                self.compile_formatted_string(parts, *span)?;
             }
             Expression::Bool(value, span) => {
                 self.function
@@ -618,6 +621,32 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .instruction(&Instruction::LocalGet(buffer_pointer));
         self.function.instruction(&Instruction::I32Const(length));
         self.runtime_call("__exs_rt_string_new", span)
+    }
+
+    /// Concatenates formatted-string fragments with the standard String-add conversion rules.
+    fn compile_formatted_string(
+        &mut self,
+        parts: &[FormattedStringPart<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.compile_string("", span)?;
+        let result = self.store_stack_value()?;
+        for part in parts {
+            match part {
+                FormattedStringPart::Text(value) => self.compile_string(value, span)?,
+                FormattedStringPart::Expression(expression) => {
+                    self.compile_expression(expression)?
+                }
+            }
+            let value = self.store_stack_value()?;
+            self.function.instruction(&Instruction::LocalGet(result));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.runtime_value_call("__exs_rt_add", 2, span)?;
+            self.store_stack_value_in(result)?;
+            self.clear_root_slot(value)?;
+        }
+        self.function.instruction(&Instruction::LocalGet(result));
+        self.clear_root_slot(result)
     }
 
     /// Constructs a runtime list while evaluating every element in source order.

@@ -5,6 +5,25 @@ mod support;
 use exs_abi::{ErrorSeverity, ExsValue};
 use support::{execute_source, execute_source_with_inputs};
 
+/// Evaluates ordinary, raw, and dedented formatted string interpolation.
+#[test]
+fn evaluates_formatted_strings() {
+    let source = r##"
+        fn main(name: String) -> String {
+            let ordinary = f"Hello {name}: {20 + 1}";
+            let raw = f#"{ordinary}\n{{literal}}"#;
+            ret fd#"
+                {raw}
+                done
+            "#;
+        }
+    "##;
+    assert_eq!(
+        execute_source(source, ExsValue::String("Ada".to_owned())),
+        ExsValue::String("Hello Ada: 21\\n{literal}\ndone".to_owned()),
+    );
+}
+
 /// Executes calls, assignments, conditionals, and boolean operators.
 #[test]
 fn executes_calls_assignments_conditionals_and_booleans() {

@@ -135,6 +135,17 @@ pub(super) fn count_expressions(expression: &Expression<'_>) -> u32 {
         | Expression::Bool(_, _)
         | Expression::None(_)
         | Expression::Variable(_) => 1,
+        Expression::FormattedString { parts, .. } => {
+            2 + parts
+                .iter()
+                .map(|part| match part {
+                    crate::ast::FormattedStringPart::Text(_) => 1,
+                    crate::ast::FormattedStringPart::Expression(expression) => {
+                        count_expressions(expression)
+                    }
+                })
+                .sum::<u32>()
+        }
         Expression::IsError { value, .. } | Expression::Propagate { value, .. } => {
             1 + count_expressions(value)
         }
@@ -203,6 +214,7 @@ pub(in crate::codegen::function) fn condition_span<'a>(
         | Expression::String(_, span)
         | Expression::Bool(_, span)
         | Expression::None(span) => *span,
+        Expression::FormattedString { span, .. } => *span,
         Expression::List { span, .. } => *span,
         Expression::Object { span, .. } => *span,
         Expression::TypedObject { span, .. } => *span,

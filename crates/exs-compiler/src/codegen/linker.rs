@@ -222,6 +222,13 @@ fn collect_closures_expression<'source, 'ast>(
             closures.push((parameters, body, *span));
             collect_closures_block(body, closures);
         }
+        Expression::FormattedString { parts, .. } => {
+            for part in parts {
+                if let crate::ast::FormattedStringPart::Expression(expression) = part {
+                    collect_closures_expression(expression, closures);
+                }
+            }
+        }
         Expression::ParallelStatic { tasks, .. } => {
             for task in tasks {
                 collect_closures_expression(task, closures);

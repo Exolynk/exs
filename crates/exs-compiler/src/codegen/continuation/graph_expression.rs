@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{BinaryOperator, Expression, MatchArmBody, MatchPattern, UnaryOperator};
+use crate::ast::{
+    BinaryOperator, Expression, FormattedStringPart, MatchArmBody, MatchPattern, UnaryOperator,
+};
 use crate::codegen::diagnostics;
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
@@ -27,6 +29,40 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     destination,
                 });
                 Ok(destination)
+            }
+            Expression::FormattedString { parts, span, .. } => {
+                let mut result = self.temporary(*span)?;
+                self.operations.push(Operation::String {
+                    value: "",
+                    destination: result,
+                    span: *span,
+                });
+                for part in parts {
+                    let value = match part {
+                        FormattedStringPart::Text(value) => {
+                            let destination = self.temporary(*span)?;
+                            self.operations.push(Operation::String {
+                                value,
+                                destination,
+                                span: *span,
+                            });
+                            destination
+                        }
+                        FormattedStringPart::Expression(expression) => {
+                            self.lower_expression(expression)?
+                        }
+                    };
+                    let destination = self.temporary(*span)?;
+                    self.operations.push(Operation::Binary {
+                        operator: BinaryOperator::Add,
+                        left: result,
+                        right: value,
+                        destination,
+                        span: *span,
+                    });
+                    result = destination;
+                }
+                Ok(result)
             }
             Expression::Variable(identifier) => {
                 if let Some(variant) = self.types.enum_variant(&identifier.name) {

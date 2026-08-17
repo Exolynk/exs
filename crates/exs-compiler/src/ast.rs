@@ -391,6 +391,15 @@ pub enum Expression<'a> {
     Float(f64, SourceSpan<'a>),
     /// A decoded UTF-8 string literal.
     String(String, SourceSpan<'a>),
+    /// A string assembled from literal and runtime expression fragments.
+    FormattedString {
+        /// Delimiter rules preserved for canonical source formatting.
+        kind: FormattedStringKind,
+        /// Source-order literal and expression fragments.
+        parts: Vec<FormattedStringPart<'a>>,
+        /// Full formatted literal span.
+        span: SourceSpan<'a>,
+    },
     /// A boolean literal.
     Bool(bool, SourceSpan<'a>),
     /// The absence value shared by Options and empty operations.
@@ -547,6 +556,26 @@ pub enum Expression<'a> {
         /// Full expression span.
         span: SourceSpan<'a>,
     },
+}
+
+/// The source delimiter form selected for a formatted string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormattedStringKind {
+    /// `f"..."` with ordinary escape decoding.
+    Standard,
+    /// `f#"..."#` with raw hash delimiters.
+    Raw,
+    /// `fd#"..."#` with raw hash delimiters and common indentation removal.
+    Dedented,
+}
+
+/// One fragment in a formatted string expression.
+#[derive(Debug, Clone)]
+pub enum FormattedStringPart<'a> {
+    /// A decoded static text fragment.
+    Text(String),
+    /// A runtime expression interpolated with String-add conversion rules.
+    Expression(Expression<'a>),
 }
 
 /// A unary operator supported in Phase 1.

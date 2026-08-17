@@ -412,6 +412,13 @@ fn rewrite_statement(statement: &mut Statement<'_>, bindings: &HashMap<String, S
 /// Rewrites source-level symbol references in one expression.
 fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String, String>) {
     match expression {
+        Expression::FormattedString { parts, .. } => {
+            for part in parts {
+                if let crate::ast::FormattedStringPart::Expression(expression) = part {
+                    rewrite_expression(expression, bindings);
+                }
+            }
+        }
         Expression::Call {
             callee, arguments, ..
         } => {

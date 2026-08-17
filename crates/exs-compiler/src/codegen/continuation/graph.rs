@@ -25,6 +25,15 @@ pub(super) enum Operation<'source, 'function> {
         expression: &'function Expression<'source>,
         destination: u32,
     },
+    /// Constructs one compiler-owned string literal in a destination slot.
+    String {
+        /// UTF-8 content held in the parsed source AST.
+        value: &'function str,
+        /// Frame slot receiving the String value.
+        destination: u32,
+        /// Source location for this literal fragment.
+        span: SourceSpan<'source>,
+    },
     /// Constructs an integer literal used by continuation control bookkeeping.
     Integer {
         value: i64,
@@ -563,7 +572,8 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
 pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> SourceSpan<'source> {
     match operation {
         Operation::Literal { expression, .. } => expression_span(expression),
-        Operation::Integer { span, .. }
+        Operation::String { span, .. }
+        | Operation::Integer { span, .. }
         | Operation::None { span, .. }
         | Operation::Boolean { span, .. }
         | Operation::Copy { span, .. }
@@ -618,6 +628,7 @@ pub(super) fn expression_span<'source>(expression: &Expression<'source>) -> Sour
         | Expression::String(_, span)
         | Expression::Bool(_, span)
         | Expression::None(span) => *span,
+        Expression::FormattedString { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Closure { span, .. } => *span,
         Expression::IsError { span, .. }

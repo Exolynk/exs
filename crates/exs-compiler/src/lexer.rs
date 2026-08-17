@@ -12,6 +12,35 @@ pub struct Token<'a> {
     pub span: SourceSpan<'a>,
 }
 
+/// The delimiter and escaping rules selected by one formatted string token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormattedStringKind {
+    /// A double-quoted formatted string with escape decoding.
+    Standard,
+    /// A hash-delimited formatted raw string.
+    Raw,
+    /// A hash-delimited formatted raw string with common indentation removed.
+    Dedented,
+}
+
+/// One literal or parsed-expression fragment within a formatted string token.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormattedStringPart {
+    /// One decoded literal fragment.
+    Text(String),
+    /// One expression source fragment plus its absolute source offset.
+    Expression { source: String, start_byte: u32 },
+}
+
+/// A formatted string token split around interpolation expressions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormattedString {
+    /// String delimiter and escaping behavior.
+    pub kind: FormattedStringKind,
+    /// Literal and expression fragments in source order.
+    pub parts: Vec<FormattedStringPart>,
+}
+
 /// Tokens recognized by the Phase-1 lexer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -23,6 +52,8 @@ pub enum TokenKind {
     Float(f64),
     /// A decoded UTF-8 string literal.
     String(String),
+    /// A string literal containing parser-aware interpolation expressions.
+    FormattedString(FormattedString),
     /// The `fn` keyword.
     Fn,
     /// The `import` keyword.
@@ -274,6 +305,18 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                 };
                 TokenKind::Integer(value)
             }
+        } else if byte == b'f'
+            && (bytes.get(index + 1) == Some(&b'"')
+                || bytes.get(index + 1) == Some(&b'#')
+                || (bytes.get(index + 1) == Some(&b'd') && bytes.get(index + 2) == Some(&b'#')))
+        {
+            match formatted_string_literal(source, &mut index, start) {
+                Ok(token) => token,
+                Err(error) => {
+                    diagnostics.push(error);
+                    continue;
+                }
+            }
         } else if matches!(byte, b'r' | b'd') && bytes.get(index + 1) == Some(&b'#') {
             match prefixed_string_literal(source, &mut index, start, byte == b'd') {
                 Ok(token) => token,
@@ -414,6 +457,56 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
     }
 }
 
+/// Lexes an embedded expression fragment and translates all spans into its enclosing source.
+pub fn lex_fragment<'a>(source_id: &'a str, text: &str, offset: u32) -> Lexed<'a> {
+    let lexed = lex(SourceInput { source_id, text });
+    Lexed {
+        tokens: lexed
+            .tokens
+            .into_iter()
+            .map(|token| Token {
+                kind: token.kind,
+                span: offset_span(token.span, source_id, offset),
+            })
+            .collect(),
+        comments: lexed
+            .comments
+            .into_iter()
+            .map(|span| offset_span(span, source_id, offset))
+            .collect(),
+        diagnostics: CompileDiagnostics {
+            diagnostics: lexed
+                .diagnostics
+                .diagnostics
+                .into_iter()
+                .map(|diagnostic| CompileDiagnostic {
+                    code: diagnostic.code,
+                    category: diagnostic.category,
+                    span: offset_span(diagnostic.span, source_id, offset),
+                    message: diagnostic.message,
+                    related: diagnostic
+                        .related
+                        .into_iter()
+                        .map(|related| crate::RelatedSpan {
+                            span: offset_span(related.span, source_id, offset),
+                            message: related.message,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        },
+    }
+}
+
+/// Reassigns one fragment-relative span to its enclosing source input.
+fn offset_span<'a>(span: SourceSpan<'_>, source_id: &'a str, offset: u32) -> SourceSpan<'a> {
+    SourceSpan {
+        source_id,
+        start_byte: span.start_byte.saturating_add(offset),
+        end_byte: span.end_byte.saturating_add(offset),
+    }
+}
+
 /// Skips a malformed string remainder without consuming the following source line.
 fn recover_string(bytes: &[u8], index: &mut usize) {
     while *index < bytes.len() && !matches!(bytes[*index], b'"' | b'\n' | b'\r') {
@@ -539,6 +632,343 @@ fn prefixed_string_literal<'a>(
         "E0007",
         "unterminated raw string literal",
     ))
+}
+
+/// Reads an `f`, `f#`, or `fd#` formatted string and splits it around expressions.
+fn formatted_string_literal<'a>(
+    source: SourceInput<'a>,
+    index: &mut usize,
+    start: usize,
+) -> Result<TokenKind, CompileDiagnostic<'a>> {
+    let bytes = source.text.as_bytes();
+    *index += 1;
+    let (kind, hash_count) = if bytes.get(*index) == Some(&b'"') {
+        *index += 1;
+        (FormattedStringKind::Standard, 0)
+    } else {
+        let dedent = bytes.get(*index) == Some(&b'd');
+        if dedent {
+            *index += 1;
+        }
+        let hash_start = *index;
+        while bytes.get(*index) == Some(&b'#') {
+            *index += 1;
+        }
+        let hash_count = index.checked_sub(hash_start).unwrap_or(0);
+        if hash_count == 0 || bytes.get(*index) != Some(&b'"') {
+            return Err(diagnostic(
+                source,
+                start,
+                *index,
+                "E0008",
+                "invalid formatted raw string delimiter",
+            ));
+        }
+        *index += 1;
+        (
+            if dedent {
+                FormattedStringKind::Dedented
+            } else {
+                FormattedStringKind::Raw
+            },
+            hash_count,
+        )
+    };
+    let mut parts = Vec::new();
+    let mut text = String::new();
+    loop {
+        if *index >= bytes.len() {
+            return Err(diagnostic(
+                source,
+                start,
+                bytes.len(),
+                "E0007",
+                "unterminated formatted string literal",
+            ));
+        }
+        if hash_count == 0 && bytes[*index] == b'"' {
+            *index += 1;
+            push_formatted_text(&mut parts, std::mem::take(&mut text));
+            return Ok(TokenKind::FormattedString(FormattedString { kind, parts }));
+        }
+        if hash_count > 0
+            && bytes[*index] == b'"'
+            && bytes
+                .get(*index + 1..*index + 1 + hash_count)
+                .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#'))
+        {
+            *index += 1 + hash_count;
+            push_formatted_text(&mut parts, std::mem::take(&mut text));
+            if kind == FormattedStringKind::Dedented {
+                parts = dedent_formatted_parts(parts);
+            }
+            return Ok(TokenKind::FormattedString(FormattedString { kind, parts }));
+        }
+        match bytes[*index] {
+            b'{' if bytes.get(*index + 1) == Some(&b'{') => {
+                text.push('{');
+                *index += 2;
+            }
+            b'}' if bytes.get(*index + 1) == Some(&b'}') => {
+                text.push('}');
+                *index += 2;
+            }
+            b'{' => {
+                push_formatted_text(&mut parts, std::mem::take(&mut text));
+                let expression_start = *index + 1;
+                let expression_end = formatted_expression_end(source, expression_start)?;
+                if source.text[expression_start..expression_end]
+                    .trim()
+                    .is_empty()
+                {
+                    return Err(diagnostic(
+                        source,
+                        *index,
+                        expression_end + 1,
+                        "E0009",
+                        "formatted string interpolation requires an expression",
+                    ));
+                }
+                parts.push(FormattedStringPart::Expression {
+                    source: source.text[expression_start..expression_end].to_owned(),
+                    start_byte: u32::try_from(expression_start).unwrap_or(u32::MAX),
+                });
+                *index = expression_end + 1;
+            }
+            b'}' => {
+                return Err(diagnostic(
+                    source,
+                    *index,
+                    *index + 1,
+                    "E0009",
+                    "unescaped `}` in formatted string literal",
+                ));
+            }
+            b'\\' if hash_count == 0 => {
+                *index += 1;
+                let Some(escape) = bytes.get(*index).copied() else {
+                    break;
+                };
+                *index += 1;
+                match escape {
+                    b'"' => text.push('"'),
+                    b'\\' => text.push('\\'),
+                    b'n' => text.push('\n'),
+                    b'r' => text.push('\r'),
+                    b't' => text.push('\t'),
+                    b'0' => text.push('\0'),
+                    b'u' => decode_unicode_escape(source, index, start, &mut text)?,
+                    _ => {
+                        return Err(diagnostic(
+                            source,
+                            start,
+                            *index,
+                            "E0006",
+                            "invalid string escape",
+                        ));
+                    }
+                }
+            }
+            b'\n' | b'\r' if hash_count == 0 => {
+                return Err(diagnostic(
+                    source,
+                    start,
+                    *index,
+                    "E0007",
+                    "unterminated formatted string literal",
+                ));
+            }
+            _ => {
+                let Some(character) = source.text[*index..].chars().next() else {
+                    break;
+                };
+                text.push(character);
+                *index += character.len_utf8();
+            }
+        }
+    }
+    Err(diagnostic(
+        source,
+        start,
+        bytes.len(),
+        "E0007",
+        "unterminated formatted string literal",
+    ))
+}
+
+/// Appends one nonempty literal fragment while keeping adjacent fragments coalesced.
+fn push_formatted_text(parts: &mut Vec<FormattedStringPart>, text: String) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(FormattedStringPart::Text(previous)) = parts.last_mut() {
+        previous.push_str(&text);
+    } else {
+        parts.push(FormattedStringPart::Text(text));
+    }
+}
+
+/// Finds the closing brace for one interpolation while skipping nested source literals.
+fn formatted_expression_end<'a>(
+    source: SourceInput<'a>,
+    mut index: usize,
+) -> Result<usize, CompileDiagnostic<'a>> {
+    let bytes = source.text.as_bytes();
+    let start = index.saturating_sub(1);
+    let mut depth = 0_usize;
+    while index < bytes.len() {
+        if bytes[index..].starts_with(b"//") {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if bytes[index..].starts_with(b"/*") {
+            index += 2;
+            while index + 1 < bytes.len() && !bytes[index..].starts_with(b"*/") {
+                index += 1;
+            }
+            if index + 1 >= bytes.len() {
+                return Err(diagnostic(
+                    source,
+                    start,
+                    bytes.len(),
+                    "E0009",
+                    "unterminated formatted string interpolation",
+                ));
+            }
+            index += 2;
+            continue;
+        }
+        if bytes[index] == b'"' {
+            index = skip_quoted_string(bytes, index + 1);
+            continue;
+        }
+        if matches!(bytes[index], b'r' | b'd') && bytes.get(index + 1) == Some(&b'#') {
+            index = skip_hash_string(bytes, index + 1);
+            continue;
+        }
+        if bytes[index] == b'f'
+            && (bytes.get(index + 1) == Some(&b'"')
+                || bytes.get(index + 1) == Some(&b'#')
+                || (bytes.get(index + 1) == Some(&b'd') && bytes.get(index + 2) == Some(&b'#')))
+        {
+            index = skip_formatted_string(bytes, index);
+            continue;
+        }
+        match bytes[index] {
+            b'{' => {
+                depth += 1;
+                index += 1;
+            }
+            b'}' if depth == 0 => return Ok(index),
+            b'}' => {
+                depth -= 1;
+                index += 1;
+            }
+            _ => {
+                let Some(character) = source.text[index..].chars().next() else {
+                    break;
+                };
+                index += character.len_utf8();
+            }
+        }
+    }
+    Err(diagnostic(
+        source,
+        start,
+        bytes.len(),
+        "E0009",
+        "unterminated formatted string interpolation",
+    ))
+}
+
+/// Skips one ordinary quoted string while locating an interpolation boundary.
+fn skip_quoted_string(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index = index.saturating_add(2),
+            b'"' => return index + 1,
+            _ => index += 1,
+        }
+    }
+    index
+}
+
+/// Skips one hash-delimited raw string while locating an interpolation boundary.
+fn skip_hash_string(bytes: &[u8], mut index: usize) -> usize {
+    let hash_start = index;
+    while bytes.get(index) == Some(&b'#') {
+        index += 1;
+    }
+    let hash_count = index - hash_start;
+    if bytes.get(index) != Some(&b'"') {
+        return index;
+    }
+    index += 1;
+    while index < bytes.len() {
+        if bytes[index] == b'"'
+            && bytes
+                .get(index + 1..index + 1 + hash_count)
+                .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#'))
+        {
+            return index + 1 + hash_count;
+        }
+        index += 1;
+    }
+    index
+}
+
+/// Skips one nested formatted string while locating an interpolation boundary.
+fn skip_formatted_string(bytes: &[u8], mut index: usize) -> usize {
+    index += 1;
+    if bytes.get(index) == Some(&b'd') {
+        index += 1;
+    }
+    if bytes.get(index) == Some(&b'"') {
+        return skip_quoted_string(bytes, index + 1);
+    }
+    skip_hash_string(bytes, index)
+}
+
+/// Applies the existing dedent rules while preserving expression fragment boundaries.
+fn dedent_formatted_parts(parts: Vec<FormattedStringPart>) -> Vec<FormattedStringPart> {
+    let mut marker_prefix = "\u{1e}exs-format-".to_owned();
+    let text = parts
+        .iter()
+        .filter_map(|part| match part {
+            FormattedStringPart::Text(value) => Some(value.as_str()),
+            FormattedStringPart::Expression { .. } => None,
+        })
+        .collect::<String>();
+    while text.contains(&marker_prefix) {
+        marker_prefix.push('_');
+    }
+    let mut serialized = String::new();
+    let mut expressions = Vec::new();
+    for part in parts {
+        match part {
+            FormattedStringPart::Text(value) => serialized.push_str(&value),
+            expression @ FormattedStringPart::Expression { .. } => {
+                let marker = format!("{marker_prefix}{}\u{1f}", expressions.len());
+                serialized.push_str(&marker);
+                expressions.push((marker, expression));
+            }
+        }
+    }
+    let dedented = dedent_string(&serialized);
+    let mut output = Vec::new();
+    let mut remaining = dedented.as_str();
+    for (marker, expression) in expressions {
+        if let Some((before, after)) = remaining.split_once(&marker) {
+            push_formatted_text(&mut output, before.to_owned());
+            output.push(expression);
+            remaining = after;
+        }
+    }
+    push_formatted_text(&mut output, remaining.to_owned());
+    output
 }
 
 /// Removes delimiter-only outer lines and common indentation from one dedented raw literal.

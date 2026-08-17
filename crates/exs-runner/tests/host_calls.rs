@@ -56,6 +56,33 @@ fn executes_variadic_static_methods() {
     assert_eq!(execute_source_with_inputs(source, &[]), ExsValue::Int(42));
 }
 
+/// Resumes a host call evaluated inside a formatted string interpolation.
+#[test]
+fn executes_host_calls_inside_formatted_strings() {
+    let compiled = compile_source(
+        r#"fn main(input: Int) -> String { ret f"value: {host.call("echo", input)}"; }"#,
+    );
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("echo", |arguments: Vec<ExsValue>| arguments
+                .into_iter()
+                .next()
+                .unwrap_or(ExsValue::None))
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        &[ExsValue::Int(42)],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::String("value: 42".to_owned()));
+}
+
 /// Preserves packed variadic arguments across resumable function, closure, and method calls.
 #[test]
 fn executes_resumable_variadic_calls() {

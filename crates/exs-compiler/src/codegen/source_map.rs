@@ -336,6 +336,14 @@ impl<'a> SourceMap<'a> {
             | Expression::String(_, span)
             | Expression::Bool(_, span)
             | Expression::None(span) => self.insert(*span),
+            Expression::FormattedString { parts, span, .. } => {
+                self.insert(*span);
+                for part in parts {
+                    if let crate::ast::FormattedStringPart::Expression(expression) = part {
+                        self.collect_expression(expression);
+                    }
+                }
+            }
             Expression::IsError { value, span } | Expression::Propagate { value, span } => {
                 self.insert(*span);
                 self.collect_expression(value);

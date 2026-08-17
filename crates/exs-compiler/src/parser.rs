@@ -4,13 +4,16 @@ use std::collections::HashSet;
 
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, EnumVariant, Expression,
-    FunctionDeclaration, Identifier, ImplDeclaration, ImportDeclaration, MatchArm, MatchArmBody,
-    MatchPattern, Module, ObjectProperty, Parameter, Statement, TraitDeclaration,
-    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator,
-    UseDeclaration, UseItem,
+    FormattedStringKind, FormattedStringPart, FunctionDeclaration, Identifier, ImplDeclaration,
+    ImportDeclaration, MatchArm, MatchArmBody, MatchPattern, Module, ObjectProperty, Parameter,
+    Statement, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration,
+    TypeField, TypeName, UnaryOperator, UseDeclaration, UseItem,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{
+    FormattedStringKind as LexerFormattedStringKind,
+    FormattedStringPart as LexerFormattedStringPart, Token, TokenKind,
+};
 
 /// Parses a token stream into one ExS module.
 pub fn parse<'a>(
@@ -941,6 +944,7 @@ impl<'a> Parser<'a> {
             TokenKind::Integer(value) => Ok(Expression::Integer(value, token.span)),
             TokenKind::Float(value) => Ok(Expression::Float(value, token.span)),
             TokenKind::String(value) => Ok(Expression::String(value, token.span)),
+            TokenKind::FormattedString(value) => self.formatted_string(value, token.span),
             TokenKind::True => Ok(Expression::Bool(true, token.span)),
             TokenKind::False => Ok(Expression::Bool(false, token.span)),
             TokenKind::None => Ok(Expression::None(token.span)),
@@ -1008,6 +1012,49 @@ impl<'a> Parser<'a> {
             }
             _ => Err(self.error(token.span, "E0101", "expected expression")),
         }
+    }
+
+    /// Parses the independently lexed expression fragments of one formatted string token.
+    fn formatted_string(
+        &mut self,
+        value: crate::lexer::FormattedString,
+        span: SourceSpan<'a>,
+    ) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
+        let kind = match value.kind {
+            LexerFormattedStringKind::Standard => FormattedStringKind::Standard,
+            LexerFormattedStringKind::Raw => FormattedStringKind::Raw,
+            LexerFormattedStringKind::Dedented => FormattedStringKind::Dedented,
+        };
+        let mut parts = Vec::with_capacity(value.parts.len());
+        for part in value.parts {
+            match part {
+                LexerFormattedStringPart::Text(value) => {
+                    parts.push(FormattedStringPart::Text(value));
+                }
+                LexerFormattedStringPart::Expression { source, start_byte } => {
+                    let mut lexed = crate::lexer::lex_fragment(span.source_id, &source, start_byte);
+                    if let Some(diagnostic) = lexed.diagnostics.diagnostics.first_mut() {
+                        return Err(diagnostic.clone());
+                    }
+                    let mut parser = Self {
+                        tokens: lexed.tokens,
+                        current: 0,
+                        type_names: self.type_names.clone(),
+                        diagnostics: CompileDiagnostics::new(),
+                    };
+                    let expression = parser.expression()?;
+                    if !parser.at_end() {
+                        return Err(parser.error(
+                            parser.peek().span,
+                            "E0103",
+                            "expected the end of a formatted string interpolation",
+                        ));
+                    }
+                    parts.push(FormattedStringPart::Expression(expression));
+                }
+            }
+        }
+        Ok(Expression::FormattedString { kind, parts, span })
     }
 
     /// Parses one enum-pattern `match` expression with expression-valued arms.
@@ -1461,6 +1508,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::String(_, span)
         | Expression::Bool(_, span)
         | Expression::None(span) => *span,
+        Expression::FormattedString { span, .. } => *span,
         Expression::List { span, .. } => *span,
         Expression::Object { span, .. } => *span,
         Expression::TypedObject { span, .. } => *span,

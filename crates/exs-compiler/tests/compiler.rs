@@ -41,6 +41,62 @@ fn compiles_variadic_function_parameters() {
     }
 }
 
+/// Compiles formatted strings with nested source expressions in every supported delimiter form.
+#[test]
+fn compiles_formatted_strings() {
+    let source = r##"
+        fn main(name: String) -> String {
+            let first = f"Hello {name}: {20 + 1}";
+            let second = f#"raw {first}"#;
+            ret fd#"
+                {second}
+            "#;
+        }
+    "##;
+    let compiled = match compile(
+        SourceInput {
+            source_id: "formatted-strings.exs",
+            text: source,
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    if let Err(error) = Validator::new().validate_all(&compiled.wasm) {
+        panic!("generated Wasm is invalid: {error}");
+    }
+}
+
+/// Formats every formatted-string delimiter form into reparsable source.
+#[test]
+fn formats_formatted_strings() {
+    let source = r##"fn main(name:String)->String{let first=f"hello {name}";let second=f#"{first}\n{{raw}}"#;ret fd#"
+    {second}
+    done
+"#;}"##;
+    let formatted = match format(SourceInput {
+        source_id: "format-formatted-strings.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert!(formatted.contains("f\"hello {name}\""));
+    assert!(formatted.contains("f#\"{first}\\n{{raw}}\"#"));
+    assert!(formatted.contains("fd#\"{second}\ndone\"#"));
+    assert!(
+        compile(
+            SourceInput {
+                source_id: "formatted-after-format.exs",
+                text: &formatted,
+            },
+            CompileOptions::default(),
+        )
+        .is_ok()
+    );
+}
+
 /// Rejects a rest parameter that is followed by another parameter.
 #[test]
 fn rejects_non_final_variadic_parameter() {

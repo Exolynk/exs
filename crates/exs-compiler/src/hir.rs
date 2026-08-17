@@ -499,6 +499,13 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             Expression::Variable(identifier) => {
                 self.reference(identifier.name.as_str(), identifier.span)
             }
+            Expression::FormattedString { parts, .. } => {
+                for part in parts {
+                    if let crate::ast::FormattedStringPart::Expression(expression) = part {
+                        self.lower_expression(expression);
+                    }
+                }
+            }
             Expression::IsError { value, .. }
             | Expression::Propagate { value, .. }
             | Expression::Unary { operand: value, .. } => self.lower_expression(value),

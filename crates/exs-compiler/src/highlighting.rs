@@ -202,7 +202,7 @@ fn source_token_kind(kind: &TokenKind) -> Option<SourceTokenKind> {
         TokenKind::Eof => None,
         TokenKind::Identifier(_) => Some(SourceTokenKind::Identifier),
         TokenKind::Integer(_) | TokenKind::Float(_) => Some(SourceTokenKind::Number),
-        TokenKind::String(_) => Some(SourceTokenKind::String),
+        TokenKind::String(_) | TokenKind::FormattedString(_) => Some(SourceTokenKind::String),
         kind if is_keyword(kind) => Some(SourceTokenKind::Keyword),
         kind if is_operator(kind) => Some(SourceTokenKind::Operator),
         _ => Some(SourceTokenKind::Punctuation),
@@ -503,6 +503,13 @@ fn highlight_expression(
         | Expression::String(..)
         | Expression::Bool(..)
         | Expression::None(..) => {}
+        Expression::FormattedString { parts, .. } => {
+            for part in parts {
+                if let crate::ast::FormattedStringPart::Expression(expression) = part {
+                    highlight_expression(expression, spans, len);
+                }
+            }
+        }
         Expression::IsError { value, .. }
         | Expression::Propagate { value, .. }
         | Expression::Unary { operand: value, .. } => highlight_expression(value, spans, len),
