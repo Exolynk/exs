@@ -53,6 +53,8 @@ impl LiteralPool {
                 pool.insert(variant);
             }
         }
+        // Formatted interpolation dispatches through this compiler-inserted method name.
+        pool.insert(standard::TO_STRING_METHOD);
         for function in &module.functions {
             collect_block_literals(&function.body, &mut pool);
         }

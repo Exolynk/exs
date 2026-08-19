@@ -470,6 +470,16 @@ fn generates_markdown_api_documentation() {
             .markdown
             .contains("Trait [`Compare`](../traits/compare.md)")
     );
+    assert!(
+        integer
+            .markdown
+            .contains("Trait [`ToString`](../traits/tostring.md)")
+    );
+    assert!(
+        integer
+            .markdown
+            .contains("Trait [`Debug`](../traits/debug.md)")
+    );
     assert!(integer.markdown.contains("clone() -> Int | Error"));
     let ordering = documentation
         .pages
@@ -488,6 +498,22 @@ fn generates_markdown_api_documentation() {
             .markdown
             .contains("fn compare(self, other: Any) -> Ordering;")
     );
+    let to_string_trait = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/traits/tostring.md")
+        .unwrap_or_else(|| panic!("missing std ToString trait page"));
+    assert!(
+        to_string_trait
+            .markdown
+            .contains("fn to_string(self) -> String;")
+    );
+    let debug_trait = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/traits/debug.md")
+        .unwrap_or_else(|| panic!("missing std Debug trait page"));
+    assert!(debug_trait.markdown.contains("fn debug(self) -> String;"));
 }
 
 /// Links a standard trait implementation and inherits its method documentation on an enum page.

@@ -49,7 +49,24 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                             destination
                         }
                         FormattedStringPart::Expression(expression) => {
-                            self.lower_expression(expression)?
+                            let receiver = self.lower_expression(expression)?;
+                            let destination = self.temporary(*span)?;
+                            self.operations.push(Operation::InstanceCall {
+                                receiver,
+                                method: crate::codegen::standard::TO_STRING_METHOD,
+                                method_span: *span,
+                                arguments: Vec::new(),
+                                targets: self
+                                    .methods
+                                    .trait_instance(
+                                        crate::codegen::standard::TO_STRING_TRAIT,
+                                        crate::codegen::standard::TO_STRING_METHOD,
+                                    )
+                                    .map_or_else(Vec::new, ToOwned::to_owned),
+                                destination,
+                                span: *span,
+                            });
+                            destination
                         }
                     };
                     let destination = self.temporary(*span)?;

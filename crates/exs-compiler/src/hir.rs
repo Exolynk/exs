@@ -27,7 +27,7 @@ impl<'a> HirModule<'a> {
     /// Resolves lexical bindings and call edges without changing source execution semantics.
     #[must_use]
     pub(crate) fn lower(module: &'a Module<'a>, traits: &TraitRegistry<'a>) -> Self {
-        let instance_targets = instance_method_targets(module, traits);
+        let instance_targets = InstanceMethodTargets::build(module, traits);
         let state = LoweringState::new();
         let mut functions = HashMap::new();
         for function in &module.functions {
@@ -161,7 +161,7 @@ impl<'a> HirFunction<'a> {
     fn lower(
         function: &'a FunctionDeclaration<'a>,
         key: String,
-        instance_targets: &HashMap<String, Vec<String>>,
+        instance_targets: &InstanceMethodTargets,
         state: &LoweringState<'a>,
     ) -> Self {
         let mut lowerer = FunctionLowerer::new_root(function, key, instance_targets, state);
@@ -328,7 +328,7 @@ struct FunctionLowerer<'a, 'state> {
     host_calls: Vec<HostCall<'a>>,
     parallel_calls: Vec<SourceSpan<'a>>,
     matches: bool,
-    instance_targets: &'state HashMap<String, Vec<String>>,
+    instance_targets: &'state InstanceMethodTargets,
     state: &'state LoweringState<'a>,
 }
 
@@ -337,7 +337,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
     fn new_root(
         function: &'a FunctionDeclaration<'a>,
         root_key: String,
-        instance_targets: &'state HashMap<String, Vec<String>>,
+        instance_targets: &'state InstanceMethodTargets,
         state: &'state LoweringState<'a>,
     ) -> Self {
         let mut lowerer = Self {
@@ -368,7 +368,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
         root_key: String,
         owner: ClosureId,
         parameters: &'a [Parameter<'a>],
-        instance_targets: &'state HashMap<String, Vec<String>>,
+        instance_targets: &'state InstanceMethodTargets,
         state: &'state LoweringState<'a>,
     ) -> Self {
         let mut lowerer = Self {
@@ -499,7 +499,18 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             Expression::Variable(identifier) => {
                 self.reference(identifier.name.as_str(), identifier.span)
             }
-            Expression::FormattedString { parts, .. } => {
+            Expression::FormattedString { parts, span, .. } => {
+                if let Some(targets) = self.instance_targets.trait_method(
+                    crate::codegen::standard::TO_STRING_TRAIT,
+                    crate::codegen::standard::TO_STRING_METHOD,
+                ) {
+                    self.calls.extend(
+                        targets
+                            .iter()
+                            .cloned()
+                            .map(|key| CallEdge { key, span: *span }),
+                    );
+                }
                 for part in parts {
                     if let crate::ast::FormattedStringPart::Expression(expression) = part {
                         self.lower_expression(expression);
@@ -516,7 +527,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 span,
             } => {
                 if let Some(operator) = TraitOperator::from_binary(*operator)
-                    && let Some(targets) = self.instance_targets.get(operator.target_key())
+                    && let Some(targets) = self.instance_targets.operator(operator.target_key())
                 {
                     self.calls.extend(
                         targets
@@ -571,7 +582,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 arguments,
                 ..
             } => {
-                if let Some(targets) = self.instance_targets.get(&method.name) {
+                if let Some(targets) = self.instance_targets.method(&method.name) {
                     self.calls
                         .extend(targets.iter().cloned().map(|key| CallEdge {
                             key,
@@ -748,41 +759,75 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
     }
 }
 
-/// Collects every statically known implementation target for each dynamic method name.
-fn instance_method_targets<'a>(
-    module: &'a Module<'a>,
-    traits: &TraitRegistry<'a>,
-) -> HashMap<String, Vec<String>> {
-    let mut targets: HashMap<String, Vec<String>> = HashMap::new();
-    for implementation in &module.implementations {
-        for method in &implementation.methods {
-            if method
-                .parameters
-                .first()
-                .is_some_and(|parameter| parameter.name.name == "self")
-            {
-                targets
+/// Collects statically known instance targets by method name, trait, and operator protocol.
+struct InstanceMethodTargets {
+    methods: HashMap<String, Vec<String>>,
+    trait_methods: HashMap<String, HashMap<String, Vec<String>>>,
+    operators: HashMap<String, Vec<String>>,
+}
+
+impl InstanceMethodTargets {
+    /// Builds call-edge indexes from every source implementation method.
+    fn build<'a>(module: &'a Module<'a>, traits: &TraitRegistry<'a>) -> Self {
+        let mut methods: HashMap<String, Vec<String>> = HashMap::new();
+        let mut trait_methods: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+        let mut operators: HashMap<String, Vec<String>> = HashMap::new();
+        for implementation in &module.implementations {
+            for method in &implementation.methods {
+                if method
+                    .parameters
+                    .first()
+                    .is_none_or(|parameter| parameter.name.name != "self")
+                {
+                    continue;
+                }
+                let target = format!("{}::{}", implementation.type_name.name, method.name.name);
+                methods
                     .entry(method.name.name.clone())
                     .or_default()
-                    .push(format!(
-                        "{}::{}",
-                        implementation.type_name.name, method.name.name
-                    ));
+                    .push(target.clone());
                 if let Some(trait_name) = &implementation.trait_name {
-                    for operator in traits.operators_for(&trait_name.name, &method.name.name) {
-                        targets
+                    let trait_name =
+                        crate::codegen::standard::canonical_trait_name(&trait_name.name)
+                            .unwrap_or(&trait_name.name);
+                    trait_methods
+                        .entry(trait_name.to_owned())
+                        .or_default()
+                        .entry(method.name.name.clone())
+                        .or_default()
+                        .push(target.clone());
+                    for operator in traits.operators_for(trait_name, &method.name.name) {
+                        operators
                             .entry(operator.target_key().to_owned())
                             .or_default()
-                            .push(format!(
-                                "{}::{}",
-                                implementation.type_name.name, method.name.name
-                            ));
+                            .push(target.clone());
                     }
                 }
             }
         }
+        Self {
+            methods,
+            trait_methods,
+            operators,
+        }
     }
-    targets
+
+    /// Returns targets for an ordinary source method call.
+    fn method(&self, name: &str) -> Option<&Vec<String>> {
+        self.methods.get(name)
+    }
+
+    /// Returns targets selected by one compiler-owned operator protocol.
+    fn operator(&self, name: &str) -> Option<&Vec<String>> {
+        self.operators.get(name)
+    }
+
+    /// Returns targets for one trait method without matching unrelated same-named methods.
+    fn trait_method(&self, trait_name: &str, method_name: &str) -> Option<&Vec<String>> {
+        self.trait_methods
+            .get(trait_name)
+            .and_then(|methods| methods.get(method_name))
+    }
 }
 
 #[cfg(test)]

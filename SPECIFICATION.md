@@ -84,7 +84,7 @@ Ordinary strings use double quotes and support `\"`, `\\`, `\n`, `\r`, `\t`, `\0
 "smile: \u{1f642}"
 ```
 
-Formatted strings use an `f` prefix and evaluate normal ExS expressions inside `{...}`. Interpolated values use the same conversion rules as `String + value`: `String`, `Bool`, `Int`, and `Float` are accepted; every other value produces `TypeError`. Use `{{` and `}}` for literal braces.
+Formatted strings use an `f` prefix and evaluate normal ExS expressions inside `{...}`. Each interpolated value is rendered through `ToString::to_string`. Built-in values have default renderers; nominal types and enums may override them with `impl ToString`. Use `{{` and `}}` for literal braces.
 
 ```exs
 f"Hello {name}; next: {count + 1}"
@@ -432,7 +432,7 @@ A trait method ending in `;` is required. A trait method with a block is a defau
 
 `Self` is valid only in a trait method signature and a method inside `impl Trait for Type`; it means the implementation target.
 
-The compiler-owned traits `Add`, `Sub`, `Mul`, `Div`, and `Compare` are reserved. A nominal type or enum may implement them with these fixed signatures:
+The compiler-owned traits `Add`, `Sub`, `Mul`, `Div`, `Compare`, `ToString`, and `Debug` are reserved. A nominal type or enum may implement them with these fixed signatures:
 
 ```exs
 fn add(self, other: Any) -> Any
@@ -440,9 +440,13 @@ fn sub(self, other: Any) -> Any
 fn mul(self, other: Any) -> Any
 fn div(self, other: Any) -> Any
 fn compare(self, other: Any) -> Ordering
+fn to_string(self) -> String
+fn debug(self) -> String
 ```
 
 `Ordering` is a built-in enum, also available as `std::Ordering`, with variants `Less`, `Equal`, `Greater`, and `Unordered`.
+
+`ToString` is used by formatted string interpolation and may also be called explicitly. `Debug` is an explicit diagnostic renderer. Both have defaults for all runtime value categories: `None` renders as `"None"`, Error as `"Error"`, scalar values use their source spelling, String is unchanged, List and Object render as `"[]"` and `"{}"`, closures render as `"fn main()"`, and enum values render as their stable `source_id::Type::Variant` identity. An `impl ToString` or `impl Debug` overrides the corresponding default for its nominal type or enum.
 
 # 9. Errors
 

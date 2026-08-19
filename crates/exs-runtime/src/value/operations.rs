@@ -1,6 +1,8 @@
 //! Dynamic Wasm operations shared across runtime value kinds.
 
+use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -389,6 +391,10 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
             Ok(argument) => compare(receiver, argument),
             Err(error) => error,
         },
+        "to_string" | "debug" => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => render_default(receiver),
+            Err(error) => error,
+        },
         "abs" => match list::operations::require_no_arguments(arguments) {
             Ok(()) => match runtime::value(receiver) {
                 RtValue::Int(_) => integer_abs(receiver),
@@ -483,6 +489,27 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
             receiver,
         ),
     }
+}
+
+/// Creates the stable built-in representation shared by `ToString` and `Debug` defaults.
+fn render_default(receiver: ValueRef) -> ValueRef {
+    let rendered = match runtime::value(receiver) {
+        RtValue::None => "None".to_owned(),
+        RtValue::Error(_) => "Error".to_owned(),
+        RtValue::Bool(value) => value.to_string(),
+        RtValue::Int(value) => value.to_string(),
+        RtValue::Float(value) => value.to_string(),
+        RtValue::String(value) => String::from(value.as_str()),
+        RtValue::List(_) => "[]".to_owned(),
+        RtValue::Object(object) => object.enum_data.as_ref().map_or_else(
+            || "{}".to_owned(),
+            |enumeration| format!("{}::{}", enumeration.type_identity, enumeration.variant),
+        ),
+        RtValue::Cell(_) => "Cell".to_owned(),
+        RtValue::Closure(_) => "fn main()".to_owned(),
+        RtValue::BoxedFutureValue(_) => "Future".to_owned(),
+    };
+    string_value_result(rendered)
 }
 
 /// Applies one unary Float operation after validating the receiver type.

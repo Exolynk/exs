@@ -32,6 +32,18 @@ pub(crate) const COMPARE_TRAIT: &str = "Compare";
 /// Required instance-method name for the `Compare` protocol.
 pub(crate) const COMPARE_METHOD: &str = "compare";
 
+/// Canonical source name for the standard string-conversion protocol.
+pub(crate) const TO_STRING_TRAIT: &str = "ToString";
+
+/// Required instance-method name for the `ToString` protocol.
+pub(crate) const TO_STRING_METHOD: &str = "to_string";
+
+/// Canonical source name for the standard diagnostic-rendering protocol.
+pub(crate) const DEBUG_TRAIT: &str = "Debug";
+
+/// Required instance-method name for the `Debug` protocol.
+pub(crate) const DEBUG_METHOD: &str = "debug";
+
 /// Canonical source name for the standard comparison-result enum.
 pub(crate) const ORDERING_ENUM: &str = "Ordering";
 
@@ -124,6 +136,12 @@ const COMPARE_PARAMETER_TYPES: [Option<&str>; 2] = [None, Some("Any")];
 /// Return annotation required by the standard `Compare::compare` method.
 const COMPARE_RETURN_TYPES: [&str; 1] = [ORDERING_ENUM];
 
+/// Parameter annotations required by zero-argument rendering trait methods.
+const RENDER_PARAMETER_TYPES: [Option<&str>; 1] = [None];
+
+/// Return annotation required by rendering trait methods.
+const RENDER_RETURN_TYPES: [&str; 1] = ["String"];
+
 /// The arithmetic source operator bound to `Add::add`.
 const ADD_OPERATORS: [StandardOperator; 1] = [StandardOperator::Add];
 /// The arithmetic source operator bound to `Sub::sub`.
@@ -192,8 +210,28 @@ const COMPARE_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor
     description: "Compares the receiver with the evaluated `other` operand and returns `Ordering::Less`, `Ordering::Equal`, `Ordering::Greater`, or `Ordering::Unordered`. Equality uses only the Equal result. Ordering operators reject Unordered with TypeError.",
 }];
 
+/// The required `ToString::to_string` method declaration.
+const TO_STRING_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
+    name: TO_STRING_METHOD,
+    has_receiver: true,
+    parameter_types: &RENDER_PARAMETER_TYPES,
+    return_types: &RENDER_RETURN_TYPES,
+    signature: "fn to_string(self) -> String;",
+    description: "Renders the receiver as a String. Formatted string interpolation invokes this method. Built-in values use a stable default representation; nominal types and enums may override it with `impl ToString`.",
+}];
+
+/// The required `Debug::debug` method declaration.
+const DEBUG_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
+    name: DEBUG_METHOD,
+    has_receiver: true,
+    parameter_types: &RENDER_PARAMETER_TYPES,
+    return_types: &RENDER_RETURN_TYPES,
+    signature: "fn debug(self) -> String;",
+    description: "Renders the receiver for diagnostics. Every built-in value has a stable default representation; nominal types and enums may override it with `impl Debug`.",
+}];
+
 /// The standard `Add` trait declaration shared by validation, contracts, and documentation.
-const STANDARD_TRAITS: [StandardTraitDescriptor; 5] = [
+const STANDARD_TRAITS: [StandardTraitDescriptor; 7] = [
     StandardTraitDescriptor {
         name: ADD_TRAIT,
         builtin_mask: TYPE_BOOL | TYPE_INT | TYPE_FLOAT | TYPE_STRING | TYPE_LIST,
@@ -237,6 +275,28 @@ const STANDARD_TRAITS: [StandardTraitDescriptor; 5] = [
         operators: &COMPARE_OPERATORS,
         description: "`Compare` is the protocol selected by equality and ordering operators. Its fixed Ordering result lets one implementation define equal, less-than, and greater-than behavior coherently. Built-in values preserve ExS equality semantics: numeric and String values are ordered, while identity-only values return Unordered unless they are the same value.",
         usage: "type Version { major: Int, minor: Int }\n\nimpl Compare for Version {\n    fn compare(self, other: Any) -> Ordering {\n        if self.major < other.major { ret Ordering::Less; }\n        if self.major > other.major { ret Ordering::Greater; }\n        if self.minor < other.minor { ret Ordering::Less; }\n        if self.minor > other.minor { ret Ordering::Greater; }\n        ret Ordering::Equal;\n    }\n}\n\nfn main() -> Bool {\n    ret Version { major: 1, minor: 2 } < Version { major: 2, minor: 0 };\n}",
+        implemented_by: &[
+            "None", "Error", "Bool", "Int", "Float", "String", "List", "Object", "Fn", "Ordering",
+        ],
+    },
+    StandardTraitDescriptor {
+        name: TO_STRING_TRAIT,
+        builtin_mask: TYPE_ANY,
+        methods: &TO_STRING_METHODS,
+        operators: &[],
+        description: "`ToString` controls formatted string interpolation and explicit `value.to_string()` calls. Every built-in value has a default String representation. Nominal types and enums may override it with `impl ToString`.",
+        usage: "type User { name: String }\n\nimpl ToString for User {\n    fn to_string(self) -> String {\n        ret f\"User({self.name})\";\n    }\n}\n\nfn main() -> String {\n    ret f\"{User { name: \\\"Ada\\\" }}\";\n}",
+        implemented_by: &[
+            "None", "Error", "Bool", "Int", "Float", "String", "List", "Object", "Fn", "Ordering",
+        ],
+    },
+    StandardTraitDescriptor {
+        name: DEBUG_TRAIT,
+        builtin_mask: TYPE_ANY,
+        methods: &DEBUG_METHODS,
+        operators: &[],
+        description: "`Debug` provides a diagnostic String representation. Every built-in value has a default representation. Nominal types and enums may override it with `impl Debug`.",
+        usage: "type User { name: String }\n\nimpl Debug for User {\n    fn debug(self) -> String {\n        ret f\"User(name={self.name})\";\n    }\n}\n\nfn main() -> String {\n    ret User { name: \\\"Ada\\\" }.debug();\n}",
         implemented_by: &[
             "None", "Error", "Bool", "Int", "Float", "String", "List", "Object", "Fn", "Ordering",
         ],

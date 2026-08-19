@@ -635,7 +635,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             match part {
                 FormattedStringPart::Text(value) => self.compile_string(value, span)?,
                 FormattedStringPart::Expression(expression) => {
-                    self.compile_expression(expression)?
+                    self.compile_to_string(expression, span)?
                 }
             }
             let value = self.store_stack_value()?;
@@ -647,6 +647,33 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         }
         self.function.instruction(&Instruction::LocalGet(result));
         self.clear_root_slot(result)
+    }
+
+    /// Evaluates one formatted value and invokes its `ToString` implementation.
+    fn compile_to_string(
+        &mut self,
+        expression: &Expression<'a>,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.compile_expression(expression)?;
+        let receiver = self.store_stack_value()?;
+        let method = crate::ast::Identifier {
+            name: crate::codegen::standard::TO_STRING_METHOD.to_owned(),
+            span,
+        };
+        let targets = self
+            .methods
+            .trait_instance(crate::codegen::standard::TO_STRING_TRAIT, &method.name)
+            .map(ToOwned::to_owned);
+        self.emit_instance_method_dispatch(
+            targets.as_deref().unwrap_or_default(),
+            0,
+            receiver,
+            &[],
+            &method,
+            span,
+        )?;
+        self.clear_root_slot(receiver)
     }
 
     /// Constructs a runtime list while evaluating every element in source order.

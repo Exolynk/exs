@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::Module;
+use crate::codegen::standard;
 use crate::codegen::trait_registry::{TraitOperator, TraitRegistry};
 use crate::codegen::types::TypeRegistry;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
@@ -22,6 +23,7 @@ pub(in crate::codegen) struct InstanceMethod {
 #[derive(Debug, Clone)]
 pub(in crate::codegen) struct MethodRegistry {
     instance_methods: HashMap<String, Vec<InstanceMethod>>,
+    trait_instance_methods: HashMap<String, HashMap<String, Vec<InstanceMethod>>>,
     operator_methods: HashMap<TraitOperator, Vec<InstanceMethod>>,
     static_methods: HashSet<String>,
 }
@@ -35,6 +37,8 @@ impl MethodRegistry {
         signatures: &HashMap<String, FunctionSignature>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
         let mut instance_methods: HashMap<String, Vec<InstanceMethod>> = HashMap::new();
+        let mut trait_instance_methods: HashMap<String, HashMap<String, Vec<InstanceMethod>>> =
+            HashMap::new();
         let mut operator_methods: HashMap<TraitOperator, Vec<InstanceMethod>> = HashMap::new();
         let mut static_methods = HashSet::new();
         for implementation in &module.implementations {
@@ -68,7 +72,15 @@ impl MethodRegistry {
                         .or_default()
                         .push(target.clone());
                     if let Some(trait_name) = &implementation.trait_name {
-                        for operator in traits.operators_for(&trait_name.name, &method.name.name) {
+                        let trait_name = standard::canonical_trait_name(&trait_name.name)
+                            .unwrap_or(&trait_name.name);
+                        trait_instance_methods
+                            .entry(trait_name.to_owned())
+                            .or_default()
+                            .entry(method.name.name.clone())
+                            .or_default()
+                            .push(target.clone());
+                        for operator in traits.operators_for(trait_name, &method.name.name) {
                             operator_methods
                                 .entry(*operator)
                                 .or_default()
@@ -82,6 +94,7 @@ impl MethodRegistry {
         }
         Ok(Self {
             instance_methods,
+            trait_instance_methods,
             operator_methods,
             static_methods,
         })
@@ -90,6 +103,18 @@ impl MethodRegistry {
     /// Returns every nominal implementation matching one instance method name.
     pub(in crate::codegen) fn instance(&self, name: &str) -> Option<&[InstanceMethod]> {
         self.instance_methods.get(name).map(Vec::as_slice)
+    }
+
+    /// Returns nominal implementations of one method for one trait only.
+    pub(in crate::codegen) fn trait_instance(
+        &self,
+        trait_name: &str,
+        method_name: &str,
+    ) -> Option<&[InstanceMethod]> {
+        self.trait_instance_methods
+            .get(trait_name)
+            .and_then(|methods| methods.get(method_name))
+            .map(Vec::as_slice)
     }
 
     /// Returns nominal implementations selected exclusively by one source operator.

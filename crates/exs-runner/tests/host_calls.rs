@@ -83,6 +83,42 @@ fn executes_host_calls_inside_formatted_strings() {
     assert_eq!(result, ExsValue::String("value: 42".to_owned()));
 }
 
+/// Resumes a `ToString` implementation selected by formatted string interpolation.
+#[test]
+fn executes_host_calls_inside_to_string_implementations() {
+    let compiled = compile_source(
+        r#"
+        type Remote {}
+
+        impl ToString for Remote {
+            fn to_string(self) -> String {
+                ret host.call("echo", "custom");
+            }
+        }
+
+        fn main() -> String {
+            ret f"value: {Remote {}}";
+        }
+        "#,
+    );
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_sync("echo", |arguments: Vec<ExsValue>| arguments
+                .into_iter()
+                .next()
+                .unwrap_or(ExsValue::None))
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
+    {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::String("value: custom".to_owned()));
+}
+
 /// Preserves packed variadic arguments across resumable function, closure, and method calls.
 #[test]
 fn executes_resumable_variadic_calls() {

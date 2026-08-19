@@ -272,6 +272,8 @@ struct TraitImplementations {
     builtin_mask: u32,
     /// Nominal Object tags supplied by source `impl Trait for Type` blocks.
     nominal_type_ids: Vec<u32>,
+    /// Stable enum identities supplied by compiler-owned and source implementations.
+    enum_type_ids: Vec<String>,
 }
 
 impl TypeRegistry {
@@ -357,10 +359,44 @@ impl TypeRegistry {
                     TraitImplementations {
                         builtin_mask: definition.builtin_mask,
                         nominal_type_ids: Vec::new(),
+                        enum_type_ids: Vec::new(),
                     },
                 )
             })
             .collect::<HashMap<_, _>>();
+        for trait_name in [standard::TO_STRING_TRAIT, standard::DEBUG_TRAIT] {
+            let Some(implementations) = trait_implementations.get_mut(trait_name) else {
+                continue;
+            };
+            let type_names = standard::enums()
+                .iter()
+                .map(|descriptor| descriptor.name)
+                .chain(
+                    module
+                        .types
+                        .iter()
+                        .map(|declaration| declaration.name.name.as_str()),
+                )
+                .chain(
+                    module
+                        .enums
+                        .iter()
+                        .map(|declaration| declaration.name.name.as_str()),
+                );
+            for type_name in type_names {
+                let Some(nominal) = types.get(type_name) else {
+                    continue;
+                };
+                if !implementations.nominal_type_ids.contains(&nominal.id) {
+                    implementations.nominal_type_ids.push(nominal.id);
+                }
+                if let Some(enum_type_id) = &nominal.enum_type_id
+                    && !implementations.enum_type_ids.contains(enum_type_id)
+                {
+                    implementations.enum_type_ids.push(enum_type_id.clone());
+                }
+            }
+        }
         for implementation in &module.implementations {
             let Some(trait_name) = &implementation.trait_name else {
                 continue;
@@ -388,6 +424,11 @@ impl TypeRegistry {
                     })?;
             if !implementations.nominal_type_ids.contains(&nominal.id) {
                 implementations.nominal_type_ids.push(nominal.id);
+            }
+            if let Some(enum_type_id) = &nominal.enum_type_id
+                && !implementations.enum_type_ids.contains(enum_type_id)
+            {
+                implementations.enum_type_ids.push(enum_type_id.clone());
             }
         }
         let mut registry = Self {
@@ -468,6 +509,11 @@ impl TypeRegistry {
                 for type_id in &implementations.nominal_type_ids {
                     if !nominal_type_ids.contains(type_id) {
                         nominal_type_ids.push(*type_id);
+                    }
+                }
+                for enum_type_id in &implementations.enum_type_ids {
+                    if !enum_type_ids.contains(enum_type_id) {
+                        enum_type_ids.push(enum_type_id.clone());
                     }
                 }
             } else {
