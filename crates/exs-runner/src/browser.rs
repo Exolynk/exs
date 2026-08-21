@@ -6,7 +6,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 
-use exs_abi::{ABI_VERSION, ErrorSeverity, ExsError, ExsValue, SourcePositionId};
+use exs_abi::{
+    ABI_VERSION, ErrorSeverity, ExsError, ExsValue, HOST_SLEEP_HOST_NAME, SourcePositionId,
+};
 use js_sys::{Error as JsError, Function, Promise, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
@@ -241,7 +243,13 @@ fn start_host_call(
             return rejected_browser_value(&format!("invalid host-call request: {error}"));
         }
     };
-    match registry.start(name, arguments) {
+    let origin = u32::try_from(source_position).ok().map(SourcePositionId);
+    let call = if name == HOST_SLEEP_HOST_NAME {
+        Ok(start_host_sleep(arguments, origin))
+    } else {
+        registry.start(name, arguments)
+    };
+    match call {
         Ok(BrowserHostCall::Ready(value)) => match browser_response(&value) {
             Ok(value) => value,
             Err(error) => rejected_browser_value(&error),
@@ -251,7 +259,6 @@ fn start_host_call(
         })
         .into(),
         Err(BrowserRegistryError::UnknownName(name)) => {
-            let origin = u32::try_from(source_position).ok().map(SourcePositionId);
             match browser_response(&missing_host_error(name, origin)) {
                 Ok(value) => value,
                 Err(error) => rejected_browser_value(&error),
@@ -259,6 +266,69 @@ fn start_host_call(
         }
         Err(error) => rejected_browser_value(&error.to_string()),
     }
+}
+
+/// Starts one browser Host sleep Promise after validating its serialized Duration argument.
+fn start_host_sleep(arguments: Vec<ExsValue>, origin: Option<SourcePositionId>) -> BrowserHostCall {
+    let (seconds, nanoseconds) = match duration_parts(arguments) {
+        Ok(parts) => parts,
+        Err(message) => return BrowserHostCall::Ready(sleep_error(message, origin)),
+    };
+    match browser_host_sleep(seconds, nanoseconds) {
+        Ok(promise) => BrowserHostCall::Pending(Box::pin(async move {
+            match JsFuture::from(promise).await {
+                Ok(_) => ExsValue::None,
+                Err(error) => sleep_error(format!("Host sleep failed: {error:?}"), origin),
+            }
+        })),
+        Err(error) => BrowserHostCall::Ready(sleep_error(
+            format!("could not start Host sleep: {error:?}"),
+            origin,
+        )),
+    }
+}
+
+/// Validates one serialized Duration Object and returns normalized duration parts.
+fn duration_parts(arguments: Vec<ExsValue>) -> Result<(u64, u32), String> {
+    let [ExsValue::Object(entries)] = arguments.as_slice() else {
+        return Err("Host::sleep expects exactly one Duration argument".to_owned());
+    };
+    let mut seconds = None;
+    let mut nanoseconds = None;
+    for (key, value) in entries {
+        let ExsValue::Int(value) = value else {
+            return Err("Host::sleep received an invalid Duration value".to_owned());
+        };
+        match key.as_str() {
+            "seconds" if seconds.replace(*value).is_none() => {}
+            "nanoseconds" if nanoseconds.replace(*value).is_none() => {}
+            _ => return Err("Host::sleep received an invalid Duration value".to_owned()),
+        }
+    }
+    let (Some(seconds), Some(nanoseconds)) = (seconds, nanoseconds) else {
+        return Err("Host::sleep received an invalid Duration value".to_owned());
+    };
+    let seconds = u64::try_from(seconds)
+        .map_err(|_| "Host::sleep received a negative Duration value".to_owned())?;
+    let nanoseconds = u32::try_from(nanoseconds)
+        .map_err(|_| "Host::sleep received an invalid Duration value".to_owned())?;
+    if nanoseconds >= 1_000_000_000 {
+        return Err("Host::sleep received a non-normalized Duration value".to_owned());
+    }
+    Ok((seconds, nanoseconds))
+}
+
+/// Creates one recoverable Host sleep capability Error.
+fn sleep_error(message: String, origin: Option<SourcePositionId>) -> ExsValue {
+    ExsValue::Error(ExsError {
+        severity: ErrorSeverity::Recoverable,
+        kind: "HostSleepError".to_owned(),
+        message,
+        data: Box::new(ExsValue::None),
+        origin,
+        trace: Vec::new(),
+        cause: None,
+    })
 }
 
 /// Encodes one host response into the byte-array value expected by the JavaScript bridge.
@@ -467,4 +537,35 @@ extern "C" {
     #[wasm_bindgen(catch, js_name = executeBrowserRunner)]
     fn execute_browser_runner(controller: &JsValue, input: &Uint8Array)
     -> Result<Promise, JsValue>;
+}
+
+#[wasm_bindgen(inline_js = r#"
+export function exsHostSleep(seconds, nanoseconds) {
+    const maxMilliseconds = 2_147_483_647n;
+    let remainingNanoseconds = BigInt(seconds) * 1_000_000_000n + BigInt(nanoseconds);
+    return new Promise((resolve) => {
+        const schedule = () => {
+            if (remainingNanoseconds === 0n) {
+                resolve();
+                return;
+            }
+            const milliseconds = remainingNanoseconds / 1_000_000n;
+            const delay = milliseconds > maxMilliseconds ? maxMilliseconds : milliseconds;
+            const delayNanoseconds = delay * 1_000_000n;
+            if (delayNanoseconds === 0n) {
+                remainingNanoseconds = 0n;
+                globalThis.setTimeout(schedule, 0);
+                return;
+            }
+            remainingNanoseconds -= delayNanoseconds;
+            globalThis.setTimeout(schedule, Number(delay));
+        };
+        schedule();
+    });
+}
+"#)]
+extern "C" {
+    /// Starts one browser-native timeout Promise for validated Duration parts.
+    #[wasm_bindgen(catch, js_name = exsHostSleep)]
+    fn browser_host_sleep(seconds: u64, nanoseconds: u32) -> Result<Promise, JsValue>;
 }

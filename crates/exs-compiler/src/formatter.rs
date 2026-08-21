@@ -682,7 +682,7 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
         } => {
             let mut values = vec![render_expression(name)];
             values.extend(arguments.iter().map(render_expression));
-            format!("host.call({})", values.join(", "))
+            format!("Host::call({})", values.join(", "))
         }
         Expression::MethodCall {
             receiver,

@@ -11,6 +11,7 @@ mod hir;
 mod lexer;
 mod module_graph;
 mod parser;
+mod prelude;
 
 pub use codegen::source_map::{
     DebugInfoError, EmbeddedSource, FunctionDebugInfo, ModuleDebugInfo, SourcePosition,
@@ -20,9 +21,9 @@ pub use diagnostic::{
     CompileDiagnostic, CompileDiagnosticCategory, CompileDiagnostics, RelatedSpan, SourceSpan,
 };
 pub use documentation::{
-    StandardEnum, StandardFunction, StandardMethod, StandardTrait, StandardType,
-    standard_library_enums, standard_library_functions, standard_library_traits,
-    standard_library_types,
+    StandardEnum, StandardFunction, StandardMethod, StandardNamespace, StandardTrait, StandardType,
+    standard_library_enums, standard_library_functions, standard_library_namespace,
+    standard_library_namespaces, standard_library_traits, standard_library_types,
 };
 pub use highlighting::{
     HighlightKind, HighlightSpan, SourceComment, SourceLex, SourceToken, SourceTokenKind,
@@ -104,7 +105,15 @@ pub fn compile<'a>(
         diagnostics.sort_by_span();
         return Err(diagnostics);
     }
-    let wasm = codegen::compile_module(&mut module, source.text, options)?;
+    let mut prelude = prelude::parse()?;
+    prelude.types.append(&mut module.types);
+    prelude.enums.append(&mut module.enums);
+    prelude.traits.append(&mut module.traits);
+    prelude.implementations.append(&mut module.implementations);
+    prelude.functions.append(&mut module.functions);
+    let mut sources = prelude::source_inputs();
+    sources.push(source);
+    let wasm = codegen::compile_project_module(&mut prelude, &sources, options)?;
     Ok(CompiledModule { wasm })
 }
 

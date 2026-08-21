@@ -65,6 +65,17 @@ pub struct StandardFunction {
     pub example: &'static str,
 }
 
+/// One source-visible standard-library namespace and its static operations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardNamespace {
+    /// Source-visible namespace name.
+    pub name: &'static str,
+    /// Overview rendered before the namespace operations.
+    pub description: &'static str,
+    /// Static operations available through the namespace separator.
+    pub functions: &'static [StandardFunction],
+}
+
 /// One source-visible standard-library trait.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StandardTrait {
@@ -84,20 +95,75 @@ pub struct StandardEnum {
 /// Returns every globally callable standard-library function.
 #[must_use]
 pub fn standard_library_functions() -> &'static [StandardFunction] {
+    &[StandardFunction {
+        name: "Error",
+        signature: "Error(kind, message, data)",
+        description: "Constructs a recoverable Error with a stable category, a human-readable message, and any related language value. `kind` and `message` must be Strings. The constructor does not assign a cause; `cause()` consequently returns None for directly constructed Errors.",
+        example: "let error = Error(\"InvalidInput\", \"age must be positive\", -1);\nret error.message();",
+    }]
+}
+
+/// Returns every source-visible standard-library namespace.
+#[must_use]
+pub fn standard_library_namespaces() -> &'static [StandardNamespace] {
     &[
-        StandardFunction {
-            name: "Error",
-            signature: "Error(kind, message, data)",
-            description: "Constructs a recoverable Error with a stable category, a human-readable message, and any related language value. `kind` and `message` must be Strings. The constructor does not assign a cause; `cause()` consequently returns None for directly constructed Errors.",
-            example: "let error = Error(\"InvalidInput\", \"age must be positive\", -1);\nret error.message();",
+        StandardNamespace {
+            name: "Duration",
+            description: "Static factories for normalized non-negative Duration values used by Host sleep operations.",
+            functions: &[
+                StandardFunction {
+                    name: "nanoseconds",
+                    signature: "Duration::nanoseconds(value: Int) -> Duration | Error",
+                    description: "Constructs a Duration from a non-negative exact nanosecond count. Negative input returns ValueError.",
+                    example: "let pause = Duration::nanoseconds(500);",
+                },
+                StandardFunction {
+                    name: "microseconds",
+                    signature: "Duration::microseconds(value: Int) -> Duration | Error",
+                    description: "Constructs a Duration from a non-negative exact microsecond count. Negative input returns ValueError and conversion overflow returns IntOverflowError.",
+                    example: "let pause = Duration::microseconds(500);",
+                },
+                StandardFunction {
+                    name: "milliseconds",
+                    signature: "Duration::milliseconds(value: Int) -> Duration | Error",
+                    description: "Constructs a Duration from a non-negative exact millisecond count. Negative input returns ValueError and non-Int input returns TypeError.",
+                    example: "let timeout = Duration::milliseconds(500);",
+                },
+                StandardFunction {
+                    name: "seconds",
+                    signature: "Duration::seconds(value: Int) -> Duration | Error",
+                    description: "Constructs a Duration from a non-negative exact second count. Negative input returns ValueError.",
+                    example: "let interval = Duration::seconds(2);",
+                },
+            ],
         },
-        StandardFunction {
-            name: "host.call",
-            signature: "host.call(name, arguments...)",
-            description: "Invokes a runner-registered host function selected by a runtime String name. Arguments are collected into a List and transported through the runner CBOR boundary. A call may complete immediately or suspend; it returns the host result or a recoverable Error such as `HostFunctionNotFound`.",
-            example: "fn main() {\n    let greeting = host.call(\"greet\", \"Ada\");\n    ret greeting;\n}",
+        StandardNamespace {
+            name: "Host",
+            description: "The runner-provided boundary for application-specific operations.",
+            functions: &[
+                StandardFunction {
+                    name: "call",
+                    signature: "Host::call(name, arguments...)",
+                    description: "Invokes a runner-registered host function selected by a runtime String name. Arguments are collected into a List and transported through the runner CBOR boundary. A call may complete immediately or suspend; it returns the host result or a recoverable Error such as `HostFunctionNotFound`.",
+                    example: "let greeting = Host::call(\"greet\", \"Ada\");\nret greeting;",
+                },
+                StandardFunction {
+                    name: "sleep",
+                    signature: "Host::sleep(duration: Duration) -> None",
+                    description: "Suspends the current ExS task until the supplied normalized Duration elapses, then returns None. This capability is built into every runner and does not use the application host-function registry.",
+                    example: "Host::sleep(Duration::milliseconds(250));\nret None;",
+                },
+            ],
         },
     ]
+}
+
+/// Returns one standard namespace by its source-visible name.
+#[must_use]
+pub fn standard_library_namespace(name: &str) -> Option<&'static StandardNamespace> {
+    standard_library_namespaces()
+        .iter()
+        .find(|namespace| namespace.name == name)
 }
 
 /// Returns every documented source-visible standard-library trait.
@@ -227,7 +293,7 @@ fn render_index(files: &[SourceFile], directories: &[String]) -> String {
     let mut output = String::from("# ExS API Documentation\n\n");
     output.push_str("This reference is generated from the root module and every reachable relative import. Adjacent `///` comments describe source declarations.\n\n");
     output.push_str("## Language\n\n");
-    output.push_str("ExS is a dynamically typed scripting language compiled to WebAssembly. Root modules declare `fn main(...)`; imported modules provide functions, nominal types, traits, and implementations. `host.call(name, args...)` invokes a runner-provided host function and may suspend. `par { ... }` runs fixed tasks concurrently, while `par(functions)` runs a List of zero-argument closures.\n\n");
+    output.push_str("ExS is a dynamically typed scripting language compiled to WebAssembly. Root modules declare `fn main(...)`; imported modules provide functions, nominal types, traits, and implementations. `Host::call(name, args...)` invokes a runner-provided host function and may suspend. `par { ... }` runs fixed tasks concurrently, while `par(functions)` runs a List of zero-argument closures.\n\n");
     output.push_str("## Modules\n\n");
     output.push_str(
         "- [`std`](modules/std/index.md) - globally available built-in types and operations.\n",
@@ -635,6 +701,33 @@ pub fn standard_library_types() -> Vec<StandardType> {
             methods: &[],
         },
         StandardType {
+            name: "Duration",
+            description: "`Duration` is a normal prelude type representing a non-negative interval as normalized `seconds` and `nanoseconds` Int fields. Create values through its static factories before passing them to `Host::sleep`.",
+            usage: "fn main() -> None {\n    let pause = Duration::milliseconds(250);\n    Host::sleep(pause);\n    ret None;\n}",
+            methods: &[
+                StandardMethod {
+                    signature: "as_seconds() -> Int",
+                    description: "Returns the normalized whole-second component. Any fractional second remains available through the `nanoseconds` field.",
+                    example: "let seconds = Duration::milliseconds(1500).as_seconds(); // 1",
+                },
+                StandardMethod {
+                    signature: "as_milliseconds() -> Int | Error",
+                    description: "Returns the total duration truncated to whole milliseconds. IntOverflowError is returned when the exact total cannot fit in an Int.",
+                    example: "let milliseconds = Duration::nanoseconds(1_500_000).as_milliseconds(); // 1",
+                },
+                StandardMethod {
+                    signature: "as_microseconds() -> Int | Error",
+                    description: "Returns the total duration truncated to whole microseconds. IntOverflowError is returned when the exact total cannot fit in an Int.",
+                    example: "let microseconds = Duration::nanoseconds(1_500).as_microseconds(); // 1",
+                },
+                StandardMethod {
+                    signature: "as_nanoseconds() -> Int | Error",
+                    description: "Returns the total duration as exact nanoseconds. IntOverflowError is returned when the exact total cannot fit in an Int.",
+                    example: "let nanoseconds = Duration::milliseconds(1).as_nanoseconds(); // 1_000_000",
+                },
+            ],
+        },
+        StandardType {
             name: "Error",
             description: "`Error` is a structured language failure value. Operations return it instead of throwing, and functions that may return an Error should include `Error` in their return contract or use the implicit `Any` contract.",
             usage: "fn main() -> Int | Error {\n    ret Error(\"DivisionByZeroError\", \"cannot divide by zero\", None);\n}",
@@ -664,18 +757,30 @@ pub fn standard_library_types() -> Vec<StandardType> {
         StandardType {
             name: "Bool",
             description: "`Bool` has exactly the values `true` and `false`. Conditions require Bool explicitly; ExS does not apply implicit truthiness to numbers, strings, collections, or None.",
-            usage: "fn main() {\n    let ready = true;\n    if ready {\n        host.call(\"println\", \"ready\");\n    }\n}",
+            usage: "fn main() {\n    let ready = true;\n    if ready {\n        Host::call(\"println\", \"ready\");\n    }\n}",
             methods: &[],
         },
         StandardType {
             name: "Int",
             description: "`Int` is a signed 64-bit exact integer. It supports numeric operators and reports `IntOverflowError` when an operation overflows the ExS integer range.",
             usage: "fn main() -> Int {\n    let quantity = 42;\n    ret quantity + 8;\n}",
-            methods: &[StandardMethod {
-                signature: "abs() -> Int",
-                description: "Returns the non-negative magnitude of the receiver. The smallest representable Int has no representable positive counterpart, so calling `abs()` on it returns `IntOverflowError`.",
-                example: "let change = -42;\nlet magnitude = change.abs(); // 42",
-            }],
+            methods: &[
+                StandardMethod {
+                    signature: "abs() -> Int",
+                    description: "Returns the non-negative magnitude of the receiver. The smallest representable Int has no representable positive counterpart, so calling `abs()` on it returns `IntOverflowError`.",
+                    example: "let change = -42;\nlet magnitude = change.abs(); // 42",
+                },
+                StandardMethod {
+                    signature: "div_euclid(other: Int) -> Int | Error",
+                    description: "Returns the Euclidean quotient of two Int values. The result satisfies `self == other * quotient + self.rem_euclid(other)`. A zero divisor returns DivisionByZeroError and the only overflowing pair, the smallest Int divided by -1, returns IntOverflowError.",
+                    example: "let seconds = 1001.div_euclid(1000); // 1",
+                },
+                StandardMethod {
+                    signature: "rem_euclid(other: Int) -> Int | Error",
+                    description: "Returns the non-negative Euclidean remainder of two Int values. A zero divisor returns DivisionByZeroError and the only overflowing pair, the smallest Int divided by -1, returns IntOverflowError.",
+                    example: "let milliseconds = 1001.rem_euclid(1000); // 1",
+                },
+            ],
         },
         StandardType {
             name: "Float",
@@ -717,7 +822,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
                 StandardMethod {
                     signature: "is_empty() -> Bool",
                     description: "Returns true when the String contains no Unicode scalar values and false otherwise. It does not trim or normalize the String.",
-                    example: "let input = \"\";\nif input.is_empty() {\n    host.call(\"println\", \"missing input\");\n}",
+                    example: "let input = \"\";\nif input.is_empty() {\n    Host::call(\"println\", \"missing input\");\n}",
                 },
             ],
         },
@@ -734,7 +839,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
                 StandardMethod {
                     signature: "is_empty() -> Bool",
                     description: "Returns true when the List has no elements. It does not mutate the List.",
-                    example: "let queue = [];\nif queue.is_empty() {\n    host.call(\"println\", \"queue is empty\");\n}",
+                    example: "let queue = [];\nif queue.is_empty() {\n    Host::call(\"println\", \"queue is empty\");\n}",
                 },
                 StandardMethod {
                     signature: "push(value) -> Int",
@@ -776,7 +881,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
                 StandardMethod {
                     signature: "is_empty() -> Bool",
                     description: "Returns true when the Object has no keys. It does not mutate the Object.",
-                    example: "let options = {};\nif options.is_empty() {\n    host.call(\"println\", \"using defaults\");\n}",
+                    example: "let options = {};\nif options.is_empty() {\n    Host::call(\"println\", \"using defaults\");\n}",
                 },
                 StandardMethod {
                     signature: "has(key: String) -> Bool | Error",
@@ -812,11 +917,12 @@ pub fn standard_library_types() -> Vec<StandardType> {
 /// Generates the synthetic standard-library module and its declaration pages.
 fn standard_pages() -> Vec<DocumentationPage> {
     let types = standard_library_types();
+    let namespaces = standard_library_namespaces();
     let traits = standard::traits();
     let enums = standard::enums();
     let mut pages = vec![DocumentationPage {
         path: "modules/std/index.md".to_owned(),
-        markdown: render_standard_index(&types, enums, traits),
+        markdown: render_standard_index(&types, namespaces, enums, traits),
     }];
     for type_info in &types {
         pages.push(DocumentationPage {
@@ -837,17 +943,8 @@ fn standard_pages() -> Vec<DocumentationPage> {
             markdown: render_standard_enum(enum_info),
         });
     }
-    if let Some(host_call) = standard_library_functions()
-        .iter()
-        .find(|function| function.name == "host.call")
-    {
-        pages.push(standard_function_page(
-            "host-call",
-            host_call.name,
-            host_call.signature,
-            host_call.description,
-            host_call.example,
-        ));
+    for namespace in namespaces {
+        pages.push(standard_namespace_page(namespace));
     }
     pages
 }
@@ -855,6 +952,7 @@ fn standard_pages() -> Vec<DocumentationPage> {
 /// Renders the synthetic standard-library module index.
 fn render_standard_index(
     types: &[StandardType],
+    namespaces: &[StandardNamespace],
     enums: &[StandardEnumDescriptor],
     traits: &[StandardTraitDescriptor],
 ) -> String {
@@ -867,6 +965,16 @@ fn render_standard_index(
             type_info.name,
             slug(type_info.name)
         ));
+    }
+    if !namespaces.is_empty() {
+        output.push_str("\n## Namespaces\n\n");
+        for namespace in namespaces {
+            output.push_str(&format!(
+                "- [`{}`](namespaces/{}.md)\n",
+                namespace.name,
+                slug(namespace.name)
+            ));
+        }
     }
     if !enums.is_empty() {
         output.push_str("\n## Enums\n\n");
@@ -886,7 +994,7 @@ fn render_standard_index(
             slug(trait_info.name)
         ));
     }
-    output.push_str("\n## Functions\n\n- [`host.call`](fn/host-call.md)\n");
+    output.push_str("\n## Functions\n\n- [`Error`](types/error.md#constructor)\n");
     output
 }
 
@@ -1004,8 +1112,24 @@ fn render_standard_type(type_info: &StandardType) -> String {
             script_example(method.example)
         ));
     }
+    if let Some(namespace) = standard_library_namespace(type_info.name) {
+        output.push_str("## Static Functions\n\n");
+        for function in namespace.functions {
+            render_standard_function(&mut output, function, "###");
+        }
+    }
     render_clone_method(&mut output, type_info.name);
     output
+}
+
+/// Renders one standard static function under a caller-selected Markdown heading level.
+fn render_standard_function(output: &mut String, function: &StandardFunction, heading: &str) {
+    output.push_str(&format!(
+        "{heading} `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
+        function.signature,
+        function.description,
+        script_example(function.example)
+    ));
 }
 
 /// Renders the automatic runtime-owned deep clone method for one source-visible type.
@@ -1043,19 +1167,18 @@ fn script_example(body: &str) -> String {
     output
 }
 
-/// Builds one synthetic standard-library function page.
-fn standard_function_page(
-    path: &str,
-    name: &str,
-    signature: &str,
-    description: &str,
-    example: &str,
-) -> DocumentationPage {
+/// Builds one synthetic standard-library namespace page.
+fn standard_namespace_page(namespace: &StandardNamespace) -> DocumentationPage {
+    let mut markdown = format!(
+        "# Namespace `std::{}`\n\n{}\n\n## Functions\n\n",
+        namespace.name, namespace.description
+    );
+    for function in namespace.functions {
+        render_standard_function(&mut markdown, function, "###");
+    }
     DocumentationPage {
-        path: format!("modules/std/fn/{path}.md"),
-        markdown: format!(
-            "# Function `{name}`\n\n```exs\n{signature}\n```\n\n{description}\n\n## Usage\n\n```exs\n{example}\n```\n"
-        ),
+        path: format!("modules/std/namespaces/{}.md", slug(namespace.name)),
+        markdown,
     }
 }
 

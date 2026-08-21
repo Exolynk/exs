@@ -39,7 +39,7 @@ pub(crate) struct ExecutionDeadline {
     timeout: Duration,
     /// Shared expiry state and pending host-future wakers.
     state: Arc<(Mutex<DeadlineState>, Condvar)>,
-    /// Timer thread joined after the root execution finishes.
+    /// Deadline thread joined after the root execution finishes.
     timer: Option<JoinHandle<()>>,
 }
 

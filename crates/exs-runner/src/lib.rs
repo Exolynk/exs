@@ -34,6 +34,8 @@ mod deadline;
 mod host_abi;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_function;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod host_sleep;
 mod limits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;

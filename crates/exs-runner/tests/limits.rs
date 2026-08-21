@@ -93,7 +93,7 @@ fn rejects_pending_host_call_after_the_configured_timeout() {
     let compiled = compile_source(
         r#"
         fn main() {
-            host.call("wait");
+            Host::call("wait");
         }
         "#,
     );
@@ -186,7 +186,7 @@ fn rejects_host_response_over_the_cbor_payload_limit() {
     let compiled = compile_source(
         r#"
         fn main() -> String {
-            ret host.call("large");
+            ret Host::call("large");
         }
         "#,
     );
@@ -213,7 +213,7 @@ fn rejects_host_request_over_the_cbor_nesting_limit() {
     let compiled = compile_source(
         r#"
         fn main() {
-            host.call("accept", [1]);
+            Host::call("accept", [1]);
         }
         "#,
     );
@@ -264,8 +264,8 @@ fn rejects_host_calls_over_the_configured_total_limit() {
     let compiled = compile_source(
         r#"
         fn main() -> Int {
-            host.call("value");
-            ret host.call("value");
+            Host::call("value");
+            ret Host::call("value");
         }
         "#,
     );
@@ -293,8 +293,8 @@ fn rejects_pending_host_calls_over_the_configured_limit() {
         r#"
         fn main() -> List {
             ret par {
-                host.call("wait");
-                host.call("wait");
+                Host::call("wait");
+                Host::call("wait");
             };
         }
         "#,

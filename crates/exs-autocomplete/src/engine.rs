@@ -1,9 +1,13 @@
 use std::collections::BTreeSet;
 
-use exs_compiler::{SourceInput, source_lex, standard_library_enums, standard_library_types};
+use exs_compiler::{
+    SourceInput, source_lex, standard_library_enums, standard_library_namespace,
+    standard_library_types,
+};
 
 use crate::catalog::{
-    append_keywords, append_standard_functions, append_standard_symbols, push_if_matching,
+    append_keywords, append_standard_functions, append_standard_namespace_functions,
+    append_standard_namespaces, append_standard_symbols, push_if_matching,
 };
 use crate::syntax::{
     FunctionHeaderContext, FunctionParameter, FunctionSignature, SymbolKind, call_argument_context,
@@ -94,6 +98,7 @@ impl CompletionEngine {
             append_keywords(&mut items, prefix);
             append_standard_functions(&mut items, prefix);
             append_standard_symbols(&mut items, prefix);
+            append_standard_namespaces(&mut items, prefix);
             append_document_symbols(&mut items, prefix, &symbols);
             append_visible_bindings(&mut items, prefix, &visible_bindings(&tokens_before_cursor));
         }
@@ -173,22 +178,35 @@ fn response_for_call_argument(
     unique_response(items, prefix_start, cursor)
 }
 
-/// Returns a completion response for the single host boundary member supported by ExS.
+/// Returns a completion response for Host namespace operations.
 fn response_for_host_member(
     prefix: &str,
     prefix_start: usize,
     cursor: usize,
 ) -> CompletionResponse {
     let mut items = Vec::new();
-    push_if_matching(
-        &mut items,
-        prefix,
-        "call",
-        Some("host.call(name, args...)"),
-        "call(\"name\")",
-        Some(6),
-        CompletionKind::HostMember,
-    );
+    let Some(namespace) = standard_library_namespace("Host") else {
+        return CompletionResponse::default();
+    };
+    for function in namespace.functions {
+        let (insert_text, cursor_offset) = if function.name == "call" {
+            ("call(\"name\")".to_owned(), Some(6))
+        } else {
+            (
+                format!("{}()", function.name),
+                Some(function.name.len() + 1),
+            )
+        };
+        push_if_matching(
+            &mut items,
+            prefix,
+            function.name,
+            Some(function.signature),
+            &insert_text,
+            cursor_offset,
+            CompletionKind::HostMember,
+        );
+    }
     unique_response(items, prefix_start, cursor)
 }
 
@@ -204,6 +222,7 @@ fn response_for_namespace(
     if receiver == "std" {
         append_standard_symbols(&mut items, prefix);
     }
+    append_standard_namespace_functions(&mut items, prefix, receiver);
     if let Some(enum_info) = standard_library_enums()
         .into_iter()
         .find(|enum_info| enum_info.name == receiver)
@@ -408,10 +427,10 @@ mod tests {
         assert_eq!(item(&response, "First").kind, CompletionKind::Variant);
     }
 
-    /// Completes the only available host boundary operation after `host.`.
+    /// Completes the only available Host boundary operation after `Host::`.
     #[test]
     fn completes_host_call() {
-        let source = "fn main() { host.ca }";
+        let source = "fn main() { Host::ca }";
         let response = CompletionEngine.complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
@@ -419,6 +438,41 @@ mod tests {
         let completion = item(&response, "call");
         assert_eq!(completion.insert_text, "call(\"name\")");
         assert_eq!(completion.kind, CompletionKind::HostMember);
+    }
+
+    /// Completes the standard Duration factory after a namespace separator.
+    #[test]
+    fn completes_duration_factories() {
+        let source = "fn main() { Duration::mil }";
+        let response = CompletionEngine.complete(CompletionRequest {
+            source,
+            cursor: source.len() - 2,
+        });
+        let completion = item(&response, "milliseconds");
+        assert_eq!(completion.insert_text, "milliseconds()");
+    }
+
+    /// Completes the built-in Host sleep operation after a namespace separator.
+    #[test]
+    fn completes_host_sleep() {
+        let source = "fn main() { Host::sl }";
+        let response = CompletionEngine.complete(CompletionRequest {
+            source,
+            cursor: source.len() - 2,
+        });
+        let completion = item(&response, "sleep");
+        assert_eq!(completion.insert_text, "sleep()");
+    }
+
+    /// Completes the built-in Host namespace in expression context.
+    #[test]
+    fn completes_host_namespace() {
+        let source = "fn main() { Hos }";
+        let response = CompletionEngine.complete(CompletionRequest {
+            source,
+            cursor: source.len() - 2,
+        });
+        assert_eq!(item(&response, "Host").kind, CompletionKind::Type);
     }
 
     /// Inserts required whitespace after accepting a local binding declaration keyword.

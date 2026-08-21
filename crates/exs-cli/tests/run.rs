@@ -139,9 +139,9 @@ fn executes_cli_print_and_println_host_functions() {
     let path = std::env::temp_dir().join(format!("exs-cli-output-{}.exs", std::process::id()));
     let source = r#"
 fn main() {
-    host.call("print", "Ada", 7);
-    host.call("println", true);
-    host.call("println");
+    Host::call("print", "Ada", 7);
+    Host::call("println", true);
+    Host::call("println");
     ret None;
 }
 "#;

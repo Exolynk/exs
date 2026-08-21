@@ -21,13 +21,14 @@ pub fn parse<'a>(
     tokens: Vec<Token<'a>>,
     require_main: bool,
 ) -> Result<Module<'a>, CompileDiagnostics<'a>> {
-    let type_names = tokens
+    let mut type_names: HashSet<_> = tokens
         .windows(2)
         .filter_map(|pair| match (&pair[0].kind, &pair[1].kind) {
             (TokenKind::Type, TokenKind::Identifier(name)) => Some(name.clone()),
             _ => None,
         })
         .collect();
+    type_names.extend(crate::prelude::type_names().map(str::to_owned));
     let mut parser = Parser {
         tokens,
         current: 0,
@@ -1224,36 +1225,56 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parses the dynamic `host.call(name, args...)` suspendable invocation form.
+    /// Parses the built-in dynamic Host boundary operations.
     fn host_call(
         &mut self,
         start: SourceSpan<'a>,
     ) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.expect_simple(TokenKind::Dot, "expected `.` after host")?;
-        let method = self.identifier("expected `call` after host.")?;
-        if method.name != "call" {
-            return Err(self.error(
-                method.span,
-                "E0113",
-                "only dynamic `host.call(name, args...)` is supported",
-            ));
-        }
-        self.expect_simple(TokenKind::LeftParen, "expected `(` after host.call")?;
+        self.expect_simple(TokenKind::DoubleColon, "expected `::` after Host")?;
+        let method = self.identifier("expected Host operation after `Host::")?;
+        self.expect_simple(TokenKind::LeftParen, "expected `(` after Host operation")?;
         let mut values = self.arguments(TokenKind::RightParen)?;
         let end = self
             .expect_simple(
                 TokenKind::RightParen,
-                "expected `)` after host.call arguments",
+                "expected `)` after Host operation arguments",
             )?
             .span;
-        if values.is_empty() {
-            return Err(self.error(
-                start.through(end),
-                "E0208",
-                "host.call expects a host-function name as its first argument",
-            ));
-        }
-        let name = Box::new(values.remove(0));
+        let name = match method.name.as_str() {
+            "call" => {
+                if values.is_empty() {
+                    return Err(self.error(
+                        start.through(end),
+                        "E0208",
+                        "Host::call expects a host-function name as its first argument",
+                    ));
+                }
+                Box::new(values.remove(0))
+            }
+            "sleep" => {
+                if values.len() != 1 {
+                    return Err(self.error(
+                        start.through(end),
+                        "E0208",
+                        format!(
+                            "Host::sleep expects 1 argument but received {}",
+                            values.len()
+                        ),
+                    ));
+                }
+                Box::new(Expression::String(
+                    exs_abi::HOST_SLEEP_HOST_NAME.to_owned(),
+                    start.through(method.span),
+                ))
+            }
+            _ => {
+                return Err(self.error(
+                    method.span,
+                    "E0113",
+                    "supported Host operations are `call` and `sleep`",
+                ));
+            }
+        };
         Ok(Expression::HostCall {
             name,
             arguments: values,

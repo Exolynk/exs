@@ -540,7 +540,7 @@ pub struct EmbeddedSource {
 /// Debug metadata decoded from ExS custom sections in one linked Wasm module.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ModuleDebugInfo {
-    /// Human-readable source identity shared by all current source positions.
+    /// Default source identity retained for single-source compatibility.
     pub source_id: String,
     /// Position records ordered by one-based `SourcePositionId`.
     pub positions: Vec<SourcePosition>,

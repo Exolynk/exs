@@ -206,9 +206,9 @@ pub(crate) fn namespace_receiver(source: &str, before_prefix: usize) -> Option<&
     }
 }
 
-/// Returns whether the source immediately before the prefix selects the host boundary.
+/// Returns whether the source immediately before the prefix selects the Host boundary.
 pub(crate) fn is_host_member_context(source: &str, before_prefix: usize) -> bool {
-    source[..before_prefix].trim_end().ends_with("host.")
+    source[..before_prefix].trim_end().ends_with("Host::")
 }
 
 /// Returns the identifier immediately before an instance member separator.

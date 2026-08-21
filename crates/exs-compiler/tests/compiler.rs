@@ -22,6 +22,32 @@ fn compiles_a_minimal_main_function() {
     assert!(module.is_ok());
 }
 
+/// Compiles the standard Duration factories and suspendable built-in Host sleep operation.
+#[test]
+fn compiles_a_builtin_host_sleep() {
+    let module = compile(
+        SourceInput {
+            source_id: "timer.exs",
+            text: "fn main() { Host::sleep(Duration::seconds(1)); ret None; }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok());
+}
+
+/// Rejects the removed lower-case host boundary spelling.
+#[test]
+fn rejects_lowercase_host_call() {
+    let module = compile(
+        SourceInput {
+            source_id: "lowercase-host.exs",
+            text: "fn main() { ret host.call(\"echo\"); }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_err());
+}
+
 /// Compiles a typed trailing variadic parameter into a packed List call boundary.
 #[test]
 fn compiles_variadic_function_parameters() {
@@ -172,7 +198,7 @@ fn formatter_preserves_comments_and_blank_lines() {
 /// Canonicalizes empty functions and documentation-declaration boundaries on reformatting.
 #[test]
 fn formatter_normalizes_empty_blocks_and_preserves_declaration_spacing() {
-    let source = "\n\n///asdasdasd\nfn main() {\n    let value = 21 * 2;\n    host.call(\"println\", \"The result is\", value);\n    //lala\n    ret value;\n}\n\n\n///Hallo\n\nfn test() {\n\n\n}\n";
+    let source = "\n\n///asdasdasd\nfn main() {\n    let value = 21 * 2;\n    Host::call(\"println\", \"The result is\", value);\n    //lala\n    ret value;\n}\n\n\n///Hallo\n\nfn test() {\n\n\n}\n";
     let formatted = match format(SourceInput {
         source_id: "format-empty-block.exs",
         text: source,
@@ -182,7 +208,7 @@ fn formatter_normalizes_empty_blocks_and_preserves_declaration_spacing() {
     };
     assert_eq!(
         formatted,
-        "/// asdasdasd\nfn main() {\n    let value = 21 * 2;\n    host.call(\"println\", \"The result is\", value);\n    // lala\n    ret value;\n}\n\n/// Hallo\nfn test() {}\n"
+        "/// asdasdasd\nfn main() {\n    let value = 21 * 2;\n    Host::call(\"println\", \"The result is\", value);\n    // lala\n    ret value;\n}\n\n/// Hallo\nfn test() {}\n"
     );
     let reformatted = match format(SourceInput {
         source_id: "format-empty-block.exs",
@@ -345,19 +371,54 @@ fn generates_markdown_api_documentation() {
     );
     assert!(color.markdown.contains("## Implemented Methods"));
     assert!(color.markdown.contains("clone() -> Color | Error"));
-    let host_call = documentation
+    let host = documentation
         .pages
         .iter()
-        .find(|page| page.path == "modules/std/fn/host-call.md")
-        .unwrap_or_else(|| panic!("missing std host.call page"));
-    assert!(host_call.markdown.contains("host.call(name, arguments...)"));
-    assert!(host_call.markdown.contains("## Usage"));
-    assert!(host_call.markdown.contains("fn main()"));
+        .find(|page| page.path == "modules/std/namespaces/host.md")
+        .unwrap_or_else(|| panic!("missing std Host namespace page"));
+    assert!(host.markdown.contains("Host::call(name, arguments...)"));
+    assert!(
+        host.markdown
+            .contains("Host::sleep(duration: Duration) -> None")
+    );
+    assert!(host.markdown.contains("# Namespace `std::Host`"));
+    let duration = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/duration.md")
+        .unwrap_or_else(|| panic!("missing std Duration type page"));
+    assert!(duration.markdown.contains("## Static Functions"));
+    assert!(
+        duration
+            .markdown
+            .contains("Duration::milliseconds(value: Int) -> Duration | Error")
+    );
+    assert!(
+        duration
+            .markdown
+            .contains("Duration::nanoseconds(value: Int) -> Duration | Error")
+    );
+    assert!(
+        duration
+            .markdown
+            .contains("Duration::microseconds(value: Int) -> Duration | Error")
+    );
+    assert!(
+        duration
+            .markdown
+            .contains("Duration::seconds(value: Int) -> Duration | Error")
+    );
+    assert!(
+        duration
+            .markdown
+            .contains("as_nanoseconds() -> Int | Error")
+    );
     let standard = documentation
         .pages
         .iter()
         .find(|page| page.path == "modules/std/index.md")
         .unwrap_or_else(|| panic!("missing std module page"));
+    assert!(standard.markdown.contains("[`Host`](namespaces/host.md)"));
     assert!(!standard.markdown.contains("[`type`]"));
     assert!(!standard.markdown.contains("[`len`]"));
     assert!(standard.markdown.contains("`std::` qualifier"));
@@ -754,7 +815,7 @@ fn compiles_a_resumable_host_call() {
     let compiled = match compile(
         SourceInput {
             source_id: "host-call.exs",
-            text: "fn main(input) { ret host.call(\"echo\", input); }",
+            text: "fn main(input) { ret Host::call(\"echo\", input); }",
         },
         CompileOptions::default(),
     ) {
@@ -805,11 +866,11 @@ fn emits_source_map_and_optional_source_sections() {
     assert!(
         sections
             .iter()
-            .any(|(name, data)| { *name == "exs.source.map" && data.starts_with(b"EXSMAP2\0") })
+            .any(|(name, data)| { *name == "exs.source.map" && data.starts_with(b"EXSMAP3\0") })
     );
     assert!(sections.iter().any(|(name, data)| {
         *name == "exs.sources"
-            && data.starts_with(b"EXSSRC1\0")
+            && data.starts_with(b"EXSSRC2\0")
             && data.ends_with(source.as_bytes())
     }));
 
@@ -836,7 +897,7 @@ fn emits_source_map_and_optional_source_sections() {
         Err(error) => panic!("could not read debug metadata: {error}"),
     };
     assert_eq!(debug_info.function_name(0), Some("main"));
-    assert_eq!(debug_info.source.as_deref(), Some(source));
+    assert_eq!(debug_info.source_for("maps.exs"), Some(source));
 }
 
 /// Compiles decimal and exponent floating-point literals.
@@ -1170,7 +1231,7 @@ fn compiles_error_constructor_in_a_suspendable_function() {
     let module = compile(
         SourceInput {
             source_id: "suspendable-error.exs",
-            text: "fn main() { host.call(\"noop\"); Error(\"test\", \"lala\", {}); }",
+            text: "fn main() { Host::call(\"noop\"); Error(\"test\", \"lala\", {}); }",
         },
         CompileOptions::default(),
     );

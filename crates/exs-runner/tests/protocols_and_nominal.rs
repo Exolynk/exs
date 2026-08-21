@@ -204,7 +204,7 @@ fn suspends_through_standard_add_implementations() {
 
         impl Add for Number {
             fn add(self, other: Any) -> Any {
-                let bonus = host.call("bonus");
+                let bonus = Host::call("bonus");
                 ret Number { value: self.value + other.value + bonus };
             }
         }
@@ -242,7 +242,7 @@ fn suspends_through_standard_div_implementations() {
 
         impl Div for Number {
             fn div(self, other: Any) -> Any {
-                let divisor = host.call("divisor");
+                let divisor = Host::call("divisor");
                 ret Number { value: self.value / divisor };
             }
         }
@@ -279,7 +279,7 @@ fn suspends_through_standard_compare_implementations() {
 
         impl Compare for Version {
             fn compare(self, other: Any) -> Ordering {
-                let result = host.call("ordering");
+                let result = Host::call("ordering");
                 if result == 0 { ret Ordering::Less; }
                 ret Ordering::Greater;
             }
@@ -312,7 +312,7 @@ fn suspends_through_standard_compare_implementations() {
 fn traces_errors_through_suspendable_child_frames() {
     let compiled = compile_source(
         r#"
-        fn child(value) -> Error { ret host.call("echo", value) + "invalid"; }
+        fn child(value) -> Error { ret Host::call("echo", value) + "invalid"; }
         fn main(input) -> Error { ret child(input)?; }
         "#,
     );
@@ -419,7 +419,7 @@ fn accepts_cbor_enum_input_for_enum_contract() {
 #[test]
 fn constructs_enum_after_a_host_call() {
     let compiled = compile_source(
-        "enum Color { Gray(value: Int), } fn main() -> Color { let value = host.call(\"value\"); ret Color::Gray(value); }",
+        "enum Color { Gray(value: Int), } fn main() -> Color { let value = Host::call(\"value\"); ret Color::Gray(value); }",
     );
     let mut runner = ServerRunner::new(ExecutionLimits::default());
     assert!(
@@ -532,7 +532,7 @@ fn returns_match_error_for_unknown_host_enum_variant() {
 #[test]
 fn resumes_host_call_inside_enum_match_arm() {
     let compiled = compile_source(
-        "enum Color { Red, Blue, } fn main() -> Int { let color = Color::Blue; ret match color { Color::Red => 1, Color::Blue => host.call(\"value\"), }; }",
+        "enum Color { Red, Blue, } fn main() -> Int { let color = Color::Blue; ret match color { Color::Red => 1, Color::Blue => Host::call(\"value\"), }; }",
     );
     let mut runner = ServerRunner::new(ExecutionLimits::default());
     assert!(

@@ -119,30 +119,30 @@ fn continuation_matrix_module() -> exs_compiler::CompiledModule {
         }
         fn identity(value: Int) -> Int { ret value; }
         fn main(input: Int) -> Int | Error {
-            host.call("record", host.call("echo", input));
-            let name = host.call("name");
-            let values = [host.call(name, input), host.call("echo", 2)];
+            Host::call("record", Host::call("echo", input));
+            let name = Host::call("name");
+            let values = [Host::call(name, input), Host::call("echo", 2)];
             let object = {
-                first: host.call("echo", values[0]),
-                second: host.call("echo", values[1]),
+                first: Host::call("echo", values[0]),
+                second: Host::call("echo", values[1]),
             };
-            values[0] = host.call("echo", object.first);
-            object.second = host.call("echo", values[1]);
-            let index = host.call("echo", 0);
+            values[0] = Host::call("echo", object.first);
+            object.second = Host::call("echo", values[1]);
+            let index = Host::call("echo", 0);
             let total = identity(object["second"] + values[index]);
-            let accumulator = Accumulator::new(host.call("echo", total));
-            if host.call("is_positive", total) {
-                total = accumulator.add(host.call("echo", 1));
+            let accumulator = Accumulator::new(Host::call("echo", total));
+            if Host::call("is_positive", total) {
+                total = accumulator.add(Host::call("echo", 1));
             } else {
                 ret 0;
             }
-            while host.call("is_less_than", total, 10) {
-                total = accumulator.add(host.call("echo", 1));
+            while Host::call("is_less_than", total, 10) {
+                total = accumulator.add(Host::call("echo", 1));
             }
-            for item in host.call("range", 2) {
-                total = accumulator.add(host.call("echo", item));
+            for item in Host::call("range", 2) {
+                total = accumulator.add(Host::call("echo", item));
             }
-            ret host.call("echo", total)?;
+            ret Host::call("echo", total)?;
         }
         "#,
     )
@@ -191,10 +191,10 @@ fn logical_continuation_module() -> exs_compiler::CompiledModule {
     compile_source(
         r#"
         fn main() {
-            let and_short = false && host.call("truth", "and-short");
-            let and_evaluated = true && host.call("truth", "and-evaluated");
-            let or_short = true || host.call("truth", "or-short");
-            let or_evaluated = false || host.call("truth", "or-evaluated");
+            let and_short = false && Host::call("truth", "and-short");
+            let and_evaluated = true && Host::call("truth", "and-evaluated");
+            let or_short = true || Host::call("truth", "or-short");
+            let or_evaluated = false || Host::call("truth", "or-evaluated");
             if and_short || !and_evaluated || !or_short || !or_evaluated {
                 ret 0;
             }
@@ -213,7 +213,7 @@ fn typed_object_continuation_module() -> exs_compiler::CompiledModule {
             fn display(self) -> String { ret self.name; }
         }
         fn main(input: String) -> String | Error {
-            let user = User { name: host.call("echo", input) };
+            let user = User { name: Host::call("echo", input) };
             if user.nickname != None {
                 ret "invalid";
             }
@@ -229,9 +229,9 @@ fn executes_sequential_continuation_states_for_synchronous_host_calls() {
     let compiled = compile_source(
         r#"
         fn main(input) {
-            let base = host.call("echo", input) + 1;
-            let values = [base, host.call("echo", 2)];
-            values[0] = host.call("echo", values[0]);
+            let base = Host::call("echo", input) + 1;
+            let values = [base, Host::call("echo", 2)];
+            values[0] = Host::call("echo", values[0]);
             ret values[0] + values[1];
         }
         "#,
@@ -262,7 +262,7 @@ fn executes_the_minimum_signed_64_bit_literal_in_a_continuation() {
     let compiled = compile_source(
         r#"
         fn main() -> Int {
-            host.call("ready");
+            Host::call("ready");
             ret -9223372036854775808;
         }
         "#,
@@ -289,7 +289,7 @@ fn terminates_continuation_after_a_fatal_direct_call_result() {
         r#"
         fn wrong() -> Int { ret "invalid"; }
         fn main() -> Int {
-            host.call("ready");
+            Host::call("ready");
             wrong();
             ret 42;
         }
@@ -320,8 +320,8 @@ fn executes_sequential_continuation_states_for_asynchronous_host_calls() {
     let compiled = compile_source(
         r#"
         fn main(input) -> Int | Error {
-            let value = host.call("echo", input)?;
-            value = value + host.call("echo", 1);
+            let value = Host::call("echo", input)?;
+            value = value + Host::call("echo", 1);
             ret value;
         }
         "#,
@@ -353,18 +353,18 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
         r#"
         fn main(input) {
             let total = 0;
-            for item in host.call("values", input) {
+            for item in Host::call("values", input) {
                 if item > 2 {
                     continue;
                 } else if item == 2 {
                     break;
                 }
                 {
-                    total = total + host.call("echo", item);
+                    total = total + Host::call("echo", item);
                 }
             }
             while total < 5 {
-                total = total + host.call("echo", 1);
+                total = total + Host::call("echo", 1);
             }
             ret total;
         }
@@ -408,7 +408,7 @@ fn executes_asynchronous_host_calls_after_scheduler_quantum_yields() {
             while count < 130 {
                 count = count + 1;
             }
-            ret host.call("echo", count);
+            ret Host::call("echo", count);
         }
         "#,
     );
@@ -531,7 +531,7 @@ fn validates_typed_object_fields_after_asynchronous_host_calls() {
     let compiled = compile_source(
         r#"
         type User { name: String, }
-        fn main() -> Error { ret User { name: host.call("wrong") }; }
+        fn main() -> Error { ret User { name: Host::call("wrong") }; }
         "#,
     );
     let mut runner = ServerRunner::new(ExecutionLimits::default());
@@ -602,7 +602,7 @@ fn validates_resumable_function_type_contracts() {
     let compiled = compile_source(
         r#"
         fn main(value: Int) -> Int {
-            ret host.call("echo", value);
+            ret Host::call("echo", value);
         }
         "#,
     );
@@ -636,7 +636,7 @@ fn executes_transitive_suspendable_direct_calls() {
     let compiled = compile_source(
         r#"
         fn double(value) {
-            ret host.call("echo", value) * 2;
+            ret Host::call("echo", value) * 2;
         }
         fn main(input) {
             ret double(input) + 1;
@@ -670,7 +670,7 @@ fn executes_transitive_suspendable_static_calls() {
         r#"
         type Math {}
         impl Math {
-            fn double(value) { ret host.call("echo", value) * 2; }
+            fn double(value) { ret Host::call("echo", value) * 2; }
         }
         fn main(input) { ret Math::double(input) + 1; }
         "#,
@@ -702,7 +702,7 @@ fn executes_transitive_suspendable_instance_calls() {
         r#"
         type Number { value: Int, }
         impl Number {
-            fn double(self) { ret host.call("echo", self.value) * 2; }
+            fn double(self) { ret Host::call("echo", self.value) * 2; }
             fn new(value) -> Number { ret Number { value: value }; }
         }
         fn main(input) { ret Number::new(input).double() + 1; }
@@ -736,7 +736,7 @@ fn executes_transitive_suspendable_trait_calls() {
         trait Double { fn double(self) -> Int; }
         type Number { value: Int, }
         impl Double for Number {
-            fn double(self) -> Int { ret host.call("echo", self.value) * 2; }
+            fn double(self) -> Int { ret Host::call("echo", self.value) * 2; }
         }
         impl Number {
             fn new(value) -> Number { ret Number { value: value }; }

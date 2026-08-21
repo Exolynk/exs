@@ -168,8 +168,8 @@ fn polls_parallel_host_calls_concurrently() {
         r#"
         fn main() -> List {
             ret par {
-                host.call("wait");
-                host.call("wait");
+                Host::call("wait");
+                Host::call("wait");
             };
         }
         "#,
@@ -291,7 +291,7 @@ fn rejects_a_non_callable_dynamic_binding() {
     let compiled = compile_source(
         r#"
         fn main() -> Error {
-            let callback = host.call("callback");
+            let callback = Host::call("callback");
             ret callback();
         }
         "#,
@@ -377,7 +377,7 @@ fn resumes_host_calls_inside_closures() {
         }
         fn main(input: Int) -> Int | Error {
             let offset = 2;
-            let add = (value) => { ret host.call("echo", value + offset); };
+            let add = (value) => { ret Host::call("echo", value + offset); };
             ret invoke(add, input);
         }
         "#,

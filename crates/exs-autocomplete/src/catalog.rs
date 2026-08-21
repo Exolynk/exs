@@ -1,6 +1,6 @@
 use exs_compiler::{
-    standard_library_enums, standard_library_functions, standard_library_traits,
-    standard_library_types,
+    standard_library_enums, standard_library_functions, standard_library_namespace,
+    standard_library_namespaces, standard_library_traits, standard_library_types,
 };
 
 use crate::{CompletionItem, CompletionKind};
@@ -94,6 +94,52 @@ pub(crate) fn append_standard_symbols(items: &mut Vec<CompletionItem>, prefix: &
             enum_info.name,
             None,
             CompletionKind::Enum,
+        );
+    }
+}
+
+/// Appends global standard namespaces valid in expression contexts.
+pub(crate) fn append_standard_namespaces(items: &mut Vec<CompletionItem>, prefix: &str) {
+    for namespace in standard_library_namespaces()
+        .iter()
+        .filter(|namespace| namespace.name != "Duration")
+    {
+        push_if_matching(
+            items,
+            prefix,
+            namespace.name,
+            Some(namespace.description),
+            namespace.name,
+            None,
+            CompletionKind::Type,
+        );
+    }
+}
+
+/// Appends the static operations documented for one standard namespace.
+pub(crate) fn append_standard_namespace_functions(
+    items: &mut Vec<CompletionItem>,
+    prefix: &str,
+    namespace_name: &str,
+) {
+    let Some(namespace) = standard_library_namespace(namespace_name) else {
+        return;
+    };
+    for function in namespace.functions {
+        let insert_text = format!("{}()", function.name);
+        let cursor = function
+            .signature
+            .split_once('(')
+            .is_some_and(|(_, arguments)| !arguments.starts_with(')'))
+            .then_some(function.name.len() + 1);
+        push_if_matching(
+            items,
+            prefix,
+            function.name,
+            Some(function.signature),
+            &insert_text,
+            cursor,
+            CompletionKind::Function,
         );
     }
 }

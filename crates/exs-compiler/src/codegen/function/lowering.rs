@@ -237,7 +237,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 return Err(diagnostics(CompileDiagnostic::new(
                     "E0300",
                     *span,
-                    "host.call requires the Phase 8 continuation lowerer",
+                    "Host::call requires the Phase 8 continuation lowerer",
                 )));
             }
             Expression::MethodCall {

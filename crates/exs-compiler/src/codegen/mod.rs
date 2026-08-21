@@ -17,19 +17,6 @@ use crate::ast::Module;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::hir::HirModule;
 
-/// Compiles a parsed module into a complete linked Wasm module.
-pub fn compile_module<'a>(
-    module: &mut Module<'a>,
-    source: &'a str,
-    options: CompileOptions,
-) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
-    let source = [crate::SourceInput {
-        source_id: module_span(module).source_id,
-        text: source,
-    }];
-    compile_project_module(module, &source, options)
-}
-
 /// Compiles a resolved source graph into a complete linked Wasm module.
 pub fn compile_project_module<'a>(
     module: &mut Module<'a>,

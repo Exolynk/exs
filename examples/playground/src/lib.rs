@@ -24,7 +24,7 @@ mod browser {
 
     const DEFAULT_SOURCE: &str = r#"fn main() {
     let value = 21 * 2;
-    host.call("println", "The result is", value);
+    Host::call("println", "The result is", value);
     ret value;
 }"#;
 

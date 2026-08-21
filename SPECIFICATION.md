@@ -220,7 +220,7 @@ Direct calls use a declared function name, an imported function name, or a local
 
 `/` accepts numeric values and always produces `Float`. Division by zero follows IEEE 754 binary64 behavior.
 
-`%` is not part of ExS 0.1.
+`%` is not part of ExS 0.1. Exact Int calculations can use `div_euclid(other)` for the Euclidean quotient and `rem_euclid(other)` for the non-negative remainder. Both require an Int receiver and Int divisor, return `DivisionByZeroError` for a zero divisor, and return `IntOverflowError` for the smallest Int divided by `-1`.
 
 For nominal types and enums, `+`, `-`, `*`, and `/` first use a matching standard trait method. Built-in behavior applies when no nominal method is selected.
 
@@ -519,7 +519,7 @@ Imports and `use` declarations must precede type, enum, trait, implementation, a
 
 Every value supports `clone()`.
 
-Numeric values support `add(other)`, `sub(other)`, `mul(other)`, and `div(other)`. `Int` and `Float` support `abs()`. `Float` also supports `floor()`, `ceil()`, and `round()`.
+Numeric values support `add(other)`, `sub(other)`, `mul(other)`, and `div(other)`. `Int` also supports `div_euclid(other)` and `rem_euclid(other)` for exact Euclidean calculations. `Int` and `Float` support `abs()`. `Float` also supports `floor()`, `ceil()`, and `round()`.
 
 Strings, Lists, and Objects support `length()` and `is_empty()`.
 
@@ -544,13 +544,24 @@ object.values()         // new shallow List in insertion order
 
 Calling an unsupported method produces `MethodNotFound`.
 
+## Durations and Host sleep
+
+```exs
+let retry_after = Duration::seconds(2);
+Host::sleep(retry_after);
+```
+
+`Duration` is a normal prelude type with `seconds: Int` and `nanoseconds: Int` fields. Valid Duration values have non-negative seconds and a nanosecond field from `0` to `999999999`. `Duration::nanoseconds(value)`, `Duration::microseconds(value)`, `Duration::milliseconds(value)`, and `Duration::seconds(value)` construct normalized values from non-negative Int input. Conversions return `ValueError` for negative input and `IntOverflowError` if an intermediate multiplication exceeds the Int range. `as_seconds()` returns the whole-second component; `as_milliseconds()`, `as_microseconds()`, and `as_nanoseconds()` return truncated total-unit Int values or `IntOverflowError` when that total exceeds the Int range.
+
+`Host::sleep(duration)` accepts exactly one normalized Duration and returns `None` after the duration elapses. It may suspend, but it is provided by every ExS runner and does not require an application host-function registration.
+
 ## Host calls
 
 ```exs
-let profile = host.call("profile.load", user_id);
+let profile = Host::call("profile.load", user_id);
 ```
 
-`host.call(name, arguments...)` invokes a host-provided operation. `name` must evaluate to a String. Arguments evaluate left to right. The host call returns its result or an Error and may suspend; it does not create an ExS task.
+`Host::call(name, arguments...)` invokes a host-provided operation. `name` must evaluate to a String. Arguments evaluate left to right. The host call returns its result or an Error and may suspend; it does not create an ExS task.
 
 Host-call arguments and final program results cross an acyclic, by-value runner boundary. Closures, cells, and cyclic value graphs cannot cross it; shared references are duplicated. An unserializable host call returns a recoverable `SerializationError` without invoking the host. An unserializable final program result becomes a fatal `SerializationError`.
 
@@ -618,7 +629,7 @@ typedObject     = qualifiedName "{" [ objectItems ] "}" ;
 matchExpr       = "match" expression "{" matchArm { "," matchArm } [ "," ] "}" ;
 matchArm        = ( qualifiedName [ "(" identifiers? ")" ] | "_" ) "=>" ( expression | block ) ;
 parExpr         = "par" "{" { expression ";" } "}" | "par" "(" expression ")" ;
-hostCall        = "host" "." "call" "(" arguments? ")" ;
+hostCall        = "Host" "::" "call" "(" arguments? ")" ;
 listLiteral     = "[" [ arguments ] "]" ;
 objectLiteral   = "{" [ objectItems ] "}" ;
 objectItems     = objectItem { "," objectItem } [ "," ] ;

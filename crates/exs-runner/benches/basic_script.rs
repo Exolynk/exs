@@ -25,7 +25,7 @@ fn main() {
                 total = total + index * 3 + 1;
                 index = index + 1;
             }
-            host.call("print", total);
+            Host::call("print", total);
             ret total;
         }
         "#,

@@ -22,6 +22,61 @@ fn executes_compiled_integer_program() {
     );
 }
 
+/// Executes the built-in Host sleep capability without requiring a registered host function.
+#[test]
+fn executes_a_builtin_host_sleep() {
+    assert_eq!(
+        execute_source_with_inputs(
+            "fn main() -> Int { Host::sleep(Duration::milliseconds(0)); ret 42; }",
+            &[],
+        ),
+        ExsValue::Int(42)
+    );
+}
+
+/// Exposes a factory-created Duration as its normal normalized object representation.
+#[test]
+fn represents_duration_as_a_normal_exs_type() {
+    assert_eq!(
+        execute_source_with_inputs(
+            "fn main() -> Duration | Error { ret Duration::milliseconds(1001); }",
+            &[],
+        ),
+        ExsValue::Object(vec![
+            ("seconds".to_owned(), ExsValue::Int(1)),
+            ("nanoseconds".to_owned(), ExsValue::Int(1_000_000)),
+        ]),
+    );
+}
+
+/// Converts a normalized Duration into exact and truncated whole-unit values.
+#[test]
+fn converts_duration_to_whole_units() {
+    assert_eq!(
+        execute_source_with_inputs(
+            "fn main() -> List | Error { let duration = Duration::nanoseconds(1001002003); let seconds = duration.as_seconds(); let milliseconds = duration.as_milliseconds()?; let microseconds = duration.as_microseconds()?; let nanoseconds = duration.as_nanoseconds()?; ret [seconds, milliseconds, microseconds, nanoseconds]; }",
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(1),
+            ExsValue::Int(1_001),
+            ExsValue::Int(1_001_002),
+            ExsValue::Int(1_001_002_003),
+        ]),
+    );
+}
+
+/// Reports a recoverable error when exact Euclidean division uses a zero divisor.
+#[test]
+fn reports_zero_divisor_for_int_euclidean_division() {
+    let ExsValue::Error(error) =
+        execute_source_with_inputs("fn main() { let value = 1; ret value.div_euclid(0); }", &[])
+    else {
+        panic!("expected Euclidean division to return an Error");
+    };
+    assert_eq!(error.kind, "DivisionByZeroError");
+}
+
 /// Packs root and direct-call variadic arguments into Lists visible to ExS bodies.
 #[test]
 fn executes_variadic_functions() {
@@ -60,7 +115,7 @@ fn executes_variadic_static_methods() {
 #[test]
 fn executes_host_calls_inside_formatted_strings() {
     let compiled = compile_source(
-        r#"fn main(input: Int) -> String { ret f"value: {host.call("echo", input)}"; }"#,
+        r#"fn main(input: Int) -> String { ret f"value: {Host::call("echo", input)}"; }"#,
     );
     let mut runner = ServerRunner::new(ExecutionLimits::default());
     assert!(
@@ -92,7 +147,7 @@ fn executes_host_calls_inside_to_string_implementations() {
 
         impl ToString for Remote {
             fn to_string(self) -> String {
-                ret host.call("echo", "custom");
+                ret Host::call("echo", "custom");
             }
         }
 
@@ -130,15 +185,15 @@ fn executes_resumable_variadic_calls() {
         }
         impl Sum for Total {
             fn sum(self, values: Int...) -> Int {
-                ret host.call("echo", values[0]) + values[1];
+                ret Host::call("echo", values[0]) + values[1];
             }
         }
         fn echo_first(values: Int...) -> Int {
-            ret host.call("echo", values[0]);
+            ret Host::call("echo", values[0]);
         }
         fn main() -> Int {
             let from_function = echo_first(40, 0);
-            let echo = (values...) => { ret host.call("echo", values[0]); };
+            let echo = (values...) => { ret Host::call("echo", values[0]); };
             let from_closure = echo(from_function);
             ret Total {}.sum(from_closure, 2);
         }
@@ -173,7 +228,7 @@ fn executes_zero_argument_variadic_parallel_closures() {
 #[test]
 fn returns_a_language_error_for_an_unregistered_dynamic_host_function() {
     let result = execute_source_with_inputs(
-        "fn main(input) { ret host.call(\"missing\", input); }",
+        "fn main(input) { ret Host::call(\"missing\", input); }",
         &[ExsValue::Int(7)],
     );
     let ExsValue::Error(error) = result else {
@@ -187,7 +242,7 @@ fn returns_a_language_error_for_an_unregistered_dynamic_host_function() {
 /// Uses the host fast path without suspending the generated resumable frame.
 #[test]
 fn executes_a_synchronous_dynamic_host_function() {
-    let compiled = compile_source("fn main(input) { ret host.call(\"echo\", input); }");
+    let compiled = compile_source("fn main(input) { ret Host::call(\"echo\", input); }");
     let mut runner = ServerRunner::new(ExecutionLimits::default());
     assert!(
         runner
@@ -214,14 +269,14 @@ fn rejects_unserializable_host_call_arguments() {
         r#"
         fn main() -> Error {
             let callback = () => { ret 1; };
-            ret host.call("save", callback);
+            ret Host::call("save", callback);
         }
         "#,
         r#"
         fn main() -> Error {
             let cycle = [];
             cycle.push(cycle);
-            ret host.call("save", cycle);
+            ret Host::call("save", cycle);
         }
         "#,
     ] {
@@ -257,7 +312,7 @@ fn rejects_unserializable_host_call_arguments() {
 /// Suspends and resumes the same generated frame for an asynchronous host function.
 #[test]
 fn executes_an_asynchronous_dynamic_host_function() {
-    let compiled = compile_source("fn main(input) { ret host.call(\"echo\", input); }");
+    let compiled = compile_source("fn main(input) { ret Host::call(\"echo\", input); }");
     let mut runner = ServerRunner::new(ExecutionLimits::default());
     assert!(
         runner
@@ -281,7 +336,7 @@ fn executes_an_asynchronous_dynamic_host_function() {
 /// Cancels a suspended execution and invalidates its pending host-call continuation.
 #[test]
 fn cancels_a_pending_host_execution() {
-    let compiled = compile_source("fn main() { ret host.call(\"wait\"); }");
+    let compiled = compile_source("fn main() { ret Host::call(\"wait\"); }");
     let cancellation = ExecutionCancellation::new();
     let cancellation_for_host = cancellation.clone();
     let mut runner = ServerRunner::new(ExecutionLimits::default());
@@ -307,7 +362,7 @@ fn cancels_a_pending_host_call_inside_a_closure() {
     let compiled = compile_source(
         r#"
         fn main() {
-            let wait = () => { ret host.call("wait"); };
+            let wait = () => { ret Host::call("wait"); };
             ret wait();
         }
         "#,

@@ -121,6 +121,50 @@ pub(crate) fn divide(left: ValueRef, right: ValueRef) -> ValueRef {
     runtime::allocate(RtValue::Float(as_float(left) / as_float(right)))
 }
 
+/// Divides two exact Int values with a Euclidean quotient.
+pub(crate) fn divide_euclid(left: ValueRef, right: ValueRef) -> ValueRef {
+    integer_euclidean(left, right, i64::checked_div_euclid, "div_euclid")
+}
+
+/// Returns the non-negative Euclidean remainder of two exact Int values.
+pub(crate) fn remainder_euclid(left: ValueRef, right: ValueRef) -> ValueRef {
+    integer_euclidean(left, right, i64::checked_rem_euclid, "rem_euclid")
+}
+
+/// Applies one exact Euclidean integer operation and reports recoverable language errors.
+fn integer_euclidean(
+    left: ValueRef,
+    right: ValueRef,
+    operation: fn(i64, i64) -> Option<i64>,
+    name: &str,
+) -> ValueRef {
+    let left_value = left;
+    let right_value = right;
+    let (RtValue::Int(left), RtValue::Int(right)) = (runtime::value(left), runtime::value(right))
+    else {
+        return runtime::recoverable_error(
+            "TypeError",
+            "Euclidean division requires Int operands",
+            left_value,
+        );
+    };
+    if *right == 0 {
+        return runtime::recoverable_error(
+            "DivisionByZeroError",
+            "Euclidean division requires a non-zero divisor",
+            right_value,
+        );
+    }
+    match operation(*left, *right) {
+        Some(value) => runtime::allocate(RtValue::Int(value)),
+        None => runtime::recoverable_error(
+            "IntOverflowError",
+            &alloc::format!("{name} overflowed the ExS signed 64-bit range"),
+            left_value,
+        ),
+    }
+}
+
 /// Negates one runtime numeric value.
 pub(crate) fn negate(value: ValueRef) -> ValueRef {
     match number_of_ref(value) {

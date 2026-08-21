@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use exs_abi::{
     ErrorSeverity, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
     HOST_CALL_RESPONSE_COPY_IMPORT, HOST_CALL_RESPONSE_LENGTH_IMPORT, HOST_CALL_START_IMPORT,
-    HOST_IMPORT_MODULE, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
+    HOST_IMPORT_MODULE, HOST_SLEEP_HOST_NAME, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
     RUNNER_TASK_RELEASE_IMPORT, SourcePositionId,
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter, StoreLimits, StoreLimitsBuilder};
@@ -211,7 +211,12 @@ fn host_call_start(
         .map_err(|error| host_cbor_error(&mut caller, error))?;
     let origin = u32::try_from(source_position).ok().map(SourcePositionId);
 
-    match caller.data().registry.start(name, arguments) {
+    let call = if name == HOST_SLEEP_HOST_NAME {
+        Ok(crate::host_sleep::start(arguments, origin))
+    } else {
+        caller.data().registry.start(name, arguments)
+    };
+    match call {
         Ok(crate::HostCall::Ready(value)) => {
             store_ready_response(&mut caller, call_id, value)?;
             Ok(HOST_CALL_READY)

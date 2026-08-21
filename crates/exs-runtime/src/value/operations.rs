@@ -387,6 +387,14 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
             Ok(argument) => divide(receiver, argument),
             Err(error) => error,
         },
+        "div_euclid" => match list::operations::single_argument(arguments) {
+            Ok(argument) => numeric::divide_euclid(receiver, argument),
+            Err(error) => error,
+        },
+        "rem_euclid" => match list::operations::single_argument(arguments) {
+            Ok(argument) => numeric::remainder_euclid(receiver, argument),
+            Err(error) => error,
+        },
         "compare" => match list::operations::single_argument(arguments) {
             Ok(argument) => compare(receiver, argument),
             Err(error) => error,

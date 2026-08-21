@@ -132,6 +132,15 @@ pub(super) fn compile<R: ModuleResolver>(
             .append(&mut modules[index].implementations);
         combined.functions.append(&mut modules[index].functions);
     }
+    let mut prelude = crate::prelude::parse().map_err(|error| error.to_string())?;
+    prelude.types.append(&mut combined.types);
+    prelude.enums.append(&mut combined.enums);
+    prelude.traits.append(&mut combined.traits);
+    prelude
+        .implementations
+        .append(&mut combined.implementations);
+    prelude.functions.append(&mut combined.functions);
+    combined = prelude;
     if combined
         .functions
         .iter()
@@ -144,13 +153,11 @@ pub(super) fn compile<R: ModuleResolver>(
             files[0].source_id
         ));
     }
-    let source_inputs = files
-        .iter()
-        .map(|file| SourceInput {
-            source_id: &file.source_id,
-            text: &file.text,
-        })
-        .collect::<Vec<_>>();
+    let mut source_inputs = crate::prelude::source_inputs();
+    source_inputs.extend(files.iter().map(|file| SourceInput {
+        source_id: &file.source_id,
+        text: &file.text,
+    }));
     let wasm = crate::codegen::compile_project_module(&mut combined, &source_inputs, options)
         .map_err(|error| error.render(&files[0].text))?;
     Ok(CompiledModule { wasm })

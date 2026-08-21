@@ -53,6 +53,8 @@ pub const TYPE_ANY: u32 = TYPE_NONE
 pub const STANDARD_ORDERING_TYPE_ID: u32 = 0;
 /// Stable host-boundary identity used by the compiler-owned `std::Ordering` enum.
 pub const STANDARD_ORDERING_TYPE_IDENTITY: &str = "std::Ordering";
+/// Runner-internal host name used by the built-in `Host::sleep` operation.
+pub const HOST_SLEEP_HOST_NAME: &str = "__exs.host.sleep";
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// The entry export invoked by runners.

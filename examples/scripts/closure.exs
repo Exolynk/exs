@@ -1,6 +1,6 @@
 fn main() {
     let y = 12;
-    test((x) => { host.call("println", x, y); });
+    test((x) => { Host::call("println", x, y); });
     ret true;
 }
 

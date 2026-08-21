@@ -772,7 +772,7 @@ pub(crate) fn host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
         _ => {
             return ready_host_error(
                 "TypeError",
-                "host.call requires a String function name",
+                "Host::call requires a String function name",
                 name,
             );
         }
@@ -780,7 +780,7 @@ pub(crate) fn host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
     if !matches!(value(arguments), RtValue::List(_)) {
         return ready_host_error(
             "TypeError",
-            "host.call arguments must be represented as a List",
+            "Host::call arguments must be represented as a List",
             arguments,
         );
     }
