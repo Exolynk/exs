@@ -5,14 +5,15 @@ mod input;
 use std::env;
 use std::fs;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::pin;
 use std::process::ExitCode;
 use std::task::{Context, Poll, Waker};
 
 use exs_compiler::{
     CompileOptions, ModuleDebugInfo, ModuleResolver, ResolvedSource, SourceInput,
-    compile_with_resolver, document_with_resolver, format, read_debug_info,
+    compile_tests_with_resolver, compile_with_resolver, document_with_resolver, format, has_tests,
+    read_debug_info,
 };
 use exs_runner::{ExecutionCancellation, ExecutionLimits, ExsValue, ServerRunner};
 
@@ -55,6 +56,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             };
             run_program(&arguments[1], &inputs)
         }
+        "test" if arguments.len() <= 2 => run_tests(arguments.get(1).map(String::as_str)),
         _ => Err(usage()),
     }
 }
@@ -127,6 +129,127 @@ fn compile_source(
         options,
         &mut resolver,
     )
+}
+
+/// Compiles one test-bearing source file with its internal test dispatcher entry point.
+fn compile_tests_source(path: &Path) -> Result<exs_compiler::CompiledTests, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("could not resolve {}: {error}", path.display()))?;
+    let source_id = canonical.to_string_lossy().into_owned();
+    let mut resolver = FileResolver;
+    compile_tests_with_resolver(
+        SourceInput {
+            source_id: &source_id,
+            text: &source,
+        },
+        CompileOptions {
+            embed_sources: true,
+        },
+        &mut resolver,
+    )
+}
+
+/// Discovers, compiles, and executes source tests below one optional path.
+fn run_tests(path: Option<&str>) -> Result<(), String> {
+    let root = Path::new(path.unwrap_or("."));
+    let sources = discover_test_sources(root)?;
+    let runner = cli_runner()?;
+    let cancellation = ExecutionCancellation::new();
+    let mut passed = 0_usize;
+    let mut failed = 0_usize;
+    for source in sources {
+        let compiled = compile_tests_source(&source)?;
+        let debug_info = read_debug_info(&compiled.wasm).ok();
+        for (index, test) in compiled.tests.iter().enumerate() {
+            let test_index = i64::try_from(index)
+                .map_err(|_| format!("{}: too many tests", source.display()))?;
+            let result = block_on(runner.execute(
+                &compiled.wasm,
+                &[ExsValue::Int(test_index)],
+                &cancellation,
+            ));
+            match result {
+                Ok(ExsValue::Error(error)) => {
+                    failed += 1;
+                    eprintln!("FAIL {} :: {}", source.display(), test.description);
+                    eprintln!("{}", format_error(&error, debug_info.as_ref()));
+                }
+                Ok(_) => {
+                    passed += 1;
+                    println!("PASS {} :: {}", source.display(), test.description);
+                }
+                Err(error) => {
+                    failed += 1;
+                    eprintln!("FAIL {} :: {}", source.display(), test.description);
+                    eprintln!("runner error: {error}");
+                }
+            }
+        }
+    }
+    println!("test result: {passed} passed; {failed} failed");
+    if failed == 0 {
+        Ok(())
+    } else {
+        Err(format!("{failed} test(s) failed"))
+    }
+}
+
+/// Returns every test-bearing `.exs` file found under one explicit file or directory path.
+fn discover_test_sources(path: &Path) -> Result<Vec<PathBuf>, String> {
+    if path.is_file() {
+        return Ok(is_test_source(path)?
+            .then(|| path.to_path_buf())
+            .into_iter()
+            .collect());
+    }
+    if !path.is_dir() {
+        return Err(format!("could not find test path {}", path.display()));
+    }
+    let mut sources = Vec::new();
+    discover_test_sources_in(path, &mut sources)?;
+    sources.sort();
+    Ok(sources)
+}
+
+/// Recursively appends test-bearing files while excluding repository and build directories.
+fn discover_test_sources_in(directory: &Path, sources: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("could not read {}: {error}", directory.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("could not read directory entry: {error}"))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+        if file_type.is_dir() {
+            if matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some(".git" | "target")
+            ) {
+                continue;
+            }
+            discover_test_sources_in(&path, sources)?;
+        } else if file_type.is_file() && is_test_source(&path)? {
+            sources.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Reports whether one `.exs` file declares source tests.
+fn is_test_source(path: &Path) -> Result<bool, String> {
+    if path.extension().is_none_or(|extension| extension != "exs") {
+        return Ok(false);
+    }
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    has_tests(SourceInput {
+        source_id: &path.to_string_lossy(),
+        text: &source,
+    })
+    .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Resolves CLI imports through canonical local filesystem paths.
@@ -439,5 +562,5 @@ fn line_and_column(source: &str, offset: u32) -> (usize, usize) {
 
 /// Returns CLI usage text.
 fn usage() -> String {
-    "usage: exs check <file.exs> | exs fmt <file.exs> | exs docs <file.exs> -o <directory> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...]".to_owned()
+    "usage: exs check <file.exs> | exs fmt <file.exs> | exs docs <file.exs> -o <directory> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...] | exs test [file.exs|directory]".to_owned()
 }

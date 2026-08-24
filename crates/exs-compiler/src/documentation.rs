@@ -108,32 +108,20 @@ pub fn standard_library_functions() -> &'static [StandardFunction] {
 pub fn standard_library_namespaces() -> &'static [StandardNamespace] {
     &[
         StandardNamespace {
-            name: "Duration",
-            description: "Static factories for normalized non-negative Duration values used by Host sleep operations.",
+            name: "test",
+            description: "Test assertions available directly in every module and through the std::test namespace.",
             functions: &[
                 StandardFunction {
-                    name: "nanoseconds",
-                    signature: "Duration::nanoseconds(value: Int) -> Duration | Error",
-                    description: "Constructs a Duration from a non-negative exact nanosecond count. Negative input returns ValueError.",
-                    example: "let pause = Duration::nanoseconds(500);",
+                    name: "assert",
+                    signature: "std::test::assert(condition: Bool[, description: String]) -> None",
+                    description: "Returns None when condition is true. When condition is false, it creates a fatal AssertionFailed Error with the supplied description, or the default message \"assert failed\" when omitted. The direct assert spelling is equivalent.",
+                    example: "assert(total > 0, \"total must be positive\");",
                 },
                 StandardFunction {
-                    name: "microseconds",
-                    signature: "Duration::microseconds(value: Int) -> Duration | Error",
-                    description: "Constructs a Duration from a non-negative exact microsecond count. Negative input returns ValueError and conversion overflow returns IntOverflowError.",
-                    example: "let pause = Duration::microseconds(500);",
-                },
-                StandardFunction {
-                    name: "milliseconds",
-                    signature: "Duration::milliseconds(value: Int) -> Duration | Error",
-                    description: "Constructs a Duration from a non-negative exact millisecond count. Negative input returns ValueError and non-Int input returns TypeError.",
-                    example: "let timeout = Duration::milliseconds(500);",
-                },
-                StandardFunction {
-                    name: "seconds",
-                    signature: "Duration::seconds(value: Int) -> Duration | Error",
-                    description: "Constructs a Duration from a non-negative exact second count. Negative input returns ValueError.",
-                    example: "let interval = Duration::seconds(2);",
+                    name: "assert_eq",
+                    signature: "std::test::assert_eq(actual: Any, expected: Any[, description: String]) -> None",
+                    description: "Returns None when actual and expected compare equal with ExS equality semantics. Otherwise it creates a fatal AssertionFailed Error whose data contains actual and expected values and uses the supplied description, or the default message \"assert_eq failed\" when omitted. The direct assert_eq spelling is equivalent.",
+                    example: "assert_eq(total, 42, \"total must include every line item\");",
                 },
             ],
         },
@@ -164,6 +152,40 @@ pub fn standard_library_namespace(name: &str) -> Option<&'static StandardNamespa
     standard_library_namespaces()
         .iter()
         .find(|namespace| namespace.name == name)
+}
+
+/// Returns static functions declared by one documented standard type.
+#[must_use]
+pub fn standard_library_type_static_functions(name: &str) -> &'static [StandardFunction] {
+    match name {
+        "Duration" => &[
+            StandardFunction {
+                name: "nanoseconds",
+                signature: "Duration::nanoseconds(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative exact nanosecond count. Negative input returns ValueError.",
+                example: "let pause = Duration::nanoseconds(500);",
+            },
+            StandardFunction {
+                name: "microseconds",
+                signature: "Duration::microseconds(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative exact microsecond count. Negative input returns ValueError and conversion overflow returns IntOverflowError.",
+                example: "let pause = Duration::microseconds(500);",
+            },
+            StandardFunction {
+                name: "milliseconds",
+                signature: "Duration::milliseconds(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative exact millisecond count. Negative input returns ValueError and non-Int input returns TypeError.",
+                example: "let timeout = Duration::milliseconds(500);",
+            },
+            StandardFunction {
+                name: "seconds",
+                signature: "Duration::seconds(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative exact second count. Negative input returns ValueError.",
+                example: "let interval = Duration::seconds(2);",
+            },
+        ],
+        _ => &[],
+    }
 }
 
 /// Returns every documented source-visible standard-library trait.
@@ -917,12 +939,13 @@ pub fn standard_library_types() -> Vec<StandardType> {
 /// Generates the synthetic standard-library module and its declaration pages.
 fn standard_pages() -> Vec<DocumentationPage> {
     let types = standard_library_types();
+    let functions = standard_library_functions();
     let namespaces = standard_library_namespaces();
     let traits = standard::traits();
     let enums = standard::enums();
     let mut pages = vec![DocumentationPage {
         path: "modules/std/index.md".to_owned(),
-        markdown: render_standard_index(&types, namespaces, enums, traits),
+        markdown: render_standard_index(&types, functions, namespaces, enums, traits),
     }];
     for type_info in &types {
         pages.push(DocumentationPage {
@@ -952,12 +975,13 @@ fn standard_pages() -> Vec<DocumentationPage> {
 /// Renders the synthetic standard-library module index.
 fn render_standard_index(
     types: &[StandardType],
+    functions: &[StandardFunction],
     namespaces: &[StandardNamespace],
     enums: &[StandardEnumDescriptor],
     traits: &[StandardTraitDescriptor],
 ) -> String {
     let mut output = String::from(
-        "# Module `std`\n\nBuilt-in types are globally available in ExS source and may also be written with the `std::` qualifier. Importing `std` is not required or allowed.\n\n## Types\n\n",
+        "# Module `std`\n\nBuilt-in standard items are globally available in ExS source and may also be written with the `std::` qualifier. Importing `std` is not required or allowed.\n\n## Types\n\n",
     );
     for type_info in types {
         output.push_str(&format!(
@@ -994,7 +1018,14 @@ fn render_standard_index(
             slug(trait_info.name)
         ));
     }
-    output.push_str("\n## Functions\n\n- [`Error`](types/error.md#constructor)\n");
+    output.push_str("\n## Functions\n\n");
+    for function in functions {
+        if function.name == "Error" {
+            output.push_str("- [`Error`](types/error.md#constructor)\n");
+        } else {
+            render_standard_function(&mut output, function, "###");
+        }
+    }
     output
 }
 
@@ -1112,9 +1143,10 @@ fn render_standard_type(type_info: &StandardType) -> String {
             script_example(method.example)
         ));
     }
-    if let Some(namespace) = standard_library_namespace(type_info.name) {
+    let static_functions = standard_library_type_static_functions(type_info.name);
+    if !static_functions.is_empty() {
         output.push_str("## Static Functions\n\n");
-        for function in namespace.functions {
+        for function in static_functions {
             render_standard_function(&mut output, function, "###");
         }
     }

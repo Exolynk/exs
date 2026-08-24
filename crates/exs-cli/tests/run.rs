@@ -167,6 +167,150 @@ fn main() {
     assert_eq!(stdout, "Ada 7true\n\nNone\n");
 }
 
+/// Omits inline tests from normal execution and reports them through the test command.
+#[test]
+fn runs_inline_source_tests_without_affecting_normal_execution() {
+    let directory = std::env::temp_dir().join(format!("exs-cli-tests-{}", std::process::id()));
+    let path = directory.join("checks.exs");
+    if let Err(error) = fs::create_dir_all(&directory) {
+        panic!("could not create test fixture directory: {error}");
+    }
+    let source = r#"
+fn main() -> String {
+    ret "program";
+}
+
+test "adds values" {
+    std::test::assert_eq(20 + 22, 42, "addition must preserve both operands");
+}
+
+test "reports default failed equality" {
+    assert_eq(false, true);
+}
+"#;
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let run = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("run")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs run: {error}"),
+    };
+    assert!(run.status.success());
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "\"program\"\n");
+    let test = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("test")
+        .arg(&directory)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs test: {error}"),
+    };
+    if let Err(error) = fs::remove_dir_all(&directory) {
+        panic!("could not remove test fixture directory: {error}");
+    }
+    assert!(!test.status.success());
+    let stdout = String::from_utf8_lossy(&test.stdout);
+    let stderr = String::from_utf8_lossy(&test.stderr);
+    assert!(stdout.contains("PASS"));
+    assert!(stdout.contains("test result: 1 passed; 1 failed"));
+    assert!(stderr.contains("FAIL"));
+    assert!(stderr.contains("AssertionFailed"));
+    assert!(stderr.contains("assert_eq failed"));
+}
+
+/// Executes a standalone test module that intentionally has no production main function.
+#[test]
+fn executes_test_only_source_files() {
+    let path = std::env::temp_dir().join(format!("exs-cli-test-only-{}.exs", std::process::id()));
+    let source = r#"
+fn add(left: Int, right: Int) -> Int {
+    ret left + right;
+}
+
+type Version {
+    value: Int,
+}
+
+impl std::Compare for Version {
+    fn compare(self, other: Any) -> Ordering {
+        if self.value < other.value {
+            ret Ordering::Less;
+        }
+        if self.value > other.value {
+            ret Ordering::Greater;
+        }
+        ret Ordering::Equal;
+    }
+}
+
+test "adds values" {
+    assert_eq(add(20, 22), 42, "addition must preserve both operands");
+}
+
+test "uses custom equality" {
+    assert_eq(
+        Version { value: 1 },
+        Version { value: 1 },
+        "versions with the same value must compare equal",
+    );
+}
+"#;
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("test")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs test: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("test result: 2 passed; 0 failed"));
+}
+
+/// Terminates normal programs when an assertion fails inside a nested direct call.
+#[test]
+fn assertion_failures_abort_normal_execution() {
+    let path = std::env::temp_dir().join(format!("exs-cli-assert-{}.exs", std::process::id()));
+    let source = r#"
+fn require_enabled(enabled: Bool) {
+    assert(enabled, "the account must be enabled");
+}
+
+fn main() {
+    require_enabled(false);
+}
+"#;
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("run")
+        .arg(&path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("AssertionFailed"));
+    assert!(stderr.contains("the account must be enabled"));
+    assert!(stderr.contains("require_enabled"));
+}
+
 /// Parses multiple CLI values and passes them to a typed main declaration.
 #[test]
 fn passes_multiple_cli_values_to_main() {

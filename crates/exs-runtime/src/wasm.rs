@@ -12,7 +12,7 @@ use exs_value::ValueRef;
 
 use crate::gc;
 use crate::runtime;
-use crate::value::{self, RtValue};
+use crate::value::{self, RtValue, RuntimeList};
 
 /// Allocates and returns the singular None value.
 #[unsafe(no_mangle)]
@@ -181,6 +181,70 @@ pub extern "C" fn __exs_rt_error_new(
         }
     };
     runtime::recoverable_error(&kind, &message, data)
+}
+
+/// Returns None when a Boolean condition holds or creates a fatal assertion Error.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_assert(condition: ValueRef, description: ValueRef) -> ValueRef {
+    let description = match runtime::value(description) {
+        RtValue::String(description) => String::from(description.as_str()),
+        _ => {
+            return runtime::fatal_error(
+                "TypeError",
+                "std::assert description requires a String value",
+                description,
+            );
+        }
+    };
+    match runtime::value(condition) {
+        RtValue::Bool(true) => runtime::allocate(RtValue::None),
+        RtValue::Bool(false) => runtime::fatal_error("AssertionFailed", &description, condition),
+        _ => runtime::fatal_error(
+            "TypeError",
+            "std::assert condition requires a Bool value",
+            condition,
+        ),
+    }
+}
+
+/// Returns None when two values compare equal or creates a fatal assertion Error.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_assert_eq(
+    condition: ValueRef,
+    actual: ValueRef,
+    expected: ValueRef,
+    description: ValueRef,
+) -> ValueRef {
+    let description = match runtime::value(description) {
+        RtValue::String(description) => String::from(description.as_str()),
+        _ => {
+            return runtime::fatal_error(
+                "TypeError",
+                "std::assert_eq description requires a String value",
+                description,
+            );
+        }
+    };
+    match runtime::value(condition) {
+        RtValue::Bool(true) => return runtime::allocate(RtValue::None),
+        RtValue::Bool(false) => {}
+        _ => {
+            return runtime::fatal_error(
+                "TypeError",
+                "std::assert_eq comparison requires a Bool value",
+                condition,
+            );
+        }
+    }
+    let checkpoint = gc::temporary_root_checkpoint();
+    gc::push_temporary_root(actual);
+    gc::push_temporary_root(expected);
+    let data = runtime::allocate(RtValue::List(Box::new(RuntimeList {
+        elements: alloc::vec![actual, expected],
+    })));
+    let error = runtime::fatal_error("AssertionFailed", &description, data);
+    gc::restore_temporary_roots(checkpoint);
+    error
 }
 
 /// Returns the compiler-visible type-mask bit for one runtime value.

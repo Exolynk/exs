@@ -4,7 +4,8 @@ use crate::SourceInput;
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, Expression,
     FunctionDeclaration, Identifier, ImplDeclaration, Module, ObjectProperty, Parameter, Statement,
-    TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, UnaryOperator,
+    TestDeclaration, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration,
+    UnaryOperator,
 };
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 use crate::formatter_trivia::{Trivia, TriviaKind};
@@ -92,6 +93,7 @@ impl Formatter {
             .chain(module.traits.iter().map(Declaration::Trait))
             .chain(module.implementations.iter().map(Declaration::Impl))
             .chain(module.functions.iter().map(Declaration::Function))
+            .chain(module.tests.iter().map(Declaration::Test))
             .collect::<Vec<_>>();
         for (index, declaration) in declarations.iter().enumerate() {
             let declaration_start = declaration.span().start_byte as usize;
@@ -114,6 +116,7 @@ impl Formatter {
                 Declaration::Trait(declaration) => self.trait_declaration(declaration),
                 Declaration::Impl(declaration) => self.implementation(declaration),
                 Declaration::Function(declaration) => self.function(declaration),
+                Declaration::Test(declaration) => self.test_declaration(declaration),
             }
         }
         self.trivia_before(usize::MAX);
@@ -241,6 +244,14 @@ impl Formatter {
                 &declaration.parameters,
                 declaration.return_type.as_ref(),
             ),
+            &declaration.body,
+        );
+    }
+
+    /// Renders one named source test declaration.
+    fn test_declaration(&mut self, declaration: &TestDeclaration<'_>) {
+        self.block_after(
+            &format!("test {:?}", declaration.description),
             &declaration.body,
         );
     }
@@ -504,6 +515,8 @@ enum Declaration<'a> {
     Impl(&'a ImplDeclaration<'a>),
     /// Direct function declaration.
     Function(&'a FunctionDeclaration<'a>),
+    /// Source test declaration.
+    Test(&'a TestDeclaration<'a>),
 }
 
 impl Declaration<'_> {
@@ -515,6 +528,7 @@ impl Declaration<'_> {
             Self::Trait(declaration) => declaration.span,
             Self::Impl(declaration) => declaration.span,
             Self::Function(declaration) => declaration.span,
+            Self::Test(declaration) => declaration.span,
         }
     }
 }

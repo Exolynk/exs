@@ -19,6 +19,8 @@ pub struct Module<'a> {
     pub implementations: Vec<ImplDeclaration<'a>>,
     /// Top-level direct function declarations.
     pub functions: Vec<FunctionDeclaration<'a>>,
+    /// Source test declarations omitted from normal executable modules.
+    pub tests: Vec<TestDeclaration<'a>>,
 }
 
 /// One relative source-file import.
@@ -159,6 +161,17 @@ pub struct FunctionDeclaration<'a> {
     /// Optional union type annotation for the returned value.
     pub return_type: Option<TypeAnnotation<'a>>,
     /// Function body.
+    pub body: Block<'a>,
+    /// Full declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+/// One named zero-argument source test.
+#[derive(Debug, Clone)]
+pub struct TestDeclaration<'a> {
+    /// Human-readable test description.
+    pub description: String,
+    /// Test body executed by the test command.
     pub body: Block<'a>,
     /// Full declaration span.
     pub span: SourceSpan<'a>,

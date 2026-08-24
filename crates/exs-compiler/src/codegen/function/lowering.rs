@@ -182,6 +182,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.compile_error_builtin(arguments, *span)?;
                     return Ok(());
                 }
+                if matches!(callee.name.as_str(), "assert" | "std::test::assert") {
+                    self.compile_assert_builtin(arguments, *span)?;
+                    return Ok(());
+                }
+                if matches!(callee.name.as_str(), "assert_eq" | "std::test::assert_eq") {
+                    self.compile_assert_eq_builtin(arguments, *span)?;
+                    return Ok(());
+                }
                 if let Some(variant) = self.types.enum_variant(&callee.name) {
                     if variant.fields.len() != arguments.len() {
                         return Err(diagnostics(CompileDiagnostic::new(
@@ -348,6 +356,93 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         }
         self.runtime_value_call("__exs_rt_error_new", 3, span)?;
         for local in argument_locals {
+            self.clear_root_slot(local)?;
+        }
+        Ok(())
+    }
+
+    /// Compiles the fatal `assert(condition[, description])` standard intrinsic.
+    fn compile_assert_builtin(
+        &mut self,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if !(1..=2).contains(&arguments.len()) {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0208",
+                span,
+                format!(
+                    "assert expects 1 or 2 arguments but received {}",
+                    arguments.len()
+                ),
+            )));
+        }
+        self.compile_expression(&arguments[0])?;
+        let condition = self.store_stack_value()?;
+        if let Some(description) = arguments.get(1) {
+            self.compile_expression(description)?;
+        } else {
+            self.compile_string(crate::codegen::standard::ASSERT_DEFAULT_DESCRIPTION, span)?;
+        }
+        let description = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(condition));
+        self.function
+            .instruction(&Instruction::LocalGet(description));
+        self.runtime_value_call("__exs_rt_assert", 2, span)?;
+        self.return_if_fatal_error(span)?;
+        self.clear_root_slot(condition)?;
+        self.clear_root_slot(description)
+    }
+
+    /// Compiles the fatal `assert_eq(actual, expected[, description])` standard intrinsic.
+    fn compile_assert_eq_builtin(
+        &mut self,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if !(2..=3).contains(&arguments.len()) {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0208",
+                span,
+                format!(
+                    "assert_eq expects 2 or 3 arguments but received {}",
+                    arguments.len()
+                ),
+            )));
+        }
+        let mut locals = Vec::with_capacity(3);
+        for argument in &arguments[..2] {
+            self.compile_expression(argument)?;
+            locals.push(self.store_stack_value()?);
+        }
+        if let Some(description) = arguments.get(2) {
+            self.compile_expression(description)?;
+        } else {
+            self.compile_string(
+                crate::codegen::standard::ASSERT_EQ_DEFAULT_DESCRIPTION,
+                span,
+            )?;
+        }
+        locals.push(self.store_stack_value()?);
+        let operator = TraitOperator::from_binary(BinaryOperator::Equal).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                span,
+                "missing standard equality operator",
+            ))
+        })?;
+        let targets = self.methods.operator(operator).to_vec();
+        self.emit_operator_dispatch(operator, &targets, 0, locals[0], locals[1], span)?;
+        let comparison = self.store_stack_value()?;
+        self.function
+            .instruction(&Instruction::LocalGet(comparison));
+        for local in &locals {
+            self.function.instruction(&Instruction::LocalGet(*local));
+        }
+        self.runtime_value_call("__exs_rt_assert_eq", 4, span)?;
+        self.return_if_fatal_error(span)?;
+        self.clear_root_slot(comparison)?;
+        for local in locals {
             self.clear_root_slot(local)?;
         }
         Ok(())

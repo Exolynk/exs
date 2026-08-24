@@ -340,6 +340,9 @@ fn highlight_module(
     for function in &module.functions {
         highlight_function(function, HighlightKind::Function, spans, len);
     }
+    for test in &module.tests {
+        highlight_block(&test.body, spans, len);
+    }
 }
 
 /// Adds semantic spans for one function or method declaration.

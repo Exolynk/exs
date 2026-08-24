@@ -6,8 +6,8 @@ use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, EnumVariant, Expression,
     FormattedStringKind, FormattedStringPart, FunctionDeclaration, Identifier, ImplDeclaration,
     ImportDeclaration, MatchArm, MatchArmBody, MatchPattern, Module, ObjectProperty, Parameter,
-    Statement, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration,
-    TypeField, TypeName, UnaryOperator, UseDeclaration, UseItem,
+    Statement, TestDeclaration, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation,
+    TypeDeclaration, TypeField, TypeName, UnaryOperator, UseDeclaration, UseItem,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{
@@ -42,6 +42,7 @@ pub fn parse<'a>(
     let mut traits = Vec::new();
     let mut implementations = Vec::new();
     let mut functions = Vec::new();
+    let mut tests = Vec::new();
     while !parser.at_end() {
         match &parser.peek().kind {
             TokenKind::Import => match parser.import_declaration() {
@@ -50,7 +51,8 @@ pub fn parse<'a>(
                         && traits.is_empty()
                         && enums.is_empty()
                         && implementations.is_empty()
-                        && functions.is_empty() =>
+                        && functions.is_empty()
+                        && tests.is_empty() =>
                 {
                     imports.push(declaration)
                 }
@@ -70,7 +72,8 @@ pub fn parse<'a>(
                         && traits.is_empty()
                         && enums.is_empty()
                         && implementations.is_empty()
-                        && functions.is_empty() =>
+                        && functions.is_empty()
+                        && tests.is_empty() =>
                 {
                     uses.push(declaration)
                 }
@@ -119,11 +122,18 @@ pub fn parse<'a>(
                     parser.synchronize_declaration();
                 }
             },
+            TokenKind::Identifier(name) if name == "test" => match parser.test_declaration() {
+                Ok(declaration) => tests.push(declaration),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
             _ => {
                 parser.diagnostics.push(parser.error(
                     parser.peek().span,
                     "E0100",
-                    "expected `type`, `enum`, `trait`, `impl`, or `fn` at module level",
+                    "expected `type`, `enum`, `trait`, `impl`, `fn`, or `test` at module level",
                 ));
                 parser.synchronize_declaration();
             }
@@ -147,6 +157,7 @@ pub fn parse<'a>(
         traits,
         implementations,
         functions,
+        tests,
     })
 }
 
@@ -304,6 +315,28 @@ impl<'a> Parser<'a> {
             .expect_simple(TokenKind::Fn, "expected `fn` at module level")?
             .span;
         self.function_from_start(start)
+    }
+
+    /// Parses one named source test declaration.
+    fn test_declaration(&mut self) -> Result<TestDeclaration<'a>, CompileDiagnostic<'a>> {
+        let start = self.advance().span;
+        let token = self.advance().clone();
+        let description = match token.kind {
+            TokenKind::String(description) => description,
+            _ => {
+                return Err(self.error(
+                    token.span,
+                    "E0113",
+                    "expected string test description after `test`",
+                ));
+            }
+        };
+        let body = self.block()?;
+        Ok(TestDeclaration {
+            description,
+            span: start.through(body.span),
+            body,
+        })
     }
 
     /// Parses one function after its `fn` keyword was consumed.

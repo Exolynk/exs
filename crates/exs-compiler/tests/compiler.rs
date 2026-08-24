@@ -22,6 +22,57 @@ fn compiles_a_minimal_main_function() {
     assert!(module.is_ok());
 }
 
+/// Compiles direct test assertions and their equivalent qualified spellings.
+#[test]
+fn compiles_direct_and_qualified_test_assertions() {
+    let module = compile(
+        SourceInput {
+            source_id: "standard-assertions.exs",
+            text: "fn main() { assert(true); std::test::assert_eq(21 * 2, 42); ret None; }",
+        },
+        CompileOptions::default(),
+    );
+    if let Err(error) = module {
+        panic!("compilation failed: {error}");
+    }
+}
+
+/// Rejects the removed one-level qualified assertion spelling.
+#[test]
+fn rejects_removed_standard_assertion_aliases() {
+    let error = match compile(
+        SourceInput {
+            source_id: "removed-standard-assertion.exs",
+            text: "fn main() { std::assert(true); ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("unknown function `std::assert`"));
+}
+
+/// Rejects declarations that would shadow directly available standard functions.
+#[test]
+fn rejects_shadowing_standard_assert_functions() {
+    let error = match compile(
+        SourceInput {
+            source_id: "shadow-standard-function.exs",
+            text: "fn assert() { ret None; } fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("compilation unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("`assert` is a reserved standard-library function")
+    );
+}
+
 /// Compiles the standard Duration factories and suspendable built-in Host sleep operation.
 #[test]
 fn compiles_a_builtin_host_sleep() {
@@ -419,6 +470,11 @@ fn generates_markdown_api_documentation() {
         .find(|page| page.path == "modules/std/index.md")
         .unwrap_or_else(|| panic!("missing std module page"));
     assert!(standard.markdown.contains("[`Host`](namespaces/host.md)"));
+    assert!(
+        !standard
+            .markdown
+            .contains("[`Duration`](namespaces/duration.md)")
+    );
     assert!(!standard.markdown.contains("[`type`]"));
     assert!(!standard.markdown.contains("[`len`]"));
     assert!(standard.markdown.contains("`std::` qualifier"));
@@ -432,9 +488,28 @@ fn generates_markdown_api_documentation() {
             .markdown
             .contains("[`Ordering`](enums/ordering.md)")
     );
+    let test_namespace = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/namespaces/test.md")
+        .unwrap_or_else(|| panic!("missing std test namespace page"));
+    assert!(test_namespace.markdown.contains("# Namespace `std::test`"));
+    assert!(
+        test_namespace
+            .markdown
+            .contains("std::test::assert(condition: Bool")
+    );
+    assert!(
+        test_namespace
+            .markdown
+            .contains("std::test::assert_eq(actual: Any, expected: Any")
+    );
     assert!(documentation.pages.iter().all(|page| !matches!(
         page.path.as_str(),
-        "modules/std/fn/type.md" | "modules/std/fn/len.md"
+        "modules/std/fn/type.md"
+            | "modules/std/fn/len.md"
+            | "modules/std/namespaces/std.md"
+            | "modules/std/namespaces/duration.md"
     )));
     let error = documentation
         .pages

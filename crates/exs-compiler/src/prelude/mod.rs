@@ -54,6 +54,7 @@ pub(crate) fn parse() -> Result<Module<'static>, CompileDiagnostics<'static>> {
         traits: Vec::new(),
         implementations: Vec::new(),
         functions: Vec::new(),
+        tests: Vec::new(),
     };
     let mut diagnostics = CompileDiagnostics::new();
     for source in sources() {

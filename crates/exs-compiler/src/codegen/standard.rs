@@ -38,6 +38,12 @@ pub(crate) const TO_STRING_TRAIT: &str = "ToString";
 /// Required instance-method name for the `ToString` protocol.
 pub(crate) const TO_STRING_METHOD: &str = "to_string";
 
+/// Default message for a failed `assert` call without an explicit description.
+pub(crate) const ASSERT_DEFAULT_DESCRIPTION: &str = "assert failed";
+
+/// Default message for a failed `assert_eq` call without an explicit description.
+pub(crate) const ASSERT_EQ_DEFAULT_DESCRIPTION: &str = "assert_eq failed";
+
 /// Canonical source name for the standard diagnostic-rendering protocol.
 pub(crate) const DEBUG_TRAIT: &str = "Debug";
 

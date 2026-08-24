@@ -10,11 +10,24 @@ use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::codegen::{diagnostics, module_span};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
+/// Top-level standard-library functions that are directly available in every module.
+const RESERVED_STANDARD_FUNCTION_NAMES: &[&str] = &["assert", "assert_eq"];
+
 /// Collects independent function and implementation declaration diagnostics before linking.
 pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostics<'a> {
     let mut diagnostics = CompileDiagnostics::new();
     let mut signatures = HashMap::new();
     for function in &module.functions {
+        if RESERVED_STANDARD_FUNCTION_NAMES.contains(&function.name.name.as_str()) {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0223",
+                function.name.span,
+                format!(
+                    "`{}` is a reserved standard-library function",
+                    function.name.name
+                ),
+            ));
+        }
         validate_function(
             module,
             function,

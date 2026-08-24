@@ -23,7 +23,8 @@ pub use diagnostic::{
 pub use documentation::{
     StandardEnum, StandardFunction, StandardMethod, StandardNamespace, StandardTrait, StandardType,
     standard_library_enums, standard_library_functions, standard_library_namespace,
-    standard_library_namespaces, standard_library_traits, standard_library_types,
+    standard_library_namespaces, standard_library_traits, standard_library_type_static_functions,
+    standard_library_types,
 };
 pub use highlighting::{
     HighlightKind, HighlightSpan, SourceComment, SourceLex, SourceToken, SourceTokenKind,
@@ -51,6 +52,22 @@ pub struct CompileOptions {
 pub struct CompiledModule {
     /// The complete linked WebAssembly module.
     pub wasm: Vec<u8>,
+}
+
+/// One test case compiled into a test executable module.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CompiledTest {
+    /// Human-readable test description written in source.
+    pub description: String,
+}
+
+/// A compiled executable module and its source-declared test cases.
+#[derive(Debug, Clone)]
+pub struct CompiledTests {
+    /// The complete linked WebAssembly module with an internal test dispatcher entry point.
+    pub wasm: Vec<u8>,
+    /// Test cases addressed by their zero-based execution index.
+    pub tests: Vec<CompiledTest>,
 }
 
 /// One generated Markdown documentation page.
@@ -130,6 +147,34 @@ pub fn compile_with_resolver<R: ModuleResolver>(
     resolver: &mut R,
 ) -> Result<CompiledModule, String> {
     module_graph::compile(source, options, resolver)
+}
+
+/// Determines whether one source unit declares at least one source test.
+///
+/// # Errors
+///
+/// Returns rendered lexer or parser diagnostics when the source is invalid.
+pub fn has_tests(source: SourceInput<'_>) -> Result<bool, String> {
+    let lexed = lexer::lex(source);
+    if !lexed.diagnostics.is_empty() {
+        return Err(lexed.diagnostics.render(source.text));
+    }
+    parser::parse(source.source_id, lexed.tokens, false)
+        .map(|module| !module.tests.is_empty())
+        .map_err(|error| error.render(source.text))
+}
+
+/// Compiles one source graph with an internal entry point for source-declared tests.
+///
+/// # Errors
+///
+/// Returns a rendered diagnostic report when parsing, resolution, or compilation fails.
+pub fn compile_tests_with_resolver<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    options: CompileOptions,
+    resolver: &mut R,
+) -> Result<CompiledTests, String> {
+    module_graph::compile_tests(source, options, resolver)
 }
 
 /// Formats one syntactically valid ExS source unit into the canonical source layout.

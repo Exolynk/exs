@@ -282,6 +282,32 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
+            Operation::Assert {
+                condition,
+                actual,
+                expected,
+                description,
+                destination,
+                span,
+            } => {
+                self.get_slot(*condition, *span)?;
+                if let (Some(actual), Some(expected)) = (actual, expected) {
+                    self.get_slot(*actual, *span)?;
+                    self.get_slot(*expected, *span)?;
+                }
+                self.get_slot(*description, *span)?;
+                self.call_runtime(
+                    if actual.is_some() {
+                        "__exs_rt_assert_eq"
+                    } else {
+                        "__exs_rt_assert"
+                    },
+                    *span,
+                )?;
+                self.set_slot(*destination, *span)?;
+                self.complete_if_fatal_error(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::TypedObject {
                 type_id,
                 destination,

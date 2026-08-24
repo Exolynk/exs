@@ -1,6 +1,7 @@
 use exs_compiler::{
     standard_library_enums, standard_library_functions, standard_library_namespace,
-    standard_library_namespaces, standard_library_traits, standard_library_types,
+    standard_library_namespaces, standard_library_traits, standard_library_type_static_functions,
+    standard_library_types,
 };
 
 use crate::{CompletionItem, CompletionKind};
@@ -116,16 +117,17 @@ pub(crate) fn append_standard_namespaces(items: &mut Vec<CompletionItem>, prefix
     }
 }
 
-/// Appends the static operations documented for one standard namespace.
+/// Appends static operations documented for one standard namespace or type.
 pub(crate) fn append_standard_namespace_functions(
     items: &mut Vec<CompletionItem>,
     prefix: &str,
     namespace_name: &str,
 ) {
-    let Some(namespace) = standard_library_namespace(namespace_name) else {
-        return;
-    };
-    for function in namespace.functions {
+    let functions = standard_library_namespace(namespace_name).map_or_else(
+        || standard_library_type_static_functions(namespace_name),
+        |namespace| namespace.functions,
+    );
+    for function in functions {
         let insert_text = format!("{}()", function.name);
         let cursor = function
             .signature

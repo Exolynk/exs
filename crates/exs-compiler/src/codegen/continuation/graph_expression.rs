@@ -446,6 +446,12 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     });
                     return Ok(destination);
                 }
+                if matches!(callee.name.as_str(), "assert" | "std::test::assert") {
+                    return self.lower_assert_builtin(arguments, *span);
+                }
+                if matches!(callee.name.as_str(), "assert_eq" | "std::test::assert_eq") {
+                    return self.lower_assert_eq_builtin(arguments, *span);
+                }
                 if let Some(binding) = self.lookup_optional(&callee.name) {
                     let closure = if binding.cell {
                         let destination = self.temporary(callee.span)?;
@@ -686,6 +692,119 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             } => self.lower_typed_object(type_name, properties, *span),
             Expression::Match { value, arms, span } => self.lower_match(value, arms, *span),
         }
+    }
+
+    /// Lowers the fatal `assert(condition[, description])` standard intrinsic.
+    fn lower_assert_builtin(
+        &mut self,
+        arguments: &'function [Expression<'source>],
+        span: SourceSpan<'source>,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        if !(1..=2).contains(&arguments.len()) {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0208",
+                span,
+                format!(
+                    "assert expects 1 or 2 arguments but received {}",
+                    arguments.len()
+                ),
+            )));
+        }
+        let first = self.lower_expression(&arguments[0])?;
+        let description = if let Some(description) = arguments.get(1) {
+            self.lower_expression(description)?
+        } else {
+            self.lower_default_assertion_description(
+                crate::codegen::standard::ASSERT_DEFAULT_DESCRIPTION,
+                span,
+            )?
+        };
+        let destination = self.temporary(span)?;
+        self.operations.push(Operation::Assert {
+            condition: first,
+            actual: None,
+            expected: None,
+            description,
+            destination,
+            span,
+        });
+        Ok(destination)
+    }
+
+    /// Lowers the fatal `assert_eq(actual, expected[, description])` standard intrinsic.
+    fn lower_assert_eq_builtin(
+        &mut self,
+        arguments: &'function [Expression<'source>],
+        span: SourceSpan<'source>,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        if !(2..=3).contains(&arguments.len()) {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0208",
+                span,
+                format!(
+                    "assert_eq expects 2 or 3 arguments but received {}",
+                    arguments.len()
+                ),
+            )));
+        }
+        let first = self.lower_expression(&arguments[0])?;
+        let second = self.lower_expression(&arguments[1])?;
+        let operator = TraitOperator::from_binary(BinaryOperator::Equal).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                span,
+                "missing standard equality operator",
+            ))
+        })?;
+        let comparison = self.temporary(span)?;
+        let result = self.temporary(span)?;
+        self.operations.push(Operation::Operator {
+            operator,
+            left: first,
+            right: second,
+            targets: self.methods.operator(operator).to_vec(),
+            destination: result,
+            span,
+        });
+        self.operations.push(Operation::OrderingTest {
+            value: result,
+            test: 0,
+            destination: comparison,
+            span,
+        });
+        let description = if let Some(description) = arguments.get(2) {
+            self.lower_expression(description)?
+        } else {
+            self.lower_default_assertion_description(
+                crate::codegen::standard::ASSERT_EQ_DEFAULT_DESCRIPTION,
+                span,
+            )?
+        };
+        let destination = self.temporary(span)?;
+        self.operations.push(Operation::Assert {
+            condition: comparison,
+            actual: Some(first),
+            expected: Some(second),
+            description,
+            destination,
+            span,
+        });
+        Ok(destination)
+    }
+
+    /// Emits a compiler-provided String when an assertion omits its description.
+    fn lower_default_assertion_description(
+        &mut self,
+        value: &'static str,
+        span: SourceSpan<'source>,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        let destination = self.temporary(span)?;
+        self.operations.push(Operation::String {
+            value,
+            destination,
+            span,
+        });
+        Ok(destination)
     }
 
     /// Lowers one enum-pattern match through explicit branches and durable arm bindings.

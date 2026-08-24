@@ -3,9 +3,18 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    Block, Expression, FunctionDeclaration, Identifier, Module, Statement, TypeAnnotation,
+    BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module, Parameter,
+    Statement, TestDeclaration, TypeAnnotation,
 };
-use crate::{CompileOptions, CompiledModule, ModuleResolver, SourceInput};
+use crate::{
+    CompileOptions, CompiledModule, CompiledTest, CompiledTests, ModuleResolver, SourceInput,
+};
+
+/// Compiler-private name assigned to a production root entry while testing.
+const PROGRAM_MAIN: &str = "$exs_program_main";
+
+/// Compiler-private name assigned to the generated test dispatcher entry.
+const TEST_MAIN: &str = "main";
 
 /// One source file retained for the lifetime of graph compilation.
 struct SourceFile {
@@ -21,6 +30,29 @@ pub(super) fn compile<R: ModuleResolver>(
     options: CompileOptions,
     resolver: &mut R,
 ) -> Result<CompiledModule, String> {
+    compile_target(source, options, resolver, false).map(|(module, _)| module)
+}
+
+/// Compiles one resolved source graph with an internal test dispatcher entry point.
+pub(super) fn compile_tests<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    options: CompileOptions,
+    resolver: &mut R,
+) -> Result<CompiledTests, String> {
+    let (module, tests) = compile_target(source, options, resolver, true)?;
+    Ok(CompiledTests {
+        wasm: module.wasm,
+        tests,
+    })
+}
+
+/// Compiles one source graph for either production or individual source-test execution.
+fn compile_target<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    options: CompileOptions,
+    resolver: &mut R,
+    test_target: bool,
+) -> Result<(CompiledModule, Vec<CompiledTest>), String> {
     let mut files = vec![SourceFile {
         source_id: source.source_id.to_owned(),
         text: source.text.to_owned(),
@@ -112,6 +144,12 @@ pub(super) fn compile<R: ModuleResolver>(
         }
         exports.push(collect_exports(module, index)?);
     }
+    let mut root_tests = if test_target {
+        std::mem::take(&mut modules[0].tests)
+    } else {
+        Vec::new()
+    };
+    let tests = test_metadata(&root_tests, &files[0].source_id)?;
     let mut combined = Module {
         imports: Vec::new(),
         uses: Vec::new(),
@@ -120,9 +158,23 @@ pub(super) fn compile<R: ModuleResolver>(
         traits: Vec::new(),
         implementations: Vec::new(),
         functions: Vec::new(),
+        tests: Vec::new(),
     };
     for index in 0..modules.len() {
-        let bindings = bindings_for(&modules[index], index, &edges[index], &exports)?;
+        let mut bindings = bindings_for(&modules[index], index, &edges[index], &exports)?;
+        if test_target && index == 0 {
+            if let Some(function) = modules[index]
+                .functions
+                .iter_mut()
+                .find(|function| function.name.name == "main")
+            {
+                function.name.name = PROGRAM_MAIN.to_owned();
+                bindings.insert("main".to_owned(), PROGRAM_MAIN.to_owned());
+            }
+            for test in &mut root_tests {
+                rewrite_block(&mut test.body, &bindings);
+            }
+        }
         rewrite_module(&mut modules[index], index, &bindings);
         combined.types.append(&mut modules[index].types);
         combined.enums.append(&mut modules[index].enums);
@@ -131,6 +183,9 @@ pub(super) fn compile<R: ModuleResolver>(
             .implementations
             .append(&mut modules[index].implementations);
         combined.functions.append(&mut modules[index].functions);
+    }
+    if test_target {
+        append_test_functions(&mut combined, &root_tests)?;
     }
     let mut prelude = crate::prelude::parse().map_err(|error| error.to_string())?;
     prelude.types.append(&mut combined.types);
@@ -160,7 +215,124 @@ pub(super) fn compile<R: ModuleResolver>(
     }));
     let wasm = crate::codegen::compile_project_module(&mut combined, &source_inputs, options)
         .map_err(|error| error.render(&files[0].text))?;
-    Ok(CompiledModule { wasm })
+    Ok((CompiledModule { wasm }, tests))
+}
+
+/// Validates source test names and returns runner-visible metadata in declaration order.
+fn test_metadata(
+    tests: &[TestDeclaration<'_>],
+    source_id: &str,
+) -> Result<Vec<CompiledTest>, String> {
+    let mut names = HashSet::new();
+    let mut metadata = Vec::with_capacity(tests.len());
+    for test in tests {
+        if test.description.is_empty() {
+            return Err(format!("{source_id}: test descriptions must not be empty"));
+        }
+        if !names.insert(test.description.as_str()) {
+            return Err(format!(
+                "{source_id}: duplicate test description `{}`",
+                test.description
+            ));
+        }
+        metadata.push(CompiledTest {
+            description: test.description.clone(),
+        });
+    }
+    Ok(metadata)
+}
+
+/// Appends compiler-private test functions and a dispatcher entry point to one module.
+fn append_test_functions<'a>(
+    module: &mut Module<'a>,
+    tests: &[TestDeclaration<'a>],
+) -> Result<(), String> {
+    if tests.is_empty() {
+        return Err("test source declares no tests".to_owned());
+    }
+    for (index, test) in tests.iter().enumerate() {
+        module.functions.push(FunctionDeclaration {
+            name: Identifier {
+                name: test_function_name(index),
+                span: test.span,
+            },
+            parameters: Vec::new(),
+            return_type: None,
+            body: test.body.clone(),
+            span: test.span,
+        });
+    }
+    let span = tests[0].span;
+    let test_index = Identifier {
+        name: "$exs_test_index".to_owned(),
+        span,
+    };
+    let mut statements = Vec::with_capacity(tests.len() + 1);
+    for index in 0..tests.len() {
+        let index_value = i128::try_from(index)
+            .map_err(|_| "too many tests for ExS Int test dispatch".to_owned())?;
+        let condition = Expression::Binary {
+            operator: BinaryOperator::Equal,
+            left: Box::new(Expression::Variable(test_index.clone())),
+            right: Box::new(Expression::Integer(index_value, span)),
+            span,
+        };
+        let result = Expression::Call {
+            callee: Identifier {
+                name: test_function_name(index),
+                span,
+            },
+            arguments: Vec::new(),
+            span,
+        };
+        statements.push(Statement::If {
+            condition,
+            then_block: Block {
+                statements: vec![Statement::Return {
+                    value: Some(result),
+                    span,
+                }],
+                span,
+            },
+            else_branch: None,
+            span,
+        });
+    }
+    statements.push(Statement::Return {
+        value: Some(Expression::Call {
+            callee: Identifier {
+                name: "Error".to_owned(),
+                span,
+            },
+            arguments: vec![
+                Expression::String("TestRunnerError".to_owned(), span),
+                Expression::String("unknown test index".to_owned(), span),
+                Expression::Variable(test_index.clone()),
+            ],
+            span,
+        }),
+        span,
+    });
+    module.functions.push(FunctionDeclaration {
+        name: Identifier {
+            name: TEST_MAIN.to_owned(),
+            span,
+        },
+        parameters: vec![Parameter {
+            name: test_index,
+            type_annotation: None,
+            variadic: false,
+        }],
+        return_type: None,
+        body: Block { statements, span },
+        span,
+    });
+    Ok(())
+}
+
+/// Returns the compiler-private function name for one source test index.
+fn test_function_name(index: usize) -> String {
+    format!("$exs_test_{index}")
 }
 
 /// Collects direct declarations that another module may import.
@@ -176,6 +348,9 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<HashMap<String, 
     {
         if name == "Self" {
             return Err("`Self` is reserved for trait type annotations".to_owned());
+        }
+        if matches!(name.as_str(), "assert" | "assert_eq") {
+            return Err(format!("`{name}` is a reserved standard-library function"));
         }
         let canonical = canonical(index, name);
         if exports.insert(name.clone(), canonical).is_some() {

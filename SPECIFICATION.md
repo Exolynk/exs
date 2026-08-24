@@ -18,11 +18,12 @@ This document defines the ExS source language. It is written for authors of ExS 
 - [10. Parallel Work with `par`](#10-parallel-work-with-par)
 - [11. Modules](#11-modules)
 - [12. Built-ins and Host Calls](#12-built-ins-and-host-calls)
-- [13. Grammar Summary](#13-grammar-summary)
+- [13. Tests](#13-tests)
+- [14. Grammar Summary](#14-grammar-summary)
 
 # 1. Program Structure
 
-An ExS source file is a module. A module has an optional import and `use` prelude followed by declarations. Executable statements and `let` declarations are not permitted at module scope.
+An ExS source file is a module. A module has an optional import and `use` prelude followed by declarations. Executable statements and `let` declarations are not permitted at module scope. A module may also declare source tests; normal program compilation omits them.
 
 The root module must declare exactly one `fn main(...)` function. Imported modules must not declare `main`.
 
@@ -567,7 +568,21 @@ Host-call arguments and final program results cross an acyclic, by-value runner 
 
 The available names, their argument contracts, capabilities, and side effects are defined by the embedding host, not by ExS.
 
-# 13. Grammar Summary
+# 13. Tests
+
+Tests are named module declarations executed by `exs test`. The command discovers test-bearing `.exs` files recursively, excluding `.git` and `target`, and runs every declared test in a fresh execution instance. `exs test path/to/file.exs` and `exs test path/to/directory` restrict discovery.
+
+```exs
+test "adds two values" {
+    assert_eq(20 + 22, 42, "addition must preserve both operands");
+}
+```
+
+Test declarations are not included by `exs run` or `exs compile`. A failed assertion creates a fatal `AssertionFailed` Error, so execution stops immediately whether the assertion appears in a test or ordinary program function.
+
+Every item in `std::` is automatically available in every module under its final name, so the `std::` qualifier is optional. `assert(condition[, description])` requires a Bool condition and accepts an optional String description. It returns None when the condition is true. Without a description, assertion failures use `"assert failed"`. `assert_eq(actual, expected[, description])` compares values with the normal `==` equality semantics and returns None when they compare equal. It accepts an optional String description and otherwise uses `"assert_eq failed"`. Assertion failures carry the description as their message; `assert_eq` carries actual and expected values as error data. `std::test::assert` and `std::test::assert_eq` are the equivalent qualified spellings.
+
+# 14. Grammar Summary
 
 This grammar summarizes the source syntax. Lexical rules, including string forms and ASCII identifiers, are defined earlier in this document.
 
@@ -579,9 +594,10 @@ useDecl         = "use" qualifiedName [ "as" identifier ] ";"
                 | "use" identifier "::" "{" useItem { "," useItem } [ "," ] "}" ";" ;
 useItem         = identifier [ "as" identifier ] ;
 qualifiedName   = identifier { "::" identifier } ;
-item            = functionDecl | typeDecl | enumDecl | traitDecl | implDecl ;
+item            = functionDecl | testDecl | typeDecl | enumDecl | traitDecl | implDecl ;
 
 functionDecl    = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] block ;
+testDecl        = "test" string block ;
 typeDecl        = "type" identifier "{" [ typeField { "," typeField } [ "," ] ] "}" ;
 enumDecl        = "enum" identifier "{" [ enumVariant { "," enumVariant } [ "," ] ] "}" ;
 enumVariant     = identifier [ "(" [ typeField { "," typeField } [ "," ] ] ")" ] ;

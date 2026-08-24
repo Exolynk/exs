@@ -145,6 +145,21 @@ pub(super) enum Operation<'source, 'function> {
         /// Source location for this constructor invocation.
         span: SourceSpan<'source>,
     },
+    /// Calls one fatal standard assertion intrinsic.
+    Assert {
+        /// Boolean assertion result.
+        condition: u32,
+        /// Actual value retained for a failed `assert_eq` diagnostic.
+        actual: Option<u32>,
+        /// Expected value retained for a failed `assert_eq` diagnostic.
+        expected: Option<u32>,
+        /// Required human-readable assertion description.
+        description: u32,
+        /// Frame slot receiving None or the fatal Error.
+        destination: u32,
+        /// Full source call span.
+        span: SourceSpan<'source>,
+    },
     /// Constructs an empty nominal Object with a compiler-resolved type tag.
     TypedObject {
         type_id: u32,
@@ -588,6 +603,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::List { span, .. }
         | Operation::Object { span, .. }
         | Operation::Error { span, .. }
+        | Operation::Assert { span, .. }
         | Operation::TypedObject { span, .. }
         | Operation::Enum { span, .. }
         | Operation::EnumMatches { span, .. }

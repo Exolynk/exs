@@ -48,6 +48,34 @@ fn executes_example_scripts() {
     }
 }
 
+/// Executes standalone test examples through the public test command.
+#[test]
+fn executes_example_tests() {
+    let tests_directory = workspace_root().join("examples/scripts");
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("test")
+        .arg(&tests_directory)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!(
+            "could not execute example tests directory {}: {error}",
+            tests_directory.display()
+        ),
+    };
+    assert!(
+        output.status.success(),
+        "example tests failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("test result: 3 passed; 0 failed"),
+        "example test command did not report every passing test\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+}
+
 /// Returns all `.exs` scripts in the workspace examples directory in a stable order.
 fn example_scripts() -> Vec<PathBuf> {
     let scripts_directory = workspace_root().join("examples/scripts");
