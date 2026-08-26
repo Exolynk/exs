@@ -9,6 +9,39 @@ use exs_abi::ExsValue;
 /// The owned future returned by an asynchronous host function.
 pub type HostFuture = Pin<Box<dyn Future<Output = ExsValue> + Send>>;
 
+/// The result of requesting one value from a host-owned pull stream.
+pub enum HostStreamItem {
+    /// One stream value is available.
+    Item(ExsValue),
+    /// The stream has no remaining values.
+    End,
+}
+
+/// The owned future returned when advancing one host-owned pull stream.
+pub type HostStreamFuture = Pin<Box<dyn Future<Output = HostStreamItem> + Send>>;
+
+/// A single-consumer host source that yields values on demand.
+pub trait HostStream: Send {
+    /// Asynchronously produces one item or reports the end of the source.
+    fn next(&mut self) -> HostStreamFuture;
+}
+
+/// Opens one host-owned pull stream from ordered ExS arguments.
+pub trait HostStreamFunction: Send + Sync {
+    /// Creates a fresh stream instance for one ExS invocation.
+    fn open(&self, arguments: Vec<ExsValue>) -> Result<Box<dyn HostStream>, ExsValue>;
+}
+
+impl<Function, Stream> HostStreamFunction for Function
+where
+    Function: Fn(Vec<ExsValue>) -> Result<Stream, ExsValue> + Send + Sync,
+    Stream: HostStream + 'static,
+{
+    fn open(&self, arguments: Vec<ExsValue>) -> Result<Box<dyn HostStream>, ExsValue> {
+        self(arguments).map(|stream| Box::new(stream) as Box<dyn HostStream>)
+    }
+}
+
 /// A synchronous host function registered under a runner-owned static name.
 pub trait SyncHostFunction: Send + Sync {
     /// Runs the function with its ordered ExS arguments.

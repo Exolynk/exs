@@ -385,6 +385,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 });
                 Ok(destination)
             }
+            Expression::HostStream { arguments, span } => self.lower_host_stream(arguments, *span),
             Expression::Index {
                 receiver,
                 index,
@@ -1203,6 +1204,65 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             });
         }
         Ok(object)
+    }
+
+    /// Lowers Host::stream through the internal open ABI without introducing a source helper.
+    fn lower_host_stream(
+        &mut self,
+        arguments: &'function [Expression<'source>],
+        span: SourceSpan<'source>,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        let nominal = self.types.get("HostStream").cloned().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                span,
+                "missing compiler-owned HostStream type",
+            ))
+        })?;
+        let handle_contract = nominal
+            .fields
+            .iter()
+            .find(|field| field.name == "handle")
+            .map(|field| field.contract.clone())
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    span,
+                    "missing compiler-owned HostStream handle field",
+                ))
+            })?;
+        let name = self.temporary(span)?;
+        self.operations.push(Operation::String {
+            value: exs_abi::HOST_STREAM_OPEN_HOST_NAME,
+            destination: name,
+            span,
+        });
+        let mut slots = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            slots.push(self.lower_expression(argument)?);
+        }
+        let argument_list = self.temporary(span)?;
+        let handle = self.temporary(span)?;
+        self.operations.push(Operation::HostCall {
+            name,
+            arguments: slots,
+            argument_list,
+            destination: handle,
+            span,
+        });
+        self.operations.push(Operation::HostResume {
+            destination: handle,
+            span,
+        });
+        let destination = self.temporary(span)?;
+        self.operations.push(Operation::HostStream {
+            handle,
+            type_id: nominal.id,
+            handle_contract,
+            destination,
+            span,
+        });
+        Ok(destination)
     }
 
     /// Allocates one durable frame slot.

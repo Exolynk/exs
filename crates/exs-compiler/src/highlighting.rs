@@ -595,6 +595,11 @@ fn highlight_expression(
                 highlight_expression(argument, spans, len);
             }
         }
+        Expression::HostStream { arguments, .. } => {
+            for argument in arguments {
+                highlight_expression(argument, spans, len);
+            }
+        }
         Expression::MethodCall {
             receiver,
             method,

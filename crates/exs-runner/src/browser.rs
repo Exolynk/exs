@@ -1,13 +1,15 @@
 //! Browser-backed execution for compiled `ExS` modules.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 
 use exs_abi::{
-    ABI_VERSION, ErrorSeverity, ExsError, ExsValue, HOST_SLEEP_HOST_NAME, SourcePositionId,
+    ABI_VERSION, ErrorSeverity, ExsError, ExsValue, HOST_SLEEP_HOST_NAME,
+    HOST_STREAM_NEXT_HOST_NAME, HOST_STREAM_OPEN_HOST_NAME, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
+    SourcePositionId,
 };
 use js_sys::{Error as JsError, Function, Promise, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
@@ -17,6 +19,39 @@ use crate::{HostCborError, RunnerError, decode_arguments, encode_result};
 
 /// One non-threaded future returned by a browser host function.
 type BrowserHostFuture = Pin<Box<dyn Future<Output = ExsValue> + 'static>>;
+
+/// The result of requesting one value from a browser host-owned pull stream.
+pub enum BrowserHostStreamItem {
+    /// One stream value is available.
+    Item(ExsValue),
+    /// The stream has no remaining values.
+    End,
+}
+
+/// The owned future returned when advancing one browser host-owned pull stream.
+pub type BrowserHostStreamFuture = Pin<Box<dyn Future<Output = BrowserHostStreamItem> + 'static>>;
+
+/// A single-consumer browser host source that yields values on demand.
+pub trait BrowserHostStream {
+    /// Asynchronously produces one item or reports the end of the source.
+    fn next(&mut self) -> BrowserHostStreamFuture;
+}
+
+/// Opens one browser host-owned pull stream from ordered ExS arguments.
+pub trait BrowserHostStreamFunction {
+    /// Creates a fresh stream instance for one ExS invocation.
+    fn open(&self, arguments: Vec<ExsValue>) -> Result<Box<dyn BrowserHostStream>, ExsValue>;
+}
+
+impl<Function, Stream> BrowserHostStreamFunction for Function
+where
+    Function: Fn(Vec<ExsValue>) -> Result<Stream, ExsValue> + 'static,
+    Stream: BrowserHostStream + 'static,
+{
+    fn open(&self, arguments: Vec<ExsValue>) -> Result<Box<dyn BrowserHostStream>, ExsValue> {
+        self(arguments).map(|stream| Box::new(stream) as Box<dyn BrowserHostStream>)
+    }
+}
 
 /// One browser host implementation registered under a static name.
 #[derive(Clone)]
@@ -33,6 +68,22 @@ enum BrowserHostCall {
     Ready(ExsValue),
     /// An asynchronous host function must resolve before the ExS task can resume.
     Pending(BrowserHostFuture),
+    /// A stream advance that must release its handle state after completion.
+    StreamPending {
+        future: BrowserHostStreamFuture,
+        stream_id: i64,
+    },
+}
+
+/// Browser-local host stream state isolated to one root execution.
+#[derive(Default)]
+struct BrowserStreamState {
+    /// Active streams keyed first by their JavaScript execution identity.
+    active: HashMap<u32, HashMap<i64, Box<dyn BrowserHostStream>>>,
+    /// Stream advances currently awaiting completion.
+    pending: HashSet<(u32, i64)>,
+    /// Next globally unique stream handle.
+    next_id: i64,
 }
 
 /// Host functions available to one browser runner configuration.
@@ -40,6 +91,10 @@ enum BrowserHostCall {
 pub struct BrowserHostFunctionRegistry {
     /// Browser-local functions that may capture non-thread-safe Rust-Wasm state.
     functions: Rc<RefCell<HashMap<String, BrowserHostFunction>>>,
+    /// Browser-local pull-stream factories keyed by application name.
+    streams: Rc<RefCell<HashMap<String, Rc<dyn BrowserHostStreamFunction>>>>,
+    /// Per-execution stream instances owned by the browser runner bridge.
+    stream_state: Rc<RefCell<BrowserStreamState>>,
 }
 
 impl BrowserHostFunctionRegistry {
@@ -85,6 +140,34 @@ impl BrowserHostFunctionRegistry {
         )
     }
 
+    /// Registers one browser pull-stream factory under a static host name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the name is empty or already registered.
+    pub fn register_stream<Host>(
+        &mut self,
+        name: impl Into<String>,
+        function: Host,
+    ) -> Result<(), BrowserRegistryError>
+    where
+        Host: BrowserHostStreamFunction + 'static,
+    {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(BrowserRegistryError::EmptyName);
+        }
+        if is_reserved_host_name(&name) {
+            return Err(BrowserRegistryError::ReservedName(name));
+        }
+        if self.functions.borrow().contains_key(&name) || self.streams.borrow().contains_key(&name)
+        {
+            return Err(BrowserRegistryError::DuplicateName(name));
+        }
+        let _previous = self.streams.borrow_mut().insert(name, Rc::new(function));
+        Ok(())
+    }
+
     /// Starts the browser host implementation registered for one name.
     fn start(
         &self,
@@ -103,6 +186,93 @@ impl BrowserHostFunctionRegistry {
         })
     }
 
+    /// Opens one fresh stream instance for the current browser execution.
+    fn open_stream(
+        &self,
+        execution_id: u32,
+        mut arguments: Vec<ExsValue>,
+        origin: Option<SourcePositionId>,
+    ) -> BrowserHostCall {
+        let Some(name) = arguments.first() else {
+            return BrowserHostCall::Ready(stream_name_missing_error(origin));
+        };
+        let ExsValue::String(name) = name else {
+            return BrowserHostCall::Ready(stream_name_error(name.clone(), origin));
+        };
+        let name = name.clone();
+        let _stream_name = arguments.remove(0);
+        let Some(factory) = self.streams.borrow().get(&name).cloned() else {
+            return BrowserHostCall::Ready(missing_stream_error(&name, origin));
+        };
+        match factory.open(arguments) {
+            Ok(stream) => {
+                let mut state = self.stream_state.borrow_mut();
+                let stream_id = state.next_id;
+                state.next_id = state.next_id.saturating_add(1);
+                state
+                    .active
+                    .entry(execution_id)
+                    .or_default()
+                    .insert(stream_id, stream);
+                BrowserHostCall::Ready(ExsValue::Int(stream_id))
+            }
+            Err(error) => BrowserHostCall::Ready(error),
+        }
+    }
+
+    /// Starts one stream advance while enforcing single-consumer access.
+    fn start_stream_next(
+        &self,
+        execution_id: u32,
+        arguments: Vec<ExsValue>,
+        origin: Option<SourcePositionId>,
+    ) -> BrowserHostCall {
+        let stream_id = match arguments.as_slice() {
+            [ExsValue::Int(stream_id)] => *stream_id,
+            [other, ..] => {
+                return BrowserHostCall::Ready(stream_handle_error(other.clone(), origin));
+            }
+            [] => return BrowserHostCall::Ready(stream_handle_missing_error(origin)),
+        };
+        let mut state = self.stream_state.borrow_mut();
+        if state.pending.contains(&(execution_id, stream_id)) {
+            return BrowserHostCall::Ready(stream_busy_error(stream_id, origin));
+        }
+        let Some(stream) = state
+            .active
+            .get_mut(&execution_id)
+            .and_then(|streams| streams.get_mut(&stream_id))
+        else {
+            return BrowserHostCall::Ready(invalid_stream_handle_error(stream_id, origin));
+        };
+        let future = stream.next();
+        let _inserted = state.pending.insert((execution_id, stream_id));
+        BrowserHostCall::StreamPending { future, stream_id }
+    }
+
+    /// Releases one completed stream advance and drops streams that reached End.
+    fn complete_stream_next(
+        &self,
+        execution_id: u32,
+        stream_id: i64,
+        item: &BrowserHostStreamItem,
+    ) {
+        let mut state = self.stream_state.borrow_mut();
+        state.pending.remove(&(execution_id, stream_id));
+        if matches!(item, BrowserHostStreamItem::End)
+            && let Some(streams) = state.active.get_mut(&execution_id)
+        {
+            let _stream = streams.remove(&stream_id);
+        }
+    }
+
+    /// Drops every stream retained by one completed or cancelled browser execution.
+    fn release_execution(&self, execution_id: u32) {
+        let mut state = self.stream_state.borrow_mut();
+        let _streams = state.active.remove(&execution_id);
+        state.pending.retain(|(id, _)| *id != execution_id);
+    }
+
     /// Inserts one function after enforcing stable browser-registry name rules.
     fn insert(
         &mut self,
@@ -112,8 +282,11 @@ impl BrowserHostFunctionRegistry {
         if name.is_empty() {
             return Err(BrowserRegistryError::EmptyName);
         }
+        if is_reserved_host_name(&name) {
+            return Err(BrowserRegistryError::ReservedName(name));
+        }
         let mut functions = self.functions.borrow_mut();
-        if functions.contains_key(&name) {
+        if functions.contains_key(&name) || self.streams.borrow().contains_key(&name) {
             return Err(BrowserRegistryError::DuplicateName(name));
         }
         let _previous = functions.insert(name, function);
@@ -128,6 +301,8 @@ pub enum BrowserRegistryError {
     EmptyName,
     /// A registration attempted to replace an existing static host name.
     DuplicateName(String),
+    /// A registration attempted to claim a runner-internal host name.
+    ReservedName(String),
     /// A host call referenced an unregistered static host name.
     UnknownName(String),
 }
@@ -140,6 +315,12 @@ impl std::fmt::Display for BrowserRegistryError {
             Self::DuplicateName(name) => {
                 write!(formatter, "host function `{name}` is already registered")
             }
+            Self::ReservedName(name) => {
+                write!(
+                    formatter,
+                    "host function `{name}` is reserved by the runner"
+                )
+            }
             Self::UnknownName(name) => {
                 write!(formatter, "host function `{name}` is not registered")
             }
@@ -148,6 +329,14 @@ impl std::fmt::Display for BrowserRegistryError {
 }
 
 impl std::error::Error for BrowserRegistryError {}
+
+/// Returns whether one name is intercepted by the browser Host ABI.
+fn is_reserved_host_name(name: &str) -> bool {
+    matches!(
+        name,
+        HOST_SLEEP_HOST_NAME | HOST_STREAM_OPEN_HOST_NAME | HOST_STREAM_NEXT_HOST_NAME
+    )
+}
 
 /// Browser-specific configuration used when creating one reusable runner.
 #[derive(Default)]
@@ -174,7 +363,9 @@ pub struct BrowserRunner {
     /// Browser-compiled module and its JavaScript execution controller.
     controller: JsValue,
     /// Rust callback retained for as long as JavaScript may invoke the Host ABI imports.
-    _host_callback: Closure<dyn FnMut(String, Uint8Array, i32) -> JsValue>,
+    _host_callback: Closure<dyn FnMut(String, Uint8Array, i32, i32) -> JsValue>,
+    /// Rust callback retained for execution-scoped host stream cleanup.
+    _release_callback: Closure<dyn FnMut(i32)>,
 }
 
 impl BrowserRunner {
@@ -188,24 +379,36 @@ impl BrowserRunner {
         let registry = configuration.registry;
         let callback_registry = registry.clone();
         let callback = Closure::wrap(Box::new(
-            move |name: String, arguments: Uint8Array, source_position: i32| {
+            move |name: String, arguments: Uint8Array, source_position: i32, execution_id: i32| {
+                let Ok(execution_id) = u32::try_from(execution_id) else {
+                    return rejected_browser_value("browser execution identity is invalid");
+                };
                 start_host_call(
                     &callback_registry,
+                    execution_id,
                     &name,
                     &arguments.to_vec(),
                     source_position,
                 )
             },
         )
-            as Box<dyn FnMut(String, Uint8Array, i32) -> JsValue>);
+            as Box<dyn FnMut(String, Uint8Array, i32, i32) -> JsValue>);
+        let release_registry = registry.clone();
+        let release = Closure::wrap(Box::new(move |execution_id: i32| {
+            if let Ok(execution_id) = u32::try_from(execution_id) {
+                release_registry.release_execution(execution_id);
+            }
+        }) as Box<dyn FnMut(i32)>);
         let wasm = Uint8Array::from(wasm);
         let host = callback.as_ref().unchecked_ref::<Function>();
-        let promise =
-            create_browser_runner(&wasm, host, ABI_VERSION.cast_signed()).map_err(browser_error)?;
+        let release_host = release.as_ref().unchecked_ref::<Function>();
+        let promise = create_browser_runner(&wasm, host, release_host, ABI_VERSION.cast_signed())
+            .map_err(browser_error)?;
         let controller = JsFuture::from(promise).await.map_err(browser_error)?;
         Ok(Self {
             controller,
             _host_callback: callback,
+            _release_callback: release,
         })
     }
 
@@ -238,6 +441,7 @@ impl BrowserRunner {
 /// Starts one Rust browser host function and converts its result into the JavaScript bridge form.
 fn start_host_call(
     registry: &BrowserHostFunctionRegistry,
+    execution_id: u32,
     name: &str,
     arguments: &[u8],
     source_position: i32,
@@ -251,6 +455,10 @@ fn start_host_call(
     let origin = u32::try_from(source_position).ok().map(SourcePositionId);
     let call = if name == HOST_SLEEP_HOST_NAME {
         Ok(start_host_sleep(arguments, origin))
+    } else if name == HOST_STREAM_OPEN_HOST_NAME {
+        Ok(registry.open_stream(execution_id, arguments, origin))
+    } else if name == HOST_STREAM_NEXT_HOST_NAME {
+        Ok(registry.start_stream_next(execution_id, arguments, origin))
     } else {
         registry.start(name, arguments)
     };
@@ -263,6 +471,27 @@ fn start_host_call(
             browser_response(&future.await).map_err(|error| JsError::new(&error).into())
         })
         .into(),
+        Ok(BrowserHostCall::StreamPending { future, stream_id }) => {
+            let registry = registry.clone();
+            future_to_promise(async move {
+                let item = future.await;
+                registry.complete_stream_next(execution_id, stream_id, &item);
+                let value = match item {
+                    BrowserHostStreamItem::Item(value) => ExsValue::Enum {
+                        type_id: STANDARD_ITERATOR_STEP_TYPE_IDENTITY.to_owned(),
+                        variant: "Item".to_owned(),
+                        fields: vec![value],
+                    },
+                    BrowserHostStreamItem::End => ExsValue::Enum {
+                        type_id: STANDARD_ITERATOR_STEP_TYPE_IDENTITY.to_owned(),
+                        variant: "Done".to_owned(),
+                        fields: Vec::new(),
+                    },
+                };
+                browser_response(&value).map_err(|error| JsError::new(&error).into())
+            })
+            .into()
+        }
         Err(BrowserRegistryError::UnknownName(name)) => {
             match browser_response(&missing_host_error(name, origin)) {
                 Ok(value) => value,
@@ -334,6 +563,94 @@ fn sleep_error(message: String, origin: Option<SourcePositionId>) -> ExsValue {
         trace: Vec::new(),
         cause: None,
     })
+}
+
+/// Builds one recoverable browser Host stream error.
+fn stream_error(
+    kind: &str,
+    message: String,
+    data: ExsValue,
+    origin: Option<SourcePositionId>,
+) -> ExsValue {
+    ExsValue::Error(ExsError {
+        severity: ErrorSeverity::Recoverable,
+        kind: kind.to_owned(),
+        message,
+        data: Box::new(data),
+        origin,
+        trace: Vec::new(),
+        cause: None,
+    })
+}
+
+/// Builds the Error returned when Host::stream omits its registered stream name.
+fn stream_name_missing_error(origin: Option<SourcePositionId>) -> ExsValue {
+    stream_error(
+        "TypeError",
+        "Host::stream expects a stream name as its first argument".to_owned(),
+        ExsValue::None,
+        origin,
+    )
+}
+
+/// Builds the Error returned when Host::stream receives a non-String stream name.
+fn stream_name_error(value: ExsValue, origin: Option<SourcePositionId>) -> ExsValue {
+    stream_error(
+        "TypeError",
+        "Host::stream expects a String stream name".to_owned(),
+        value,
+        origin,
+    )
+}
+
+/// Builds the Error returned when a stream advance omits its handle.
+fn stream_handle_missing_error(origin: Option<SourcePositionId>) -> ExsValue {
+    stream_error(
+        "TypeError",
+        "stream next expects a stream handle".to_owned(),
+        ExsValue::None,
+        origin,
+    )
+}
+
+/// Builds the Error returned when a stream advance receives a non-Int handle.
+fn stream_handle_error(value: ExsValue, origin: Option<SourcePositionId>) -> ExsValue {
+    stream_error(
+        "TypeError",
+        "stream handle must be an Int".to_owned(),
+        value,
+        origin,
+    )
+}
+
+/// Builds the Error returned when a stream already has a pending advance.
+fn stream_busy_error(stream_id: i64, origin: Option<SourcePositionId>) -> ExsValue {
+    stream_error(
+        "StreamBusy",
+        format!("stream handle `{stream_id}` already has a pending next call"),
+        ExsValue::Int(stream_id),
+        origin,
+    )
+}
+
+/// Builds the Error returned when a stream handle is no longer active.
+fn invalid_stream_handle_error(stream_id: i64, origin: Option<SourcePositionId>) -> ExsValue {
+    stream_error(
+        "InvalidStreamHandle",
+        format!("stream handle `{stream_id}` is not open"),
+        ExsValue::Int(stream_id),
+        origin,
+    )
+}
+
+/// Builds the Error returned for an unregistered stream factory.
+fn missing_stream_error(name: &str, origin: Option<SourcePositionId>) -> ExsValue {
+    stream_error(
+        "HostFunctionNotFound",
+        format!("unknown host stream `{name}`"),
+        ExsValue::None,
+        origin,
+    )
 }
 
 /// Encodes one host response into the byte-array value expected by the JavaScript bridge.
@@ -418,25 +735,34 @@ function exportedFunction(exports, name) {
     return value;
 }
 
-export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
+export async function createBrowserRunner(wasm, host, release, expectedAbiVersion) {
     const module = await WebAssembly.compile(bytes(wasm, "compiled ExS module"));
     if (typeof host !== "function") {
         throw new TypeError("browser host dispatcher must be a function");
     }
+    if (typeof release !== "function") {
+        throw new TypeError("browser host cleanup callback must be a function");
+    }
+    let nextExecutionId = 1;
     return {
-            async execute(functionName, input) {
+        async execute(functionName, input) {
+            if (nextExecutionId > 2_147_483_647) {
+                throw new RangeError("browser execution identity overflow");
+            }
+            const executionId = nextExecutionId++;
             const ready = new Map();
             const pending = new Map();
             let activeTasks = 0;
             let memory;
-            const imports = {
+            try {
+                const imports = {
                 exs: {
                     __exs_host_call_start(callId, namePointer, nameLength, requestPointer, requestLength, sourcePosition) {
                         const name = new TextDecoder("utf-8", { fatal: true }).decode(
                             read(memory, namePointer, nameLength, "host function name"),
                         );
                         const request = read(memory, requestPointer, requestLength, "host-call request");
-                        const response = host(name, request, sourcePosition);
+                        const response = host(name, request, sourcePosition, executionId);
                         if (response && typeof response.then === "function") {
                             pending.set(
                                 callId,
@@ -480,28 +806,28 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
                         return 0;
                     },
                 },
-            };
-            const instance = await WebAssembly.instantiate(module, imports);
-            memory = instance.exports.memory;
-            if (!(memory instanceof WebAssembly.Memory)) {
+                };
+                const instance = await WebAssembly.instantiate(module, imports);
+                memory = instance.exports.memory;
+                if (!(memory instanceof WebAssembly.Memory)) {
                 throw new TypeError("missing exported ExS linear memory");
-            }
-            const version = exportedFunction(instance.exports, "__exs_abi_version")();
-            if (version !== expectedAbiVersion) {
+                }
+                const version = exportedFunction(instance.exports, "__exs_abi_version")();
+                if (version !== expectedAbiVersion) {
                 throw new TypeError(`expected ExS ABI version ${expectedAbiVersion}, received ${version}`);
-            }
-            const inputBytes = bytes(input, "ExS input");
-            const allocate = exportedFunction(instance.exports, "__exs_input_alloc");
-            const inputPointer = allocate(inputBytes.length);
-            write(memory, inputPointer, inputBytes, "ExS input");
-            if (typeof functionName !== "string" || functionName.length === 0) {
+                }
+                const inputBytes = bytes(input, "ExS input");
+                const allocate = exportedFunction(instance.exports, "__exs_input_alloc");
+                const inputPointer = allocate(inputBytes.length);
+                write(memory, inputPointer, inputBytes, "ExS input");
+                if (typeof functionName !== "string" || functionName.length === 0) {
                 throw new TypeError("ExS function name must be a non-empty string");
-            }
-            const start = exportedFunction(instance.exports, `__exs_start_${functionName}`);
-            const resultPointer = exportedFunction(instance.exports, "__exs_result_ptr");
-            const resultLength = exportedFunction(instance.exports, "__exs_result_len");
-            let status = start(inputPointer, inputBytes.length);
-            while (true) {
+                }
+                const start = exportedFunction(instance.exports, `__exs_start_${functionName}`);
+                const resultPointer = exportedFunction(instance.exports, "__exs_result_ptr");
+                const resultLength = exportedFunction(instance.exports, "__exs_result_len");
+                let status = start(inputPointer, inputBytes.length);
+                while (true) {
                 if (status === STATUS_COMPLETE) {
                     return read(memory, resultPointer(), resultLength(), "ExS result");
                 }
@@ -520,6 +846,9 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
                 write(memory, responsePointer, value, "host response");
                 const resume = exportedFunction(instance.exports, "__exs_resume_host");
                 status = resume(callId, responsePointer, value.length);
+                }
+            } finally {
+                release(executionId);
             }
         },
     };
@@ -538,6 +867,7 @@ extern "C" {
     fn create_browser_runner(
         wasm: &Uint8Array,
         host: &Function,
+        release: &Function,
         expected_abi_version: i32,
     ) -> Result<Promise, JsValue>;
 

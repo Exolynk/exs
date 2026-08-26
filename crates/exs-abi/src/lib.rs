@@ -12,8 +12,8 @@ pub use cbor::{
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 21 exports one entry wrapper for each root function.
-pub const ABI_VERSION: u32 = 21;
+/// Version 22 adds runner-owned asynchronous Host stream support.
+pub const ABI_VERSION: u32 = 22;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
@@ -53,8 +53,14 @@ pub const TYPE_ANY: u32 = TYPE_NONE
 pub const STANDARD_ORDERING_TYPE_ID: u32 = 0;
 /// Stable host-boundary identity used by the compiler-owned `std::Ordering` enum.
 pub const STANDARD_ORDERING_TYPE_IDENTITY: &str = "std::Ordering";
+/// Stable host-boundary identity used by the compiler-owned `IteratorStep` enum.
+pub const STANDARD_ITERATOR_STEP_TYPE_IDENTITY: &str = "<std>/iterator.exs::IteratorStep";
 /// Runner-internal host name used by the built-in `Host::sleep` operation.
 pub const HOST_SLEEP_HOST_NAME: &str = "__exs.host.sleep";
+/// Runner-internal host name used to open a host-owned pull stream.
+pub const HOST_STREAM_OPEN_HOST_NAME: &str = "__exs.host.stream_open";
+/// Runner-internal host name used to advance one host-owned pull stream.
+pub const HOST_STREAM_NEXT_HOST_NAME: &str = "__exs.host.stream_next";
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// Prefix for compiler-generated entry exports invoked by runners.

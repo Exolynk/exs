@@ -311,6 +311,7 @@ impl<'a> Parser<'a> {
             span: start.through(end),
         })
     }
+
     fn function(
         &mut self,
         visibility: FunctionVisibility,
@@ -1306,11 +1307,24 @@ impl<'a> Parser<'a> {
                     start.through(method.span),
                 ))
             }
+            "stream" => {
+                if values.is_empty() {
+                    return Err(self.error(
+                        start.through(end),
+                        "E0208",
+                        "Host::stream expects a host-stream name as its first argument",
+                    ));
+                }
+                return Ok(Expression::HostStream {
+                    arguments: values,
+                    span: start.through(end),
+                });
+            }
             _ => {
                 return Err(self.error(
                     method.span,
                     "E0113",
-                    "supported Host operations are `call` and `sleep`",
+                    "supported Host operations are `call`, `sleep`, and `stream`",
                 ));
             }
         };
@@ -1581,6 +1595,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
         | Expression::HostCall { span, .. }
+        | Expression::HostStream { span, .. }
         | Expression::MethodCall { span, .. }
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }

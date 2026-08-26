@@ -268,6 +268,19 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Converts one completed Host stream-open result into a HostStream or preserves its Error.
+    HostStream {
+        /// Frame slot holding the raw runner-owned stream handle or Error.
+        handle: u32,
+        /// Compiler-owned nominal HostStream type tag.
+        type_id: u32,
+        /// Contract enforced for a successful runner-provided stream handle.
+        handle_contract: TypeContract,
+        /// Frame slot receiving the HostStream or unchanged Error.
+        destination: u32,
+        /// Full source span.
+        span: SourceSpan<'source>,
+    },
     /// Invokes a direct non-suspendable Wasm function with frame-backed arguments.
     DirectCall {
         signature: FunctionSignature,
@@ -355,19 +368,19 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
-    /// Evaluates one for-loop iteration condition.
-    ForBranch {
-        snapshot: u32,
-        index: u32,
-        length: u32,
+    /// Branches on one IteratorStep after storing its Item payload for the loop body.
+    IteratorBranch {
+        step: u32,
+        item: u32,
         checked: u32,
-        when_true: u32,
-        when_false: u32,
-        span: SourceSpan<'source>,
-    },
-    /// Increments one durable loop index.
-    Increment {
-        slot: u32,
+        type_identity_slot: u32,
+        done_variant_slot: u32,
+        item_variant_slot: u32,
+        type_identity: String,
+        done_variant: String,
+        item_variant: String,
+        when_item: u32,
+        when_done: u32,
         span: SourceSpan<'source>,
     },
     /// Completes the resumable frame with a source result value.
@@ -614,6 +627,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::PropertySet { span, .. }
         | Operation::HostCall { span, .. }
         | Operation::HostResume { span, .. }
+        | Operation::HostStream { span, .. }
         | Operation::DirectCall { span, .. }
         | Operation::ChildCall { span, .. }
         | Operation::ClosureCall { span, .. }
@@ -627,8 +641,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::Branch { span, .. }
         | Operation::Goto { span, .. }
         | Operation::IterSnapshot { span, .. }
-        | Operation::ForBranch { span, .. }
-        | Operation::Increment { span, .. }
+        | Operation::IteratorBranch { span, .. }
         | Operation::Return { span, .. } => *span,
     }
 }
@@ -654,6 +667,7 @@ pub(super) fn expression_span<'source>(expression: &Expression<'source>) -> Sour
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }
         | Expression::HostCall { span, .. }
+        | Expression::HostStream { span, .. }
         | Expression::MethodCall { span, .. }
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }

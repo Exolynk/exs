@@ -42,7 +42,9 @@ mod registry;
 
 #[cfg(all(feature = "browser", target_arch = "wasm32"))]
 pub use self::browser::{
-    BrowserHostFunctionRegistry, BrowserRegistryError, BrowserRunner, BrowserRunnerConfig,
+    BrowserHostFunctionRegistry, BrowserHostStream, BrowserHostStreamFunction,
+    BrowserHostStreamFuture, BrowserHostStreamItem, BrowserRegistryError, BrowserRunner,
+    BrowserRunnerConfig,
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::cancellation::ExecutionCancellation;
@@ -51,7 +53,10 @@ pub use self::cbor::{
     encode_result_with_limits,
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-pub use self::host_function::{AsyncHostFunction, HostCall, HostFuture, SyncHostFunction};
+pub use self::host_function::{
+    AsyncHostFunction, HostCall, HostFuture, HostStream, HostStreamFunction, HostStreamFuture,
+    HostStreamItem, SyncHostFunction,
+};
 pub use self::limits::{ExecutionLimits, LimitKind};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::registry::{HostFunctionRegistry, RegistryError};
@@ -190,7 +195,10 @@ impl ServerRunner {
                             return Err(RunnerError::Cancelled);
                         }
                     };
-                    if !store.data_mut().complete_pending_host_call() {
+                    if !store
+                        .data_mut()
+                        .complete_pending_host_call(call_id, &response)
+                    {
                         return Err(RunnerError::Abi(
                             "runner completed an untracked pending host call".to_owned(),
                         ));

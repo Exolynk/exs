@@ -541,6 +541,13 @@ pub enum Expression<'a> {
         /// Full expression span.
         span: SourceSpan<'a>,
     },
+    /// Opens one runner-owned Host stream through the compiler-reserved Host ABI operation.
+    HostStream {
+        /// Stream-factory name followed by ordered factory arguments.
+        arguments: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
     /// A dynamically dispatched member call.
     MethodCall {
         /// Receiver evaluated before arguments.

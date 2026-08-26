@@ -55,6 +55,8 @@ impl LiteralPool {
         }
         // Formatted interpolation dispatches through this compiler-inserted method name.
         pool.insert(standard::TO_STRING_METHOD);
+        // Iterator dispatches through this compiler-inserted method name.
+        pool.insert("next");
         pool.insert(standard::ASSERT_DEFAULT_DESCRIPTION);
         pool.insert(standard::ASSERT_EQ_DEFAULT_DESCRIPTION);
         for function in &module.functions {
@@ -233,6 +235,12 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
             name, arguments, ..
         } => {
             collect_expression_literals(name, pool);
+            for argument in arguments {
+                collect_expression_literals(argument, pool);
+            }
+        }
+        Expression::HostStream { arguments, .. } => {
+            pool.insert(exs_abi::HOST_STREAM_OPEN_HOST_NAME);
             for argument in arguments {
                 collect_expression_literals(argument, pool);
             }

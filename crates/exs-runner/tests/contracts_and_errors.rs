@@ -287,6 +287,10 @@ fn returns_recoverable_errors_for_invalid_dynamic_operations() {
         "fn main(input) { for item in 1 { ret item; } ret 0; }",
         "NotIterable",
     );
+    assert_error_kind(
+        "fn main(input) { let value = {}; for item in value { ret item; } ret 0; }",
+        "NotIterable",
+    );
 }
 
 /// Returns a recoverable Error when a non-Boolean value is used as a condition.

@@ -883,6 +883,7 @@ name = "exs-rust-guest"
 version = "0.1.0"
 dependencies = [
  "exs-guest",
+ "exs-runner",
 ]
 
 [[package]]

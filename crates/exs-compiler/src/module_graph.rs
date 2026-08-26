@@ -200,7 +200,8 @@ fn compile_target<R: ModuleResolver>(
     prelude
         .implementations
         .append(&mut combined.implementations);
-    prelude.functions.append(&mut combined.functions);
+    combined.functions.append(&mut prelude.functions);
+    prelude.functions = combined.functions;
     combined = prelude;
     if combined
         .functions
@@ -651,6 +652,11 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
             name, arguments, ..
         } => {
             rewrite_expression(name, bindings);
+            for argument in arguments {
+                rewrite_expression(argument, bindings);
+            }
+        }
+        Expression::HostStream { arguments, .. } => {
             for argument in arguments {
                 rewrite_expression(argument, bindings);
             }

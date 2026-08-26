@@ -22,4 +22,21 @@ async fn add(inputs: Vec<ExsValue>) -> ExsValue {
     ExsValue::Int(value + 8)
 }
 
-exs_guest::export!(main, add);
+/// Opens the example counter stream and sums every integer it yields.
+async fn sum_stream(_inputs: Vec<ExsValue>) -> ExsValue {
+    let mut stream = match host::stream("counter", [ExsValue::Int(3)]).await {
+        Ok(stream) => stream,
+        Err(error) => return error,
+    };
+    let mut total = 0_i64;
+    loop {
+        match stream.next().await {
+            Ok(host::IteratorStep::Item(ExsValue::Int(value))) => total += value,
+            Ok(host::IteratorStep::Item(_)) => {}
+            Ok(host::IteratorStep::Done) => return ExsValue::Int(total),
+            Err(error) => return error,
+        }
+    }
+}
+
+exs_guest::export!(main, add, sum_stream);

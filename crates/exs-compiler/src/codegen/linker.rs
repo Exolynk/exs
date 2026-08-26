@@ -275,6 +275,11 @@ fn collect_closures_expression<'source, 'ast>(
                 collect_closures_expression(argument, closures);
             }
         }
+        Expression::HostStream { arguments, .. } => {
+            for argument in arguments {
+                collect_closures_expression(argument, closures);
+            }
+        }
         Expression::MethodCall {
             receiver,
             arguments,

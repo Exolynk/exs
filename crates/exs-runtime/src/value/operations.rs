@@ -4,9 +4,13 @@ use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec;
 use alloc::vec::Vec;
 
-use exs_abi::{STANDARD_ORDERING_TYPE_ID, STANDARD_ORDERING_TYPE_IDENTITY};
+use exs_abi::{
+    STANDARD_ITERATOR_STEP_TYPE_IDENTITY, STANDARD_ORDERING_TYPE_ID,
+    STANDARD_ORDERING_TYPE_IDENTITY,
+};
 use exs_value::ValueRef;
 
 use crate::gc;
@@ -212,7 +216,8 @@ pub(crate) fn index_set(receiver: ValueRef, index: ValueRef, replacement: ValueR
 pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
     match runtime::value(iterable) {
         RtValue::List(list) => {
-            let elements = list.elements.clone();
+            let mut elements = list.elements.clone();
+            elements.reverse();
             runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })))
         }
         RtValue::String(string) => {
@@ -230,16 +235,56 @@ pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
                 gc::push_temporary_root(value);
                 elements.push(value);
             }
+            elements.reverse();
             let snapshot = runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })));
             gc::restore_temporary_roots(checkpoint);
             snapshot
         }
+        RtValue::Object(_) => iterable,
         _ => runtime::recoverable_error(
             "NotIterable",
-            "for requires a List or String iterable",
+            "for requires an iterable or Iterator receiver",
             iterable,
         ),
     }
+}
+
+/// Advances one built-in List snapshot and returns a prelude IteratorStep value.
+fn iterator_next(receiver: ValueRef) -> ValueRef {
+    let item = match runtime::value_mut(receiver) {
+        RtValue::List(list) => {
+            if list.elements.is_empty() {
+                None
+            } else {
+                list.elements.pop()
+            }
+        }
+        _ => {
+            return runtime::recoverable_error(
+                "NotIterable",
+                "next requires an Iterator receiver",
+                receiver,
+            );
+        }
+    };
+    let checkpoint = gc::temporary_root_checkpoint();
+    let (variant, fields) = match item {
+        Some(item) => {
+            gc::push_temporary_root(item);
+            ("Item", vec![item])
+        }
+        None => ("Done", Vec::new()),
+    };
+    let step = runtime::allocate(RtValue::Object(Box::new(RuntimeObject::enumeration(
+        None,
+        RuntimeEnum {
+            type_identity: STANDARD_ITERATOR_STEP_TYPE_IDENTITY.into(),
+            variant: variant.into(),
+            fields,
+        },
+    ))));
+    gc::restore_temporary_roots(checkpoint);
+    step
 }
 
 /// Returns the scalar or entry count for runtime values with a visible length.
@@ -263,7 +308,7 @@ pub(crate) fn length(value: ValueRef) -> ValueRef {
 pub(crate) fn is_empty(value: ValueRef) -> ValueRef {
     let empty = match runtime::value(value) {
         RtValue::String(value) => value.as_str().is_empty(),
-        RtValue::List(value) => value.elements.is_empty(),
+        RtValue::List(value) => value.elements.len() == 0,
         RtValue::Object(value) => value.entries.is_empty(),
         _ => {
             return runtime::recoverable_error(
@@ -453,6 +498,10 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "cause" => match list::operations::require_no_arguments(arguments) {
             Ok(()) => error_cause(receiver),
+            Err(error) => error,
+        },
+        "next" => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => iterator_next(receiver),
             Err(error) => error,
         },
         "push" => match list::operations::single_argument(arguments) {

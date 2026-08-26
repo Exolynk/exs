@@ -698,6 +698,9 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
             values.extend(arguments.iter().map(render_expression));
             format!("Host::call({})", values.join(", "))
         }
+        Expression::HostStream { arguments, .. } => {
+            format!("Host::stream({})", expressions(arguments))
+        }
         Expression::MethodCall {
             receiver,
             method,

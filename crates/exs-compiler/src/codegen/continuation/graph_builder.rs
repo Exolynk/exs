@@ -248,7 +248,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         Ok(())
     }
 
-    /// Lowers a for loop through a durable iterable snapshot and index states.
+    /// Lowers a for loop through one async-capable IteratorStep at a time.
     pub(super) fn lower_for(
         &mut self,
         binding: &'function crate::ast::Identifier<'source>,
@@ -263,32 +263,60 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             destination: snapshot,
             span,
         });
-        let index = self.temporary(span)?;
-        self.operations.push(Operation::Integer {
-            value: 0,
-            destination: index,
+        let condition_start = self.operations.len();
+        let step = self.temporary(span)?;
+        self.operations.push(Operation::InstanceCall {
+            receiver: snapshot,
+            method: "next",
+            method_span: span,
+            arguments: Vec::new(),
+            targets: self
+                .methods
+                .trait_instance("Iterator", "next")
+                .map_or_else(Vec::new, ToOwned::to_owned),
+            destination: step,
             span,
         });
-        let condition_start = self.operations.len();
-        let length = self.temporary(span)?;
+        let item = self.temporary(binding.span)?;
         let checked = self.temporary(span)?;
-        let branch = self.push(Operation::ForBranch {
-            snapshot,
-            index,
-            length,
+        let type_identity_slot = self.temporary(span)?;
+        let done_variant_slot = self.temporary(span)?;
+        let item_variant_slot = self.temporary(span)?;
+        let done = self
+            .types
+            .enum_variant("IteratorStep::Done")
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    span,
+                    "missing prelude IteratorStep::Done variant",
+                ))
+            })?;
+        let item_variant = self
+            .types
+            .enum_variant("IteratorStep::Item")
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    span,
+                    "missing prelude IteratorStep::Item variant",
+                ))
+            })?;
+        let branch = self.push(Operation::IteratorBranch {
+            step,
+            item,
             checked,
-            when_true: 0,
-            when_false: 0,
+            type_identity_slot,
+            done_variant_slot,
+            item_variant_slot,
+            type_identity: done.type_identity.clone(),
+            done_variant: done.name.clone(),
+            item_variant: item_variant.name.clone(),
+            when_item: 0,
+            when_done: 0,
             span,
         })?;
         let body_start = self.operations.len();
-        let item = self.temporary(binding.span)?;
-        self.operations.push(Operation::Index {
-            receiver: snapshot,
-            index,
-            destination: item,
-            span,
-        });
         let cell = self.captured_names.contains(&binding.name);
         if cell {
             self.operations.push(Operation::CellNew {
@@ -310,15 +338,13 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         }
         let _scope = self.scopes.pop();
         let increment = self.operations.len();
-        self.operations
-            .push(Operation::Increment { slot: index, span });
         self.operations.push(Operation::Goto {
             target: self.state_id(condition_start, span)?,
             checkpoint: true,
             span,
         });
         let exit = self.operations.len();
-        self.set_for_targets(branch, body_start, exit, span)?;
+        self.set_iterator_targets(branch, body_start, exit, span)?;
         let context = self.loops.pop().ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0999",
@@ -435,8 +461,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         Ok(())
     }
 
-    /// Patches one for-loop branch after its body and exit starts are known.
-    pub(super) fn set_for_targets(
+    /// Patches one IteratorStep branch after its body and exit starts are known.
+    pub(super) fn set_iterator_targets(
         &mut self,
         state: usize,
         when_true: usize,
@@ -445,16 +471,16 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
     ) -> Result<(), CompileDiagnostics<'source>> {
         let when_true = self.state_id(when_true, span)?;
         let when_false = self.state_id(when_false, span)?;
-        let Some(Operation::ForBranch {
-            when_true: target_true,
-            when_false: target_false,
+        let Some(Operation::IteratorBranch {
+            when_item: target_true,
+            when_done: target_false,
             ..
         }) = self.operations.get_mut(state)
         else {
             return Err(diagnostics(CompileDiagnostic::new(
                 "E0999",
                 span,
-                "missing continuation for-loop branch",
+                "missing continuation IteratorStep branch",
             )));
         };
         *target_true = when_true;

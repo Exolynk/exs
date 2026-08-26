@@ -241,11 +241,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.clear_root_slot(local)?;
                 }
             }
-            Expression::HostCall { span, .. } => {
+            Expression::HostCall { span, .. } | Expression::HostStream { span, .. } => {
                 return Err(diagnostics(CompileDiagnostic::new(
                     "E0300",
                     *span,
-                    "Host::call requires the Phase 8 continuation lowerer",
+                    "Host operations require the Phase 8 continuation lowerer",
                 )));
             }
             Expression::MethodCall {

@@ -15,11 +15,18 @@ struct PreludeSource {
 }
 
 /// Prelude units linked in deterministic dependency order.
-const SOURCES: &[PreludeSource] = &[PreludeSource {
-    source_id: "<std>/duration.exs",
-    text: include_str!("duration.exs"),
-    type_names: &["Duration"],
-}];
+const SOURCES: &[PreludeSource] = &[
+    PreludeSource {
+        source_id: "<std>/duration.exs",
+        text: include_str!("duration.exs"),
+        type_names: &["Duration"],
+    },
+    PreludeSource {
+        source_id: "<std>/iterator.exs",
+        text: include_str!("iterator.exs"),
+        type_names: &["IteratorStep", "HostStream"],
+    },
+];
 
 /// Returns all named prelude source units in linking order.
 const fn sources() -> &'static [PreludeSource] {

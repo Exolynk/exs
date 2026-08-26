@@ -11,5 +11,16 @@ workspace = true
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+smoke = ["dep:exs-runner"]
+
 [dependencies]
 exs-guest = { path = "../../crates/exs-guest" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+exs-runner = { path = "../../crates/exs-runner", optional = true }
+
+[[bin]]
+name = "smoke"
+path = "src/bin/smoke.rs"
+required-features = ["smoke"]

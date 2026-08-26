@@ -430,3 +430,190 @@ fn reports_pending_execution_without_host_future_as_deadlock() {
         matches!(result, Err(RunnerError::Deadlock(message)) if message.contains("without a runner host future"))
     );
 }
+
+struct TestStream {
+    items: Vec<ExsValue>,
+}
+
+impl exs_runner::HostStream for TestStream {
+    fn next(&mut self) -> exs_runner::HostStreamFuture {
+        if self.items.is_empty() {
+            Box::pin(async { exs_runner::HostStreamItem::End })
+        } else {
+            let item = self.items.remove(0);
+            Box::pin(async move { exs_runner::HostStreamItem::Item(item) })
+        }
+    }
+}
+
+/// Consumes items produced by a host-registered stream in a for loop.
+#[test]
+fn executes_a_host_stream_in_for_loop() {
+    let source = r#"
+    fn main() -> Int | Error {
+        let stream = Host::stream("counter", 3)?;
+        let sum = 0;
+        for value in stream {
+            sum = sum + value;
+        }
+        ret sum;
+    }
+    "#;
+    let compiled = compile_source(source);
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_stream("counter", |args: Vec<ExsValue>| {
+                let count = match args.first() {
+                    Some(ExsValue::Int(n)) => *n,
+                    _ => 0,
+                };
+                let items = (1..=count).map(ExsValue::Int).collect();
+                Ok(TestStream { items })
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::Int(6));
+}
+
+/// Preserves the host stream-open Error so source `?` can return it unchanged.
+#[test]
+fn propagates_a_host_stream_open_error() {
+    let source = r#"
+    fn main() -> Error {
+        ret Host::stream("missing")?;
+    }
+    "#;
+    let compiled = compile_source(source);
+    let runner = ServerRunner::new(ExecutionLimits::default());
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    let ExsValue::Error(error) = result else {
+        panic!("missing host stream did not return an Error");
+    };
+    assert_eq!(error.kind, "HostFunctionNotFound");
+}
+
+/// Drops a completed stream handle before source can advance it again.
+#[test]
+fn closes_a_host_stream_after_end() {
+    let source = r#"
+    fn main() -> Error {
+        let stream = Host::stream("empty")?;
+        for value in stream {
+            value;
+        }
+        ret stream.next();
+    }
+    "#;
+    let compiled = compile_source(source);
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_stream("empty", |_| Ok(TestStream { items: Vec::new() }))
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    let ExsValue::Error(error) = result else {
+        panic!("closed stream advanced without an Error");
+    };
+    assert_eq!(error.kind, "InvalidStreamHandle");
+}
+
+/// Rejects a second stream advance while the first advance is still pending.
+#[test]
+fn rejects_concurrent_host_stream_advances() {
+    let source = r#"
+    fn main() -> List | Error {
+        let stream = Host::stream("single")?;
+        ret par {
+            stream.next();
+            stream.next();
+        };
+    }
+    "#;
+    let compiled = compile_source(source);
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .register_stream("single", |_| {
+                Ok(TestStream {
+                    items: vec![ExsValue::Int(1)],
+                })
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    let ExsValue::List(results) = result else {
+        panic!("parallel stream advances did not return a List");
+    };
+    assert!(matches!(
+        results.as_slice(),
+        [ExsValue::Enum { variant, .. }, ExsValue::Error(error)]
+            if variant == "Item" && error.kind == "StreamBusy"
+    ));
+}
+
+/// Iterates over a user-defined type that implements the Iterator trait.
+#[test]
+fn executes_a_custom_iterator_in_for_loop() {
+    let source = r#"
+    type ListIter {
+        items: List,
+    }
+
+    impl Iterator for ListIter {
+        fn next(self) -> IteratorStep | Error {
+            if self.items.is_empty() {
+                ret IteratorStep::Done;
+            }
+            ret IteratorStep::Item(self.items.remove(0));
+        }
+    }
+
+    fn main() -> Int {
+        let iter = ListIter { items: [1, 2, 3, 4] };
+        let sum = 0;
+        for x in iter {
+            sum = sum + x;
+        }
+        ret sum;
+    }
+    "#;
+    assert_eq!(execute_source_with_inputs(source, &[]), ExsValue::Int(10));
+}

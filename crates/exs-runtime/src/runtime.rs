@@ -309,10 +309,7 @@ pub(crate) fn input_alloc(length: i32) -> i32 {
 
 /// Decodes the runner-provided CBOR input into one runtime value.
 pub(crate) fn decode_input_value(pointer_value: i32, length: i32) -> ValueRef {
-    let checkpoint = gc::temporary_root_checkpoint();
-    let value = exs_value_to_runtime(decode_input(pointer_value, length));
-    gc::restore_temporary_roots(checkpoint);
-    value
+    exs_value_to_runtime(decode_input(pointer_value, length))
 }
 
 /// Returns the number of CBOR-decoded values supplied to the generated entry point.
@@ -362,9 +359,9 @@ pub(crate) fn set_result(value: ValueRef) {
             .to_cbor()
             .unwrap_or_else(|_| trap()),
     };
-    unsafe {
-        runtime().result_buffer = encoded;
-    }
+    let state = unsafe { runtime() };
+    state.result_buffer = encoded;
+    state.temporary_roots.clear();
 }
 
 /// Starts one fresh root execution with a running scheduler task.
@@ -387,7 +384,9 @@ pub(crate) fn scheduler_checkpoint() {
 
 /// Cancels every live scheduler task in the active root execution.
 pub(crate) fn execution_cancel() {
-    execution(unsafe { runtime() }).cancel();
+    let state = unsafe { runtime() };
+    execution(state).cancel();
+    state.temporary_roots.clear();
 }
 
 /// Returns the linear-memory pointer of the CBOR result buffer.

@@ -154,6 +154,7 @@ pub(crate) struct HirFunction<'a> {
     host_calls: Vec<HostCall<'a>>,
     parallel_calls: Vec<SourceSpan<'a>>,
     matches: bool,
+    for_loops: bool,
 }
 
 impl<'a> HirFunction<'a> {
@@ -174,6 +175,7 @@ impl<'a> HirFunction<'a> {
             host_calls: lowerer.host_calls,
             parallel_calls: lowerer.parallel_calls,
             matches: lowerer.matches,
+            for_loops: lowerer.for_loops,
         }
     }
 
@@ -217,6 +219,12 @@ impl<'a> HirFunction<'a> {
     #[must_use]
     pub(crate) const fn has_matches(&self) -> bool {
         self.matches
+    }
+
+    /// Returns whether this function contains a for loop whose iterator may suspend.
+    #[must_use]
+    pub(crate) const fn has_for_loops(&self) -> bool {
+        self.for_loops
     }
 }
 
@@ -328,6 +336,7 @@ struct FunctionLowerer<'a, 'state> {
     host_calls: Vec<HostCall<'a>>,
     parallel_calls: Vec<SourceSpan<'a>>,
     matches: bool,
+    for_loops: bool,
     instance_targets: &'state InstanceMethodTargets,
     state: &'state LoweringState<'a>,
 }
@@ -353,6 +362,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             host_calls: Vec::new(),
             parallel_calls: Vec::new(),
             matches: false,
+            for_loops: false,
             instance_targets,
             state,
         };
@@ -384,6 +394,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             host_calls: Vec::new(),
             parallel_calls: Vec::new(),
             matches: false,
+            for_loops: false,
             instance_targets,
             state,
         };
@@ -464,6 +475,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 body,
                 ..
             } => {
+                self.for_loops = true;
                 self.lower_expression(iterable);
                 self.scopes.push(HashMap::new());
                 self.declare(&binding.name, binding.span);
@@ -572,6 +584,12 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             } => {
                 self.host_calls.push(HostCall { span: *span });
                 self.lower_expression(name);
+                for argument in arguments {
+                    self.lower_expression(argument);
+                }
+            }
+            Expression::HostStream { arguments, span } => {
+                self.host_calls.push(HostCall { span: *span });
                 for argument in arguments {
                     self.lower_expression(argument);
                 }

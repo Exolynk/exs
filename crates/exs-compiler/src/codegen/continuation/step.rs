@@ -486,6 +486,44 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.complete_if_fatal_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
+            Operation::HostStream {
+                handle,
+                type_id,
+                handle_contract,
+                destination,
+                span,
+            } => {
+                self.get_slot(*handle, *span)?;
+                self.call_runtime("__exs_rt_is_error", *span)?;
+                self.call_runtime("__exs_rt_condition", *span)?;
+                self.function
+                    .instruction(&Instruction::If(BlockType::Empty));
+                self.get_slot(*handle, *span)?;
+                self.set_slot(*destination, *span)?;
+                self.function.instruction(&Instruction::Else);
+                self.validate_slot_matches(*handle, handle_contract, *span)?;
+                self.function.instruction(&Instruction::LocalGet(2));
+                self.function.instruction(&Instruction::I32Eqz);
+                self.function
+                    .instruction(&Instruction::If(BlockType::Empty));
+                self.get_slot(*handle, *span)?;
+                self.function.instruction(&Instruction::I32Const(1));
+                self.call_runtime("__exs_rt_type_mismatch", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.function.instruction(&Instruction::Else);
+                self.function
+                    .instruction(&Instruction::I32Const(type_id.cast_signed()));
+                self.call_runtime("__exs_rt_object_typed_new", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.get_slot(*destination, *span)?;
+                self.string("handle", *span)?;
+                self.get_slot(*handle, *span)?;
+                self.call_runtime("__exs_rt_index_set", *span)?;
+                self.function.instruction(&Instruction::Drop);
+                self.function.instruction(&Instruction::End);
+                self.function.instruction(&Instruction::End);
+                self.ready(next, *span)?;
+            }
             Operation::DirectCall {
                 signature,
                 arguments,
@@ -624,30 +662,61 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.complete_if_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
-            Operation::ForBranch {
-                snapshot,
-                index,
-                length,
+            Operation::IteratorBranch {
+                step,
+                item,
                 checked,
-                when_true,
-                when_false,
+                type_identity_slot,
+                done_variant_slot,
+                item_variant_slot,
+                type_identity,
+                done_variant,
+                item_variant,
+                when_item,
+                when_done,
                 span,
             } => {
-                self.get_slot(*snapshot, *span)?;
-                self.call_runtime("__exs_rt_length", *span)?;
-                self.set_slot(*length, *span)?;
-                self.get_slot(*index, *span)?;
-                self.get_slot(*length, *span)?;
-                self.call_runtime("__exs_rt_lt", *span)?;
+                self.complete_if_error(*step, *span)?;
+                self.string(type_identity, *span)?;
+                self.set_slot(*type_identity_slot, *span)?;
+                self.string(done_variant, *span)?;
+                self.set_slot(*done_variant_slot, *span)?;
+                self.get_slot(*step, *span)?;
+                self.get_slot(*type_identity_slot, *span)?;
+                self.get_slot(*done_variant_slot, *span)?;
+                self.call_runtime("__exs_rt_enum_matches", *span)?;
                 self.set_slot(*checked, *span)?;
-                self.branch_on_value(*checked, *length, *when_true, *when_false, *span)?;
-            }
-            Operation::Increment { slot, span } => {
-                self.get_slot(*slot, *span)?;
-                self.integer(1, *span)?;
-                self.call_runtime("__exs_rt_add", *span)?;
-                self.set_slot(*slot, *span)?;
-                self.ready(next, *span)?;
+                self.complete_if_error(*checked, *span)?;
+                self.get_slot(*checked, *span)?;
+                self.call_runtime("__exs_rt_condition", *span)?;
+                self.function
+                    .instruction(&Instruction::If(BlockType::Empty));
+                self.ready(*when_done, *span)?;
+                self.function.instruction(&Instruction::Else);
+                self.string(item_variant, *span)?;
+                self.set_slot(*item_variant_slot, *span)?;
+                self.get_slot(*step, *span)?;
+                self.get_slot(*type_identity_slot, *span)?;
+                self.get_slot(*item_variant_slot, *span)?;
+                self.call_runtime("__exs_rt_enum_matches", *span)?;
+                self.set_slot(*checked, *span)?;
+                self.get_slot(*checked, *span)?;
+                self.call_runtime("__exs_rt_condition", *span)?;
+                self.function
+                    .instruction(&Instruction::If(BlockType::Empty));
+                self.get_slot(*step, *span)?;
+                self.function.instruction(&Instruction::I32Const(0));
+                self.call_runtime("__exs_rt_enum_field", *span)?;
+                self.set_slot(*item, *span)?;
+                self.complete_if_error(*item, *span)?;
+                self.ready(*when_item, *span)?;
+                self.function.instruction(&Instruction::Else);
+                self.get_slot(*step, *span)?;
+                self.call_runtime("__exs_rt_match_error", *span)?;
+                self.set_slot(*checked, *span)?;
+                self.complete_if_error(*checked, *span)?;
+                self.function.instruction(&Instruction::End);
+                self.function.instruction(&Instruction::End);
             }
             Operation::Return { value, span } => self.complete(*value, *span)?,
         }

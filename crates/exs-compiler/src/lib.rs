@@ -127,7 +127,9 @@ pub fn compile<'a>(
     prelude.enums.append(&mut module.enums);
     prelude.traits.append(&mut module.traits);
     prelude.implementations.append(&mut module.implementations);
-    prelude.functions.append(&mut module.functions);
+    let mut functions = std::mem::take(&mut module.functions);
+    functions.append(&mut prelude.functions);
+    prelude.functions = functions;
     let mut sources = prelude::source_inputs();
     sources.push(source);
     let wasm = codegen::compile_project_module(&mut prelude, &sources, options)?;

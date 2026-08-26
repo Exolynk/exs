@@ -5,14 +5,15 @@ use std::collections::{BTreeMap, HashMap};
 use exs_abi::{
     ErrorSeverity, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
     HOST_CALL_RESPONSE_COPY_IMPORT, HOST_CALL_RESPONSE_LENGTH_IMPORT, HOST_CALL_START_IMPORT,
-    HOST_IMPORT_MODULE, HOST_SLEEP_HOST_NAME, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
-    RUNNER_TASK_RELEASE_IMPORT, SourcePositionId,
+    HOST_IMPORT_MODULE, HOST_SLEEP_HOST_NAME, HOST_STREAM_NEXT_HOST_NAME,
+    HOST_STREAM_OPEN_HOST_NAME, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
+    RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY, SourcePositionId,
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter, StoreLimits, StoreLimitsBuilder};
 
 use crate::{
-    ExecutionLimits, HostCborError, HostFunctionRegistry, HostFuture, LimitKind, RegistryError,
-    decode_arguments_with_limits, encode_result_with_limits,
+    ExecutionLimits, HostCborError, HostFunctionRegistry, HostFuture, HostStream, LimitKind,
+    RegistryError, decode_arguments_with_limits, encode_result_with_limits,
 };
 
 /// Runner-owned state accessed by imported host functions for one Wasm instance.
@@ -23,6 +24,14 @@ pub(crate) struct HostAbiState {
     ready_responses: HashMap<i64, Vec<u8>>,
     /// Futures that have suspended a runtime task and await later runner resumption.
     pending_calls: BTreeMap<i64, HostFuture>,
+    /// Active pull-stream instances created during this root execution.
+    active_streams: HashMap<i64, Box<dyn HostStream>>,
+    /// Stream handle indexed by each pending stream-next host call.
+    pending_stream_calls: HashMap<i64, i64>,
+    /// Stream handle staged while its host call is being registered.
+    starting_stream_id: Option<i64>,
+    /// Next stream handle identifier.
+    next_stream_id: i64,
     /// Number of active language tasks currently holding runner permits.
     active_tasks: usize,
     /// Number of host calls started during this root execution.
@@ -44,6 +53,10 @@ impl HostAbiState {
             registry,
             ready_responses: HashMap::new(),
             pending_calls: BTreeMap::new(),
+            active_streams: HashMap::new(),
+            pending_stream_calls: HashMap::new(),
+            starting_stream_id: None,
+            next_stream_id: 1,
             active_tasks: 0,
             host_calls_started: 0,
             pending_host_calls: 0,
@@ -130,12 +143,146 @@ impl HostAbiState {
     }
 
     /// Releases one concurrent pending-host-call slot after its completion is selected.
-    pub(crate) fn complete_pending_host_call(&mut self) -> bool {
+    pub(crate) fn complete_pending_host_call(&mut self, call_id: i64, response: &ExsValue) -> bool {
         let Some(next) = self.pending_host_calls.checked_sub(1) else {
             return false;
         };
         self.pending_host_calls = next;
+        if let Some(stream_id) = self.pending_stream_calls.remove(&call_id)
+            && matches!(
+                response,
+                ExsValue::Enum {
+                    type_id,
+                    variant,
+                    ..
+                } if type_id == STANDARD_ITERATOR_STEP_TYPE_IDENTITY && variant == "Done"
+            )
+        {
+            let _stream = self.active_streams.remove(&stream_id);
+        }
         true
+    }
+
+    /// Opens one named dynamic stream and registers an active handle for iteration.
+    fn stream_open(
+        &mut self,
+        mut arguments: Vec<ExsValue>,
+        origin: Option<SourcePositionId>,
+    ) -> Result<crate::HostCall, RegistryError> {
+        if arguments.is_empty() {
+            return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
+                severity: ErrorSeverity::Recoverable,
+                kind: "TypeError".to_owned(),
+                message: "Host::stream expects a stream name as its first argument".to_owned(),
+                data: Box::new(ExsValue::None),
+                origin,
+                trace: Vec::new(),
+                cause: None,
+            })));
+        }
+        let stream_name = match arguments.remove(0) {
+            ExsValue::String(name) => name,
+            other => {
+                return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
+                    severity: ErrorSeverity::Recoverable,
+                    kind: "TypeError".to_owned(),
+                    message: "Host::stream expects a String stream name".to_owned(),
+                    data: Box::new(other),
+                    origin,
+                    trace: Vec::new(),
+                    cause: None,
+                })));
+            }
+        };
+        match self.registry.open_stream(&stream_name, arguments) {
+            Ok(stream) => {
+                let stream_id = self.next_stream_id;
+                self.next_stream_id = self.next_stream_id.saturating_add(1);
+                self.active_streams.insert(stream_id, stream);
+                Ok(crate::HostCall::Ready(ExsValue::Int(stream_id)))
+            }
+            Err(error_value) => Ok(crate::HostCall::Ready(error_value)),
+        }
+    }
+
+    /// Advances one active stream handle and returns an `IteratorStep`.
+    fn stream_next(
+        &mut self,
+        arguments: Vec<ExsValue>,
+        origin: Option<SourcePositionId>,
+    ) -> Result<crate::HostCall, RegistryError> {
+        let stream_id = match arguments.as_slice() {
+            [ExsValue::Int(id)] => *id,
+            [other, ..] => {
+                return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
+                    severity: ErrorSeverity::Recoverable,
+                    kind: "TypeError".to_owned(),
+                    message: "stream handle must be an Int".to_owned(),
+                    data: Box::new(other.clone()),
+                    origin,
+                    trace: Vec::new(),
+                    cause: None,
+                })));
+            }
+            [] => {
+                return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
+                    severity: ErrorSeverity::Recoverable,
+                    kind: "TypeError".to_owned(),
+                    message: "stream next expects a stream handle".to_owned(),
+                    data: Box::new(ExsValue::None),
+                    origin,
+                    trace: Vec::new(),
+                    cause: None,
+                })));
+            }
+        };
+
+        if self
+            .pending_stream_calls
+            .values()
+            .any(|id| *id == stream_id)
+        {
+            return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
+                severity: ErrorSeverity::Recoverable,
+                kind: "StreamBusy".to_owned(),
+                message: format!("stream handle `{stream_id}` already has a pending next call"),
+                data: Box::new(ExsValue::Int(stream_id)),
+                origin,
+                trace: Vec::new(),
+                cause: None,
+            })));
+        }
+
+        let Some(stream) = self.active_streams.get_mut(&stream_id) else {
+            return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
+                severity: ErrorSeverity::Recoverable,
+                kind: "InvalidStreamHandle".to_owned(),
+                message: format!("stream handle `{stream_id}` is not open"),
+                data: Box::new(ExsValue::Int(stream_id)),
+                origin,
+                trace: Vec::new(),
+                cause: None,
+            })));
+        };
+
+        let future = stream.next();
+        self.starting_stream_id = Some(stream_id);
+        let stream_future = async move {
+            let item = future.await;
+            match item {
+                crate::HostStreamItem::Item(value) => ExsValue::Enum {
+                    type_id: STANDARD_ITERATOR_STEP_TYPE_IDENTITY.to_owned(),
+                    variant: "Item".to_owned(),
+                    fields: vec![value],
+                },
+                crate::HostStreamItem::End => ExsValue::Enum {
+                    type_id: STANDARD_ITERATOR_STEP_TYPE_IDENTITY.to_owned(),
+                    variant: "Done".to_owned(),
+                    fields: Vec::new(),
+                },
+            }
+        };
+        Ok(crate::HostCall::Pending(Box::pin(stream_future)))
     }
 }
 
@@ -189,6 +336,7 @@ fn host_call_start(
     request_length: i32,
     source_position: i32,
 ) -> Result<i32, wasmtime::Error> {
+    caller.data_mut().starting_stream_id = None;
     if !caller.data_mut().start_host_call() {
         return Err(wasmtime::Error::msg("host-call limit exceeded"));
     }
@@ -213,6 +361,10 @@ fn host_call_start(
 
     let call = if name == HOST_SLEEP_HOST_NAME {
         Ok(crate::host_sleep::start(arguments, origin))
+    } else if name == HOST_STREAM_OPEN_HOST_NAME {
+        caller.data_mut().stream_open(arguments, origin)
+    } else if name == HOST_STREAM_NEXT_HOST_NAME {
+        caller.data_mut().stream_next(arguments, origin)
     } else {
         caller.data().registry.start(name, arguments)
     };
@@ -235,6 +387,17 @@ fn host_call_start(
                 return Err(wasmtime::Error::msg(
                     "runtime reused an active host-call identifier",
                 ));
+            }
+            if let Some(stream_id) = caller.data_mut().starting_stream_id.take() {
+                let previous = caller
+                    .data_mut()
+                    .pending_stream_calls
+                    .insert(call_id, stream_id);
+                if previous.is_some() {
+                    return Err(wasmtime::Error::msg(
+                        "runtime reused an active stream host-call identifier",
+                    ));
+                }
             }
             Ok(HOST_CALL_PENDING)
         }

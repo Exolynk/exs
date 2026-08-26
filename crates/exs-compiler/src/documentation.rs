@@ -141,6 +141,12 @@ pub fn standard_library_namespaces() -> &'static [StandardNamespace] {
                     description: "Suspends the current ExS task until the supplied normalized Duration elapses, then returns None. This capability is built into every runner and does not use the application host-function registry.",
                     example: "Host::sleep(Duration::milliseconds(250));\nret None;",
                 },
+                StandardFunction {
+                    name: "stream",
+                    signature: "Host::stream(name, arguments...) -> HostStream | Error",
+                    description: "Opens a runner-registered pull stream selected by a runtime String name. Arguments are collected into a List and passed to the stream factory without the name. HostStream implements Iterator; each advance may suspend, and the runner drops the stream after IteratorStep::Done or execution cleanup.",
+                    example: "let events = Host::stream(\"events.subscribe\", user_id)?;\nfor event in events {\n    Host::call(\"events.record\", event);\n}",
+                },
             ],
         },
     ]
@@ -226,7 +232,7 @@ pub(super) fn generate<R: ModuleResolver>(
         .enumerate()
         .map(|(index, file)| module_directory(index, &file.source_id))
         .collect::<Vec<_>>();
-    let mut pages = standard_pages();
+    let mut pages = standard_pages()?;
     for (index, module) in modules.iter().enumerate() {
         pages.extend(module_pages(
             module,
@@ -936,16 +942,74 @@ pub fn standard_library_types() -> Vec<StandardType> {
     ]
 }
 
-/// Generates the synthetic standard-library module and its declaration pages.
-fn standard_pages() -> Vec<DocumentationPage> {
-    let types = standard_library_types();
+/// Generates runtime-owned and source-prelude declaration pages for the standard library.
+fn standard_pages() -> Result<Vec<DocumentationPage>, String> {
+    let prelude_modules = standard_prelude_modules()?;
+    let prelude_type_names = prelude_modules
+        .iter()
+        .flat_map(|(module, _)| {
+            module
+                .types
+                .iter()
+                .map(|declaration| declaration.name.name.as_str())
+        })
+        .collect::<Vec<_>>();
+    let prelude_enum_names = prelude_modules
+        .iter()
+        .flat_map(|(module, _)| {
+            module
+                .enums
+                .iter()
+                .map(|declaration| declaration.name.name.as_str())
+        })
+        .collect::<Vec<_>>();
+    let prelude_trait_names = prelude_modules
+        .iter()
+        .flat_map(|(module, _)| {
+            module
+                .traits
+                .iter()
+                .map(|declaration| declaration.name.name.as_str())
+        })
+        .collect::<Vec<_>>();
+    let types = standard_library_types()
+        .into_iter()
+        .filter(|type_info| !prelude_type_names.contains(&type_info.name))
+        .collect::<Vec<_>>();
     let functions = standard_library_functions();
     let namespaces = standard_library_namespaces();
-    let traits = standard::traits();
-    let enums = standard::enums();
+    let traits = standard::traits()
+        .iter()
+        .filter(|descriptor| !prelude_trait_names.contains(&descriptor.name))
+        .collect::<Vec<_>>();
+    let enums = standard::enums()
+        .iter()
+        .filter(|descriptor| !prelude_enum_names.contains(&descriptor.name))
+        .collect::<Vec<_>>();
+    let type_names = types
+        .iter()
+        .map(|type_info| type_info.name)
+        .chain(prelude_type_names.iter().copied())
+        .collect::<Vec<_>>();
+    let trait_names = traits
+        .iter()
+        .map(|descriptor| descriptor.name)
+        .chain(prelude_trait_names.iter().copied())
+        .collect::<Vec<_>>();
+    let enum_names = enums
+        .iter()
+        .map(|descriptor| descriptor.name)
+        .chain(prelude_enum_names.iter().copied())
+        .collect::<Vec<_>>();
     let mut pages = vec![DocumentationPage {
         path: "modules/std/index.md".to_owned(),
-        markdown: render_standard_index(&types, functions, namespaces, enums, traits),
+        markdown: render_standard_index(
+            &type_names,
+            functions,
+            namespaces,
+            &enum_names,
+            &trait_names,
+        ),
     }];
     for type_info in &types {
         pages.push(DocumentationPage {
@@ -969,25 +1033,70 @@ fn standard_pages() -> Vec<DocumentationPage> {
     for namespace in namespaces {
         pages.push(standard_namespace_page(namespace));
     }
+    for (module, source) in &prelude_modules {
+        pages.extend(standard_prelude_pages(module, source));
+    }
+    Ok(pages)
+}
+
+/// Parses every bundled ExS prelude source for standard-library documentation rendering.
+fn standard_prelude_modules() -> Result<Vec<(Module<'static>, SourceFile)>, String> {
+    crate::prelude::source_inputs()
+        .into_iter()
+        .map(|source| {
+            let module = parse(source.source_id, source.text)?;
+            Ok((
+                module,
+                SourceFile {
+                    source_id: source.source_id.to_owned(),
+                    display_path: source.source_id.to_owned(),
+                    text: source.text.to_owned(),
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Builds standard-library declaration pages from one bundled ExS prelude source.
+fn standard_prelude_pages(module: &Module<'_>, source: &SourceFile) -> Vec<DocumentationPage> {
+    let mut pages = Vec::new();
+    for declaration in &module.types {
+        pages.push(DocumentationPage {
+            path: format!("modules/std/types/{}.md", slug(&declaration.name.name)),
+            markdown: render_type_page(module, declaration, source),
+        });
+    }
+    for declaration in &module.enums {
+        pages.push(DocumentationPage {
+            path: format!("modules/std/enums/{}.md", slug(&declaration.name.name)),
+            markdown: render_enum_page(module, declaration, source),
+        });
+    }
+    for declaration in &module.traits {
+        pages.push(DocumentationPage {
+            path: format!("modules/std/traits/{}.md", slug(&declaration.name.name)),
+            markdown: render_trait_page(declaration, source),
+        });
+    }
     pages
 }
 
 /// Renders the synthetic standard-library module index.
 fn render_standard_index(
-    types: &[StandardType],
+    types: &[&str],
     functions: &[StandardFunction],
     namespaces: &[StandardNamespace],
-    enums: &[StandardEnumDescriptor],
-    traits: &[StandardTraitDescriptor],
+    enums: &[&str],
+    traits: &[&str],
 ) -> String {
     let mut output = String::from(
         "# Module `std`\n\nBuilt-in standard items are globally available in ExS source and may also be written with the `std::` qualifier. Importing `std` is not required or allowed.\n\n## Types\n\n",
     );
-    for type_info in types {
+    for type_name in types {
         output.push_str(&format!(
             "- [`{}`](types/{}.md)\n",
-            type_info.name,
-            slug(type_info.name)
+            type_name,
+            slug(type_name)
         ));
     }
     if !namespaces.is_empty() {
@@ -1002,20 +1111,20 @@ fn render_standard_index(
     }
     if !enums.is_empty() {
         output.push_str("\n## Enums\n\n");
-        for enum_info in enums {
+        for enum_name in enums {
             output.push_str(&format!(
                 "- [`{}`](enums/{}.md)\n",
-                enum_info.name,
-                slug(enum_info.name)
+                enum_name,
+                slug(enum_name)
             ));
         }
     }
     output.push_str("\n## Traits\n\n");
-    for trait_info in traits {
+    for trait_name in traits {
         output.push_str(&format!(
             "- [`{}`](traits/{}.md)\n",
-            trait_info.name,
-            slug(trait_info.name)
+            trait_name,
+            slug(trait_name)
         ));
     }
     output.push_str("\n## Functions\n\n");
@@ -1269,6 +1378,9 @@ fn documentation_comment(source: &str, span: SourceSpan<'_>) -> Option<String> {
     let mut comment = Vec::new();
     for line in source[..start].lines().rev() {
         let line = line.trim_start();
+        if line.is_empty() && comment.is_empty() {
+            continue;
+        }
         let Some(line) = line.strip_prefix("///") else {
             break;
         };

@@ -430,6 +430,10 @@ fn generates_markdown_api_documentation() {
     assert!(host.markdown.contains("Host::call(name, arguments...)"));
     assert!(
         host.markdown
+            .contains("Host::stream(name, arguments...) -> HostStream | Error")
+    );
+    assert!(
+        host.markdown
             .contains("Host::sleep(duration: Duration) -> None")
     );
     assert!(host.markdown.contains("# Namespace `std::Host`"));
@@ -438,31 +442,72 @@ fn generates_markdown_api_documentation() {
         .iter()
         .find(|page| page.path == "modules/std/types/duration.md")
         .unwrap_or_else(|| panic!("missing std Duration type page"));
-    assert!(duration.markdown.contains("## Static Functions"));
+    assert!(duration.markdown.contains("## Implemented Methods"));
     assert!(
         duration
             .markdown
-            .contains("Duration::milliseconds(value: Int) -> Duration | Error")
+            .contains("fn milliseconds(value: Int) -> Duration | Error")
     );
     assert!(
         duration
             .markdown
-            .contains("Duration::nanoseconds(value: Int) -> Duration | Error")
+            .contains("Creates an exact Duration from a non-negative millisecond count.")
     );
     assert!(
         duration
             .markdown
-            .contains("Duration::microseconds(value: Int) -> Duration | Error")
+            .contains("fn nanoseconds(value: Int) -> Duration | Error")
     );
     assert!(
         duration
             .markdown
-            .contains("Duration::seconds(value: Int) -> Duration | Error")
+            .contains("fn microseconds(value: Int) -> Duration | Error")
     );
     assert!(
         duration
             .markdown
-            .contains("as_nanoseconds() -> Int | Error")
+            .contains("fn seconds(value: Int) -> Duration | Error")
+    );
+    assert!(
+        duration
+            .markdown
+            .contains("fn as_nanoseconds(self) -> Int | Error")
+    );
+    let iterator_step = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/enums/iteratorstep.md")
+        .unwrap_or_else(|| panic!("missing std IteratorStep enum page"));
+    assert!(
+        iterator_step
+            .markdown
+            .contains("The result of advancing one Iterator.")
+    );
+    assert!(iterator_step.markdown.contains("Item(value: Any)"));
+    let iterator = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/traits/iterator.md")
+        .unwrap_or_else(|| panic!("missing std Iterator trait page"));
+    assert!(
+        iterator
+            .markdown
+            .contains("fn next(self) -> IteratorStep | Error;")
+    );
+    let host_stream = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/hoststream.md")
+        .unwrap_or_else(|| panic!("missing std HostStream type page"));
+    assert!(
+        host_stream
+            .markdown
+            .contains("A host-backed pull stream that implements Iterator.")
+    );
+    assert!(
+        host_stream
+            .markdown
+            .contains("Trait [`Iterator`](../traits/iterator.md)")
     );
     let standard = documentation
         .pages
@@ -477,6 +522,26 @@ fn generates_markdown_api_documentation() {
     );
     assert!(!standard.markdown.contains("[`type`]"));
     assert!(!standard.markdown.contains("[`len`]"));
+    assert!(
+        standard
+            .markdown
+            .contains("[`Duration`](types/duration.md)")
+    );
+    assert!(
+        standard
+            .markdown
+            .contains("[`HostStream`](types/hoststream.md)")
+    );
+    assert!(
+        standard
+            .markdown
+            .contains("[`IteratorStep`](enums/iteratorstep.md)")
+    );
+    assert!(
+        standard
+            .markdown
+            .contains("[`Iterator`](traits/iterator.md)")
+    );
     assert!(standard.markdown.contains("`std::` qualifier"));
     assert!(standard.markdown.contains("[`Add`](traits/add.md)"));
     assert!(standard.markdown.contains("[`Sub`](traits/sub.md)"));
@@ -511,6 +576,12 @@ fn generates_markdown_api_documentation() {
             | "modules/std/namespaces/std.md"
             | "modules/std/namespaces/duration.md"
     )));
+    assert!(
+        documentation
+            .pages
+            .iter()
+            .all(|page| !page.path.contains("__exs_"))
+    );
     let error = documentation
         .pages
         .iter()

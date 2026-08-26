@@ -297,7 +297,7 @@ for item in iterable {
 
 `while` evaluates its Bool condition before every iteration.
 
-`for` evaluates `iterable` once. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. Any other value produces `NotIterable`.
+`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
 
 Each loop iteration creates a fresh binding for the loop variable. Closures created in separate iterations therefore capture distinct loop bindings.
 
@@ -565,6 +565,19 @@ let profile = Host::call("profile.load", user_id);
 ```
 
 `Host::call(name, arguments...)` invokes a host-provided operation. `name` must evaluate to a String. Arguments evaluate left to right. The host call returns its result or an Error and may suspend; it does not create an ExS task.
+
+## Host streams
+
+```exs
+let events = Host::stream("events.subscribe", user_id)?;
+for event in events {
+    Host::call("events.record", event);
+}
+```
+
+`Host::stream(name, arguments...)` opens a runner-registered pull stream and returns `HostStream | Error`. Its arguments follow the same variadic convention as `Host::call`; the name itself is not passed to the registered factory. A HostStream implements `Iterator`; each `next()` may suspend and returns `IteratorStep::Item(value)`, `IteratorStep::Done`, or an Error.
+
+Each stream is single-consumer. Starting a second `next()` before the first completes returns a recoverable Error. A stream is closed and dropped after `Done`, when its root execution ends, or when that execution is cancelled. A completed handle cannot be advanced again.
 
 Host-call arguments and final program results cross an acyclic, by-value runner boundary. Closures, cells, and cyclic value graphs cannot cross it; shared references are duplicated. An unserializable host call returns a recoverable `SerializationError` without invoking the host. An unserializable final program result becomes a fatal `SerializationError`.
 
