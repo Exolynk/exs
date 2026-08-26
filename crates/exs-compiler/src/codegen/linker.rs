@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, MODULE_METADATA_SECTION, RESUME_HOST_EXPORT,
-    START_EXPORT,
+    START_EXPORT_PREFIX,
 };
 use exs_runtime::WASM_TEMPLATE;
 use wasm_encoder::{
@@ -28,11 +28,16 @@ use super::types::TypeRegistry;
 use super::{diagnostics, module_span};
 use crate::CompileOptions;
 use crate::ast::{
-    AssignmentTarget, Block, Expression, FunctionDeclaration, Identifier, Module, Parameter,
-    Statement,
+    AssignmentTarget, Block, Expression, FunctionDeclaration, FunctionVisibility, Identifier,
+    Module, Parameter, Statement,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
 use crate::hir::HirModule;
+
+/// Builds the stable Wasm export name for one runner-callable source function.
+fn entry_export_name(name: &str) -> String {
+    format!("{START_EXPORT_PREFIX}{name}")
+}
 
 /// Links one source module against the committed runtime template.
 pub(super) fn link<'source>(
@@ -65,11 +70,15 @@ pub(super) fn link<'source>(
             format!("could not link runtime template: {error}"),
         )),
     })?;
+    let entries = module
+        .functions
+        .iter()
+        .filter(|function| function.visibility == FunctionVisibility::Public)
+        .map(|function| format!("entry={}\n", function.name.name))
+        .collect::<String>();
     wasm.section(&CustomSection {
         name: MODULE_METADATA_SECTION.into(),
-        data: format!("abi={ABI_VERSION}\nentry=main\n")
-            .into_bytes()
-            .into(),
+        data: format!("abi={ABI_VERSION}\n{entries}").into_bytes().into(),
     });
     wasm.section(&CustomSection {
         name: SOURCE_MAP_SECTION.into(),
@@ -106,6 +115,7 @@ pub(super) fn lifted_functions<'source>(
         .map(|((parameters, body, span), closure)| LiftedFunction {
             key: format!("$closure:{}", closure.id().0),
             declaration: FunctionDeclaration {
+                visibility: FunctionVisibility::Private,
                 name: Identifier {
                     name: format!("$closure:{}", closure.id().0),
                     span,
@@ -317,12 +327,13 @@ struct TemplateLinker<'source, 'module> {
     methods: Option<MethodRegistry>,
     runtime_functions: HashMap<String, u32>,
     type_registry: TypeRegistry,
+    entry_names: Vec<String>,
     start_type: Option<u32>,
     abi_version_type: Option<u32>,
     resume_type: Option<u32>,
     cancel_type: Option<u32>,
     dispatch_type: Option<u32>,
-    start_index: Option<u32>,
+    entry_indices: Vec<u32>,
     abi_version_index: Option<u32>,
     resume_index: Option<u32>,
     cancel_index: Option<u32>,
@@ -366,6 +377,12 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
                     ))
                 })?;
         let type_registry = TypeRegistry::build(module, traits)?;
+        let entry_names = module
+            .functions
+            .iter()
+            .filter(|function| function.visibility == FunctionVisibility::Public)
+            .map(|function| function.name.name.clone())
+            .collect();
         Ok(Self {
             module,
             traits,
@@ -375,12 +392,13 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             methods: None,
             runtime_functions: HashMap::new(),
             type_registry,
+            entry_names,
             start_type: None,
             abi_version_type: None,
             resume_type: None,
             cancel_type: None,
             dispatch_type: None,
-            start_index: None,
+            entry_indices: Vec::new(),
             abi_version_index: None,
             resume_index: None,
             cancel_index: None,
@@ -578,32 +596,39 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             functions.function(*type_index);
         }
         let dispatch_index = program_base + self.program_function_count()?;
-        self.dispatch_index = self
-            .suspendable_functions
-            .contains("main")
-            .then_some(dispatch_index);
-        if self.suspendable_functions.contains("main") {
+        let has_suspendable_entry = self
+            .entry_names
+            .iter()
+            .any(|name| self.suspendable_functions.contains(name));
+        self.dispatch_index = has_suspendable_entry.then_some(dispatch_index);
+        if has_suspendable_entry {
             functions.function(
                 self.dispatch_type
                     .ok_or_else(|| self.state_error("missing dispatcher type"))?,
             );
         }
-        let start_index = dispatch_index + u32::from(self.suspendable_functions.contains("main"));
-        self.start_index = Some(start_index);
-        self.abi_version_index = Some(start_index + 1);
-        if self.suspendable_functions.contains("main") {
-            self.resume_index = Some(start_index + 2);
-            self.cancel_index = Some(start_index + 3);
+        let first_entry_index = dispatch_index + u32::from(has_suspendable_entry);
+        let entry_count = u32::try_from(self.entry_names.len())
+            .map_err(|_| self.state_error("too many root functions"))?;
+        self.entry_indices = (0..entry_count)
+            .map(|offset| first_entry_index + offset)
+            .collect();
+        self.abi_version_index = Some(first_entry_index + entry_count);
+        if has_suspendable_entry {
+            self.resume_index = Some(first_entry_index + entry_count + 1);
+            self.cancel_index = Some(first_entry_index + entry_count + 2);
         }
-        functions.function(
-            self.start_type
-                .ok_or_else(|| self.state_error("missing start type"))?,
-        );
+        for _ in &self.entry_names {
+            functions.function(
+                self.start_type
+                    .ok_or_else(|| self.state_error("missing start type"))?,
+            );
+        }
         functions.function(
             self.abi_version_type
                 .ok_or_else(|| self.state_error("missing ABI version type"))?,
         );
-        if self.suspendable_functions.contains("main") {
+        if has_suspendable_entry {
             functions.function(
                 self.resume_type
                     .ok_or_else(|| self.state_error("missing resume type"))?,
@@ -643,12 +668,9 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             }
         }
         reencode::utils::parse_export_section(self, exports, section)?;
-        exports.export(
-            START_EXPORT,
-            ExportKind::Func,
-            self.start_index
-                .ok_or_else(|| self.state_error("missing start function index"))?,
-        );
+        for (name, index) in self.entry_names.iter().zip(&self.entry_indices) {
+            exports.export(&entry_export_name(name), ExportKind::Func, *index);
+        }
         if let Some(resume_index) = self.resume_index {
             exports.export(RESUME_HOST_EXPORT, ExportKind::Func, resume_index);
         }
@@ -679,7 +701,6 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             .as_ref()
             .ok_or_else(|| self.state_error("missing implementation methods"))?;
         let mut body_diagnostics = CompileDiagnostics::new();
-        let mut main_frame_slot_count = None;
         for function in &self.module.functions {
             let result = if self.suspendable_functions.contains(&function.name.name) {
                 continuation::compile_function(
@@ -694,12 +715,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     methods,
                     &self.type_registry,
                 )
-                .map(|compiled| {
-                    if function.name.name == "main" {
-                        main_frame_slot_count = Some(compiled.slot_count);
-                    }
-                    compiled.function
-                })
+                .map(|compiled| compiled.function)
             } else {
                 FunctionCompiler::new(
                     function,
@@ -796,44 +812,47 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
             .map_err(reencode::Error::UserError)?;
             codes.function(&dispatcher);
         }
-        let main = signatures.get("main").ok_or_else(|| {
-            reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                "E0200",
-                module_span(self.module),
-                "missing fn main()",
-            )))
-        })?;
-        let start = if self.suspendable_functions.contains("main") {
-            continuation::compile_start(
-                self.module,
-                main,
-                main_frame_slot_count.ok_or_else(|| {
+        for name in &self.entry_names {
+            let entry = signatures.get(name).ok_or_else(|| {
+                reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
+                    "E0999",
+                    module_span(self.module),
+                    format!("missing root function signature for `{name}`"),
+                )))
+            })?;
+            let start = if self.suspendable_functions.contains(name) {
+                let frame_layout = self.frame_layouts.get(name).ok_or_else(|| {
                     reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
                         "E0999",
                         module_span(self.module),
-                        "missing main continuation frame layout",
+                        format!("missing continuation frame layout for `{name}`"),
                     )))
-                })?,
-                dispatcher_index.ok_or_else(|| {
-                    reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                        "E0999",
-                        module_span(self.module),
-                        "missing continuation dispatcher index",
-                    )))
-                })?,
-                &self.runtime_functions,
-            )
-        } else {
-            compile_start(self.module, main, &self.runtime_functions)
+                })?;
+                continuation::compile_start(
+                    self.module,
+                    entry,
+                    frame_layout.slot_count,
+                    dispatcher_index.ok_or_else(|| {
+                        reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
+                            "E0999",
+                            module_span(self.module),
+                            "missing continuation dispatcher index",
+                        )))
+                    })?,
+                    &self.runtime_functions,
+                )
+            } else {
+                compile_start(self.module, entry, &self.runtime_functions)
+            }
+            .map_err(reencode::Error::UserError)?;
+            codes.function(&start);
         }
-        .map_err(reencode::Error::UserError)?;
-        codes.function(&start);
 
         let mut abi_version = Function::new([]);
         abi_version.instruction(&Instruction::I32Const(ABI_VERSION.cast_signed()));
         abi_version.instruction(&Instruction::End);
         codes.function(&abi_version);
-        if self.suspendable_functions.contains("main") {
+        if dispatcher_index.is_some() {
             let resume = continuation::compile_resume(
                 self.module,
                 dispatcher_index.ok_or_else(|| {

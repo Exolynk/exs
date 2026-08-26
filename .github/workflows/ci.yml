@@ -35,6 +35,8 @@ jobs:
         run: cargo clippy -p exs-runtime --lib --target wasm32-unknown-unknown -- -D warnings
       - name: Test workspace
         run: cargo test --workspace
+      - name: Build Rust guest example
+        run: cargo build -p exs-rust-guest --target wasm32-unknown-unknown
       - name: Build runtime Wasm template
         run: cargo rustc -p exs-runtime --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory
       - name: Install Trunk

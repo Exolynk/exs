@@ -46,7 +46,7 @@ mod browser {
     ///
     /// Returns a JavaScript error when Birei's embedded assets cannot be added to the page.
     #[wasm_bindgen(start)]
-    pub fn start() -> Result<(), JsValue> {
+    fn start() -> Result<(), JsValue> {
         birei::embed_assets()?;
         mount_to_body(Playground);
         Ok(())

@@ -209,18 +209,23 @@ impl BrowserRunner {
         })
     }
 
-    /// Executes one isolated ExS instance with ordered main-function arguments.
+    /// Executes one isolated named public function with ordered arguments.
     ///
     /// # Errors
     ///
     /// Returns an error when Wasm instantiation, ABI validation, host dispatch, or CBOR boundary
     /// handling fails. Recoverable language failures remain `Ok(ExsValue::Error(...))`.
-    pub async fn execute(&self, inputs: &[ExsValue]) -> Result<ExsValue, RunnerError> {
+    pub async fn execute(
+        &self,
+        function: &str,
+        inputs: &[ExsValue],
+    ) -> Result<ExsValue, RunnerError> {
         let input = ExsValue::List(inputs.to_vec())
             .to_cbor()
             .map_err(|error| RunnerError::Abi(format!("could not encode input CBOR: {error}")))?;
         let input = Uint8Array::from(input.as_slice());
-        let promise = execute_browser_runner(&self.controller, &input).map_err(browser_error)?;
+        let promise =
+            execute_browser_runner(&self.controller, function, &input).map_err(browser_error)?;
         let result = JsFuture::from(promise).await.map_err(browser_error)?;
         let result = result.dyn_into::<Uint8Array>().map_err(|_| {
             RunnerError::Abi("browser runner returned a non-byte result".to_owned())
@@ -419,7 +424,7 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
         throw new TypeError("browser host dispatcher must be a function");
     }
     return {
-        async execute(input) {
+            async execute(functionName, input) {
             const ready = new Map();
             const pending = new Map();
             let activeTasks = 0;
@@ -489,7 +494,10 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
             const allocate = exportedFunction(instance.exports, "__exs_input_alloc");
             const inputPointer = allocate(inputBytes.length);
             write(memory, inputPointer, inputBytes, "ExS input");
-            const start = exportedFunction(instance.exports, "__exs_start");
+            if (typeof functionName !== "string" || functionName.length === 0) {
+                throw new TypeError("ExS function name must be a non-empty string");
+            }
+            const start = exportedFunction(instance.exports, `__exs_start_${functionName}`);
             const resultPointer = exportedFunction(instance.exports, "__exs_result_ptr");
             const resultLength = exportedFunction(instance.exports, "__exs_result_len");
             let status = start(inputPointer, inputBytes.length);
@@ -517,11 +525,11 @@ export async function createBrowserRunner(wasm, host, expectedAbiVersion) {
     };
 }
 
-export function executeBrowserRunner(controller, input) {
+export function executeBrowserRunner(controller, functionName, input) {
     if (!controller || typeof controller.execute !== "function") {
         throw new TypeError("invalid ExS browser runner controller");
     }
-    return controller.execute(input);
+    return controller.execute(functionName, input);
 }
 "#)]
 extern "C" {
@@ -535,8 +543,11 @@ extern "C" {
 
     /// Executes one isolated ExS instance through the JavaScript controller.
     #[wasm_bindgen(catch, js_name = executeBrowserRunner)]
-    fn execute_browser_runner(controller: &JsValue, input: &Uint8Array)
-    -> Result<Promise, JsValue>;
+    fn execute_browser_runner(
+        controller: &JsValue,
+        function: &str,
+        input: &Uint8Array,
+    ) -> Result<Promise, JsValue>;
 }
 
 #[wasm_bindgen(inline_js = r#"

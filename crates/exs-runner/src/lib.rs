@@ -17,7 +17,7 @@ use std::task::Poll;
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, CborError, INPUT_ALLOC_EXPORT,
     RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, RUNNER_IMPORT_MODULE,
-    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, START_EXPORT, STATUS_CANCELLED,
+    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, START_EXPORT_PREFIX, STATUS_CANCELLED,
     STATUS_COMPLETE, STATUS_PENDING,
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -88,7 +88,7 @@ impl ServerRunner {
         &mut self.registry
     }
 
-    /// Executes one linked module and awaits any asynchronous host completions.
+    /// Executes one named public function in a linked module and awaits asynchronous host calls.
     ///
     /// # Errors
     ///
@@ -97,6 +97,7 @@ impl ServerRunner {
     pub async fn execute(
         &self,
         wasm: &[u8],
+        function: &str,
         inputs: &[ExsValue],
         cancellation: &ExecutionCancellation,
     ) -> Result<ExsValue, RunnerError> {
@@ -129,7 +130,7 @@ impl ServerRunner {
         let (input_pointer, input_length) =
             write_input(&mut store, &instance, inputs, &self.limits)?;
         let start = instance
-            .get_typed_func::<(i32, i32), i32>(&mut store, START_EXPORT)
+            .get_typed_func::<(i32, i32), i32>(&mut store, &entry_export_name(function))
             .map_err(|error| RunnerError::Abi(error.to_string()))?;
         let mut status = start
             .call(&mut store, (input_pointer, input_length))
@@ -255,6 +256,12 @@ impl fmt::Display for RunnerError {
 }
 
 impl std::error::Error for RunnerError {}
+
+/// Builds the stable Wasm export name for one requested root ExS function.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+fn entry_export_name(function: &str) -> String {
+    format!("{START_EXPORT_PREFIX}{function}")
+}
 
 /// Cancels the active scheduler task in one suspended resumable module.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]

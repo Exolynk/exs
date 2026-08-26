@@ -25,7 +25,7 @@ This document defines the ExS source language. It is written for authors of ExS 
 
 An ExS source file is a module. A module has an optional import and `use` prelude followed by declarations. Executable statements and `let` declarations are not permitted at module scope. A module may also declare source tests; normal program compilation omits them.
 
-The root module must declare exactly one `fn main(...)` function. Imported modules must not declare `main`.
+The root module must declare exactly one `fn main(...)` function. Imported modules must not declare `main`. Every root-module function is callable by an external runner.
 
 ```exs
 fn main(name: String) -> String {
@@ -324,6 +324,8 @@ fn add(left: Int, right: Int) -> Int {
 
 Parameters are positional. ExS has no default, named, or keyword parameters. Duplicate parameter names are compile errors. Named functions are visible throughout their enclosing module, enabling recursion.
 
+Every root-module function is callable by an external runner. The runner selects the function by name and supplies its positional arguments. Methods, trait methods, closures, prelude functions, and imported-module functions are not externally callable.
+
 A function, method, trait method, or closure may declare one trailing variadic parameter with `...` after its name or type annotation:
 
 ```exs
@@ -338,7 +340,7 @@ fn total(prefix: Int, values: Int...) -> Int {
 
 The variadic binding is always a `List` and may be empty. It must be the final parameter. A type annotation applies independently to every supplied trailing value, not to the `List` itself. Calls must provide every non-variadic parameter and may then provide any number of trailing values. A non-variadic declaration still requires its exact argument count. Trait implementations must declare the same variadic position as their trait method.
 
-The root `main` function may have zero or more parameters. Hosts may supply fewer input values, in which case missing fixed `main` parameters receive `None`. When `main` has a trailing variadic parameter, all remaining host input values are packed into its List. Supplying more values than a non-variadic `main` declares is a fatal `ArityError`.
+An externally callable function may have zero or more parameters. Hosts may supply fewer input values, in which case missing fixed parameters receive `None`. When a root function has a trailing variadic parameter, all remaining host input values are packed into its List. Supplying more values than a non-variadic root function declares is a fatal `ArityError`.
 
 ## Closures
 

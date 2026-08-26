@@ -16,7 +16,8 @@ fn rejects_wasm_memory_over_the_configured_limit() {
         max_memory_bytes: 64 * 1024,
         ..ExecutionLimits::default()
     });
-    let result = block_on(runner.execute(wasm.as_bytes(), &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(wasm.as_bytes(), "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Memory))
@@ -37,7 +38,8 @@ fn rejects_execution_after_the_configured_fuel_budget() {
         max_fuel: 1,
         ..ExecutionLimits::default()
     });
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Fuel))
@@ -59,7 +61,8 @@ fn rejects_guest_execution_after_the_configured_timeout() {
         timeout: Duration::from_millis(10),
         ..ExecutionLimits::default()
     });
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Timeout))
@@ -80,7 +83,8 @@ fn rejects_completed_execution_after_a_zero_timeout() {
         timeout: Duration::ZERO,
         ..ExecutionLimits::default()
     });
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Timeout))
@@ -107,7 +111,8 @@ fn rejects_pending_host_call_after_the_configured_timeout() {
             .register_async("wait", |_| std::future::pending::<ExsValue>())
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Timeout))
@@ -127,7 +132,8 @@ fn rejects_wasm_stack_over_the_configured_limit() {
         max_wasm_stack_bytes: 64 * 1024,
         ..ExecutionLimits::default()
     });
-    let result = block_on(runner.execute(wasm.as_bytes(), &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(wasm.as_bytes(), "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::WasmStack))
@@ -150,6 +156,7 @@ fn rejects_main_input_over_the_cbor_payload_limit() {
     });
     let result = block_on(runner.execute(
         &compiled.wasm,
+        "main",
         &[ExsValue::String("input".to_owned())],
         &ExecutionCancellation::new(),
     ));
@@ -173,7 +180,8 @@ fn rejects_result_over_the_configured_limit() {
         max_result_bytes: 1,
         ..ExecutionLimits::default()
     });
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Result))
@@ -200,7 +208,8 @@ fn rejects_host_response_over_the_cbor_payload_limit() {
             .register_sync("large", |_| ExsValue::String("response".to_owned()))
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::CborPayload))
@@ -227,7 +236,8 @@ fn rejects_host_request_over_the_cbor_nesting_limit() {
             .register_sync("accept", |_| ExsValue::None)
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::CborNesting))
@@ -251,7 +261,8 @@ fn rejects_parallel_tasks_over_the_configured_limit() {
         max_tasks: 2,
         ..ExecutionLimits::default()
     });
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Tasks))
@@ -279,7 +290,8 @@ fn rejects_host_calls_over_the_configured_total_limit() {
             .register_sync("value", |_| ExsValue::Int(1))
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::HostCalls))
@@ -309,7 +321,8 @@ fn rejects_pending_host_calls_over_the_configured_limit() {
             .register_async("wait", |_| std::future::pending::<ExsValue>())
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::PendingHostCalls))
@@ -320,7 +333,7 @@ fn rejects_pending_host_calls_over_the_configured_limit() {
 fn reports_malformed_wasm_as_a_runner_error() {
     let runner = ServerRunner::new(ExecutionLimits::default());
     let cancellation = ExecutionCancellation::new();
-    assert!(block_on(runner.execute(&[0], &[], &cancellation)).is_err());
+    assert!(block_on(runner.execute(&[0], "main", &[], &cancellation)).is_err());
 }
 
 /// Rejects a valid Wasm module that cannot participate in runner task metering.
@@ -329,6 +342,6 @@ fn rejects_modules_missing_runner_task_metering_imports() {
     let runner = ServerRunner::new(ExecutionLimits::default());
     let cancellation = ExecutionCancellation::new();
     let empty_wasm_module = [0, 97, 115, 109, 1, 0, 0, 0];
-    let result = block_on(runner.execute(&empty_wasm_module, &[], &cancellation));
+    let result = block_on(runner.execute(&empty_wasm_module, "main", &[], &cancellation));
     assert!(matches!(result, Err(RunnerError::Abi(message)) if message.contains("task-metering")));
 }

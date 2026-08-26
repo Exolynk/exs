@@ -54,7 +54,15 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
                 Some(separator) if separator == "--" => input::parse_arguments(&arguments[3..])?,
                 Some(_) => return Err("expected `--` before run input values".to_owned()),
             };
-            run_program(&arguments[1], &inputs)
+            run_program(&arguments[1], "main", &inputs)
+        }
+        "call" if arguments.len() >= 3 => {
+            let inputs = match arguments.get(3) {
+                None => Vec::new(),
+                Some(separator) if separator == "--" => input::parse_arguments(&arguments[4..])?,
+                Some(_) => return Err("expected `--` before call input values".to_owned()),
+            };
+            run_program(&arguments[1], &arguments[2], &inputs)
         }
         "test" if arguments.len() <= 2 => run_tests(arguments.get(1).map(String::as_str)),
         _ => Err(usage()),
@@ -167,6 +175,7 @@ fn run_tests(path: Option<&str>) -> Result<(), String> {
                 .map_err(|_| format!("{}: too many tests", source.display()))?;
             let result = block_on(runner.execute(
                 &compiled.wasm,
+                "main",
                 &[ExsValue::Int(test_index)],
                 &cancellation,
             ));
@@ -282,7 +291,7 @@ impl ModuleResolver for FileResolver {
 }
 
 /// Executes a source file or linked WebAssembly module.
-fn run_program(path: &str, inputs: &[exs_runner::ExsValue]) -> Result<(), String> {
+fn run_program(path: &str, function: &str, inputs: &[exs_runner::ExsValue]) -> Result<(), String> {
     let wasm = if Path::new(path)
         .extension()
         .is_some_and(|extension| extension == "wasm")
@@ -300,7 +309,7 @@ fn run_program(path: &str, inputs: &[exs_runner::ExsValue]) -> Result<(), String
     let debug_info = read_debug_info(&wasm).ok();
     let runner = cli_runner()?;
     let cancellation = ExecutionCancellation::new();
-    let result = block_on(runner.execute(&wasm, inputs, &cancellation))
+    let result = block_on(runner.execute(&wasm, function, inputs, &cancellation))
         .map_err(|error| error.to_string())?;
     match result {
         exs_runner::ExsValue::Error(error) => Err(format_error(&error, debug_info.as_ref())),
@@ -562,5 +571,5 @@ fn line_and_column(source: &str, offset: u32) -> (usize, usize) {
 
 /// Returns CLI usage text.
 fn usage() -> String {
-    "usage: exs check <file.exs> | exs fmt <file.exs> | exs docs <file.exs> -o <directory> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...] | exs test [file.exs|directory]".to_owned()
+    "usage: exs check <file.exs> | exs fmt <file.exs> | exs docs <file.exs> -o <directory> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...] | exs call <file.exs|file.wasm> <function> [-- <value> ...] | exs test [file.exs|directory]".to_owned()
 }

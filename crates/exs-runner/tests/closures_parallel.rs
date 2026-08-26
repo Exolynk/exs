@@ -68,7 +68,8 @@ fn reuses_parallel_child_frames_within_a_constrained_memory_budget() {
         max_fuel: u64::MAX,
         ..ExecutionLimits::default()
     });
-    let result = block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()));
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     match result {
         Ok(result) => assert_eq!(result, ExsValue::Int(20_000)),
         Err(error) => panic!("execution failed: {error}"),
@@ -194,8 +195,12 @@ fn polls_parallel_host_calls_concurrently() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -303,8 +308,12 @@ fn rejects_a_non_callable_dynamic_binding() {
             .register_sync("callback", |_| ExsValue::Int(1))
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -393,6 +402,7 @@ fn resumes_host_calls_inside_closures() {
     );
     let result = match block_on(runner.execute(
         &compiled.wasm,
+        "main",
         &[ExsValue::Int(40)],
         &ExecutionCancellation::new(),
     )) {

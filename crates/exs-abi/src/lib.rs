@@ -12,8 +12,8 @@ pub use cbor::{
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 20 adds generic runner task-acquire and task-release imports.
-pub const ABI_VERSION: u32 = 20;
+/// Version 21 exports one entry wrapper for each root function.
+pub const ABI_VERSION: u32 = 21;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
@@ -57,8 +57,8 @@ pub const STANDARD_ORDERING_TYPE_IDENTITY: &str = "std::Ordering";
 pub const HOST_SLEEP_HOST_NAME: &str = "__exs.host.sleep";
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
-/// The entry export invoked by runners.
-pub const START_EXPORT: &str = "__exs_start";
+/// Prefix for compiler-generated entry exports invoked by runners.
+pub const START_EXPORT_PREFIX: &str = "__exs_start_";
 /// The ABI-version export.
 pub const ABI_VERSION_EXPORT: &str = "__exs_abi_version";
 /// The runtime export allocating a host-writable input buffer in linear memory.

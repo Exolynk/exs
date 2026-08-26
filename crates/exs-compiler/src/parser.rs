@@ -4,10 +4,11 @@ use std::collections::HashSet;
 
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, EnumVariant, Expression,
-    FormattedStringKind, FormattedStringPart, FunctionDeclaration, Identifier, ImplDeclaration,
-    ImportDeclaration, MatchArm, MatchArmBody, MatchPattern, Module, ObjectProperty, Parameter,
-    Statement, TestDeclaration, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation,
-    TypeDeclaration, TypeField, TypeName, UnaryOperator, UseDeclaration, UseItem,
+    FormattedStringKind, FormattedStringPart, FunctionDeclaration, FunctionVisibility, Identifier,
+    ImplDeclaration, ImportDeclaration, MatchArm, MatchArmBody, MatchPattern, Module,
+    ObjectProperty, Parameter, Statement, TestDeclaration, TraitDeclaration,
+    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator,
+    UseDeclaration, UseItem,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{
@@ -115,7 +116,7 @@ pub fn parse<'a>(
                     parser.synchronize_declaration();
                 }
             },
-            TokenKind::Fn => match parser.function() {
+            TokenKind::Fn => match parser.function(FunctionVisibility::Public) {
                 Ok(declaration) => functions.push(declaration),
                 Err(diagnostic) => {
                     parser.diagnostics.push(diagnostic);
@@ -310,11 +311,14 @@ impl<'a> Parser<'a> {
             span: start.through(end),
         })
     }
-    fn function(&mut self) -> Result<FunctionDeclaration<'a>, CompileDiagnostic<'a>> {
+    fn function(
+        &mut self,
+        visibility: FunctionVisibility,
+    ) -> Result<FunctionDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::Fn, "expected `fn` at module level")?
             .span;
-        self.function_from_start(start)
+        self.function_from_start(start, visibility)
     }
 
     /// Parses one named source test declaration.
@@ -343,10 +347,12 @@ impl<'a> Parser<'a> {
     fn function_from_start(
         &mut self,
         start: SourceSpan<'a>,
+        visibility: FunctionVisibility,
     ) -> Result<FunctionDeclaration<'a>, CompileDiagnostic<'a>> {
         let (name, parameters, return_type) = self.function_header_from_start()?;
         let body = self.block()?;
         Ok(FunctionDeclaration {
+            visibility,
             name,
             parameters,
             return_type,
@@ -503,7 +509,7 @@ impl<'a> Parser<'a> {
             let method_start = self
                 .expect_simple(TokenKind::Fn, "expected `fn` inside impl block")?
                 .span;
-            methods.push(self.function_from_start(method_start)?);
+            methods.push(self.function_from_start(method_start, FunctionVisibility::Private)?);
         }
         let end = self
             .expect_simple(TokenKind::RightBrace, "expected `}` after impl methods")?

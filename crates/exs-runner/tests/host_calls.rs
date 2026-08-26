@@ -129,6 +129,7 @@ fn executes_host_calls_inside_formatted_strings() {
     );
     let result = match block_on(runner.execute(
         &compiled.wasm,
+        "main",
         &[ExsValue::Int(42)],
         &ExecutionCancellation::new(),
     )) {
@@ -166,8 +167,12 @@ fn executes_host_calls_inside_to_string_implementations() {
                 .unwrap_or(ExsValue::None))
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -209,8 +214,12 @@ fn executes_resumable_variadic_calls() {
                 .unwrap_or(ExsValue::None))
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -254,11 +263,15 @@ fn executes_a_synchronous_dynamic_host_function() {
             .is_ok()
     );
     let cancellation = ExecutionCancellation::new();
-    let result =
-        match block_on(runner.execute(&compiled.wasm, &[ExsValue::Int(i64::MAX)], &cancellation)) {
-            Ok(result) => result,
-            Err(error) => panic!("execution failed: {error}"),
-        };
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[ExsValue::Int(i64::MAX)],
+        &cancellation,
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
     assert_eq!(result, ExsValue::Int(i64::MAX));
 }
 
@@ -295,11 +308,15 @@ fn rejects_unserializable_host_call_arguments() {
                 })
                 .is_ok()
         );
-        let result =
-            match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new())) {
-                Ok(result) => result,
-                Err(error) => panic!("execution failed: {error}"),
-            };
+        let result = match block_on(runner.execute(
+            &compiled.wasm,
+            "main",
+            &[],
+            &ExecutionCancellation::new(),
+        )) {
+            Ok(result) => result,
+            Err(error) => panic!("execution failed: {error}"),
+        };
         let ExsValue::Error(error) = result else {
             panic!("unserializable host arguments did not return an Error");
         };
@@ -324,6 +341,7 @@ fn executes_an_asynchronous_dynamic_host_function() {
     );
     let result = match block_on(runner.execute(
         &compiled.wasm,
+        "main",
         &[ExsValue::Int(i64::MIN)],
         &ExecutionCancellation::new(),
     )) {
@@ -352,7 +370,7 @@ fn cancels_a_pending_host_execution() {
             })
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, &[], &cancellation));
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[], &cancellation));
     assert!(matches!(result, Err(RunnerError::Cancelled)));
 }
 
@@ -382,7 +400,7 @@ fn cancels_a_pending_host_call_inside_a_closure() {
             })
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, &[], &cancellation));
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[], &cancellation));
     assert!(matches!(result, Err(RunnerError::Cancelled)));
 }
 
@@ -399,7 +417,7 @@ fn reports_pending_execution_without_host_future_as_deadlock() {
                 i32.const {})
             (func (export "__exs_input_alloc") (param i32) (result i32)
                 i32.const 0)
-            (func (export "__exs_start") (param i32 i32) (result i32)
+            (func (export "__exs_start_main") (param i32 i32) (result i32)
                 i32.const 1)
         )
         "#,
@@ -407,7 +425,7 @@ fn reports_pending_execution_without_host_future_as_deadlock() {
     );
     let cancellation = ExecutionCancellation::new();
     let runner = ServerRunner::new(ExecutionLimits::default());
-    let result = block_on(runner.execute(wasm.as_bytes(), &[], &cancellation));
+    let result = block_on(runner.execute(wasm.as_bytes(), "main", &[], &cancellation));
     assert!(
         matches!(result, Err(RunnerError::Deadlock(message)) if message.contains("without a runner host future"))
     );

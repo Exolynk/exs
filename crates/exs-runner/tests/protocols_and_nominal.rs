@@ -225,8 +225,12 @@ fn suspends_through_standard_add_implementations() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -262,8 +266,12 @@ fn suspends_through_standard_div_implementations() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -299,8 +307,12 @@ fn suspends_through_standard_compare_implementations() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -327,6 +339,7 @@ fn traces_errors_through_suspendable_child_frames() {
     );
     let result = match block_on(runner.execute(
         &compiled.wasm,
+        "main",
         &[ExsValue::Int(7)],
         &ExecutionCancellation::new(),
     )) {
@@ -428,8 +441,12 @@ fn constructs_enum_after_a_host_call() {
             .register_sync("value", |_| ExsValue::Int(42))
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -541,8 +558,12 @@ fn resumes_host_call_inside_enum_match_arm() {
             .register_sync("value", |_| ExsValue::Int(42))
             .is_ok()
     );
-    let result = match block_on(runner.execute(&compiled.wasm, &[], &ExecutionCancellation::new()))
-    {
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };

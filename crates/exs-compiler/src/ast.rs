@@ -142,6 +142,7 @@ impl<'a> TraitMethodDeclaration<'a> {
     #[must_use]
     pub fn default_implementation(&self) -> Option<FunctionDeclaration<'a>> {
         self.body.clone().map(|body| FunctionDeclaration {
+            visibility: FunctionVisibility::Private,
             name: self.name.clone(),
             parameters: self.parameters.clone(),
             return_type: self.return_type.clone(),
@@ -151,9 +152,20 @@ impl<'a> TraitMethodDeclaration<'a> {
     }
 }
 
+/// External visibility of one top-level function declaration.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum FunctionVisibility {
+    /// The function is available only to ExS code in the linked module.
+    Private,
+    /// The function receives a runner-callable entry wrapper when it is in the root module.
+    Public,
+}
+
 /// A named function declaration.
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration<'a> {
+    /// Whether this top-level function is callable by an external runner.
+    pub visibility: FunctionVisibility,
     /// Function name.
     pub name: Identifier<'a>,
     /// Positional parameters with optional type annotations.

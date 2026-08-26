@@ -133,6 +133,34 @@ fn prints_the_main_result() {
     assert_eq!(stdout, "1.0\n");
 }
 
+/// Invokes a named public function without routing through the source main function.
+#[test]
+fn calls_named_public_function() {
+    let path = std::env::temp_dir().join(format!("exs-cli-call-{}.exs", std::process::id()));
+    let source =
+        "fn main() -> Int { ret 0; } fn add(left: Int, right: Int) -> Int { ret left + right; }";
+    if let Err(error) = fs::write(&path, source) {
+        panic!("could not create source fixture: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("call")
+        .arg(&path)
+        .arg("add")
+        .arg("--")
+        .arg("20")
+        .arg("22")
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute exs: {error}"),
+    };
+    if let Err(error) = fs::remove_file(&path) {
+        panic!("could not remove source fixture: {error}");
+    }
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
+}
+
 /// Makes the CLI-owned print and println host functions available to source programs.
 #[test]
 fn executes_cli_print_and_println_host_functions() {

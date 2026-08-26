@@ -3,8 +3,8 @@
 //! Rust guest support for the stable ExS runner ABI.
 //!
 //! The default `std` feature supports conventional Rust `cdylib` guests for
-//! `wasm32-unknown-unknown`. Export linear memory and invoke [`export!`] with an
-//! `async fn(Vec<ExsValue>) -> ExsValue` entry point.
+//! `wasm32-unknown-unknown`. Export linear memory and invoke [`export!`] with one or more
+//! `async fn(Vec<ExsValue>) -> ExsValue` entry points.
 //!
 //! For a `no_std` guest, disable default features and enable `no-std`. That mode supplies the
 //! guest allocator and panic handler:
@@ -41,10 +41,14 @@ use exs_abi::ABI_VERSION;
 /// One erased asynchronous guest entry point retained between runner callbacks.
 pub type GuestFuture = Pin<Box<dyn Future<Output = ExsValue>>>;
 
-/// Exports the ExS runner ABI for one `async fn(Vec<ExsValue>) -> ExsValue` guest entry point.
+/// Exports the ExS runner ABI for one or more named asynchronous guest entry points.
+///
+/// Each supplied top-level function identifier becomes callable through the runner under the
+/// same name. For example, `export!(main, add)` exports `__exs_start_main` and
+/// `__exs_start_add`, so callers can execute `main` and `add` respectively.
 #[macro_export]
 macro_rules! export {
-    ($entry:path $(,)?) => {
+    ($($entry:ident),+ $(,)?) => {
         #[unsafe(no_mangle)]
         #[doc = "Returns the ExS ABI version implemented by this guest."]
         pub extern "C" fn __exs_abi_version() -> i32 {
@@ -55,13 +59,17 @@ macro_rules! export {
         pub extern "C" fn __exs_input_alloc(length: i32) -> i32 {
             $crate::input_alloc(length)
         }
-        #[unsafe(no_mangle)]
-        #[doc = "Starts one ExS ABI guest execution."]
-        pub extern "C" fn __exs_start(pointer: i32, length: i32) -> i32 {
-            $crate::start(pointer, length, |inputs| {
-                $crate::boxed_future($entry(inputs))
-            })
-        }
+        $(
+            const _: () = {
+                #[unsafe(export_name = concat!("__exs_start_", stringify!($entry)))]
+                #[doc = concat!("Starts the ExS ABI guest entry point `", stringify!($entry), "`.")]
+                pub extern "C" fn entry(pointer: i32, length: i32) -> i32 {
+                    $crate::start(pointer, length, |inputs| {
+                        $crate::boxed_future($entry(inputs))
+                    })
+                }
+            };
+        )+
         #[unsafe(no_mangle)]
         #[doc = "Resumes one asynchronous host call through the ExS ABI."]
         pub extern "C" fn __exs_resume_host(call_id: i64, pointer: i32, length: i32) -> i32 {

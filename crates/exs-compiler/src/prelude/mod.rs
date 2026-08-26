@@ -1,7 +1,7 @@
 //! Compiler-linked ExS source declarations available to every module.
 
 use crate::SourceInput;
-use crate::ast::Module;
+use crate::ast::{FunctionVisibility, Module};
 use crate::diagnostic::CompileDiagnostics;
 
 /// One named ExS source unit bundled into the global standard prelude.
@@ -65,6 +65,9 @@ pub(crate) fn parse() -> Result<Module<'static>, CompileDiagnostics<'static>> {
         diagnostics.extend(lexed.diagnostics);
         match crate::parser::parse(source.source_id, lexed.tokens, false) {
             Ok(mut module) => {
+                for function in &mut module.functions {
+                    function.visibility = FunctionVisibility::Private;
+                }
                 combined.types.append(&mut module.types);
                 combined.enums.append(&mut module.enums);
                 combined.traits.append(&mut module.traits);

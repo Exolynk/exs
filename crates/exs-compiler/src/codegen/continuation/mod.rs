@@ -27,8 +27,6 @@ pub(super) use self::entry::{compile_cancel, compile_dispatch, compile_resume, c
 pub(super) struct CompiledContinuation {
     /// The generated one-argument frame step function.
     pub(super) function: Function,
-    /// The number of initialized-or-reserved durable frame slots.
-    pub(super) slot_count: u32,
 }
 
 /// Compiler-known durable capacity for one suspendable frame.
@@ -137,6 +135,5 @@ pub(super) fn compile_function<'source>(
     compiler.function.instruction(&Instruction::End);
     Ok(CompiledContinuation {
         function: compiler.function,
-        slot_count: graph.slot_count,
     })
 }

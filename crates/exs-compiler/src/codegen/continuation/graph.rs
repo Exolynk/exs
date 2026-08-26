@@ -14,8 +14,6 @@ use super::FrameLayout;
 pub(super) struct ContinuationGraph<'source, 'function> {
     /// One continuation operation per generated state.
     pub(super) operations: Vec<Operation<'source, 'function>>,
-    /// Number of slots required by parameters, lexical bindings, and temporaries.
-    pub(super) slot_count: u32,
 }
 
 /// One non-suspending operation or host-call boundary in a continuation graph.
@@ -579,7 +577,6 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
         });
         Ok(Self {
             operations: builder.operations,
-            slot_count: builder.next_slot,
         })
     }
 }

@@ -912,6 +912,7 @@ fn compiles_a_resumable_host_call() {
         .collect::<Vec<_>>();
     assert!(exports.iter().any(|name| name == "__exs_resume_host"));
     assert!(exports.iter().any(|name| name == "__exs_cancel"));
+    assert!(exports.iter().any(|name| name == "__exs_start_main"));
 }
 
 /// Emits compact source positions by default and embeds source text only when requested.
@@ -1721,4 +1722,37 @@ fn compiles_zero_parameter_main() {
         CompileOptions::default(),
     );
     assert!(module.is_ok());
+}
+
+/// Treats `pub` as an ordinary identifier after removing it from the language keywords.
+#[test]
+fn treats_pub_as_an_unreserved_identifier() {
+    let module = compile(
+        SourceInput {
+            source_id: "pub-identifier.exs",
+            text: "fn pub() -> Int { ret 42; } fn main() -> Int { ret pub(); }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok(), "{module:?}");
+}
+
+/// Rejects the removed `pub fn` modifier at the module boundary.
+#[test]
+fn rejects_removed_pub_function_modifier() {
+    let error = match compile(
+        SourceInput {
+            source_id: "pub-modifier.exs",
+            text: "pub fn main() { ret None; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("removed `pub` modifier compiled"),
+        Err(error) => error,
+    };
+    assert!(
+        error.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "E0100" && diagnostic.message.contains("`fn`")
+        })
+    );
 }

@@ -34,7 +34,7 @@ pub fn execute_source_with_inputs(source: &str, inputs: &[ExsValue]) -> ExsValue
     let compiled = compile_source(source);
     let runner = ServerRunner::new(ExecutionLimits::default());
     let cancellation = ExecutionCancellation::new();
-    match block_on(runner.execute(&compiled.wasm, inputs, &cancellation)) {
+    match block_on(runner.execute(&compiled.wasm, "main", inputs, &cancellation)) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     }
@@ -53,7 +53,7 @@ pub fn runner_test_module(memory_pages: u32, helper: &str, start_body: &str) -> 
             (func (export "__exs_input_alloc") (param i32) (result i32)
                 i32.const 0)
             {helper}
-            (func (export "__exs_start") (param i32 i32) (result i32)
+            (func (export "__exs_start_main") (param i32 i32) (result i32)
                 {start_body})
         )
         "#,
