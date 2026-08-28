@@ -113,6 +113,9 @@ impl ServerRunner {
         if cancellation.is_cancelled() {
             return Err(RunnerError::Cancelled);
         }
+        if wasm.len() > self.limits.max_module_bytes {
+            return Err(RunnerError::LimitExceeded(LimitKind::Module));
+        }
         let execution_started_at = std::time::Instant::now();
         let engine = limited_engine(&self.limits)?;
         let module =

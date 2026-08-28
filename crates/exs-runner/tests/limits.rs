@@ -25,6 +25,20 @@ fn rejects_wasm_memory_over_the_configured_limit() {
     ));
 }
 
+/// Rejects an oversized Wasm module before native compilation begins.
+#[test]
+fn rejects_wasm_over_the_configured_module_size_limit() {
+    let runner = ServerRunner::new(ExecutionLimits {
+        max_module_bytes: 1,
+        ..ExecutionLimits::default()
+    });
+    let result = block_on(runner.execute(&[0, 97], "main", &[], &ExecutionCancellation::new()));
+    assert!(matches!(
+        result,
+        Err(RunnerError::LimitExceeded(LimitKind::Module))
+    ));
+}
+
 /// Rejects guest instruction execution once Wasmtime consumes the fuel budget.
 #[test]
 fn rejects_execution_after_the_configured_fuel_budget() {

@@ -25,6 +25,8 @@ pub(crate) struct HostAbiState {
     registry: HostFunctionRegistry,
     /// CBOR responses that completed synchronously and await runtime retrieval.
     ready_responses: HashMap<i64, Vec<u8>>,
+    /// Total byte length retained by synchronous CBOR responses awaiting runtime retrieval.
+    ready_response_bytes: usize,
     /// Futures that have suspended a runtime task and await later runner resumption.
     pending_calls: BTreeMap<i64, HostFuture>,
     /// Active pull-stream instances created during this root execution.
@@ -64,6 +66,7 @@ impl HostAbiState {
         Self {
             registry,
             ready_responses: HashMap::new(),
+            ready_response_bytes: 0,
             pending_calls: BTreeMap::new(),
             active_streams: HashMap::new(),
             pending_stream_calls: HashMap::new(),
@@ -113,6 +116,32 @@ impl HostAbiState {
     /// Returns the duration for which a host operation may wait before the root deadline.
     fn remaining_until_deadline(&self) -> std::time::Duration {
         self.deadline_at.saturating_duration_since(Instant::now())
+    }
+
+    /// Retains one ready response while enforcing response-count and byte budgets.
+    fn store_ready_response(&mut self, call_id: i64, response: Vec<u8>) -> Result<(), LimitKind> {
+        if self.ready_responses.contains_key(&call_id) {
+            return Err(LimitKind::HostCalls);
+        }
+        if self.ready_responses.len() >= self.limits.max_ready_responses {
+            return Err(LimitKind::ReadyResponses);
+        }
+        let Some(next_bytes) = self.ready_response_bytes.checked_add(response.len()) else {
+            return Err(LimitKind::HostOwnedBytes);
+        };
+        if next_bytes > self.limits.max_host_owned_bytes {
+            return Err(LimitKind::HostOwnedBytes);
+        }
+        self.ready_responses.insert(call_id, response);
+        self.ready_response_bytes = next_bytes;
+        Ok(())
+    }
+
+    /// Removes one ready response and releases its retained host-owned bytes.
+    fn take_ready_response(&mut self, call_id: i64) -> Option<Vec<u8>> {
+        let response = self.ready_responses.remove(&call_id)?;
+        self.ready_response_bytes = self.ready_response_bytes.saturating_sub(response.len());
+        Some(response)
     }
 
     /// Acquires one active language-task permit when the configured budget allows it.
@@ -474,8 +503,7 @@ fn host_call_response_copy(
 ) -> Result<i32, wasmtime::Error> {
     let response = caller
         .data_mut()
-        .ready_responses
-        .remove(&call_id)
+        .take_ready_response(call_id)
         .ok_or_else(|| wasmtime::Error::msg("host response is not ready"))?;
     let destination_length = memory_range(destination_pointer, destination_length)?.1;
     if response.len() != destination_length {
@@ -566,13 +594,16 @@ fn store_ready_response(
             "host response exceeds configured CBOR payload limit",
         ));
     }
-    let previous = caller.data_mut().ready_responses.insert(call_id, response);
-    if previous.is_some() {
-        return Err(wasmtime::Error::msg(
+    match caller.data_mut().store_ready_response(call_id, response) {
+        Ok(()) => Ok(()),
+        Err(LimitKind::HostCalls) => Err(wasmtime::Error::msg(
             "runtime reused an active host-call identifier",
-        ));
+        )),
+        Err(kind) => {
+            caller.data_mut().report_limit_violation(kind);
+            Err(wasmtime::Error::msg("ready host-response limit exceeded"))
+        }
     }
-    Ok(())
 }
 
 /// Converts a host-boundary CBOR failure into a technical Wasmtime failure.
@@ -596,4 +627,51 @@ fn host_cbor_error(caller: &mut Caller<'_, HostAbiState>, error: HostCborError) 
         _ => {}
     }
     wasmtime::Error::msg(format!("could not process host CBOR: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates isolated Host ABI state with one explicit response-retention policy.
+    fn state(max_ready_responses: usize, max_host_owned_bytes: usize) -> HostAbiState {
+        let limits = ExecutionLimits {
+            max_ready_responses,
+            max_host_owned_bytes,
+            ..ExecutionLimits::default()
+        };
+        let now = Instant::now();
+        HostAbiState::new(HostFunctionRegistry::new(), limits, now, now)
+    }
+
+    /// Rejects synchronous responses once their retained-count limit is reached.
+    #[test]
+    fn rejects_ready_responses_over_the_configured_count_limit() {
+        let mut state = state(1, 8);
+        assert!(state.store_ready_response(1, vec![1]).is_ok());
+        assert_eq!(
+            state.store_ready_response(2, vec![2]),
+            Err(LimitKind::ReadyResponses)
+        );
+    }
+
+    /// Rejects synchronous responses once their aggregate retained bytes exceed the budget.
+    #[test]
+    fn rejects_ready_responses_over_the_configured_byte_limit() {
+        let mut state = state(2, 2);
+        assert!(state.store_ready_response(1, vec![1, 2]).is_ok());
+        assert_eq!(
+            state.store_ready_response(2, vec![3]),
+            Err(LimitKind::HostOwnedBytes)
+        );
+    }
+
+    /// Releases retained response bytes after the runtime copies one ready response.
+    #[test]
+    fn releases_ready_response_bytes_after_copy() {
+        let mut state = state(1, 2);
+        assert!(state.store_ready_response(1, vec![1, 2]).is_ok());
+        assert_eq!(state.take_ready_response(1), Some(vec![1, 2]));
+        assert!(state.store_ready_response(2, vec![3, 4]).is_ok());
+    }
 }
