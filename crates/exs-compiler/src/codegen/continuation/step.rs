@@ -154,6 +154,25 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
+            Operation::BytesStatic {
+                value,
+                from_utf8,
+                destination,
+                span,
+            } => {
+                self.get_slot(*value, *span)?;
+                self.call_runtime(
+                    if *from_utf8 {
+                        "__exs_rt_bytes_from_utf8"
+                    } else {
+                        "__exs_rt_bytes_from_list"
+                    },
+                    *span,
+                )?;
+                self.set_slot(*destination, *span)?;
+                self.complete_if_error(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::Integer {
                 value,
                 destination,

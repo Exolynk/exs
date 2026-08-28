@@ -37,6 +37,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             Expression::String(value, span) => {
                 self.compile_string(value, *span)?;
             }
+            Expression::Bytes(value, span) => {
+                self.compile_bytes(value, *span)?;
+            }
             Expression::FormattedString { parts, span, .. } => {
                 self.compile_formatted_string(parts, *span)?;
             }
@@ -458,6 +461,30 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         arguments: &[Expression<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        if type_name.name == "Bytes" && matches!(method.name.as_str(), "from_list" | "from_utf8") {
+            if arguments.len() != 1 {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0208",
+                    span,
+                    format!(
+                        "static method `Bytes::{}` expects 1 argument but received {}",
+                        method.name,
+                        arguments.len()
+                    ),
+                )));
+            }
+            self.compile_expression(&arguments[0])?;
+            self.runtime_value_call(
+                if method.name == "from_utf8" {
+                    "__exs_rt_bytes_from_utf8"
+                } else {
+                    "__exs_rt_bytes_from_list"
+                },
+                1,
+                span,
+            )?;
+            return Ok(());
+        }
         let key = format!("{}::{}", type_name.name, method.name);
         if let Some(variant) = self.types.enum_variant(&key) {
             if variant.fields.len() != arguments.len() {
@@ -718,6 +745,41 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .instruction(&Instruction::LocalGet(buffer_pointer));
         self.function.instruction(&Instruction::I32Const(length));
         self.runtime_call("__exs_rt_string_new", span)
+    }
+
+    /// Compiles one static source Bytes literal through the compiler-owned literal pool.
+    pub(super) fn compile_bytes(
+        &mut self,
+        value: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let data_index = self.literals.get(value).copied().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0211",
+                span,
+                "missing compiler Bytes literal data segment",
+            ))
+        })?;
+        let length = i32::try_from(value.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0211",
+                span,
+                "Bytes literal is too large for Wasm linear memory",
+            ))
+        })?;
+        self.function.instruction(&Instruction::I32Const(length));
+        self.runtime_call("__exs_rt_literal_buffer_alloc", span)?;
+        let buffer_pointer = self.allocate_local();
+        self.function
+            .instruction(&Instruction::LocalTee(buffer_pointer));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::I32Const(length));
+        self.function
+            .instruction(&Instruction::MemoryInit { mem: 0, data_index });
+        self.function
+            .instruction(&Instruction::LocalGet(buffer_pointer));
+        self.function.instruction(&Instruction::I32Const(length));
+        self.runtime_call("__exs_rt_bytes_new", span)
     }
 
     /// Concatenates formatted-string fragments with the standard String-add conversion rules.

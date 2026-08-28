@@ -416,6 +416,8 @@ pub enum Expression<'a> {
     Float(f64, SourceSpan<'a>),
     /// A decoded UTF-8 string literal.
     String(String, SourceSpan<'a>),
+    /// A raw-octet literal encoded from UTF-8 source bytes.
+    Bytes(String, SourceSpan<'a>),
     /// A string assembled from literal and runtime expression fragments.
     FormattedString {
         /// Delimiter rules preserved for canonical source formatting.

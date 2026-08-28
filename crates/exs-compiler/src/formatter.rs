@@ -626,6 +626,7 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
             }
         }
         Expression::String(value, _) => quote_string(value),
+        Expression::Bytes(value, _) => format!("b{}", quote_string(value)),
         Expression::FormattedString { kind, parts, .. } => formatted_string(*kind, parts),
         Expression::Bool(value, _) => value.to_string(),
         Expression::None(_) => "None".to_owned(),

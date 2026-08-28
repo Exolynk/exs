@@ -176,6 +176,20 @@ pub fn standard_library_namespace(name: &str) -> Option<&'static StandardNamespa
 #[must_use]
 pub fn standard_library_type_static_functions(name: &str) -> &'static [StandardFunction] {
     match name {
+        "Bytes" => &[
+            StandardFunction {
+                name: "from_list",
+                signature: "Bytes::from_list(values: List) -> Bytes | Error",
+                description: "Creates immutable Bytes from a List of Int octets. Every value must be between 0 and 255; non-Int entries return TypeError and out-of-range entries return ValueError.",
+                example: "let payload = Bytes::from_list([0, 127, 255]);",
+            },
+            StandardFunction {
+                name: "from_utf8",
+                signature: "Bytes::from_utf8(value: String) -> Bytes | Error",
+                description: "Encodes the UTF-8 contents of a String into immutable Bytes.",
+                example: "let encoded = Bytes::from_utf8(\"hello\");",
+            },
+        ],
         "Duration" => &[
             StandardFunction {
                 name: "nanoseconds",
@@ -851,8 +865,8 @@ pub fn standard_library_types() -> Vec<StandardType> {
         },
         StandardType {
             name: "String",
-            description: "`String` is an immutable UTF-8 sequence. Indexing and `length()` operate on Unicode scalar values rather than UTF-8 byte positions.",
-            usage: "fn main() -> String {\n    let greeting = \"Hello\";\n    ret greeting[0];\n}",
+            description: "`String` is an immutable UTF-8 sequence. `length()` operates on Unicode scalar values rather than UTF-8 byte positions; use `for` to iterate scalar Strings.",
+            usage: "fn main() -> String {\n    let greeting = \"Hello\";\n    ret greeting;\n}",
             methods: &[
                 StandardMethod {
                     signature: "length() -> Int",
@@ -863,6 +877,43 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     signature: "is_empty() -> Bool",
                     description: "Returns true when the String contains no Unicode scalar values and false otherwise. It does not trim or normalize the String.",
                     example: "let input = \"\";\nif input.is_empty() {\n    Host::call(\"println\", \"missing input\");\n}",
+                },
+            ],
+        },
+        StandardType {
+            name: "Bytes",
+            description: "`Bytes` is an immutable sequence of raw octets. It is the binary-safe value used for arbitrary host data; indexing and iteration yield Int values from 0 through 255.",
+            usage: "fn main() -> Bytes | Error {\n    let header = b\"EXS\";\n    ret header.concat(Bytes::from_list([0, 1])?);\n}",
+            methods: &[
+                StandardMethod {
+                    signature: "length() -> Int",
+                    description: "Returns the number of octets in the Bytes value.",
+                    example: "let payload = b\"abc\";\nlet count = payload.length(); // 3",
+                },
+                StandardMethod {
+                    signature: "is_empty() -> Bool",
+                    description: "Returns true when the Bytes value contains no octets. It does not mutate the receiver.",
+                    example: "let payload = b\"\";\nlet empty = payload.is_empty(); // true",
+                },
+                StandardMethod {
+                    signature: "to_list() -> List",
+                    description: "Returns a new List whose elements are the receiver octets as Int values in source order.",
+                    example: "let values = b\"AB\".to_list(); // [65, 66]",
+                },
+                StandardMethod {
+                    signature: "slice(start: Int, end: Int) -> Bytes | Error",
+                    description: "Returns a new Bytes value covering the half-open range from start through end. Both indexes must be non-negative and the range must lie inside the receiver, otherwise IndexError is returned.",
+                    example: "let middle = b\"abcd\".slice(1, 3); // b\"bc\"",
+                },
+                StandardMethod {
+                    signature: "concat(other: Bytes) -> Bytes | Error",
+                    description: "Returns a new Bytes value with other appended. A non-Bytes argument returns TypeError.",
+                    example: "let message = b\"hello, \".concat(b\"world\");",
+                },
+                StandardMethod {
+                    signature: "decode_utf8() -> String | Error",
+                    description: "Decodes the receiver as UTF-8. Invalid byte sequences return EncodingError rather than replacing or dropping octets.",
+                    example: "let text = b\"hello\".decode_utf8(); // \"hello\"",
                 },
             ],
         },
@@ -1288,7 +1339,7 @@ fn render_standard_function(output: &mut String, function: &StandardFunction, he
 /// Renders the automatic runtime-owned deep clone method for one source-visible type.
 fn render_clone_method(output: &mut String, type_name: &str) {
     output.push_str(&format!(
-        "### `clone() -> {type_name} | Error`\n\nCreates a synchronous deep copy of this value's reachable mutable graph. Lists, Objects, nominal values, enum payloads, Errors, Cells, and Closures are copied while preserving aliases and cycles inside the copy; immutable values such as None, Bool, Int, Float, and String are reused. `clone()` never mutates its source, cannot be overridden, and returns `CloneError` when a reachable host-owned resource cannot be cloned.\n\n```exs\nfn main(value: {type_name}) -> {type_name} | Error {{\n    ret value.clone();\n}}\n```\n\n"
+        "### `clone() -> {type_name} | Error`\n\nCreates a synchronous deep copy of this value's reachable mutable graph. Lists, Objects, nominal values, enum payloads, Errors, Cells, and Closures are copied while preserving aliases and cycles inside the copy; immutable values such as None, Bool, Int, Float, String, and Bytes are reused. `clone()` never mutates its source, cannot be overridden, and returns `CloneError` when a reachable host-owned resource cannot be cloned.\n\n```exs\nfn main(value: {type_name}) -> {type_name} | Error {{\n    ret value.clone();\n}}\n```\n\n"
     ));
 }
 

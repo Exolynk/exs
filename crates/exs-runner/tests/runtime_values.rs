@@ -201,6 +201,81 @@ fn round_trips_signed_64_bit_runner_values() {
     }
 }
 
+/// Preserves native Bytes across the runner boundary and typed ExS function contracts.
+#[test]
+fn round_trips_native_bytes() {
+    assert_eq!(
+        execute_source(
+            "fn main(value: Bytes) -> Bytes { ret value; }",
+            ExsValue::Bytes(vec![0, 127, 255]),
+        ),
+        ExsValue::Bytes(vec![0, 127, 255])
+    );
+}
+
+/// Evaluates Bytes literals, construction, methods, indexing, and Iterator-backed for loops.
+#[test]
+fn evaluates_native_bytes_operations() {
+    let source = r#"
+        fn main() -> List | Error {
+            let prefix = b"A";
+            let suffix = Bytes::from_list([0, 255])?;
+            let value = prefix.concat(suffix)?;
+            let sum = 0;
+            for byte in value {
+                sum = sum + byte;
+            }
+            ret [
+                value[0],
+                value.length(),
+                value.to_list(),
+                value.slice(1, 3)?,
+                b"ok".decode_utf8()?,
+                sum,
+                Bytes::from_utf8("go")?,
+            ];
+        }
+    "#;
+    assert_eq!(
+        execute_source_with_inputs(source, &[]),
+        ExsValue::List(vec![
+            ExsValue::Int(65),
+            ExsValue::Int(3),
+            ExsValue::List(vec![
+                ExsValue::Int(65),
+                ExsValue::Int(0),
+                ExsValue::Int(255)
+            ]),
+            ExsValue::Bytes(vec![0, 255]),
+            ExsValue::String("ok".to_owned()),
+            ExsValue::Int(320),
+            ExsValue::Bytes(b"go".to_vec()),
+        ])
+    );
+}
+
+/// Returns documented recoverable errors for invalid Bytes construction and UTF-8 decoding.
+#[test]
+fn reports_native_bytes_errors() {
+    for (source, kind) in [
+        (
+            "fn main() -> Error { ret Bytes::from_list([256]); }",
+            "ValueError",
+        ),
+        (
+            "fn main() -> Error { ret Bytes::from_list([255]).decode_utf8(); }",
+            "EncodingError",
+        ),
+    ] {
+        let result = execute_source_with_inputs(source, &[]);
+        let ExsValue::Error(error) = result else {
+            panic!("Bytes failure did not return an Error");
+        };
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.severity, ErrorSeverity::Recoverable);
+    }
+}
+
 /// Reports overflow only when integer arithmetic exceeds the signed 64-bit range.
 #[test]
 fn reports_signed_64_bit_integer_overflow() {

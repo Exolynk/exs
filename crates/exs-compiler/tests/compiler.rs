@@ -158,6 +158,33 @@ fn compiles_formatted_strings() {
     }
 }
 
+/// Compiles and formats immutable Bytes literals alongside ordinary Strings.
+#[test]
+fn compiles_and_formats_bytes_literals() {
+    let source = "fn main() -> Bytes { ret b\"hello\\n\"; }";
+    let compiled = match compile(
+        SourceInput {
+            source_id: "bytes.exs",
+            text: source,
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(compiled) => compiled,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    if let Err(error) = Validator::new().validate_all(&compiled.wasm) {
+        panic!("generated Wasm is invalid: {error}");
+    }
+    let formatted = match format(SourceInput {
+        source_id: "bytes.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert!(formatted.contains("b\"hello\\n\""));
+}
+
 /// Formats every formatted-string delimiter form into reparsable source.
 #[test]
 fn formats_formatted_strings() {

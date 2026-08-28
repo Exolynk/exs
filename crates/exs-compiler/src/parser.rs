@@ -985,6 +985,7 @@ impl<'a> Parser<'a> {
             TokenKind::Integer(value) => Ok(Expression::Integer(value, token.span)),
             TokenKind::Float(value) => Ok(Expression::Float(value, token.span)),
             TokenKind::String(value) => Ok(Expression::String(value, token.span)),
+            TokenKind::Bytes(value) => Ok(Expression::Bytes(value, token.span)),
             TokenKind::FormattedString(value) => self.formatted_string(value, token.span),
             TokenKind::True => Ok(Expression::Bool(true, token.span)),
             TokenKind::False => Ok(Expression::Bool(false, token.span)),
@@ -1648,6 +1649,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         Expression::Integer(_, span)
         | Expression::Float(_, span)
         | Expression::String(_, span)
+        | Expression::Bytes(_, span)
         | Expression::Bool(_, span)
         | Expression::None(span) => *span,
         Expression::FormattedString { span, .. } => *span,

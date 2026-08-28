@@ -58,7 +58,8 @@ impl CloneContext {
             | RtValue::Bool(_)
             | RtValue::Int(_)
             | RtValue::Float(_)
-            | RtValue::String(_) => Ok(source),
+            | RtValue::String(_)
+            | RtValue::Bytes(_) => Ok(source),
             RtValue::List(list) => self.clone_list(source, list.elements.clone()),
             RtValue::Object(object) => self.clone_object(source, object),
             RtValue::Cell(cell) => self.clone_cell(source, cell.value),

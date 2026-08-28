@@ -91,6 +91,15 @@ Formatted strings use an `f` prefix and evaluate normal ExS expressions inside `
 f"Hello {name}; next: {count + 1}"
 ```
 
+### Bytes
+
+Bytes use a `b` prefix and contain the UTF-8 source bytes after normal string escape decoding. Use `Bytes::from_list` for arbitrary octets, including values that do not form UTF-8.
+
+```exs
+b"header\n"
+Bytes::from_list([0, 127, 255])
+```
+
 Raw strings use an `r` prefix and one or more `#` delimiters. Their contents are not escape-decoded.
 
 ```exs
@@ -139,6 +148,7 @@ ExS is dynamically typed. Types describe values, not variable bindings. The sour
 | `Int` | A signed 64-bit integer. |
 | `Float` | An IEEE 754 binary64 value. |
 | `String` | An immutable Unicode-scalar sequence. |
+| `Bytes` | An immutable raw-octet sequence. |
 | `List` | A mutable ordered sequence of values. |
 | `Object` | A mutable insertion-ordered String-keyed mapping. |
 | `Error` | A recoverable failure value. |
@@ -158,7 +168,7 @@ fn describe(value: String | Int | None) -> String | Error {
 }
 ```
 
-The built-in contract names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `List`, `Object`, and `Fn`. User-defined nominal types, enums, and traits are also valid contract names. A type may optionally be written with the `std::` qualifier, such as `std::Int` or `std::None`.
+The built-in contract names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `Bytes`, `List`, `Object`, and `Fn`. User-defined nominal types, enums, and traits are also valid contract names. A type may optionally be written with the `std::` qualifier, such as `std::Int` or `std::None`.
 
 An omitted annotation means `Any`. Contracts are checked at function entry and at each explicit or implicit return.
 
@@ -200,7 +210,7 @@ value.method(argument)
 Type::method(argument)
 ```
 
-List indexes must be nonnegative `Int` values. Object indexes must be Strings. Invalid indexes produce `IndexError`; an invalid receiver or Object key produces `TypeError`. Missing Object properties and keys evaluate to `None`.
+List and Bytes indexes must be nonnegative `Int` values. Bytes indexing returns an `Int` from 0 through 255. Object indexes must be Strings. Invalid indexes produce `IndexError`; an invalid receiver or Object key produces `TypeError`. Missing Object properties and keys evaluate to `None`.
 
 String indexing is not supported. Use `for` to iterate a String by Unicode scalar.
 
@@ -297,7 +307,7 @@ for item in iterable {
 
 `while` evaluates its Bool condition before every iteration.
 
-`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
+`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. Bytes yields one Int octet from 0 through 255. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
 
 Each loop iteration creates a fresh binding for the loop variable. Closures created in separate iterations therefore capture distinct loop bindings.
 
@@ -449,7 +459,7 @@ fn debug(self) -> String
 
 `Ordering` is a built-in enum, also available as `std::Ordering`, with variants `Less`, `Equal`, `Greater`, and `Unordered`.
 
-`ToString` is used by formatted string interpolation and may also be called explicitly. `Debug` is an explicit diagnostic renderer. Both have defaults for all runtime value categories: `None` renders as `"None"`, Error as `"Error"`, scalar values use their source spelling, String is unchanged, List and Object render as `"[]"` and `"{}"`, closures render as `"fn main()"`, and enum values render as their stable `source_id::Type::Variant` identity. An `impl ToString` or `impl Debug` overrides the corresponding default for its nominal type or enum.
+`ToString` is used by formatted string interpolation and may also be called explicitly. `Debug` is an explicit diagnostic renderer. Both have defaults for all runtime value categories: `None` renders as `"None"`, Error as `"Error"`, scalar values use their source spelling, String is unchanged, Bytes renders as `"Bytes(length)"`, List and Object render as `"[]"` and `"{}"`, closures render as `"fn main()"`, and enum values render as their stable `source_id::Type::Variant` identity. An `impl ToString` or `impl Debug` overrides the corresponding default for its nominal type or enum.
 
 # 9. Errors
 
@@ -473,7 +483,7 @@ error.data()      // any value
 error.cause()     // related value or None
 ```
 
-Common Error kinds are `ArityError`, `CloneError`, `IndexError`, `IntOverflowError`, `MatchError`, `MethodNotFound`, `MissingValue`, `NotIterable`, `SerializationError`, `TypeError`, and `HostFunctionNotFound`.
+Common Error kinds are `ArityError`, `CloneError`, `EncodingError`, `IndexError`, `IntOverflowError`, `MatchError`, `MethodNotFound`, `MissingValue`, `NotIterable`, `SerializationError`, `TypeError`, `ValueError`, and `HostFunctionNotFound`.
 
 # 10. Parallel Work with `par`
 
@@ -524,7 +534,18 @@ Every value supports `clone()`.
 
 Numeric values support `add(other)`, `sub(other)`, `mul(other)`, and `div(other)`. `Int` also supports `div_euclid(other)` and `rem_euclid(other)` for exact Euclidean calculations. `Int` and `Float` support `abs()`. `Float` also supports `floor()`, `ceil()`, and `round()`.
 
-Strings, Lists, and Objects support `length()` and `is_empty()`.
+Strings, Bytes, Lists, and Objects support `length()` and `is_empty()`.
+
+Bytes are immutable and support:
+
+```text
+Bytes::from_list(values)    // Bytes or TypeError / ValueError
+Bytes::from_utf8(value)     // Bytes or TypeError
+bytes.to_list()             // new List of Int octets
+bytes.slice(start, end)     // new Bytes or IndexError
+bytes.concat(other)         // new Bytes or TypeError
+bytes.decode_utf8()         // String or EncodingError
+```
 
 Lists support:
 

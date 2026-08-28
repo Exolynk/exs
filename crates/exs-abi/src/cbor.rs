@@ -40,6 +40,8 @@ pub enum ExsValue {
     Float(f64),
     /// An immutable UTF-8 ExS string.
     String(String),
+    /// An immutable sequence of raw octets.
+    Bytes(Vec<u8>),
     /// An ordered sequence of host-safe ExS values.
     List(Vec<ExsValue>),
     /// An insertion-ordered mapping from string keys to host-safe ExS values.
@@ -244,6 +246,10 @@ fn encode_value(
             .str(value)
             .map(|_| ())
             .map_err(|_| CborError::Encode),
+        ExsValue::Bytes(value) => encoder
+            .bytes(value)
+            .map(|_| ())
+            .map_err(|_| CborError::Encode),
         ExsValue::List(values) => {
             check_collection_length(limits, values.len())?;
             let length = u64::try_from(values.len()).map_err(|_| CborError::Encode)?;
@@ -329,6 +335,9 @@ fn decode_value(
         )),
         Type::String => Ok(ExsValue::String(
             decoder.str().map_err(|_| CborError::Malformed)?.into(),
+        )),
+        Type::Bytes => Ok(ExsValue::Bytes(
+            decoder.bytes().map_err(|_| CborError::Malformed)?.into(),
         )),
         Type::Array => {
             let length = decoder

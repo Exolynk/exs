@@ -637,6 +637,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.call_runtime("__exs_rt_float_new", *span)
             }
             Expression::String(value, span) => self.string(value, *span),
+            Expression::Bytes(value, span) => self.bytes(value, *span),
             Expression::Bool(value, span) => {
                 self.function
                     .instruction(&Instruction::I32Const(i32::from(*value)));
@@ -693,6 +694,40 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .instruction(&Instruction::LocalGet(self.literal_buffer_local));
         self.function.instruction(&Instruction::I32Const(length));
         self.call_runtime("__exs_rt_string_new", span)
+    }
+
+    /// Emits one compiler-owned passive-data Bytes construction.
+    pub(super) fn bytes(
+        &mut self,
+        value: &str,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let data_index = self.literals.get(value).copied().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0211",
+                span,
+                "missing compiler Bytes literal data segment",
+            ))
+        })?;
+        let length = i32::try_from(value.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0211",
+                span,
+                "Bytes literal is too large for Wasm linear memory",
+            ))
+        })?;
+        self.function.instruction(&Instruction::I32Const(length));
+        self.call_runtime("__exs_rt_literal_buffer_alloc", span)?;
+        self.function
+            .instruction(&Instruction::LocalTee(self.literal_buffer_local));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::I32Const(length));
+        self.function
+            .instruction(&Instruction::MemoryInit { mem: 0, data_index });
+        self.function
+            .instruction(&Instruction::LocalGet(self.literal_buffer_local));
+        self.function.instruction(&Instruction::I32Const(length));
+        self.call_runtime("__exs_rt_bytes_new", span)
     }
 
     /// Emits a named runtime ABI call after setting its source position.

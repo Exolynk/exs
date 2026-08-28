@@ -14,7 +14,9 @@ use exs_value::ValueRef;
 use crate::gc;
 use crate::scheduler::{ExecutionContext, HostResume};
 use crate::state::{AsyncFrame, FrameContinuation, HeapSlot, RuntimeState, runtime};
-use crate::value::{RtValue, RuntimeEnum, RuntimeError, RuntimeList, RuntimeObject, RuntimeString};
+use crate::value::{
+    RtValue, RuntimeBytes, RuntimeEnum, RuntimeError, RuntimeList, RuntimeObject, RuntimeString,
+};
 
 #[link(wasm_import_module = "exs")]
 unsafe extern "C" {
@@ -300,6 +302,20 @@ pub(crate) fn string_new(pointer_value: i32, length: i32) -> ValueRef {
     }
     let value = RuntimeString::from_utf8(buffer).unwrap_or_else(|_| trap());
     allocate(RtValue::String(Box::new(value)))
+}
+
+/// Creates immutable runtime Bytes from the compiler-populated literal buffer.
+pub(crate) fn bytes_new(pointer_value: i32, length: i32) -> ValueRef {
+    let Ok(length) = usize::try_from(length) else {
+        trap();
+    };
+    let buffer = &unsafe { runtime() }.literal_buffer;
+    if usize::try_from(pointer_value).ok() != Some(buffer.as_ptr() as usize)
+        || length != buffer.len()
+    {
+        trap();
+    }
+    allocate(RtValue::Bytes(Box::new(RuntimeBytes::from_slice(buffer))))
 }
 
 /// Allocates a runtime-owned linear-memory buffer for one CBOR input value.
@@ -998,6 +1014,7 @@ fn runtime_to_exs_value_inner(
         RtValue::Int(value) => Ok(ExsValue::Int(*value)),
         RtValue::Float(value) => Ok(ExsValue::Float(*value)),
         RtValue::String(value) => Ok(ExsValue::String(value.as_str().into())),
+        RtValue::Bytes(value) => Ok(ExsValue::Bytes(value.as_slice().into())),
         RtValue::List(list) => {
             if active_containers.contains(&reference) {
                 return Err(BoundarySerializationError::Cycle);
@@ -1066,6 +1083,7 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
         ExsValue::Int(value) => RtValue::Int(value),
         ExsValue::Float(value) => RtValue::Float(value),
         ExsValue::String(value) => RtValue::String(Box::new(RuntimeString::from_string(value))),
+        ExsValue::Bytes(value) => RtValue::Bytes(Box::new(RuntimeBytes::from_vec(value))),
         ExsValue::List(elements) => RtValue::List(Box::new(RuntimeList {
             elements: elements.into_iter().map(exs_value_to_runtime).collect(),
         })),

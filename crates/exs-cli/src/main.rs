@@ -393,6 +393,14 @@ fn format_result(result: &exs_runner::ExsValue) -> String {
         }
         exs_runner::ExsValue::Float(value) => value.to_string(),
         exs_runner::ExsValue::String(value) => format!("{value:?}"),
+        exs_runner::ExsValue::Bytes(value) => {
+            let values = value
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Bytes::from_list([{values}])")
+        }
         exs_runner::ExsValue::List(values) => {
             let values = values
                 .iter()

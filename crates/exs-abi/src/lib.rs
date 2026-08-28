@@ -12,13 +12,35 @@ pub use cbor::{
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 23 adds runner-owned wall-clock and monotonic-time Host operations.
-pub const ABI_VERSION: u32 = 24;
+/// Version 25 adds native immutable Bytes values to the host boundary.
+pub const ABI_VERSION: u32 = 25;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
-    "abs", "floor", "ceil", "round", "clone", "length", "is_empty", "kind", "message", "data",
-    "cause", "push", "pop", "insert", "remove", "clear", "has", "delete", "keys", "values",
+    "abs",
+    "floor",
+    "ceil",
+    "round",
+    "clone",
+    "length",
+    "is_empty",
+    "kind",
+    "message",
+    "data",
+    "cause",
+    "push",
+    "pop",
+    "insert",
+    "remove",
+    "clear",
+    "has",
+    "delete",
+    "keys",
+    "values",
+    "to_list",
+    "slice",
+    "concat",
+    "decode_utf8",
 ];
 
 /// Runtime type-mask bit for None.
@@ -39,6 +61,8 @@ pub const TYPE_LIST: u32 = 1 << 6;
 pub const TYPE_OBJECT: u32 = 1 << 7;
 /// Runtime type-mask bit for callable closure values.
 pub const TYPE_FN: u32 = 1 << 8;
+/// Runtime type-mask bit for immutable byte sequences.
+pub const TYPE_BYTES: u32 = 1 << 9;
 /// Runtime type-mask accepting every current source-visible value type.
 pub const TYPE_ANY: u32 = TYPE_NONE
     | TYPE_ERROR
@@ -48,7 +72,8 @@ pub const TYPE_ANY: u32 = TYPE_NONE
     | TYPE_STRING
     | TYPE_LIST
     | TYPE_OBJECT
-    | TYPE_FN;
+    | TYPE_FN
+    | TYPE_BYTES;
 /// Reserved nominal type tag used by the compiler-owned `std::Ordering` enum.
 pub const STANDARD_ORDERING_TYPE_ID: u32 = 0;
 /// Stable host-boundary identity used by the compiler-owned `std::Ordering` enum.

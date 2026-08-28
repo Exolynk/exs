@@ -205,7 +205,7 @@ fn collect_assignment_target_literals(target: &AssignmentTarget<'_>, pool: &mut 
 /// Collects literals recursively from one expression.
 fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPool) {
     match expression {
-        Expression::String(value, _) => pool.insert(value),
+        Expression::String(value, _) | Expression::Bytes(value, _) => pool.insert(value),
         Expression::FormattedString { parts, .. } => {
             pool.insert("");
             for part in parts {

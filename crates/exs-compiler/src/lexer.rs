@@ -52,6 +52,8 @@ pub enum TokenKind {
     Float(f64),
     /// A decoded UTF-8 string literal.
     String(String),
+    /// A decoded UTF-8 byte literal whose source bytes create immutable Bytes.
+    Bytes(String),
     /// A string literal containing parser-aware interpolation expressions.
     FormattedString(FormattedString),
     /// The `fn` keyword.
@@ -304,6 +306,17 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                     }
                 };
                 TokenKind::Integer(value)
+            }
+        } else if byte == b'b' && bytes.get(index + 1) == Some(&b'"') {
+            index += 1;
+            match string_literal(source, &mut index, start) {
+                Ok(TokenKind::String(value)) => TokenKind::Bytes(value),
+                Ok(_) => unreachable!(),
+                Err(error) => {
+                    diagnostics.push(error);
+                    recover_string(bytes, &mut index);
+                    continue;
+                }
             }
         } else if byte == b'f'
             && (bytes.get(index + 1) == Some(&b'"')

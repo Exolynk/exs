@@ -43,6 +43,7 @@ pub(crate) fn type_names() -> impl Iterator<Item = &'static str> {
     sources()
         .iter()
         .flat_map(|source| source.type_names.iter().copied())
+        .chain(["Bytes"])
 }
 
 /// Returns source metadata for all prelude units with a caller-selected lifetime.

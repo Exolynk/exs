@@ -686,6 +686,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             Expression::Integer(_, _)
             | Expression::Float(_, _)
             | Expression::String(_, _)
+            | Expression::Bytes(_, _)
             | Expression::Bool(_, _)
             | Expression::None(_) => {}
         }

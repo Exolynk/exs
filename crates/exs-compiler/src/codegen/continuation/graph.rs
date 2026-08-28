@@ -32,6 +32,17 @@ pub(super) enum Operation<'source, 'function> {
         /// Source location for this literal fragment.
         span: SourceSpan<'source>,
     },
+    /// Constructs native immutable Bytes through one compiler-recognized static method.
+    BytesStatic {
+        /// Frame slot containing the List or String source value.
+        value: u32,
+        /// Whether to encode the source String rather than validate a List of octets.
+        from_utf8: bool,
+        /// Frame slot receiving the Bytes result or Error.
+        destination: u32,
+        /// Source location for the static method call.
+        span: SourceSpan<'source>,
+    },
     /// Constructs an integer literal used by continuation control bookkeeping.
     Integer {
         value: i64,
@@ -621,6 +632,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
     match operation {
         Operation::Literal { expression, .. } => expression_span(expression),
         Operation::String { span, .. }
+        | Operation::BytesStatic { span, .. }
         | Operation::Integer { span, .. }
         | Operation::None { span, .. }
         | Operation::Boolean { span, .. }
@@ -676,6 +688,7 @@ pub(super) fn expression_span<'source>(expression: &Expression<'source>) -> Sour
         Expression::Integer(_, span)
         | Expression::Float(_, span)
         | Expression::String(_, span)
+        | Expression::Bytes(_, span)
         | Expression::Bool(_, span)
         | Expression::None(span) => *span,
         Expression::FormattedString { span, .. } => *span,

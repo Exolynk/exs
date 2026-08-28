@@ -14,6 +14,7 @@ fn round_trips_phase_one_values() {
         ExsValue::Float(-1.5),
         ExsValue::Float(0.0),
         ExsValue::String("Ada\\nLovelace".to_owned()),
+        ExsValue::Bytes(vec![0, 1, 2, 255]),
         ExsValue::List(vec![
             ExsValue::Int(1),
             ExsValue::String("Ada".to_owned()),
@@ -62,12 +63,12 @@ fn rejects_trailing_cbor_data() {
     );
 }
 
-/// Rejects CBOR byte strings, which are not represented by the ABI value.
+/// Decodes CBOR byte strings into native Bytes values.
 #[test]
-fn rejects_unsupported_cbor_values() {
+fn decodes_byte_strings() {
     assert_eq!(
         ExsValue::from_cbor(&[0x40]),
-        Err(CborError::UnsupportedType)
+        Ok(ExsValue::Bytes(Vec::new()))
     );
 }
 

@@ -5,8 +5,8 @@ use alloc::string::String;
 use core::panic::PanicInfo;
 
 use exs_abi::{
-    TYPE_ANY, TYPE_BOOL, TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE,
-    TYPE_OBJECT, TYPE_STRING,
+    TYPE_ANY, TYPE_BOOL, TYPE_BYTES, TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST,
+    TYPE_NONE, TYPE_OBJECT, TYPE_STRING,
 };
 use exs_value::ValueRef;
 
@@ -256,6 +256,7 @@ fn value_type_mask(value: &RtValue) -> u32 {
         RtValue::Int(_) => TYPE_INT,
         RtValue::Float(_) => TYPE_FLOAT,
         RtValue::String(_) => TYPE_STRING,
+        RtValue::Bytes(_) => TYPE_BYTES,
         RtValue::List(_) => TYPE_LIST,
         RtValue::Object(_) => TYPE_OBJECT,
         RtValue::Closure(_) => TYPE_FN,
@@ -479,6 +480,24 @@ pub extern "C" fn __exs_rt_literal_buffer_alloc(length: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_string_new(pointer: i32, length: i32) -> ValueRef {
     runtime::string_new(pointer, length)
+}
+
+/// Creates immutable runtime Bytes from the compiler-populated literal buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_bytes_new(pointer: i32, length: i32) -> ValueRef {
+    runtime::bytes_new(pointer, length)
+}
+
+/// Creates immutable Bytes from one runtime List of integer octets.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_bytes_from_list(values: ValueRef) -> ValueRef {
+    value::operations::bytes_from_list(values)
+}
+
+/// Encodes one runtime String as immutable UTF-8 Bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_bytes_from_utf8(value: ValueRef) -> ValueRef {
+    value::operations::bytes_from_utf8(value)
 }
 
 /// Allocates an empty mutable runtime list.

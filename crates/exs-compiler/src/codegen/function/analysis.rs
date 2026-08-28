@@ -132,6 +132,7 @@ pub(super) fn count_expressions(expression: &Expression<'_>) -> u32 {
         Expression::Integer(_, _)
         | Expression::Float(_, _)
         | Expression::String(_, _)
+        | Expression::Bytes(_, _)
         | Expression::Bool(_, _)
         | Expression::None(_)
         | Expression::Variable(_) => 1,
@@ -218,6 +219,7 @@ pub(in crate::codegen::function) fn condition_span<'a>(
         Expression::Integer(_, span)
         | Expression::Float(_, span)
         | Expression::String(_, span)
+        | Expression::Bytes(_, span)
         | Expression::Bool(_, span)
         | Expression::None(span) => *span,
         Expression::FormattedString { span, .. } => *span,

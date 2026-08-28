@@ -504,6 +504,7 @@ fn highlight_expression(
         Expression::Integer(..)
         | Expression::Float(..)
         | Expression::String(..)
+        | Expression::Bytes(..)
         | Expression::Bool(..)
         | Expression::None(..) => {}
         Expression::FormattedString { parts, .. } => {

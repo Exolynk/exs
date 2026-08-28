@@ -635,6 +635,7 @@ fn builtin_mask(name: &str) -> Option<u32> {
         "Int" => Some(TYPE_INT),
         "Float" => Some(TYPE_FLOAT),
         "String" => Some(TYPE_STRING),
+        "Bytes" => Some(exs_abi::TYPE_BYTES),
         "List" => Some(TYPE_LIST),
         "Object" => Some(TYPE_OBJECT),
         "Fn" => Some(TYPE_FN),

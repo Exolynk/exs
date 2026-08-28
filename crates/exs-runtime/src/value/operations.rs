@@ -16,7 +16,8 @@ use exs_value::ValueRef;
 use crate::gc;
 use crate::runtime;
 use crate::value::{
-    RtValue, RuntimeEnum, RuntimeList, RuntimeObject, RuntimeString, clone, list, numeric, object,
+    RtValue, RuntimeBytes, RuntimeEnum, RuntimeList, RuntimeObject, RuntimeString, clone, list,
+    numeric, object,
 };
 
 /// Adds two runtime values through String, List, or numeric dispatch.
@@ -155,6 +156,7 @@ fn values_equal(left: ValueRef, right: ValueRef) -> bool {
             }
         }
         (RtValue::String(left), RtValue::String(right)) => left.as_str() == right.as_str(),
+        (RtValue::Bytes(left), RtValue::Bytes(right)) => left.as_slice() == right.as_slice(),
         (RtValue::List(_), RtValue::List(_))
         | (RtValue::Object(_), RtValue::Object(_))
         | (RtValue::Error(_), RtValue::Error(_))
@@ -191,12 +193,201 @@ pub(crate) fn index_get(receiver: ValueRef, index: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
         RtValue::List(_) => list::operations::get(receiver, index),
         RtValue::Object(_) => object::operations::get(receiver, index),
+        RtValue::Bytes(_) => bytes_get(receiver, index),
         _ => runtime::recoverable_error(
             "TypeError",
-            "index access requires a List or Object receiver",
+            "index access requires a Bytes, List, or Object receiver",
             receiver,
         ),
     }
+}
+
+/// Creates immutable Bytes from one List of integer octets.
+pub(crate) fn bytes_from_list(values: ValueRef) -> ValueRef {
+    let bytes = match runtime::value(values) {
+        RtValue::List(values) => {
+            let mut bytes = Vec::with_capacity(values.elements.len());
+            for value in &values.elements {
+                match runtime::value(*value) {
+                    RtValue::Int(value) if (0..=255).contains(value) => bytes.push(*value as u8),
+                    RtValue::Int(_) => {
+                        return runtime::recoverable_error(
+                            "ValueError",
+                            "Bytes::from_list values must be between 0 and 255",
+                            *value,
+                        );
+                    }
+                    _ => {
+                        return runtime::recoverable_error(
+                            "TypeError",
+                            "Bytes::from_list requires a List of Int values",
+                            *value,
+                        );
+                    }
+                }
+            }
+            bytes
+        }
+        _ => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "Bytes::from_list requires a List receiver",
+                values,
+            );
+        }
+    };
+    bytes_value(bytes)
+}
+
+/// Encodes one UTF-8 String as immutable Bytes.
+pub(crate) fn bytes_from_utf8(value: ValueRef) -> ValueRef {
+    match runtime::value(value) {
+        RtValue::String(value) => bytes_value(value.as_str().as_bytes().to_vec()),
+        _ => runtime::recoverable_error(
+            "TypeError",
+            "Bytes::from_utf8 requires a String value",
+            value,
+        ),
+    }
+}
+
+/// Reads one immutable Bytes octet at a zero-based integer index.
+fn bytes_get(receiver: ValueRef, index: ValueRef) -> ValueRef {
+    let index = match bytes_index(index, false) {
+        Ok(index) => index,
+        Err(error) => return error,
+    };
+    match runtime::value(receiver) {
+        RtValue::Bytes(bytes) => match bytes.as_slice().get(index) {
+            Some(byte) => runtime::allocate(RtValue::Int(i64::from(*byte))),
+            None => runtime::recoverable_error(
+                "IndexError",
+                "Bytes index is outside the Bytes bounds",
+                receiver,
+            ),
+        },
+        _ => runtime::recoverable_error(
+            "TypeError",
+            "index access requires a Bytes receiver",
+            receiver,
+        ),
+    }
+}
+
+/// Returns a new immutable Bytes subsequence for one half-open byte range.
+fn bytes_slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef {
+    let start = match bytes_index(start, true) {
+        Ok(index) => index,
+        Err(error) => return error,
+    };
+    let end = match bytes_index(end, true) {
+        Ok(index) => index,
+        Err(error) => return error,
+    };
+    match runtime::value(receiver) {
+        RtValue::Bytes(bytes) if start <= end && end <= bytes.as_slice().len() => {
+            bytes_value(bytes.as_slice()[start..end].to_vec())
+        }
+        RtValue::Bytes(_) => runtime::recoverable_error(
+            "IndexError",
+            "Bytes slice range is outside the Bytes bounds",
+            receiver,
+        ),
+        _ => runtime::recoverable_error("TypeError", "slice requires a Bytes receiver", receiver),
+    }
+}
+
+/// Concatenates two immutable Bytes values into one new Bytes value.
+fn bytes_concat(receiver: ValueRef, other: ValueRef) -> ValueRef {
+    match (runtime::value(receiver), runtime::value(other)) {
+        (RtValue::Bytes(left), RtValue::Bytes(right)) => {
+            let mut bytes = Vec::with_capacity(left.as_slice().len() + right.as_slice().len());
+            bytes.extend_from_slice(left.as_slice());
+            bytes.extend_from_slice(right.as_slice());
+            bytes_value(bytes)
+        }
+        (RtValue::Bytes(_), _) => {
+            runtime::recoverable_error("TypeError", "concat requires a Bytes argument", other)
+        }
+        _ => runtime::recoverable_error("TypeError", "concat requires a Bytes receiver", receiver),
+    }
+}
+
+/// Returns a new List containing the receiver's octets as Int values.
+fn bytes_to_list(receiver: ValueRef) -> ValueRef {
+    let bytes = match runtime::value(receiver) {
+        RtValue::Bytes(bytes) => bytes.as_slice().to_vec(),
+        _ => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "to_list requires a Bytes receiver",
+                receiver,
+            );
+        }
+    };
+    let checkpoint = gc::temporary_root_checkpoint();
+    let list = runtime::allocate(RtValue::List(Box::new(RuntimeList::new())));
+    gc::push_temporary_root(list);
+    for byte in bytes {
+        let value = runtime::allocate(RtValue::Int(i64::from(byte)));
+        let RtValue::List(list_value) = runtime::value_mut(list) else {
+            runtime::trap();
+        };
+        list_value.elements.push(value);
+    }
+    gc::restore_temporary_roots(checkpoint);
+    list
+}
+
+/// Decodes one Bytes value as UTF-8 or returns an EncodingError.
+fn bytes_decode_utf8(receiver: ValueRef) -> ValueRef {
+    let text = match runtime::value(receiver) {
+        RtValue::Bytes(bytes) => match core::str::from_utf8(bytes.as_slice()) {
+            Ok(value) => String::from(value),
+            Err(_) => {
+                return runtime::recoverable_error(
+                    "EncodingError",
+                    "Bytes do not contain valid UTF-8",
+                    receiver,
+                );
+            }
+        },
+        _ => {
+            return runtime::recoverable_error(
+                "TypeError",
+                "decode_utf8 requires a Bytes receiver",
+                receiver,
+            );
+        }
+    };
+    string_value_result(text)
+}
+
+/// Validates one Bytes index and converts it to the native index type.
+fn bytes_index(reference: ValueRef, allow_end: bool) -> Result<usize, ValueRef> {
+    match runtime::value(reference) {
+        RtValue::Int(index) if *index >= 0 => usize::try_from(*index).map_err(|_| {
+            runtime::recoverable_error(
+                "IndexError",
+                "Bytes index is outside the supported range",
+                reference,
+            )
+        }),
+        _ => Err(runtime::recoverable_error(
+            "IndexError",
+            if allow_end {
+                "Bytes slice indexes require non-negative Int values"
+            } else {
+                "Bytes index requires a non-negative Int value"
+            },
+            reference,
+        )),
+    }
+}
+
+/// Allocates one immutable Bytes result from owned raw octets.
+fn bytes_value(value: Vec<u8>) -> ValueRef {
+    runtime::allocate(RtValue::Bytes(Box::new(RuntimeBytes::from_vec(value))))
 }
 
 /// Replaces one value through the receiver's runtime indexing dispatch.
@@ -232,6 +423,19 @@ pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
                 let value = runtime::allocate(RtValue::String(Box::new(
                     crate::value::RuntimeString::from_string(scalar),
                 )));
+                gc::push_temporary_root(value);
+                elements.push(value);
+            }
+            elements.reverse();
+            let snapshot = runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })));
+            gc::restore_temporary_roots(checkpoint);
+            snapshot
+        }
+        RtValue::Bytes(bytes) => {
+            let checkpoint = gc::temporary_root_checkpoint();
+            let mut elements = Vec::with_capacity(bytes.as_slice().len());
+            for byte in bytes.as_slice() {
+                let value = runtime::allocate(RtValue::Int(i64::from(*byte)));
                 gc::push_temporary_root(value);
                 elements.push(value);
             }
@@ -291,12 +495,13 @@ fn iterator_next(receiver: ValueRef) -> ValueRef {
 pub(crate) fn length(value: ValueRef) -> ValueRef {
     let length = match runtime::value(value) {
         RtValue::String(value) => value.as_str().chars().count(),
+        RtValue::Bytes(value) => value.as_slice().len(),
         RtValue::List(value) => value.elements.len(),
         RtValue::Object(value) => value.entries.len(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
-                "length requires a String, List, or Object receiver",
+                "length requires a Bytes, String, List, or Object receiver",
                 value,
             );
         }
@@ -308,12 +513,13 @@ pub(crate) fn length(value: ValueRef) -> ValueRef {
 pub(crate) fn is_empty(value: ValueRef) -> ValueRef {
     let empty = match runtime::value(value) {
         RtValue::String(value) => value.as_str().is_empty(),
+        RtValue::Bytes(value) => value.as_slice().is_empty(),
         RtValue::List(value) => value.elements.len() == 0,
         RtValue::Object(value) => value.entries.is_empty(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
-                "is_empty requires a String, List, or Object receiver",
+                "is_empty requires a Bytes, String, List, or Object receiver",
                 value,
             );
         }
@@ -484,6 +690,22 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
             Ok(()) => is_empty(receiver),
             Err(error) => error,
         },
+        "to_list" => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => bytes_to_list(receiver),
+            Err(error) => error,
+        },
+        "slice" => match list::operations::two_arguments(arguments) {
+            Ok((start, end)) => bytes_slice(receiver, start, end),
+            Err(error) => error,
+        },
+        "concat" => match list::operations::single_argument(arguments) {
+            Ok(other) => bytes_concat(receiver, other),
+            Err(error) => error,
+        },
+        "decode_utf8" => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => bytes_decode_utf8(receiver),
+            Err(error) => error,
+        },
         "kind" => match list::operations::require_no_arguments(arguments) {
             Ok(()) => error_kind(receiver),
             Err(error) => error,
@@ -557,6 +779,7 @@ fn render_default(receiver: ValueRef) -> ValueRef {
         RtValue::Int(value) => value.to_string(),
         RtValue::Float(value) => value.to_string(),
         RtValue::String(value) => String::from(value.as_str()),
+        RtValue::Bytes(value) => format!("Bytes({})", value.as_slice().len()),
         RtValue::List(_) => "[]".to_owned(),
         RtValue::Object(object) => object.enum_data.as_ref().map_or_else(
             || "{}".to_owned(),

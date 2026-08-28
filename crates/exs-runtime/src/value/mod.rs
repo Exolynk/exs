@@ -1,5 +1,6 @@
 //! Runtime value payloads and dynamic value operations.
 
+mod bytes;
 mod cell;
 pub(crate) mod clone;
 mod closure;
@@ -11,6 +12,7 @@ mod string;
 pub(crate) mod numeric;
 pub(crate) mod operations;
 
+pub(crate) use bytes::RuntimeBytes;
 pub(crate) use cell::RuntimeCellValue;
 pub(crate) use closure::RuntimeClosure;
 pub(crate) use error::RuntimeError;
@@ -39,6 +41,8 @@ pub(crate) enum RtValue {
     Float(f64),
     /// An immutable UTF-8 string.
     String(Box<RuntimeString>),
+    /// An immutable raw-octet sequence.
+    Bytes(Box<RuntimeBytes>),
     /// A mutable ordered sequence.
     List(Box<RuntimeList>),
     /// A mutable insertion-ordered string-keyed mapping.

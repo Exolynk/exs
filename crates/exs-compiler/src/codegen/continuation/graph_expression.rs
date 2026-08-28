@@ -22,6 +22,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             Expression::Integer(_, _)
             | Expression::Float(_, _)
             | Expression::String(_, _)
+            | Expression::Bytes(_, _)
             | Expression::Bool(_, _)
             | Expression::None(_) => {
                 let destination = self.temporary(expression_span(expression))?;
@@ -570,6 +571,30 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 arguments,
                 span,
             } => {
+                if type_name.name == "Bytes"
+                    && matches!(method.name.as_str(), "from_list" | "from_utf8")
+                {
+                    if arguments.len() != 1 {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            *span,
+                            format!(
+                                "static method `Bytes::{}` expects 1 argument but received {}",
+                                method.name,
+                                arguments.len()
+                            ),
+                        )));
+                    }
+                    let value = self.lower_expression(&arguments[0])?;
+                    let destination = self.temporary(*span)?;
+                    self.operations.push(Operation::BytesStatic {
+                        value,
+                        from_utf8: method.name == "from_utf8",
+                        destination,
+                        span: *span,
+                    });
+                    return Ok(destination);
+                }
                 let key = format!("{}::{}", type_name.name, method.name);
                 if let Some(variant) = self.types.enum_variant(&key) {
                     if variant.fields.len() != arguments.len() {

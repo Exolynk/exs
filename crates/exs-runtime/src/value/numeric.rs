@@ -57,6 +57,7 @@ pub(crate) fn number_of(value: &RtValue) -> Option<Number> {
         RtValue::None
         | RtValue::Error(_)
         | RtValue::String(_)
+        | RtValue::Bytes(_)
         | RtValue::List(_)
         | RtValue::Object(_)
         | RtValue::Cell(_)
