@@ -139,6 +139,22 @@ The [language reference](SPECIFICATION.md) defines only the ExS source language 
   - [x] Document browser main-thread execution as application-owned isolation; applications that execute untrusted source must place their runner in a Worker.
 - [x] Execute each native root in a fresh Wasmtime store and instance; instance pooling is not implemented.
 
+### Phase 17: Fixed Proposed by Sol
+
+- [] **High: `Host::sleep` can permanently exhaust native threads.**  
+   [host_sleep.rs](/Users/roba/Code/exs/crates/exs-runner/src/host_sleep.rs:25) creates a detached OS thread for every sleep. Timeout or cancellation drops the future but cannot stop that thread. Since [Duration accepts up to `i64::MAX` seconds](/Users/roba/Code/exs/crates/exs-compiler/src/prelude/duration.exs:59), repeated executions can leave hundreds of threads sleeping indefinitely. Replace this with a shared cancellable timer mechanism and cap sleeps to the execution deadline.
+- [] **High: cancellation does not interrupt executing Wasm.**  
+   [ServerRunner::execute](/Users/roba/Code/exs/crates/exs-runner/src/lib.rs:147) runs guest code synchronously and checks cancellation only before execution or while awaiting host futures. A CPU-bound loop ignores `ExecutionCancellation` until fuel or timeout interrupts it. It also blocks a single-threaded async executor. Cancellation should trigger Wasmtime interruption, with a test cancelling an active infinite loop.
+- [] **High under an untrusted-Wasm threat model: native runner memory is not fully bounded.**  
+   Synchronous responses accumulate in [ready_responses](/Users/roba/Code/exs/crates/exs-runner/src/host_abi.rs:27), with only a per-response size check at [host_abi.rs](/Users/roba/Code/exs/crates/exs-runner/src/host_abi.rs:545). A custom Wasm module can issue unique calls without copying their responses, potentially retaining roughly `10,000 × 2 MiB` using default limits. Additionally, module compilation occurs before the timeout starts at [lib.rs](/Users/roba/Code/exs/crates/exs-runner/src/lib.rs:117). Add a total host-owned byte budget, outstanding-ready-response limit, module-size limit, and compilation isolation/caching.
+- [] **Medium: the documented `exs-guest` no-std build is broken.**  
+   [host.rs](/Users/roba/Code/exs/crates/exs-guest/src/host.rs:114) uses `vec!` without importing `alloc::vec`. The advertised configuration fails for `wasm32-unknown-unknown`. CI should explicitly build this feature combination.
+- [] **Medium: the “strict RFC 3339” parser accepts invalid offsets.**  
+   [datetime.exs](/Users/roba/Code/exs/crates/exs-compiler/src/prelude/datetime.exs:310) parses offset minutes but only validates the combined offset seconds later. Values such as `+01:60` are accepted as `+02:00`. Validate hours and minutes independently and add invalid-offset tests.
+- [] **Medium: CI does not verify the committed runtime matches its source.**  
+   Compilers embed the committed artifact at [exs-runtime/src/lib.rs](/Users/roba/Code/exs/crates/exs-runtime/src/lib.rs:30). CI rebuilds the runtime at [ci.yml](/Users/roba/Code/exs/.github/workflows/ci.yml:40), but never compares that output with the committed file. Runtime source changes could therefore pass tests while the old runtime still ships. The artifact currently matches a deterministic fresh build, but CI should enforce this.
+- [ ] Lower priority: the CLI’s [custom `block_on`](/Users/roba/Code/exs/crates/exs-cli/src/main.rs:365) repeatedly polls with `yield_now`, consuming significant CPU during sleeps or other pending host calls.
+
 ### Backlog: Further Ideas
 
 - [ ] Optimizations: Add host-name caching, direct-operation specialization, root-frame reduction, and safe inlining.

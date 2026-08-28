@@ -41,6 +41,8 @@ mod host_time;
 mod limits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod timer;
 
 #[cfg(all(feature = "browser", target_arch = "wasm32"))]
 pub use self::browser::{
@@ -116,12 +118,17 @@ impl ServerRunner {
         let module =
             Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
         check_task_metering_imports(&module)?;
+        let deadline = deadline::ExecutionDeadline::new(engine.clone(), self.limits.timeout)
+            .map_err(|error| {
+                RunnerError::Wasm(format!("could not start execution deadline: {error}"))
+            })?;
         let mut store = Store::new(
             &engine,
             host_abi::HostAbiState::new(
                 self.registry.clone(),
                 self.limits.clone(),
                 execution_started_at,
+                deadline.expires_at(),
             ),
         );
         store.limiter(host_abi::HostAbiState::store_limits);
@@ -129,10 +136,6 @@ impl ServerRunner {
             .set_fuel(self.limits.max_fuel)
             .map_err(|error| RunnerError::Wasm(error.to_string()))?;
         store.set_epoch_deadline(1);
-        let deadline = deadline::ExecutionDeadline::new(engine.clone(), self.limits.timeout)
-            .map_err(|error| {
-                RunnerError::Wasm(format!("could not start execution deadline: {error}"))
-            })?;
         let mut linker = Linker::new(&engine);
         host_abi::define(&mut linker).map_err(|error| RunnerError::Wasm(error.to_string()))?;
         let instance = linker

@@ -1,43 +1,30 @@
 //! Runner-owned implementation of the built-in Host sleep capability.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
-use std::thread;
 use std::time::Duration;
 
 use exs_abi::{ErrorSeverity, ExsError, ExsValue, SourcePositionId};
 
-use crate::HostCall;
+use crate::{HostCall, timer};
 
 /// Starts one built-in Host sleep after validating its serialized Duration argument.
-pub(crate) fn start(arguments: Vec<ExsValue>, origin: Option<SourcePositionId>) -> HostCall {
+pub(crate) fn start(
+    arguments: Vec<ExsValue>,
+    remaining_until_deadline: Duration,
+    origin: Option<SourcePositionId>,
+) -> HostCall {
     let (seconds, nanoseconds) = match duration_parts(arguments) {
         Ok(parts) => parts,
         Err(message) => return HostCall::Ready(sleep_error(message, origin)),
     };
-    let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let waker = Arc::new(Mutex::new(None::<Waker>));
-    let completion = Arc::clone(&completed);
-    let wake_target = Arc::clone(&waker);
-    let sleep = Duration::new(seconds, nanoseconds);
-    let spawned = thread::Builder::new()
-        .name("exs-sleep".to_owned())
-        .spawn(move || {
-            thread::sleep(sleep);
-            completion.store(true, std::sync::atomic::Ordering::Release);
-            let mut waker = wake_target
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if let Some(waker) = waker.take() {
-                waker.wake();
-            }
-        });
-    match spawned {
-        Ok(_thread) => HostCall::Pending(Box::pin(SleepFuture { completed, waker })),
+    let requested = Duration::new(seconds, nanoseconds);
+    let duration = requested.min(remaining_until_deadline);
+    match timer::sleep(duration) {
+        Ok(sleep) => HostCall::Pending(Box::pin(async move {
+            sleep.await;
+            ExsValue::None
+        })),
         Err(error) => HostCall::Ready(sleep_error(
-            format!("could not start Host sleep: {error}"),
+            format!("could not start Host sleep timer: {error}"),
             origin,
         )),
     }
@@ -84,30 +71,4 @@ fn sleep_error(message: String, origin: Option<SourcePositionId>) -> ExsValue {
         trace: Vec::new(),
         cause: None,
     })
-}
-
-/// A future that completes after one native thread has slept for the requested duration.
-struct SleepFuture {
-    /// Completion signal set by the sleep thread.
-    completed: Arc<std::sync::atomic::AtomicBool>,
-    /// Latest task waker to notify once the sleep expires.
-    waker: Arc<Mutex<Option<Waker>>>,
-}
-
-impl Future for SleepFuture {
-    type Output = ExsValue;
-
-    /// Polls the sleep completion signal without blocking the runner's async executor.
-    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.completed.load(std::sync::atomic::Ordering::Acquire) {
-            return Poll::Ready(ExsValue::None);
-        }
-        let mut waker = self.waker.lock().unwrap_or_else(|error| error.into_inner());
-        *waker = Some(context.waker().clone());
-        if self.completed.load(std::sync::atomic::Ordering::Acquire) {
-            Poll::Ready(ExsValue::None)
-        } else {
-            Poll::Pending
-        }
-    }
 }

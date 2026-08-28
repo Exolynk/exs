@@ -45,6 +45,8 @@ pub(crate) struct HostAbiState {
     limits: ExecutionLimits,
     /// Monotonic instant at which this root execution began.
     execution_started_at: Instant,
+    /// Monotonic instant at which this root execution must time out.
+    deadline_at: Instant,
     /// Wasmtime-owned resource limiter for this instance's linear memory.
     store_limits: StoreLimits,
     /// The most recent hard-limit violation reported through a Wasm import.
@@ -57,6 +59,7 @@ impl HostAbiState {
         registry: HostFunctionRegistry,
         limits: ExecutionLimits,
         execution_started_at: Instant,
+        deadline_at: Instant,
     ) -> Self {
         Self {
             registry,
@@ -75,6 +78,7 @@ impl HostAbiState {
                 .build(),
             limits,
             execution_started_at,
+            deadline_at,
             limit_violation: None,
         }
     }
@@ -104,6 +108,11 @@ impl HostAbiState {
     /// Returns monotonic time elapsed since this root execution began.
     fn elapsed(&self) -> std::time::Duration {
         self.execution_started_at.elapsed()
+    }
+
+    /// Returns the duration for which a host operation may wait before the root deadline.
+    fn remaining_until_deadline(&self) -> std::time::Duration {
+        self.deadline_at.saturating_duration_since(Instant::now())
     }
 
     /// Acquires one active language-task permit when the configured budget allows it.
@@ -375,7 +384,11 @@ fn host_call_start(
     let origin = u32::try_from(source_position).ok().map(SourcePositionId);
 
     let call = if name == HOST_SLEEP_HOST_NAME {
-        Ok(crate::host_sleep::start(arguments, origin))
+        Ok(crate::host_sleep::start(
+            arguments,
+            caller.data().remaining_until_deadline(),
+            origin,
+        ))
     } else if name == HOST_NOW_HOST_NAME {
         Ok(crate::host_time::now(arguments, origin))
     } else if name == HOST_ELAPSED_HOST_NAME {

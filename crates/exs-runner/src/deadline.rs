@@ -86,6 +86,13 @@ impl ExecutionDeadline {
         lock_state(lock).expired
     }
 
+    /// Returns the monotonic instant at which this execution must time out.
+    pub(crate) fn expires_at(&self) -> Instant {
+        self.started_at
+            .checked_add(self.timeout)
+            .unwrap_or(self.started_at)
+    }
+
     /// Registers or refreshes one executor waker while a host future is pending.
     pub(crate) fn register_waker(&self, registration: &mut Option<u64>, waker: &Waker) {
         let (lock, _) = &*self.state;

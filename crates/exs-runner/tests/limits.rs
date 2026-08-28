@@ -119,6 +119,28 @@ fn rejects_pending_host_call_after_the_configured_timeout() {
     ));
 }
 
+/// Bounds a built-in Host sleep by the root execution deadline.
+#[test]
+fn rejects_a_long_builtin_sleep_after_the_configured_timeout() {
+    let compiled = compile_source(
+        r#"
+        fn main() {
+            Host::sleep(Duration::seconds(9223372036854775807));
+        }
+        "#,
+    );
+    let runner = ServerRunner::new(ExecutionLimits {
+        timeout: Duration::from_millis(10),
+        ..ExecutionLimits::default()
+    });
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    assert!(matches!(
+        result,
+        Err(RunnerError::LimitExceeded(LimitKind::Timeout))
+    ));
+}
+
 /// Rejects recursive guest calls once their native Wasm stack reaches the configured cap.
 #[test]
 fn rejects_wasm_stack_over_the_configured_limit() {
