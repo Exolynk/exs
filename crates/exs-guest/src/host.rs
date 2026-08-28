@@ -1,6 +1,8 @@
 //! Asynchronous Rust futures for the ExS Host ABI.
 
+use alloc::borrow::ToOwned;
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::future::Future;
 use core::pin::Pin;
