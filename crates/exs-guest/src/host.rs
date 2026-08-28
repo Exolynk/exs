@@ -51,7 +51,7 @@ pub fn call(name: impl Into<String>, arguments: impl IntoIterator<Item = ExsValu
     HostCall {
         name: name.into(),
         arguments: arguments.into_iter().collect(),
-        call_id: None,
+        state: HostCallState::NotStarted,
     }
 }
 
@@ -350,8 +350,18 @@ pub struct HostCall {
     name: String,
     /// Ordered arguments encoded as the Host ABI request list.
     arguments: Vec<ExsValue>,
-    /// Runner-assigned continuation identity after the initial poll.
-    call_id: Option<i64>,
+    /// Lifecycle state retained between polls.
+    state: HostCallState,
+}
+
+/// Lifecycle of one host call across guest future polls.
+enum HostCallState {
+    /// The call has not yet been sent to the runner.
+    NotStarted,
+    /// The runner accepted the call and has not yet supplied its response.
+    Pending(i64),
+    /// The future has resolved and must not be polled again.
+    Complete,
 }
 
 impl Future for HostCall {
@@ -359,19 +369,28 @@ impl Future for HostCall {
 
     /// Polls the Host ABI once and yields until the runner provides an asynchronous response.
     fn poll(mut self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(call_id) = self.call_id
-            && let Some(response) = take_host_response(call_id)
-        {
-            return Poll::Ready(response);
-        }
-        let Some((call_id, response)) = begin_host_call(self.call_id, &self.name, &self.arguments)
-        else {
-            return Poll::Ready(guest_error("HostCallFailed", "could not start host call"));
-        };
-        self.call_id = Some(call_id);
-        match response {
-            Some(response) => Poll::Ready(response),
-            None => Poll::Pending,
+        match core::mem::replace(&mut self.state, HostCallState::Complete) {
+            HostCallState::NotStarted => {
+                let Some((call_id, response)) = begin_host_call(None, &self.name, &self.arguments)
+                else {
+                    return Poll::Ready(guest_error("HostCallFailed", "could not start host call"));
+                };
+                match response {
+                    Some(response) => Poll::Ready(response),
+                    None => {
+                        self.state = HostCallState::Pending(call_id);
+                        Poll::Pending
+                    }
+                }
+            }
+            HostCallState::Pending(call_id) => match take_host_response(call_id) {
+                Some(response) => Poll::Ready(response),
+                None => {
+                    self.state = HostCallState::Pending(call_id);
+                    Poll::Pending
+                }
+            },
+            HostCallState::Complete => panic!("completed HostCall polled again"),
         }
     }
 }

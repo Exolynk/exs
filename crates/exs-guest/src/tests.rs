@@ -2,8 +2,11 @@
 
 use std::sync::Mutex;
 
+use core::future::poll_fn;
+use core::task::Poll;
+
 use crate::execution::{resume_response, start_inputs};
-use crate::imports::set_test_host_call_status;
+use crate::imports::{set_test_host_call_status, test_host_call_start_count};
 use crate::state::execution_mut;
 use crate::{ExsValue, boxed_future, cancel};
 use exs_abi::{
@@ -49,6 +52,53 @@ fn resumes_an_async_host_call() {
     assert_eq!(status, STATUS_PENDING);
     assert_eq!(resume_response(1, ExsValue::Int(7)), STATUS_COMPLETE);
     assert_eq!(read_result(), ExsValue::Int(7));
+    set_test_host_call_status(HOST_CALL_FATAL);
+}
+
+/// Keeps a pending HostCall from starting again when another call completes first.
+#[test]
+fn preserves_pending_host_calls_when_responses_complete_out_of_order() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    cancel();
+    set_test_host_call_status(HOST_CALL_PENDING);
+    let status = start_inputs(Vec::new(), |_| {
+        boxed_future(async move {
+            let mut first = Box::pin(crate::host::call("first", []));
+            let mut second = Box::pin(crate::host::call("second", []));
+            let mut first_response = None;
+            let mut second_response = None;
+            poll_fn(move |context| {
+                if first_response.is_none()
+                    && let Poll::Ready(response) = first.as_mut().poll(context)
+                {
+                    first_response = Some(response);
+                }
+                if second_response.is_none()
+                    && let Poll::Ready(response) = second.as_mut().poll(context)
+                {
+                    second_response = Some(response);
+                }
+                match (first_response.take(), second_response.take()) {
+                    (Some(first), Some(second)) => Poll::Ready(ExsValue::List(vec![first, second])),
+                    (first, second) => {
+                        first_response = first;
+                        second_response = second;
+                        Poll::Pending
+                    }
+                }
+            })
+            .await
+        })
+    });
+    assert_eq!(status, STATUS_PENDING);
+    assert_eq!(test_host_call_start_count(), 2);
+    assert_eq!(resume_response(2, ExsValue::Int(20)), STATUS_PENDING);
+    assert_eq!(test_host_call_start_count(), 2);
+    assert_eq!(resume_response(1, ExsValue::Int(10)), STATUS_COMPLETE);
+    assert_eq!(
+        read_result(),
+        ExsValue::List(vec![ExsValue::Int(10), ExsValue::Int(20)])
+    );
     set_test_host_call_status(HOST_CALL_FATAL);
 }
 

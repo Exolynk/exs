@@ -4,7 +4,7 @@
 use exs_abi::HOST_CALL_FATAL;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 // Imports the runner host and task controls on the `wasm32` guest target.
 #[cfg(target_arch = "wasm32")]
@@ -72,6 +72,7 @@ pub(crate) fn host_call_start(
         );
         #[cfg(test)]
         {
+            TEST_HOST_CALL_START_COUNT.fetch_add(1, Ordering::SeqCst);
             TEST_HOST_CALL_STATUS.load(Ordering::SeqCst)
         }
         #[cfg(not(test))]
@@ -135,8 +136,19 @@ pub(crate) fn task_release() -> i32 {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn set_test_host_call_status(status: i32) {
     TEST_HOST_CALL_STATUS.store(status, Ordering::SeqCst);
+    TEST_HOST_CALL_START_COUNT.store(0, Ordering::SeqCst);
+}
+
+/// Returns the number of Host ABI starts observed by the native test stub.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn test_host_call_start_count() -> usize {
+    TEST_HOST_CALL_START_COUNT.load(Ordering::SeqCst)
 }
 
 /// Provides the native Host ABI status consumed by guest unit tests.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 static TEST_HOST_CALL_STATUS: AtomicI32 = AtomicI32::new(HOST_CALL_FATAL);
+
+/// Counts Host ABI starts observed by the native test stub.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+static TEST_HOST_CALL_START_COUNT: AtomicUsize = AtomicUsize::new(0);
