@@ -86,6 +86,19 @@ fn compiles_a_builtin_host_sleep() {
     assert!(module.is_ok());
 }
 
+/// Compiles runner-owned wall-clock and monotonic-time Host operations.
+#[test]
+fn compiles_builtin_host_time_operations() {
+    let module = compile(
+        SourceInput {
+            source_id: "clock.exs",
+            text: "fn main() -> Duration | Error { let now = Host::now(); let elapsed = Host::elapsed(); ret now.duration_since(now)? + elapsed; }",
+        },
+        CompileOptions::default(),
+    );
+    assert!(module.is_ok());
+}
+
 /// Rejects the removed lower-case host boundary spelling.
 #[test]
 fn rejects_lowercase_host_call() {
@@ -436,6 +449,8 @@ fn generates_markdown_api_documentation() {
         host.markdown
             .contains("Host::sleep(duration: Duration) -> None")
     );
+    assert!(host.markdown.contains("Host::now() -> DateTime"));
+    assert!(host.markdown.contains("Host::elapsed() -> Duration"));
     assert!(host.markdown.contains("# Namespace `std::Host`"));
     let duration = documentation
         .pages
@@ -447,6 +462,21 @@ fn generates_markdown_api_documentation() {
         duration
             .markdown
             .contains("fn milliseconds(value: Int) -> Duration | Error")
+    );
+    let date_time = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/datetime.md")
+        .unwrap_or_else(|| panic!("missing std DateTime type page"));
+    assert!(
+        date_time
+            .markdown
+            .contains("optional IANA time-zone metadata")
+    );
+    assert!(
+        date_time
+            .markdown
+            .contains("fn duration_since(self, earlier: DateTime)")
     );
     assert!(
         duration

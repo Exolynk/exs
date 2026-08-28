@@ -594,6 +594,14 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                     self.lower_expression(argument);
                 }
             }
+            Expression::HostTime {
+                arguments, span, ..
+            } => {
+                self.host_calls.push(HostCall { span: *span });
+                for argument in arguments {
+                    self.lower_expression(argument);
+                }
+            }
             Expression::MethodCall {
                 receiver,
                 method,

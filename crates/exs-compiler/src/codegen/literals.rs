@@ -245,6 +245,27 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
                 collect_expression_literals(argument, pool);
             }
         }
+        Expression::HostTime {
+            operation,
+            arguments,
+            ..
+        } => {
+            match operation {
+                crate::ast::HostTimeOperation::Now => pool.insert(exs_abi::HOST_NOW_HOST_NAME),
+                crate::ast::HostTimeOperation::Elapsed => {
+                    pool.insert(exs_abi::HOST_ELAPSED_HOST_NAME);
+                }
+                crate::ast::HostTimeOperation::InTimezone => {
+                    pool.insert(exs_abi::HOST_DATETIME_IN_TIMEZONE_HOST_NAME);
+                }
+                crate::ast::HostTimeOperation::FromComponents => {
+                    pool.insert(exs_abi::HOST_DATETIME_FROM_COMPONENTS_HOST_NAME);
+                }
+            }
+            for argument in arguments {
+                collect_expression_literals(argument, pool);
+            }
+        }
         Expression::List { elements, .. } => {
             for element in elements {
                 collect_expression_literals(element, pool);

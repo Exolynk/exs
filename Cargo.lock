@@ -862,6 +862,7 @@ dependencies = [
  "exs-compiler",
  "exs-runtime",
  "exs-value",
+ "jiff",
  "js-sys",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -1458,11 +1459,14 @@ dependencies = [
  "defmt",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb",
  "jiff-tzdb-platform",
+ "js-sys",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "wasm-bindgen",
  "windows-link",
 ]
 

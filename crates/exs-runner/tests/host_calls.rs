@@ -34,6 +34,139 @@ fn executes_a_builtin_host_sleep() {
     );
 }
 
+/// Returns a structured wall-clock snapshot without requiring a registered host function.
+#[test]
+fn executes_a_builtin_host_now() {
+    let ExsValue::Object(fields) =
+        execute_source_with_inputs("fn main() { ret Host::now(); }", &[])
+    else {
+        panic!("Host::now did not return a DateTime object");
+    };
+    assert_eq!(fields.len(), 4);
+    assert_eq!(fields[0].0, "unix_seconds");
+    assert!(matches!(fields[0].1, ExsValue::Int(_)));
+    assert_eq!(fields[1].0, "nanoseconds");
+    assert!(matches!(fields[1].1, ExsValue::Int(value) if (0..1_000_000_000).contains(&value)));
+    assert_eq!(fields[2].0, "utc_offset_seconds");
+    assert!(matches!(fields[2].1, ExsValue::Int(_)));
+    assert_eq!(fields[3].0, "timezone");
+    assert!(matches!(fields[3].1, ExsValue::String(_) | ExsValue::None));
+}
+
+/// Returns a normalized non-negative monotonic Duration for the current root execution.
+#[test]
+fn executes_a_builtin_host_elapsed() {
+    let ExsValue::Object(fields) =
+        execute_source_with_inputs("fn main() -> Duration { ret Host::elapsed(); }", &[])
+    else {
+        panic!("Host::elapsed did not return a Duration object");
+    };
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0].0, "seconds");
+    assert!(matches!(fields[0].1, ExsValue::Int(value) if value >= 0));
+    assert_eq!(fields[1].0, "nanoseconds");
+    assert!(matches!(fields[1].1, ExsValue::Int(value) if (0..1_000_000_000).contains(&value)));
+}
+
+/// Preserves elapsed-time arithmetic through the documented DateTime prelude method.
+#[test]
+fn calculates_a_duration_between_datetime_snapshots() {
+    assert_eq!(
+        execute_source_with_inputs(
+            "fn main() -> Duration | Error { let earlier = DateTime { unix_seconds: 1, nanoseconds: 900000000, utc_offset_seconds: 0, timezone: None }; let later = DateTime { unix_seconds: 2, nanoseconds: 100000000, utc_offset_seconds: 0, timezone: None }; ret later.duration_since(earlier); }",
+            &[],
+        ),
+        ExsValue::Object(vec![
+            ("seconds".to_owned(), ExsValue::Int(0)),
+            ("nanoseconds".to_owned(), ExsValue::Int(200_000_000)),
+        ]),
+    );
+}
+
+/// Executes the DateTime prelude calendar, formatting, parsing, and fixed-offset arithmetic APIs.
+#[test]
+fn executes_datetime_prelude_operations() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            fn main() -> List | Error {
+                let value = DateTime::from_components(
+                    2024, 2, 29, 23, 5, 7, 123000000, 3600, None,
+                )?;
+                let parsed = DateTime::parse_rfc3339("2024-02-29T22:05:07.12Z")?;
+                let duration = Duration::seconds(2)?;
+                let shifted = value.with_day(28)?;
+                let adjusted = (shifted + duration)?;
+                let restored = (adjusted - duration)?;
+                let invalid = DateTime {
+                    unix_seconds: 9223372036854775807,
+                    nanoseconds: 0,
+                    utc_offset_seconds: 1,
+                    timezone: None,
+                };
+                ret [
+                    value.year()?,
+                    value.month()?,
+                    value.day()?,
+                    value.hour()?,
+                    value.weekday()?,
+                    value.ordinal()?,
+                    value.to_rfc3339()?,
+                    parsed.to_date_string()?,
+                    adjusted.to_time_string()?,
+                    parsed.nanosecond(),
+                    value.is_after(adjusted),
+                    shifted.is_same_instant(restored),
+                    value.to_string(),
+                    invalid.to_string(),
+                ];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(2024),
+            ExsValue::Int(2),
+            ExsValue::Int(29),
+            ExsValue::Int(23),
+            ExsValue::Int(4),
+            ExsValue::Int(60),
+            ExsValue::String("2024-02-29T23:05:07.123000000+01:00".to_owned()),
+            ExsValue::String("2024-02-29".to_owned()),
+            ExsValue::String("23:05:09.123000000+01:00".to_owned()),
+            ExsValue::Int(120_000_000),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::String("2024-02-29T23:05:07.123000000+01:00".to_owned()),
+            ExsValue::String("<invalid DateTime>".to_owned()),
+        ]),
+    );
+}
+
+/// Resolves and renders IANA time zones through the runner-owned Jiff database.
+#[test]
+fn resolves_datetime_iana_time_zones() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            fn main() -> List | Error {
+                let constructed = DateTime::from_components_in_timezone(
+                    2024, 1, 1, 12, 0, 0, 0, "Europe/Zurich",
+                )?;
+                let utc = DateTime::from_unix(1704106800, 0, 0, None)?;
+                let converted = utc.in_timezone("Europe/Zurich")?;
+                ret [constructed.to_rfc3339()?, converted.to_rfc3339()?];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::String("2024-01-01T12:00:00.000000000+01:00".to_owned()),
+            ExsValue::String("2024-01-01T12:00:00.000000000+01:00".to_owned()),
+        ]),
+    );
+}
+
 /// Exposes a factory-created Duration as its normal normalized object representation.
 #[test]
 fn represents_duration_as_a_normal_exs_type() {

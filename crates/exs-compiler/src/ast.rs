@@ -548,6 +548,15 @@ pub enum Expression<'a> {
         /// Full expression span.
         span: SourceSpan<'a>,
     },
+    /// Invokes one compiler-owned runner time operation that constructs a nominal prelude value.
+    HostTime {
+        /// Built-in time operation selected by the parsed Host member name.
+        operation: HostTimeOperation,
+        /// Ordered arguments passed to the built-in runner operation.
+        arguments: Vec<Expression<'a>>,
+        /// Full expression span.
+        span: SourceSpan<'a>,
+    },
     /// A dynamically dispatched member call.
     MethodCall {
         /// Receiver evaluated before arguments.
@@ -588,6 +597,19 @@ pub enum Expression<'a> {
         /// Full expression span.
         span: SourceSpan<'a>,
     },
+}
+
+/// Runner-owned Host time operations that construct nominal prelude values after resumption.
+#[derive(Debug, Clone, Copy)]
+pub enum HostTimeOperation {
+    /// Captures the current wall-clock DateTime snapshot.
+    Now,
+    /// Returns monotonic Duration elapsed since root execution start.
+    Elapsed,
+    /// Renders one instant in a named IANA time zone.
+    InTimezone,
+    /// Resolves one civil DateTime in a named IANA time zone with compatible DST handling.
+    FromComponents,
 }
 
 /// The source delimiter form selected for a formatted string.

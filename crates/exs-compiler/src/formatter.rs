@@ -701,6 +701,19 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
         Expression::HostStream { arguments, .. } => {
             format!("Host::stream({})", expressions(arguments))
         }
+        Expression::HostTime {
+            operation,
+            arguments,
+            ..
+        } => {
+            let name = match operation {
+                crate::ast::HostTimeOperation::Now => "now",
+                crate::ast::HostTimeOperation::Elapsed => "elapsed",
+                crate::ast::HostTimeOperation::InTimezone => "date_time_in_timezone",
+                crate::ast::HostTimeOperation::FromComponents => "date_time_from_components",
+            };
+            format!("Host::{name}({})", expressions(arguments))
+        }
         Expression::MethodCall {
             receiver,
             method,

@@ -66,6 +66,8 @@ pub(crate) struct RuntimeState {
     pub(crate) values: Vec<Option<HeapSlot>>,
     /// Reusable zero-based indices of swept value-table entries.
     pub(crate) free_slots: Vec<u32>,
+    /// Value-table size that triggers the next automatic garbage collection.
+    pub(crate) next_gc_at: usize,
     /// Active compiler-generated function root frames in call order.
     pub(crate) root_frames: Vec<RootFrame>,
     /// Durable frames for the currently active resumable root execution.
@@ -104,6 +106,7 @@ impl RuntimeState {
         Self {
             values: Vec::new(),
             free_slots: Vec::new(),
+            next_gc_at: crate::gc::INITIAL_COLLECTION_THRESHOLD,
             root_frames: Vec::new(),
             async_frames: Vec::new(),
             free_async_frames: Vec::new(),

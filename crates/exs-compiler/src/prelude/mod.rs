@@ -17,6 +17,11 @@ struct PreludeSource {
 /// Prelude units linked in deterministic dependency order.
 const SOURCES: &[PreludeSource] = &[
     PreludeSource {
+        source_id: "<std>/datetime.exs",
+        text: include_str!("datetime.exs"),
+        type_names: &["DateTime"],
+    },
+    PreludeSource {
         source_id: "<std>/duration.exs",
         text: include_str!("duration.exs"),
         type_names: &["Duration"],

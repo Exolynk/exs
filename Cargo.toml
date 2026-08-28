@@ -31,3 +31,4 @@ wasmparser = "0.245.1"
 wasmtime = "41.0.2"
 dlmalloc = { version = "0.2", features = ["global"] }
 minicbor = { version = "0.26", default-features = false, features = ["alloc"] }
+jiff = { version = "0.2.35", default-features = false }

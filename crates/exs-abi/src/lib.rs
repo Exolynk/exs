@@ -12,8 +12,8 @@ pub use cbor::{
 
 /// The compiler/runtime ABI version for the current Phase-1 implementation.
 ///
-/// Version 22 adds runner-owned asynchronous Host stream support.
-pub const ABI_VERSION: u32 = 22;
+/// Version 23 adds runner-owned wall-clock and monotonic-time Host operations.
+pub const ABI_VERSION: u32 = 24;
 
 /// Receiver method names implemented by the built-in runtime.
 pub const RESERVED_METHOD_NAMES: &[&str] = &[
@@ -57,6 +57,14 @@ pub const STANDARD_ORDERING_TYPE_IDENTITY: &str = "std::Ordering";
 pub const STANDARD_ITERATOR_STEP_TYPE_IDENTITY: &str = "<std>/iterator.exs::IteratorStep";
 /// Runner-internal host name used by the built-in `Host::sleep` operation.
 pub const HOST_SLEEP_HOST_NAME: &str = "__exs.host.sleep";
+/// Runner-internal host name used by the built-in `Host::now` operation.
+pub const HOST_NOW_HOST_NAME: &str = "__exs.host.now";
+/// Runner-internal host name used by the built-in `Host::elapsed` operation.
+pub const HOST_ELAPSED_HOST_NAME: &str = "__exs.host.elapsed";
+/// Runner-internal host name used to render an instant in one IANA time zone.
+pub const HOST_DATETIME_IN_TIMEZONE_HOST_NAME: &str = "__exs.host.datetime_in_timezone";
+/// Runner-internal host name used to resolve civil components in one IANA time zone.
+pub const HOST_DATETIME_FROM_COMPONENTS_HOST_NAME: &str = "__exs.host.datetime_from_components";
 /// Runner-internal host name used to open a host-owned pull stream.
 pub const HOST_STREAM_OPEN_HOST_NAME: &str = "__exs.host.stream_open";
 /// Runner-internal host name used to advance one host-owned pull stream.

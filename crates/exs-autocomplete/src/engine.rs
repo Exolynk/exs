@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(item(&response, "First").kind, CompletionKind::Variant);
     }
 
-    /// Completes the only available Host boundary operation after `Host::`.
+    /// Completes one available Host boundary operation after `Host::`.
     #[test]
     fn completes_host_call() {
         let source = "fn main() { Host::ca }";
@@ -462,6 +462,18 @@ mod tests {
         });
         let completion = item(&response, "sleep");
         assert_eq!(completion.insert_text, "sleep()");
+    }
+
+    /// Completes the built-in Host wall-clock operation after a namespace separator.
+    #[test]
+    fn completes_host_now() {
+        let source = "fn main() { Host::no }";
+        let response = CompletionEngine.complete(CompletionRequest {
+            source,
+            cursor: source.len() - 2,
+        });
+        let completion = item(&response, "now");
+        assert_eq!(completion.insert_text, "now()");
     }
 
     /// Completes the built-in Host namespace in expression context.

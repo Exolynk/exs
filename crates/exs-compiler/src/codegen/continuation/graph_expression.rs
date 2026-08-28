@@ -3,14 +3,15 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    BinaryOperator, Expression, FormattedStringPart, MatchArmBody, MatchPattern, UnaryOperator,
+    BinaryOperator, Expression, FormattedStringPart, HostTimeOperation, MatchArmBody, MatchPattern,
+    UnaryOperator,
 };
 use crate::codegen::diagnostics;
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
-use super::graph::{BindingSlot, GraphBuilder, Operation, expression_span};
+use super::graph::{BindingSlot, GraphBuilder, HostTimeField, Operation, expression_span};
 
 impl<'source, 'function> GraphBuilder<'source, 'function> {
     pub(super) fn lower_expression(
@@ -386,6 +387,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 Ok(destination)
             }
             Expression::HostStream { arguments, span } => self.lower_host_stream(arguments, *span),
+            Expression::HostTime {
+                operation,
+                arguments,
+                span,
+            } => self.lower_host_time(*operation, arguments, *span),
             Expression::Index {
                 receiver,
                 index,
@@ -1259,6 +1265,72 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             handle,
             type_id: nominal.id,
             handle_contract,
+            destination,
+            span,
+        });
+        Ok(destination)
+    }
+
+    /// Lowers one built-in Host time operation and converts its raw object into a nominal value.
+    fn lower_host_time(
+        &mut self,
+        operation: HostTimeOperation,
+        arguments: &'function [Expression<'source>],
+        span: SourceSpan<'source>,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        let (host_name, type_name) = match operation {
+            HostTimeOperation::Now => (exs_abi::HOST_NOW_HOST_NAME, "DateTime"),
+            HostTimeOperation::Elapsed => (exs_abi::HOST_ELAPSED_HOST_NAME, "Duration"),
+            HostTimeOperation::InTimezone => {
+                (exs_abi::HOST_DATETIME_IN_TIMEZONE_HOST_NAME, "DateTime")
+            }
+            HostTimeOperation::FromComponents => {
+                (exs_abi::HOST_DATETIME_FROM_COMPONENTS_HOST_NAME, "DateTime")
+            }
+        };
+        let nominal = self.types.get(type_name).cloned().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                span,
+                format!("missing compiler-owned {type_name} type"),
+            ))
+        })?;
+        let mut fields = Vec::with_capacity(nominal.fields.len());
+        for field in nominal.fields {
+            fields.push(HostTimeField {
+                name: field.name,
+                contract: field.contract,
+                slot: self.temporary(span)?,
+            });
+        }
+        let name = self.temporary(span)?;
+        self.operations.push(Operation::String {
+            value: host_name,
+            destination: name,
+            span,
+        });
+        let argument_list = self.temporary(span)?;
+        let mut slots = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            slots.push(self.lower_expression(argument)?);
+        }
+        let value = self.temporary(span)?;
+        self.operations.push(Operation::HostCall {
+            name,
+            arguments: slots,
+            argument_list,
+            destination: value,
+            span,
+        });
+        self.operations.push(Operation::HostResume {
+            destination: value,
+            span,
+        });
+        let destination = self.temporary(span)?;
+        self.operations.push(Operation::HostTime {
+            value,
+            type_id: nominal.id,
+            fields,
             destination,
             span,
         });

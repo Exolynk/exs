@@ -162,6 +162,9 @@ pub(super) fn count_expressions(expression: &Expression<'_>) -> u32 {
         Expression::HostStream { arguments, .. } => {
             1 + arguments.iter().map(count_expressions).sum::<u32>()
         }
+        Expression::HostTime { arguments, .. } => {
+            1 + arguments.iter().map(count_expressions).sum::<u32>()
+        }
         Expression::List { elements, .. } => {
             1 + elements.iter().map(count_expressions).sum::<u32>()
         }
@@ -231,6 +234,7 @@ pub(in crate::codegen::function) fn condition_span<'a>(
         | Expression::Call { span, .. }
         | Expression::HostCall { span, .. }
         | Expression::HostStream { span, .. }
+        | Expression::HostTime { span, .. }
         | Expression::MethodCall { span, .. }
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }

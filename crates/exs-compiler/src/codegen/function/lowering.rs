@@ -241,7 +241,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.clear_root_slot(local)?;
                 }
             }
-            Expression::HostCall { span, .. } | Expression::HostStream { span, .. } => {
+            Expression::HostCall { span, .. }
+            | Expression::HostStream { span, .. }
+            | Expression::HostTime { span, .. } => {
                 return Err(diagnostics(CompileDiagnostic::new(
                     "E0300",
                     *span,

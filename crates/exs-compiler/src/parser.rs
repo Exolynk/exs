@@ -1307,6 +1307,74 @@ impl<'a> Parser<'a> {
                     start.through(method.span),
                 ))
             }
+            "now" => {
+                if !values.is_empty() {
+                    return Err(self.error(
+                        start.through(end),
+                        "E0208",
+                        format!(
+                            "Host::now expects 0 arguments but received {}",
+                            values.len()
+                        ),
+                    ));
+                }
+                return Ok(Expression::HostTime {
+                    operation: crate::ast::HostTimeOperation::Now,
+                    arguments: values,
+                    span: start.through(end),
+                });
+            }
+            "elapsed" => {
+                if !values.is_empty() {
+                    return Err(self.error(
+                        start.through(end),
+                        "E0208",
+                        format!(
+                            "Host::elapsed expects 0 arguments but received {}",
+                            values.len()
+                        ),
+                    ));
+                }
+                return Ok(Expression::HostTime {
+                    operation: crate::ast::HostTimeOperation::Elapsed,
+                    arguments: values,
+                    span: start.through(end),
+                });
+            }
+            "date_time_in_timezone" => {
+                if values.len() != 2 {
+                    return Err(self.error(
+                        start.through(end),
+                        "E0208",
+                        format!(
+                            "Host::date_time_in_timezone expects 2 arguments but received {}",
+                            values.len()
+                        ),
+                    ));
+                }
+                return Ok(Expression::HostTime {
+                    operation: crate::ast::HostTimeOperation::InTimezone,
+                    arguments: values,
+                    span: start.through(end),
+                });
+            }
+            "date_time_from_components" => {
+                if values.len() != 8 {
+                    return Err(self.error(
+                        start.through(end),
+                        "E0208",
+                        format!(
+                            "Host::date_time_from_components expects 8 arguments but received {}",
+                            values.len()
+                        ),
+                    ));
+                }
+                return Ok(Expression::HostTime {
+                    operation: crate::ast::HostTimeOperation::FromComponents,
+                    arguments: values,
+                    span: start.through(end),
+                });
+            }
             "stream" => {
                 if values.is_empty() {
                     return Err(self.error(
@@ -1324,7 +1392,7 @@ impl<'a> Parser<'a> {
                 return Err(self.error(
                     method.span,
                     "E0113",
-                    "supported Host operations are `call`, `sleep`, and `stream`",
+                    "supported Host operations are `call`, `sleep`, `now`, `elapsed`, `date_time_in_timezone`, `date_time_from_components`, and `stream`",
                 ));
             }
         };
@@ -1596,6 +1664,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         | Expression::Call { span, .. }
         | Expression::HostCall { span, .. }
         | Expression::HostStream { span, .. }
+        | Expression::HostTime { span, .. }
         | Expression::MethodCall { span, .. }
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }

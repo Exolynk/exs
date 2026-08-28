@@ -115,22 +115,14 @@ pub(super) fn compile_function<'source>(
         source_map,
         frame_layouts,
         return_contract: &signature.return_type,
-        function: Function::new([(8, ValType::I32)]),
+        function: Function::new([(9, ValType::I32)]),
         scratch_local: 1,
         literal_buffer_local: 3,
         variadic_length_local: 7,
         variadic_index_local: 8,
+        state_local: 9,
     };
-    for (state, operation) in graph.operations.iter().enumerate() {
-        let state = u32::try_from(state).map_err(|_| {
-            diagnostics(CompileDiagnostic::new(
-                "E0212",
-                declaration.span,
-                "too many continuation states for one function",
-            ))
-        })?;
-        compiler.emit_state(state, operation)?;
-    }
+    compiler.emit_dispatch(&graph.operations, declaration.span)?;
     compiler.function.instruction(&Instruction::Unreachable);
     compiler.function.instruction(&Instruction::End);
     Ok(CompiledContinuation {

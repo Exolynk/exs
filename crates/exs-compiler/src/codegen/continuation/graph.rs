@@ -281,6 +281,19 @@ pub(super) enum Operation<'source, 'function> {
         /// Full source span.
         span: SourceSpan<'source>,
     },
+    /// Converts one completed runner time result into a nominal prelude object or preserves Error.
+    HostTime {
+        /// Frame slot holding the raw runner object or Error.
+        value: u32,
+        /// Compiler-owned nominal type tag for the resulting prelude value.
+        type_id: u32,
+        /// Fields copied from the validated raw runner object.
+        fields: Vec<HostTimeField>,
+        /// Frame slot receiving the nominal value or unchanged Error.
+        destination: u32,
+        /// Full source span.
+        span: SourceSpan<'source>,
+    },
     /// Invokes a direct non-suspendable Wasm function with frame-backed arguments.
     DirectCall {
         signature: FunctionSignature,
@@ -388,6 +401,16 @@ pub(super) enum Operation<'source, 'function> {
         value: u32,
         span: SourceSpan<'source>,
     },
+}
+
+/// One nominal prelude field constructed from a runner-owned time response object.
+pub(super) struct HostTimeField {
+    /// Source-visible field key in the raw and nominal object.
+    pub(super) name: String,
+    /// Contract enforced for the raw field value.
+    pub(super) contract: TypeContract,
+    /// Frame slot retaining the validated field value while the nominal object is assembled.
+    pub(super) slot: u32,
 }
 
 /// Builds a flat continuation graph for sequential source statements.
@@ -628,6 +651,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::HostCall { span, .. }
         | Operation::HostResume { span, .. }
         | Operation::HostStream { span, .. }
+        | Operation::HostTime { span, .. }
         | Operation::DirectCall { span, .. }
         | Operation::ChildCall { span, .. }
         | Operation::ClosureCall { span, .. }
@@ -668,6 +692,7 @@ pub(super) fn expression_span<'source>(expression: &Expression<'source>) -> Sour
         | Expression::Call { span, .. }
         | Expression::HostCall { span, .. }
         | Expression::HostStream { span, .. }
+        | Expression::HostTime { span, .. }
         | Expression::MethodCall { span, .. }
         | Expression::StaticMethodCall { span, .. }
         | Expression::Index { span, .. }

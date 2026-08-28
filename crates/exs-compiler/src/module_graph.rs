@@ -661,6 +661,11 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
                 rewrite_expression(argument, bindings);
             }
         }
+        Expression::HostTime { arguments, .. } => {
+            for argument in arguments {
+                rewrite_expression(argument, bindings);
+            }
+        }
         Expression::Closure {
             parameters, body, ..
         } => {

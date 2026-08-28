@@ -1,13 +1,16 @@
 //! Wasmtime imports implementing the dynamic ExS Host ABI.
 
 use std::collections::{BTreeMap, HashMap};
+use std::time::Instant;
 
 use exs_abi::{
     ErrorSeverity, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
     HOST_CALL_RESPONSE_COPY_IMPORT, HOST_CALL_RESPONSE_LENGTH_IMPORT, HOST_CALL_START_IMPORT,
-    HOST_IMPORT_MODULE, HOST_SLEEP_HOST_NAME, HOST_STREAM_NEXT_HOST_NAME,
-    HOST_STREAM_OPEN_HOST_NAME, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
-    RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY, SourcePositionId,
+    HOST_DATETIME_FROM_COMPONENTS_HOST_NAME, HOST_DATETIME_IN_TIMEZONE_HOST_NAME,
+    HOST_ELAPSED_HOST_NAME, HOST_IMPORT_MODULE, HOST_NOW_HOST_NAME, HOST_SLEEP_HOST_NAME,
+    HOST_STREAM_NEXT_HOST_NAME, HOST_STREAM_OPEN_HOST_NAME, RUNNER_IMPORT_MODULE,
+    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
+    SourcePositionId,
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter, StoreLimits, StoreLimitsBuilder};
 
@@ -40,6 +43,8 @@ pub(crate) struct HostAbiState {
     pending_host_calls: usize,
     /// Policy applied to each host-boundary payload.
     limits: ExecutionLimits,
+    /// Monotonic instant at which this root execution began.
+    execution_started_at: Instant,
     /// Wasmtime-owned resource limiter for this instance's linear memory.
     store_limits: StoreLimits,
     /// The most recent hard-limit violation reported through a Wasm import.
@@ -48,7 +53,11 @@ pub(crate) struct HostAbiState {
 
 impl HostAbiState {
     /// Creates one isolated Host ABI state from a runner-owned registry.
-    pub(crate) fn new(registry: HostFunctionRegistry, limits: ExecutionLimits) -> Self {
+    pub(crate) fn new(
+        registry: HostFunctionRegistry,
+        limits: ExecutionLimits,
+        execution_started_at: Instant,
+    ) -> Self {
         Self {
             registry,
             ready_responses: HashMap::new(),
@@ -65,6 +74,7 @@ impl HostAbiState {
                 .trap_on_grow_failure(true)
                 .build(),
             limits,
+            execution_started_at,
             limit_violation: None,
         }
     }
@@ -89,6 +99,11 @@ impl HostAbiState {
     /// Records one hard-limit violation before trapping back through Wasm.
     fn report_limit_violation(&mut self, kind: LimitKind) {
         self.limit_violation = Some(kind);
+    }
+
+    /// Returns monotonic time elapsed since this root execution began.
+    fn elapsed(&self) -> std::time::Duration {
+        self.execution_started_at.elapsed()
     }
 
     /// Acquires one active language-task permit when the configured budget allows it.
@@ -361,6 +376,18 @@ fn host_call_start(
 
     let call = if name == HOST_SLEEP_HOST_NAME {
         Ok(crate::host_sleep::start(arguments, origin))
+    } else if name == HOST_NOW_HOST_NAME {
+        Ok(crate::host_time::now(arguments, origin))
+    } else if name == HOST_ELAPSED_HOST_NAME {
+        Ok(crate::host_time::elapsed(
+            arguments,
+            caller.data().elapsed(),
+            origin,
+        ))
+    } else if name == HOST_DATETIME_IN_TIMEZONE_HOST_NAME {
+        Ok(crate::host_time::in_timezone(arguments, origin))
+    } else if name == HOST_DATETIME_FROM_COMPONENTS_HOST_NAME {
+        Ok(crate::host_time::from_components(arguments, origin))
     } else if name == HOST_STREAM_OPEN_HOST_NAME {
         caller.data_mut().stream_open(arguments, origin)
     } else if name == HOST_STREAM_NEXT_HOST_NAME {

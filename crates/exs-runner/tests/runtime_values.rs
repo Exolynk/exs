@@ -861,7 +861,7 @@ fn passes_object_cbor_input_to_main() {
     );
 }
 
-/// Keeps aliased runtime Objects alive while repeated helper allocations trigger collection.
+/// Keeps aliased runtime Objects alive across threshold-triggered collection.
 #[test]
 fn preserves_live_aliases_across_allocation_triggered_collection() {
     assert_eq!(
@@ -874,9 +874,11 @@ fn preserves_live_aliases_across_allocation_triggered_collection() {
             fn main(input) {
                 let object = { value: input };
                 let alias = object;
-                churn(1);
-                churn(2);
-                churn(3);
+                let count = 0;
+                while count < 512 {
+                    churn(count);
+                    count = count + 1;
+                }
                 if alias == object && alias.value == input {
                     ret object;
                 }
@@ -889,7 +891,7 @@ fn preserves_live_aliases_across_allocation_triggered_collection() {
     );
 }
 
-/// Traces a self-referential List without losing its identity or looping during collection.
+/// Traces a self-referential List without losing its identity during threshold-triggered collection.
 #[test]
 fn traces_cycles_during_allocation_triggered_collection() {
     assert_eq!(
@@ -902,9 +904,11 @@ fn traces_cycles_during_allocation_triggered_collection() {
             fn main(input) {
                 let cycle = [];
                 cycle.push(cycle);
-                churn(1);
-                churn(2);
-                churn(3);
+                let count = 0;
+                while count < 512 {
+                    churn(count);
+                    count = count + 1;
+                }
                 ret cycle[0] == cycle;
             }
         "#,
@@ -1025,7 +1029,7 @@ fn iterates_string_unicode_scalars() {
     );
 }
 
-/// Preserves rooted values while loop allocations repeatedly trigger collection.
+/// Preserves rooted values while loop allocations cross the collection threshold.
 #[test]
 fn preserves_live_values_during_allocation_heavy_loops() {
     assert_eq!(
@@ -1035,7 +1039,7 @@ fn preserves_live_values_during_allocation_heavy_loops() {
                 let stable = { value: [input] };
                 let alias = stable;
                 let count = 0;
-                while count < 64 {
+                while count < 512 {
                     let discarded = [{ count: count }, [count, count], "discarded"];
                     count = count + 1;
                 }

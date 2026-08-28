@@ -69,7 +69,13 @@ pub(crate) fn task_release() {
 
 /// Appends one runtime value and returns its one-based table index.
 pub(crate) fn allocate(value: RtValue) -> ValueRef {
-    gc::collect();
+    let should_collect = {
+        let state = unsafe { runtime() };
+        state.free_slots.is_empty() && state.values.len() >= state.next_gc_at
+    };
+    if should_collect {
+        gc::collect();
+    }
     let state = unsafe { runtime() };
     if let Some(index) = state.free_slots.pop() {
         let index = index as usize;

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY, STATUS_READY};
+use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY, STATUS_READY, TYPE_OBJECT};
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use crate::ast::UnaryOperator;
@@ -12,7 +12,7 @@ use crate::codegen::types::TypeContract;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::FrameLayout;
-use super::graph::{Operation, operation_span};
+use super::graph::{HostTimeField, Operation, operation_span};
 use super::step_calls::binary_operation;
 
 pub(super) struct StepCompiler<'source, 'context> {
@@ -36,24 +36,90 @@ pub(super) struct StepCompiler<'source, 'context> {
     pub(super) variadic_length_local: u32,
     /// Reused Wasm local holding one variadic List index during boundary validation.
     pub(super) variadic_index_local: u32,
+    /// Cached continuation state used by the generated balanced operation dispatcher.
+    pub(super) state_local: u32,
 }
 
 impl<'source, 'context> StepCompiler<'source, 'context> {
-    /// Emits a state guard and its operation body.
-    pub(super) fn emit_state(
+    /// Emits a balanced continuation-state dispatcher for all graph operations.
+    pub(super) fn emit_dispatch(
+        &mut self,
+        operations: &[Operation<'source, '_>],
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.call_runtime("__exs_rt_async_frame_state", span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.state_local));
+        self.emit_dispatch_range(operations, 0)
+    }
+
+    /// Emits one balanced range of continuation-state dispatch comparisons.
+    fn emit_dispatch_range(
+        &mut self,
+        operations: &[Operation<'source, '_>],
+        start: usize,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let Some((operation, remaining)) = operations.split_first() else {
+            self.function.instruction(&Instruction::Unreachable);
+            return Ok(());
+        };
+        let state = u32::try_from(start).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                operation_span(operation),
+                "too many continuation states for one function",
+            ))
+        })?;
+        if remaining.is_empty() {
+            self.function
+                .instruction(&Instruction::LocalGet(self.state_local));
+            self.function
+                .instruction(&Instruction::I32Const(state.cast_signed()));
+            self.function.instruction(&Instruction::I32Eq);
+            self.function
+                .instruction(&Instruction::If(BlockType::Empty));
+            self.emit_state(state, operation)?;
+            self.function.instruction(&Instruction::End);
+            self.function.instruction(&Instruction::Unreachable);
+            return Ok(());
+        }
+        let middle = operations.len() / 2;
+        let pivot = start.checked_add(middle).ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                operation_span(operation),
+                "too many continuation states for one function",
+            ))
+        })?;
+        let pivot = u32::try_from(pivot).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                operation_span(operation),
+                "too many continuation states for one function",
+            ))
+        })?;
+        self.function
+            .instruction(&Instruction::LocalGet(self.state_local));
+        self.function
+            .instruction(&Instruction::I32Const(pivot.cast_signed()));
+        self.function.instruction(&Instruction::I32LtU);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.emit_dispatch_range(&operations[..middle], start)?;
+        self.function.instruction(&Instruction::Else);
+        self.emit_dispatch_range(&operations[middle..], start + middle)?;
+        self.function.instruction(&Instruction::End);
+        Ok(())
+    }
+
+    /// Emits one operation body after the dispatcher selected its exact state.
+    fn emit_state(
         &mut self,
         state: u32,
         operation: &Operation<'source, '_>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.call_runtime("__exs_rt_async_frame_state", operation_span(operation))?;
-        self.function
-            .instruction(&Instruction::I32Const(state.cast_signed()));
-        self.function.instruction(&Instruction::I32Eq);
-        self.function
-            .instruction(&Instruction::If(BlockType::Empty));
         self.emit_operation(state, operation)?;
-        self.function.instruction(&Instruction::End);
         Ok(())
     }
 
@@ -524,6 +590,13 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.function.instruction(&Instruction::End);
                 self.ready(next, *span)?;
             }
+            Operation::HostTime {
+                value,
+                type_id,
+                fields,
+                destination,
+                span,
+            } => self.host_time(next, *value, *type_id, fields, *destination, *span)?,
             Operation::DirectCall {
                 signature,
                 arguments,
@@ -1242,6 +1315,85 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.call_runtime("__exs_rt_parallel_list_error", span)?;
         self.set_slot(destination, span)?;
         self.complete(destination, span)?;
+        self.function.instruction(&Instruction::End);
+        Ok(())
+    }
+
+    /// Converts a raw runner time object into its compiler-owned nominal prelude representation.
+    fn host_time(
+        &mut self,
+        next: u32,
+        value: u32,
+        type_id: u32,
+        fields: &[HostTimeField],
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.get_slot(value, span)?;
+        self.call_runtime("__exs_rt_is_error", span)?;
+        self.call_runtime("__exs_rt_condition", span)?;
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.get_slot(value, span)?;
+        self.set_slot(destination, span)?;
+        self.ready(next, span)?;
+        self.function.instruction(&Instruction::Else);
+        self.get_slot(value, span)?;
+        self.function
+            .instruction(&Instruction::I32Const(TYPE_OBJECT.cast_signed()));
+        self.call_runtime("__exs_rt_type_matches", span)?;
+        self.function.instruction(&Instruction::I32Eqz);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.get_slot(value, span)?;
+        self.function.instruction(&Instruction::I32Const(1));
+        self.call_runtime("__exs_rt_type_mismatch", span)?;
+        self.set_slot(destination, span)?;
+        self.ready(next, span)?;
+        self.function.instruction(&Instruction::Else);
+        self.function
+            .instruction(&Instruction::I32Const(type_id.cast_signed()));
+        self.call_runtime("__exs_rt_object_typed_new", span)?;
+        self.set_slot(destination, span)?;
+        self.host_time_fields(next, value, fields, destination, span, 0)?;
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
+        Ok(())
+    }
+
+    /// Copies and validates runner time fields until one mismatch or the nominal object is complete.
+    fn host_time_fields(
+        &mut self,
+        next: u32,
+        value: u32,
+        fields: &[HostTimeField],
+        destination: u32,
+        span: SourceSpan<'source>,
+        index: usize,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let Some(field) = fields.get(index) else {
+            return self.ready(next, span);
+        };
+        self.get_slot(value, span)?;
+        self.string(&field.name, span)?;
+        self.call_runtime("__exs_rt_index_get", span)?;
+        self.set_slot(field.slot, span)?;
+        self.validate_slot_matches(field.slot, &field.contract, span)?;
+        self.function.instruction(&Instruction::LocalGet(2));
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.get_slot(destination, span)?;
+        self.string(&field.name, span)?;
+        self.get_slot(field.slot, span)?;
+        self.call_runtime("__exs_rt_index_set", span)?;
+        self.function.instruction(&Instruction::Drop);
+        self.host_time_fields(next, value, fields, destination, span, index + 1)?;
+        self.function.instruction(&Instruction::Else);
+        self.get_slot(field.slot, span)?;
+        self.function.instruction(&Instruction::I32Const(1));
+        self.call_runtime("__exs_rt_type_mismatch", span)?;
+        self.set_slot(destination, span)?;
+        self.ready(next, span)?;
         self.function.instruction(&Instruction::End);
         Ok(())
     }

@@ -453,6 +453,14 @@ impl<'a> SourceMap<'a> {
                     self.collect_expression(argument);
                 }
             }
+            Expression::HostTime {
+                arguments, span, ..
+            } => {
+                self.insert(*span);
+                for argument in arguments {
+                    self.collect_expression(argument);
+                }
+            }
             Expression::MethodCall {
                 receiver,
                 method,

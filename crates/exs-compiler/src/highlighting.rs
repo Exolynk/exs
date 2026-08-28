@@ -600,6 +600,11 @@ fn highlight_expression(
                 highlight_expression(argument, spans, len);
             }
         }
+        Expression::HostTime { arguments, .. } => {
+            for argument in arguments {
+                highlight_expression(argument, spans, len);
+            }
+        }
         Expression::MethodCall {
             receiver,
             method,

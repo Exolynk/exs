@@ -36,6 +36,8 @@ mod host_abi;
 mod host_function;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_sleep;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod host_time;
 mod limits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;
@@ -109,13 +111,18 @@ impl ServerRunner {
         if cancellation.is_cancelled() {
             return Err(RunnerError::Cancelled);
         }
+        let execution_started_at = std::time::Instant::now();
         let engine = limited_engine(&self.limits)?;
         let module =
             Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
         check_task_metering_imports(&module)?;
         let mut store = Store::new(
             &engine,
-            host_abi::HostAbiState::new(self.registry.clone(), self.limits.clone()),
+            host_abi::HostAbiState::new(
+                self.registry.clone(),
+                self.limits.clone(),
+                execution_started_at,
+            ),
         );
         store.limiter(host_abi::HostAbiState::store_limits);
         store

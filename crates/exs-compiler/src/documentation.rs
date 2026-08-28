@@ -142,6 +142,18 @@ pub fn standard_library_namespaces() -> &'static [StandardNamespace] {
                     example: "Host::sleep(Duration::milliseconds(250));\nret None;",
                 },
                 StandardFunction {
+                    name: "now",
+                    signature: "Host::now() -> DateTime",
+                    description: "Returns a snapshot of the runner wall clock. The result always carries the Unix instant and observed UTC offset; `timezone` contains the runner-resolved IANA name when available.",
+                    example: "let now = Host::now();\nret now.unix_seconds;",
+                },
+                StandardFunction {
+                    name: "elapsed",
+                    signature: "Host::elapsed() -> Duration",
+                    description: "Returns monotonic time elapsed since this root execution began. It is unaffected by wall-clock changes and is suitable for measuring work inside one execution.",
+                    example: "Host::sleep(Duration::milliseconds(250));\nret Host::elapsed();",
+                },
+                StandardFunction {
                     name: "stream",
                     signature: "Host::stream(name, arguments...) -> HostStream | Error",
                     description: "Opens a runner-registered pull stream selected by a runtime String name. Arguments are collected into a List and passed to the stream factory without the name. HostStream implements Iterator; each advance may suspend, and the runner drops the stream after IteratorStep::Done or execution cleanup.",

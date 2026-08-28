@@ -7,6 +7,9 @@ use exs_value::ValueRef;
 use crate::state::{RootFrame, runtime};
 use crate::value::RtValue;
 
+/// Minimum value-table size before automatic collection becomes worthwhile.
+pub(crate) const INITIAL_COLLECTION_THRESHOLD: usize = 256;
+
 /// Creates one compiler-generated root frame and returns its stack position token.
 pub(crate) fn push_root_frame(slot_count: i32) -> i32 {
     let Ok(slot_count) = usize::try_from(slot_count) else {
@@ -94,7 +97,12 @@ pub(crate) fn collect() {
     while let Some(reference) = worklist.pop() {
         mark(reference, &mut worklist);
     }
-    sweep();
+    let live_values = sweep();
+    let state = unsafe { runtime() };
+    state.next_gc_at = live_values
+        .checked_mul(2)
+        .unwrap_or(usize::MAX)
+        .max(INITIAL_COLLECTION_THRESHOLD);
 }
 
 /// Copies the current root set after clearing the previous collection's marks.
@@ -155,8 +163,9 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
 }
 
 /// Releases all unreachable table entries and records their reusable indices.
-fn sweep() {
+fn sweep() -> usize {
     let state = unsafe { runtime() };
+    let mut live_values = 0;
     for (index, slot) in state.values.iter_mut().enumerate() {
         if slot.as_ref().is_some_and(|slot| !slot.marked) {
             *slot = None;
@@ -164,8 +173,11 @@ fn sweep() {
                 crate::runtime::trap();
             };
             state.free_slots.push(index);
+        } else if slot.is_some() {
+            live_values += 1;
         }
     }
+    live_values
 }
 
 /// Converts one Wasm root-frame token to a Rust index.
