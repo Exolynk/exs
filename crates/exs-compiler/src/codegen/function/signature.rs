@@ -347,6 +347,7 @@ fn insert_signature<'a>(
                 builtin_mask: 0,
                 nominal_type_ids: vec![receiver_type.unwrap_or_default()],
                 enum_type_ids: Vec::new(),
+                list_item: None,
             });
         } else {
             parameter_types

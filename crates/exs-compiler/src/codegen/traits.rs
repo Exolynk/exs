@@ -327,5 +327,6 @@ fn replace_self_annotation(
         if member.name == "Self" {
             member.name = self_type.to_owned();
         }
+        replace_self_annotation(member.argument.as_deref_mut(), self_type);
     }
 }

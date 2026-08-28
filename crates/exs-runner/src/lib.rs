@@ -62,7 +62,7 @@ pub use self::host_function::{
 pub use self::limits::{ExecutionLimits, LimitKind};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::registry::{HostFunctionRegistry, RegistryError};
-pub use exs_abi::{ErrorSeverity, ExsError, ExsValue, SourcePositionId};
+pub use exs_abi::{Bytes, ErrorSeverity, ExsError, ExsValue, SourcePositionId};
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 /// A reusable Wasmtime server runner with dynamically registered host functions.

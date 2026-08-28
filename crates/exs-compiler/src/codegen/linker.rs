@@ -48,7 +48,8 @@ pub(super) fn link<'source>(
     suspendable_functions: &HashSet<String>,
     traits: &TraitRegistry<'source>,
 ) -> Result<Vec<u8>, CompileDiagnostics<'source>> {
-    let literal_pool = LiteralPool::collect(module);
+    let type_registry = TypeRegistry::build(module, traits)?;
+    let literal_pool = LiteralPool::collect(module, &type_registry)?;
     let template_data = template_data_layout(module)?;
     let source_map = SourceMap::collect(module);
     let mut linker = TemplateLinker::new(
@@ -59,6 +60,7 @@ pub(super) fn link<'source>(
         source_map,
         suspendable_functions.clone(),
         traits,
+        type_registry,
     )?;
     let mut wasm = WasmModule::new();
     reencode::utils::parse_core_module(&mut linker, &mut wasm, WasmParser::new(0), WASM_TEMPLATE)
@@ -360,6 +362,7 @@ struct TemplateLinker<'source, 'module> {
 
 impl<'source, 'module> TemplateLinker<'source, 'module> {
     /// Creates a linker for one parsed source module.
+    #[allow(clippy::too_many_arguments)] // Keeps the construction inputs explicit and ownership-local.
     fn new(
         module: &'module Module<'source>,
         lifted: Vec<LiftedFunction<'source>>,
@@ -368,6 +371,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
         source_map: SourceMap<'source>,
         suspendable_functions: HashSet<String>,
         traits: &'module TraitRegistry<'source>,
+        type_registry: TypeRegistry,
     ) -> Result<Self, CompileDiagnostics<'source>> {
         let literal_count = u32::try_from(literals.bytes.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
@@ -387,7 +391,6 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
                         "too many data segments for the Wasm data index space",
                     ))
                 })?;
-        let type_registry = TypeRegistry::build(module, traits)?;
         let entry_names = module
             .functions
             .iter()

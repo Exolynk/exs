@@ -1418,9 +1418,17 @@ fn type_annotation(annotation: &TypeAnnotation<'_>) -> String {
     annotation
         .members
         .iter()
-        .map(|member| member.name.as_str())
+        .map(type_name)
         .collect::<Vec<_>>()
         .join(" | ")
+}
+
+/// Renders one recursive source type name.
+fn type_name(member: &crate::ast::TypeName<'_>) -> String {
+    member.argument.as_deref().map_or_else(
+        || member.name.clone(),
+        |argument| format!("{}<{}>", member.name, type_annotation(argument)),
+    )
 }
 
 /// Appends the consecutive preceding `///` documentation comment and reports whether one exists.

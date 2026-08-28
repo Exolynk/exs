@@ -325,14 +325,14 @@ fn cli_runner() -> Result<ServerRunner, String> {
     let mut runner = ServerRunner::new(ExecutionLimits::default());
     runner
         .registry_mut()
-        .register_sync("print", |arguments: Vec<ExsValue>| {
+        .fn_sync_raw("print", |arguments: Vec<ExsValue>| {
             write_host_output(&arguments, false);
             ExsValue::None
         })
         .map_err(|error| format!("could not register CLI print host function: {error}"))?;
     runner
         .registry_mut()
-        .register_sync("println", |arguments: Vec<ExsValue>| {
+        .fn_sync_raw("println", |arguments: Vec<ExsValue>| {
             write_host_output(&arguments, true);
             ExsValue::None
         })

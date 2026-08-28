@@ -220,7 +220,7 @@ fn suspends_through_standard_add_implementations() {
     assert!(
         runner
             .registry_mut()
-            .register_async("bonus", |_arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("bonus", |_arguments: Vec<ExsValue>| async move {
                 ExsValue::Int(1)
             })
             .is_ok()
@@ -261,7 +261,7 @@ fn suspends_through_standard_div_implementations() {
     assert!(
         runner
             .registry_mut()
-            .register_async("divisor", |_arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("divisor", |_arguments: Vec<ExsValue>| async move {
                 ExsValue::Int(2)
             })
             .is_ok()
@@ -302,7 +302,7 @@ fn suspends_through_standard_compare_implementations() {
     assert!(
         runner
             .registry_mut()
-            .register_async("ordering", |_arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("ordering", |_arguments: Vec<ExsValue>| async move {
                 ExsValue::Int(0)
             })
             .is_ok()
@@ -332,7 +332,7 @@ fn traces_errors_through_suspendable_child_frames() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -438,7 +438,7 @@ fn constructs_enum_after_a_host_call() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("value", |_| ExsValue::Int(42))
+            .fn_sync_raw("value", |_| ExsValue::Int(42))
             .is_ok()
     );
     let result = match block_on(runner.execute(
@@ -555,7 +555,7 @@ fn resumes_host_call_inside_enum_match_arm() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("value", |_| ExsValue::Int(42))
+            .fn_sync_raw("value", |_| ExsValue::Int(42))
             .is_ok()
     );
     let result = match block_on(runner.execute(

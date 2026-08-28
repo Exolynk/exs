@@ -533,6 +533,9 @@ fn rewrite_annotation(annotation: &mut TypeAnnotation<'_>, bindings: &HashMap<St
         if let Some(name) = bindings.get(&member.name) {
             member.name = name.clone();
         }
+        if let Some(argument) = member.argument.as_deref_mut() {
+            rewrite_annotation(argument, bindings);
+        }
     }
 }
 

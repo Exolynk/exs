@@ -23,22 +23,21 @@ fn register_continuation_matrix_hosts(
         "range",
     ] {
         let name = name.to_owned();
-        let registration =
-            if asynchronous {
-                let calls = Arc::clone(&calls);
-                let function_name = name.clone();
-                runner.registry_mut().register_async(name, move |arguments| {
+        let registration = if asynchronous {
+            let calls = Arc::clone(&calls);
+            let function_name = name.clone();
+            runner.registry_mut().fn_async_raw(name, move |arguments| {
                 let calls = Arc::clone(&calls);
                 let function_name = function_name.clone();
                 async move { continuation_matrix_response(&function_name, arguments, &calls) }
             })
-            } else {
-                let calls = Arc::clone(&calls);
-                let function_name = name.clone();
-                runner.registry_mut().register_sync(name, move |arguments| {
-                    continuation_matrix_response(&function_name, arguments, &calls)
-                })
-            };
+        } else {
+            let calls = Arc::clone(&calls);
+            let function_name = name.clone();
+            runner.registry_mut().fn_sync_raw(name, move |arguments| {
+                continuation_matrix_response(&function_name, arguments, &calls)
+            })
+        };
         assert!(registration.is_ok());
     }
 }
@@ -157,7 +156,7 @@ fn register_logical_host(
     let registration = if asynchronous {
         runner
             .registry_mut()
-            .register_async("truth", move |arguments: Vec<ExsValue>| {
+            .fn_async_raw("truth", move |arguments: Vec<ExsValue>| {
                 let calls = Arc::clone(&calls);
                 async move {
                     record_logical_host_call(&calls, &arguments);
@@ -167,7 +166,7 @@ fn register_logical_host(
     } else {
         runner
             .registry_mut()
-            .register_sync("truth", move |arguments: Vec<ExsValue>| {
+            .fn_sync_raw("truth", move |arguments: Vec<ExsValue>| {
                 record_logical_host_call(&calls, &arguments);
                 ExsValue::Bool(true)
             })
@@ -240,7 +239,7 @@ fn executes_sequential_continuation_states_for_synchronous_host_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("echo", |arguments: Vec<ExsValue>| {
+            .fn_sync_raw("echo", |arguments: Vec<ExsValue>| {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -272,7 +271,7 @@ fn executes_the_minimum_signed_64_bit_literal_in_a_continuation() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("ready", |_| ExsValue::None)
+            .fn_sync_raw("ready", |_| ExsValue::None)
             .is_ok()
     );
     let result = match block_on(runner.execute(
@@ -304,7 +303,7 @@ fn terminates_continuation_after_a_fatal_direct_call_result() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("ready", |_| ExsValue::None)
+            .fn_sync_raw("ready", |_| ExsValue::None)
             .is_ok()
     );
     let result = match block_on(runner.execute(
@@ -339,7 +338,7 @@ fn executes_sequential_continuation_states_for_asynchronous_host_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -384,7 +383,7 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("values", |_arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("values", |_arguments: Vec<ExsValue>| async move {
                 ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(3), ExsValue::Int(2)])
             })
             .is_ok()
@@ -392,7 +391,7 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -427,7 +426,7 @@ fn executes_asynchronous_host_calls_after_scheduler_quantum_yields() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -506,7 +505,7 @@ fn constructs_typed_objects_for_synchronous_host_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("echo", |arguments: Vec<ExsValue>| {
+            .fn_sync_raw("echo", |arguments: Vec<ExsValue>| {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -532,7 +531,7 @@ fn constructs_typed_objects_for_asynchronous_host_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -563,7 +562,7 @@ fn validates_typed_object_fields_after_asynchronous_host_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("wrong", |_arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("wrong", |_arguments: Vec<ExsValue>| async move {
                 ExsValue::Int(7)
             })
             .is_ok()
@@ -641,7 +640,7 @@ fn validates_resumable_function_type_contracts() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("echo", |_arguments: Vec<ExsValue>| ExsValue::String(
+            .fn_sync_raw("echo", |_arguments: Vec<ExsValue>| ExsValue::String(
                 "wrong".to_owned()
             ))
             .is_ok()
@@ -679,7 +678,7 @@ fn executes_transitive_suspendable_direct_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -712,7 +711,7 @@ fn executes_transitive_suspendable_static_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -746,7 +745,7 @@ fn executes_transitive_suspendable_instance_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -784,7 +783,7 @@ fn executes_transitive_suspendable_trait_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()

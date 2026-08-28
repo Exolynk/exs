@@ -18,6 +18,8 @@ use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
 use crate::{HostCborError, RunnerError, decode_arguments, encode_result};
+#[cfg(feature = "serde")]
+use serde::{Serialize, de::DeserializeOwned};
 
 /// One non-threaded future returned by a browser host function.
 type BrowserHostFuture = Pin<Box<dyn Future<Output = ExsValue> + 'static>>;
@@ -106,12 +108,43 @@ impl BrowserHostFunctionRegistry {
         Self::default()
     }
 
-    /// Registers a synchronous browser host implementation under one static name.
+    /// Registers a typed synchronous browser host implementation under one static name.
     ///
     /// # Errors
     ///
     /// Returns an error when the name is empty or already registered.
-    pub fn register_sync<Host>(
+    #[cfg(feature = "serde")]
+    pub fn fn_sync<Request, Response, Host>(
+        &mut self,
+        name: impl Into<String>,
+        function: Host,
+    ) -> Result<(), BrowserRegistryError>
+    where
+        Request: DeserializeOwned + 'static,
+        Response: Serialize + 'static,
+        Host: Fn(Request) -> Result<Response, ExsError> + 'static,
+    {
+        self.fn_sync_raw(name, move |arguments| {
+            let request = match decode_typed_request(arguments) {
+                Ok(request) => request,
+                Err(error) => return error,
+            };
+            match function(request) {
+                Ok(response) => match ExsValue::from_serialize(&response) {
+                    Ok(value) => value,
+                    Err(error) => typed_encode_error(error.to_string()),
+                },
+                Err(error) => ExsValue::Error(error),
+            }
+        })
+    }
+
+    /// Registers a low-level synchronous browser host implementation under one static name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the name is empty or already registered.
+    pub fn fn_sync_raw<Host>(
         &mut self,
         name: impl Into<String>,
         function: Host,
@@ -122,12 +155,49 @@ impl BrowserHostFunctionRegistry {
         self.insert(name.into(), BrowserHostFunction::Sync(Rc::new(function)))
     }
 
-    /// Registers an asynchronous browser host implementation under one static name.
+    /// Registers a typed asynchronous browser host implementation under one static name.
     ///
     /// # Errors
     ///
     /// Returns an error when the name is empty or already registered.
-    pub fn register_async<Host, HostFutureValue>(
+    #[cfg(feature = "serde")]
+    pub fn fn_async<Request, Response, Host, HostFutureValue>(
+        &mut self,
+        name: impl Into<String>,
+        function: Host,
+    ) -> Result<(), BrowserRegistryError>
+    where
+        Request: DeserializeOwned + 'static,
+        Response: Serialize + 'static,
+        Host: Fn(Request) -> HostFutureValue + 'static,
+        HostFutureValue: Future<Output = Result<Response, ExsError>> + 'static,
+    {
+        let function = Rc::new(function);
+        self.fn_async_raw(name, move |arguments| {
+            let request = decode_typed_request(arguments);
+            let function = Rc::clone(&function);
+            async move {
+                let request = match request {
+                    Ok(request) => request,
+                    Err(error) => return error,
+                };
+                match function(request).await {
+                    Ok(response) => match ExsValue::from_serialize(&response) {
+                        Ok(value) => value,
+                        Err(error) => typed_encode_error(error.to_string()),
+                    },
+                    Err(error) => ExsValue::Error(error),
+                }
+            }
+        })
+    }
+
+    /// Registers a low-level asynchronous browser host implementation under one static name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the name is empty or already registered.
+    pub fn fn_async_raw<Host, HostFutureValue>(
         &mut self,
         name: impl Into<String>,
         function: Host,
@@ -142,12 +212,42 @@ impl BrowserHostFunctionRegistry {
         )
     }
 
-    /// Registers one browser pull-stream factory under a static host name.
+    /// Registers one typed iterator factory under a static host name.
+    ///
+    /// Each iterator item is serialized to the ExS boundary value as it is requested. Use
+    /// [`Self::stream_raw`] when the source itself must yield asynchronously.
     ///
     /// # Errors
     ///
     /// Returns an error when the name is empty or already registered.
-    pub fn register_stream<Host>(
+    #[cfg(feature = "serde")]
+    pub fn stream<Request, Item, Items, Host>(
+        &mut self,
+        name: impl Into<String>,
+        function: Host,
+    ) -> Result<(), BrowserRegistryError>
+    where
+        Request: DeserializeOwned + 'static,
+        Item: Serialize + 'static,
+        Items: IntoIterator<Item = Item> + 'static,
+        Items::IntoIter: 'static,
+        Host: Fn(Request) -> Result<Items, ExsError> + 'static,
+    {
+        self.stream_raw(name, move |arguments| {
+            let request = decode_typed_request(arguments)?;
+            let items = function(request).map_err(ExsValue::Error)?;
+            Ok(BrowserSerializedIterator {
+                items: items.into_iter(),
+            })
+        })
+    }
+
+    /// Registers one low-level browser pull-stream factory under a static host name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the name is empty or already registered.
+    pub fn stream_raw<Host>(
         &mut self,
         name: impl Into<String>,
         function: Host,
@@ -294,6 +394,77 @@ impl BrowserHostFunctionRegistry {
         let _previous = functions.insert(name, function);
         Ok(())
     }
+}
+
+/// A typed iterator exposed through the browser pull-stream protocol.
+#[cfg(feature = "serde")]
+struct BrowserSerializedIterator<Items> {
+    /// Remaining application values.
+    items: Items,
+}
+
+#[cfg(feature = "serde")]
+impl<Items> BrowserHostStream for BrowserSerializedIterator<Items>
+where
+    Items: Iterator + 'static,
+    Items::Item: Serialize,
+{
+    fn next(&mut self) -> BrowserHostStreamFuture {
+        let item = match self.items.next() {
+            Some(value) => match ExsValue::from_serialize(&value) {
+                Ok(value) => BrowserHostStreamItem::Item(value),
+                Err(error) => BrowserHostStreamItem::Item(typed_encode_error(error.to_string())),
+            },
+            None => BrowserHostStreamItem::End,
+        };
+        Box::pin(std::future::ready(item))
+    }
+}
+
+/// Decodes the zero-or-one request argument accepted by one typed browser host function.
+#[cfg(feature = "serde")]
+fn decode_typed_request<Request: DeserializeOwned>(
+    arguments: Vec<ExsValue>,
+) -> Result<Request, ExsValue> {
+    let value = match arguments.as_slice() {
+        [] => ExsValue::None,
+        [value] => value.clone(),
+        values => {
+            return Err(typed_decode_error(format!(
+                "typed host functions expect zero or one argument, received {}",
+                values.len()
+            )));
+        }
+    };
+    value
+        .into_deserialize()
+        .map_err(|error| typed_decode_error(error.to_string()))
+}
+
+/// Builds one recoverable language error for typed browser host request decoding.
+#[cfg(feature = "serde")]
+fn typed_decode_error(message: String) -> ExsValue {
+    typed_error("WireDecodeError", message)
+}
+
+/// Builds one recoverable language error for typed browser host response encoding.
+#[cfg(feature = "serde")]
+fn typed_encode_error(message: String) -> ExsValue {
+    typed_error("WireEncodeError", message)
+}
+
+/// Builds one recoverable error emitted by the typed browser host adapter.
+#[cfg(feature = "serde")]
+fn typed_error(kind: &str, message: String) -> ExsValue {
+    ExsValue::Error(ExsError {
+        severity: ErrorSeverity::Recoverable,
+        kind: kind.to_owned(),
+        message,
+        data: Box::new(ExsValue::None),
+        origin: None,
+        trace: Vec::new(),
+        cause: None,
+    })
 }
 
 /// An error caused by browser host-function registration or lookup.

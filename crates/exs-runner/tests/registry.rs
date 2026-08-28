@@ -57,7 +57,7 @@ fn rejects_hostile_declared_argument_collection_by_default() {
 fn starts_synchronous_host_functions() {
     let mut registry = HostFunctionRegistry::new();
     registry
-        .register_sync("join", |arguments: Vec<ExsValue>| {
+        .fn_sync_raw("join", |arguments: Vec<ExsValue>| {
             assert_eq!(arguments, vec![ExsValue::String("Ada".to_owned())]);
             ExsValue::Error(ExsError {
                 severity: ErrorSeverity::Recoverable,
@@ -85,7 +85,7 @@ fn starts_synchronous_host_functions() {
 fn starts_asynchronous_host_functions() {
     let mut registry = HostFunctionRegistry::new();
     registry
-        .register_async("increment", |arguments: Vec<ExsValue>| async move {
+        .fn_async_raw("increment", |arguments: Vec<ExsValue>| async move {
             let [ExsValue::Int(value)] = arguments.as_slice() else {
                 return ExsValue::None;
             };
@@ -106,11 +106,9 @@ fn starts_asynchronous_host_functions() {
 #[test]
 fn rejects_duplicate_and_unknown_host_names() {
     let mut registry = HostFunctionRegistry::new();
-    registry
-        .register_sync("value", |_| ExsValue::Int(1))
-        .unwrap();
+    registry.fn_sync_raw("value", |_| ExsValue::Int(1)).unwrap();
     assert_eq!(
-        registry.register_sync("value", |_| ExsValue::Int(2)),
+        registry.fn_sync_raw("value", |_| ExsValue::Int(2)),
         Err(RegistryError::DuplicateName("value".to_owned()))
     );
     assert!(matches!(

@@ -4,7 +4,47 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
+
 pub mod cbor;
+#[cfg(feature = "serde")]
+mod serde;
+#[cfg(feature = "serde")]
+pub use serde::SerdeError;
+
+/// An explicit byte-buffer field for Serde-backed ExS boundary data.
+///
+/// This wrapper serializes as [`ExsValue::Bytes`], while ordinary `Vec<T>` values retain their
+/// generic `List<T>` representation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Bytes(Vec<u8>);
+
+impl Bytes {
+    /// Creates an ExS byte-buffer value from its owned bytes.
+    #[must_use]
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the byte-buffer contents.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Consumes this wrapper and returns its owned byte buffer.
+    #[must_use]
+    pub fn into_inner(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl From<Vec<u8>> for Bytes {
+    /// Wraps an owned byte buffer for the ExS Serde boundary.
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
 
 pub use cbor::{
     CborError, CborLimits, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, SourcePositionId,

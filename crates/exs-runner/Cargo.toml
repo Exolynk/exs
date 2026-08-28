@@ -12,9 +12,11 @@ workspace = true
 default = ["server"]
 server = ["dep:wasmtime"]
 browser = ["dep:jiff", "dep:js-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures"]
+serde = ["dep:serde", "exs-abi/serde"]
 
 [dependencies]
 exs-abi = { path = "../exs-abi" }
+serde = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wasmtime = { workspace = true, optional = true }

@@ -254,7 +254,7 @@ fn executes_host_calls_inside_formatted_strings() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("echo", |arguments: Vec<ExsValue>| arguments
+            .fn_sync_raw("echo", |arguments: Vec<ExsValue>| arguments
                 .into_iter()
                 .next()
                 .unwrap_or(ExsValue::None))
@@ -294,7 +294,7 @@ fn executes_host_calls_inside_to_string_implementations() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("echo", |arguments: Vec<ExsValue>| arguments
+            .fn_sync_raw("echo", |arguments: Vec<ExsValue>| arguments
                 .into_iter()
                 .next()
                 .unwrap_or(ExsValue::None))
@@ -341,7 +341,7 @@ fn executes_resumable_variadic_calls() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("echo", |arguments: Vec<ExsValue>| arguments
+            .fn_sync_raw("echo", |arguments: Vec<ExsValue>| arguments
                 .into_iter()
                 .next()
                 .unwrap_or(ExsValue::None))
@@ -389,7 +389,7 @@ fn executes_a_synchronous_dynamic_host_function() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("echo", |arguments: Vec<ExsValue>| arguments
+            .fn_sync_raw("echo", |arguments: Vec<ExsValue>| arguments
                 .into_iter()
                 .next()
                 .unwrap_or(ExsValue::None))
@@ -432,7 +432,7 @@ fn rejects_unserializable_host_call_arguments() {
         assert!(
             runner
                 .registry_mut()
-                .register_sync("save", {
+                .fn_sync_raw("save", {
                     let calls = Arc::clone(&calls);
                     move |_| {
                         calls.fetch_add(1, Ordering::SeqCst);
@@ -467,7 +467,7 @@ fn executes_an_asynchronous_dynamic_host_function() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()
@@ -494,7 +494,7 @@ fn cancels_a_pending_host_execution() {
     assert!(
         runner
             .registry_mut()
-            .register_async("wait", move |_arguments: Vec<ExsValue>| {
+            .fn_async_raw("wait", move |_arguments: Vec<ExsValue>| {
                 let cancellation = cancellation_for_host.clone();
                 std::future::poll_fn(move |_| {
                     cancellation.cancel();
@@ -524,7 +524,7 @@ fn cancels_a_pending_host_call_inside_a_closure() {
     assert!(
         runner
             .registry_mut()
-            .register_async("wait", move |_arguments: Vec<ExsValue>| {
+            .fn_async_raw("wait", move |_arguments: Vec<ExsValue>| {
                 let cancellation = cancellation_for_host.clone();
                 std::future::poll_fn(move |_| {
                     cancellation.cancel();
@@ -597,7 +597,7 @@ fn executes_a_host_stream_in_for_loop() {
     assert!(
         runner
             .registry_mut()
-            .register_stream("counter", |args: Vec<ExsValue>| {
+            .stream_raw("counter", |args: Vec<ExsValue>| {
                 let count = match args.first() {
                     Some(ExsValue::Int(n)) => *n,
                     _ => 0,
@@ -661,7 +661,7 @@ fn closes_a_host_stream_after_end() {
     assert!(
         runner
             .registry_mut()
-            .register_stream("empty", |_| Ok(TestStream { items: Vec::new() }))
+            .stream_raw("empty", |_| Ok(TestStream { items: Vec::new() }))
             .is_ok()
     );
     let result = match block_on(runner.execute(
@@ -696,7 +696,7 @@ fn rejects_concurrent_host_stream_advances() {
     assert!(
         runner
             .registry_mut()
-            .register_stream("single", |_| {
+            .stream_raw("single", |_| {
                 Ok(TestStream {
                     items: vec![ExsValue::Int(1)],
                 })
@@ -749,4 +749,77 @@ fn executes_a_custom_iterator_in_for_loop() {
     }
     "#;
     assert_eq!(execute_source_with_inputs(source, &[]), ExsValue::Int(10));
+}
+
+/// Rehydrates a nested host DTO into nominal ExS values after an async-capable Host call.
+#[test]
+fn decodes_typed_host_call_results_recursively() {
+    let source = r#"
+    type ServiceVisit {
+        performed_on: String,
+        actions: List<String>,
+    }
+
+    enum VehicleStatus {
+        Available,
+        InService(until: String),
+    }
+
+    type Vehicle {
+        registration: String,
+        status: VehicleStatus,
+        visits: List<ServiceVisit>,
+        attachment: Bytes,
+        note: String | None,
+    }
+
+    fn main() -> String {
+        let vehicle: Vehicle = Host::call("vehicle");
+        for visit: ServiceVisit in vehicle.visits {
+            ret visit.performed_on;
+        }
+        ret vehicle.registration;
+    }
+    "#;
+    let compiled = compile_source(source);
+    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    assert!(
+        runner
+            .registry_mut()
+            .fn_sync_raw("vehicle", |_| {
+                ExsValue::Object(vec![
+                    ("registration".into(), ExsValue::String("ZH 421 742".into())),
+                    (
+                        "status".into(),
+                        ExsValue::Object(vec![
+                            ("$variant".into(), ExsValue::String("InService".into())),
+                            ("until".into(), ExsValue::String("2026-09-04".into())),
+                        ]),
+                    ),
+                    (
+                        "visits".into(),
+                        ExsValue::List(vec![ExsValue::Object(vec![
+                            ("performed_on".into(), ExsValue::String("2026-08-20".into())),
+                            (
+                                "actions".into(),
+                                ExsValue::List(vec![ExsValue::String("calibrate radar".into())]),
+                            ),
+                        ])]),
+                    ),
+                    ("attachment".into(), ExsValue::Bytes(vec![0, 1, 2, 255])),
+                    ("note".into(), ExsValue::None),
+                ])
+            })
+            .is_ok()
+    );
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(result, ExsValue::String("2026-08-20".into()));
 }

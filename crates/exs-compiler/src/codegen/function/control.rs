@@ -38,7 +38,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         statement: &Statement<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         match statement {
-            Statement::Let { name, value, .. } => {
+            Statement::Let {
+                name,
+                type_annotation,
+                value,
+                span,
+            } => {
                 if self
                     .scopes
                     .last()
@@ -52,7 +57,18 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 }
                 self.compile_expression(value)?;
                 let local = self.allocate_local();
-                self.store_stack_value_in(local)?;
+                if let Some(annotation) = type_annotation {
+                    let contract = self.types.resolve(Some(annotation), name.span)?;
+                    let schema = self.types.wire_schema(&contract);
+                    self.store_stack_value_in(local)?;
+                    self.function.instruction(&Instruction::LocalGet(local));
+                    self.compile_string(&schema, *span)?;
+                    self.runtime_call("__exs_rt_decode_wire", *span)?;
+                    self.return_if_error(*span)?;
+                    self.store_stack_value_in(local)?;
+                } else {
+                    self.store_stack_value_in(local)?;
+                }
                 if let Some(scope) = self.scopes.last_mut() {
                     scope.insert(name.name.clone(), local);
                 }
@@ -155,10 +171,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             } => self.compile_while(condition, body, *span)?,
             Statement::For {
                 binding,
+                type_annotation,
                 iterable,
                 body,
                 span,
-            } => self.compile_for(binding, iterable, body, *span)?,
+            } => self.compile_for(binding, type_annotation.as_ref(), iterable, body, *span)?,
             Statement::Break { span } => self.compile_loop_branch(*span, true)?,
             Statement::Continue { span } => self.compile_loop_branch(*span, false)?,
         }
@@ -205,6 +222,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     pub(super) fn compile_for(
         &mut self,
         binding: &crate::ast::Identifier<'a>,
+        type_annotation: Option<&crate::ast::TypeAnnotation<'a>>,
         iterable: &Expression<'a>,
         body: &Block<'a>,
         span: SourceSpan<'a>,
@@ -262,6 +280,15 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function.instruction(&Instruction::LocalGet(index));
         self.runtime_value_call("__exs_rt_index_get", 2, span)?;
         self.store_stack_value_in(item)?;
+        if let Some(annotation) = type_annotation {
+            let contract = self.types.resolve(Some(annotation), binding.span)?;
+            let schema = self.types.wire_schema(&contract);
+            self.function.instruction(&Instruction::LocalGet(item));
+            self.compile_string(&schema, binding.span)?;
+            self.runtime_call("__exs_rt_decode_wire", binding.span)?;
+            self.return_if_error(binding.span)?;
+            self.store_stack_value_in(item)?;
+        }
         self.compile_block(body, true)?;
         let _loop = self.loops.pop();
 

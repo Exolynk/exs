@@ -191,6 +191,23 @@ pub(super) fn validate_annotation_with_self<'a>(
                 format!("unknown type `{}`", member.name),
             ));
         }
+        if member.name == "List" {
+            if let Some(argument) = member.argument.as_deref() {
+                validate_annotation_with_self(
+                    module,
+                    Some(argument),
+                    member.span,
+                    allows_self,
+                    diagnostics,
+                );
+            }
+        } else if member.argument.is_some() {
+            diagnostics.push(CompileDiagnostic::new(
+                "E0216",
+                member.span,
+                format!("type `{}` does not accept a generic argument", member.name),
+            ));
+        }
     }
 }
 
@@ -211,6 +228,8 @@ pub(super) struct TypeContract {
     pub(super) nominal_type_ids: Vec<u32>,
     /// Accepted stable identities for nominal enum values received from a host.
     pub(super) enum_type_ids: Vec<String>,
+    /// Optional recursive element contract for `List<T>` members.
+    pub(super) list_item: Option<Box<TypeContract>>,
 }
 
 /// One resolved nominal Object field contract.
@@ -255,6 +274,8 @@ pub(super) struct EnumVariant {
     pub(super) name: String,
     /// Ordered payload contracts.
     pub(super) fields: Vec<TypeContract>,
+    /// Source-visible payload names aligned with `fields`.
+    pub(super) field_names: Vec<String>,
 }
 
 /// The nominal type registry for one compiled module.
@@ -481,12 +502,36 @@ impl TypeRegistry {
                 builtin_mask: TYPE_ANY,
                 nominal_type_ids: Vec::new(),
                 enum_type_ids: Vec::new(),
+                list_item: None,
             });
         };
         let mut resolved_builtin_mask = 0;
         let mut nominal_type_ids = Vec::new();
         let mut enum_type_ids = Vec::new();
+        let mut list_item: Option<Box<TypeContract>> = None;
         for member in &annotation.members {
+            if member.name == "List" {
+                let contract = match member.argument.as_deref() {
+                    Some(argument) => self.resolve(Some(argument), member.span)?,
+                    None => TypeContract {
+                        builtin_mask: TYPE_ANY,
+                        nominal_type_ids: Vec::new(),
+                        enum_type_ids: Vec::new(),
+                        list_item: None,
+                    },
+                };
+                if let Some(existing) = &mut list_item {
+                    merge_contract(existing, contract);
+                } else {
+                    list_item = Some(Box::new(contract));
+                }
+            } else if member.argument.is_some() {
+                return Err(diagnostics(CompileDiagnostic::new(
+                    "E0216",
+                    member.span,
+                    format!("type `{}` does not accept a generic argument", member.name),
+                )));
+            }
             if let Some(mask) = builtin_mask(&member.name) {
                 resolved_builtin_mask |= mask;
             } else if let Some(nominal) = self
@@ -528,6 +573,7 @@ impl TypeRegistry {
             builtin_mask: resolved_builtin_mask,
             nominal_type_ids,
             enum_type_ids,
+            list_item,
         })
     }
 
@@ -555,6 +601,13 @@ impl TypeRegistry {
             .collect()
     }
 
+    /// Returns an opaque runtime schema for one recursive host-boundary type contract.
+    pub(super) fn wire_schema(&self, contract: &TypeContract) -> String {
+        let mut output = String::new();
+        self.append_wire_contract(&mut output, contract);
+        output
+    }
+
     /// Registers every constructor and payload contract for one enum declaration.
     fn register_enum<'a>(
         &mut self,
@@ -578,6 +631,11 @@ impl TypeRegistry {
                 .iter()
                 .map(|field| self.resolve(field.type_annotation.as_ref(), field.name.span))
                 .collect::<Result<Vec<_>, _>>()?;
+            let field_names = variant
+                .fields
+                .iter()
+                .map(|field| field.name.name.clone())
+                .collect();
             self.enum_variants.insert(
                 format!("{}::{}", declaration.name.name, variant.name.name),
                 EnumVariant {
@@ -585,6 +643,7 @@ impl TypeRegistry {
                     type_identity: type_identity.clone(),
                     name: variant.name.name.clone(),
                     fields,
+                    field_names,
                 },
             );
         }
@@ -602,10 +661,111 @@ impl TypeRegistry {
                         type_identity: STANDARD_ORDERING_TYPE_IDENTITY.to_owned(),
                         name: (*variant).to_owned(),
                         fields: Vec::new(),
+                        field_names: Vec::new(),
                     },
                 );
             }
         }
+    }
+
+    /// Appends one compact, length-prefixed runtime decoder contract.
+    fn append_wire_contract(&self, output: &mut String, contract: &TypeContract) {
+        output.push('C');
+        append_wire_number(output, contract.builtin_mask);
+        match &contract.list_item {
+            Some(item) => {
+                output.push('L');
+                self.append_wire_contract(output, item);
+            }
+            None => output.push('N'),
+        }
+        let objects = contract
+            .nominal_type_ids
+            .iter()
+            .filter_map(|id| self.type_by_id(*id))
+            .filter(|nominal| nominal.kind == NominalKind::Object)
+            .collect::<Vec<_>>();
+        append_wire_number(output, objects.len() as u32);
+        for nominal in objects {
+            output.push('O');
+            append_wire_number(output, nominal.id);
+            self.append_wire_fields(output, &nominal.fields);
+        }
+        let enums = contract
+            .nominal_type_ids
+            .iter()
+            .filter_map(|id| self.type_by_id(*id))
+            .filter(|nominal| nominal.kind == NominalKind::Enum)
+            .collect::<Vec<_>>();
+        append_wire_number(output, enums.len() as u32);
+        for nominal in enums {
+            output.push('E');
+            append_wire_number(output, nominal.id);
+            append_wire_text(output, nominal.enum_type_id.as_deref().unwrap_or_default());
+            let variants = self
+                .enum_variants
+                .values()
+                .filter(|variant| variant.type_id == nominal.id)
+                .collect::<Vec<_>>();
+            append_wire_number(output, variants.len() as u32);
+            for variant in variants {
+                output.push('V');
+                append_wire_text(output, &variant.name);
+                append_wire_number(output, variant.fields.len() as u32);
+                for (name, field) in variant.field_names.iter().zip(&variant.fields) {
+                    output.push('F');
+                    append_wire_text(output, name);
+                    self.append_wire_contract(output, field);
+                }
+            }
+        }
+    }
+
+    /// Appends every named nominal Object field to an opaque runtime schema.
+    fn append_wire_fields(&self, output: &mut String, fields: &[NominalField]) {
+        append_wire_number(output, fields.len() as u32);
+        for field in fields {
+            output.push('F');
+            append_wire_text(output, &field.name);
+            self.append_wire_contract(output, &field.contract);
+        }
+    }
+
+    /// Returns one nominal type by its compiler-owned tag.
+    fn type_by_id(&self, id: u32) -> Option<&NominalType> {
+        self.types.values().find(|nominal| nominal.id == id)
+    }
+}
+
+/// Appends one semicolon-terminated schema number.
+fn append_wire_number(output: &mut String, value: u32) {
+    output.push_str(&value.to_string());
+    output.push(';');
+}
+
+/// Appends one byte-length-prefixed schema text fragment.
+fn append_wire_text(output: &mut String, value: &str) {
+    append_wire_number(output, value.len() as u32);
+    output.push_str(value);
+}
+
+/// Merges one union alternative into an existing recursive type contract.
+fn merge_contract(target: &mut TypeContract, source: TypeContract) {
+    target.builtin_mask |= source.builtin_mask;
+    for type_id in source.nominal_type_ids {
+        if !target.nominal_type_ids.contains(&type_id) {
+            target.nominal_type_ids.push(type_id);
+        }
+    }
+    for type_id in source.enum_type_ids {
+        if !target.enum_type_ids.contains(&type_id) {
+            target.enum_type_ids.push(type_id);
+        }
+    }
+    match (&mut target.list_item, source.list_item) {
+        (Some(target), Some(source)) => merge_contract(target, *source),
+        (None, Some(source)) => target.list_item = Some(source),
+        _ => {}
     }
 }
 

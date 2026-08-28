@@ -180,7 +180,7 @@ fn polls_parallel_host_calls_concurrently() {
     assert!(
         runner
             .registry_mut()
-            .register_async("wait", {
+            .fn_async_raw("wait", {
                 let polls = Arc::clone(&polls);
                 move |_arguments: Vec<ExsValue>| {
                     let polls = Arc::clone(&polls);
@@ -305,7 +305,7 @@ fn rejects_a_non_callable_dynamic_binding() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("callback", |_| ExsValue::Int(1))
+            .fn_sync_raw("callback", |_| ExsValue::Int(1))
             .is_ok()
     );
     let result = match block_on(runner.execute(
@@ -395,7 +395,7 @@ fn resumes_host_calls_inside_closures() {
     assert!(
         runner
             .registry_mut()
-            .register_async("echo", |arguments: Vec<ExsValue>| async move {
+            .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
                 arguments.into_iter().next().unwrap_or(ExsValue::None)
             })
             .is_ok()

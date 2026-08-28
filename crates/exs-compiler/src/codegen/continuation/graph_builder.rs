@@ -37,7 +37,12 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         statement: &'function Statement<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         match statement {
-            Statement::Let { name, value, .. } => {
+            Statement::Let {
+                name,
+                type_annotation,
+                value,
+                ..
+            } => {
                 if self
                     .scopes
                     .last()
@@ -51,11 +56,21 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 }
                 let value = self.lower_expression(value)?;
                 let binding = self.temporary(name.span)?;
-                self.operations.push(Operation::Copy {
-                    source: value,
-                    destination: binding,
-                    span: name.span,
-                });
+                if let Some(annotation) = type_annotation {
+                    let contract = self.types.resolve(Some(annotation), name.span)?;
+                    self.operations.push(Operation::WireDecode {
+                        source: value,
+                        destination: binding,
+                        schema: self.types.wire_schema(&contract),
+                        span: name.span,
+                    });
+                } else {
+                    self.operations.push(Operation::Copy {
+                        source: value,
+                        destination: binding,
+                        span: name.span,
+                    });
+                }
                 let cell = self.captured_names.contains(&name.name);
                 if cell {
                     self.operations.push(Operation::CellNew {
@@ -155,10 +170,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             } => self.lower_while(condition, body, *span)?,
             Statement::For {
                 binding,
+                type_annotation,
                 iterable,
                 body,
                 span,
-            } => self.lower_for(binding, iterable, body, *span)?,
+            } => self.lower_for(binding, type_annotation.as_ref(), iterable, body, *span)?,
             Statement::Break { span } => self.lower_loop_branch(*span, true)?,
             Statement::Continue { span } => self.lower_loop_branch(*span, false)?,
         }
@@ -252,6 +268,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
     pub(super) fn lower_for(
         &mut self,
         binding: &'function crate::ast::Identifier<'source>,
+        type_annotation: Option<&'function crate::ast::TypeAnnotation<'source>>,
         iterable: &'function Expression<'source>,
         body: &'function crate::ast::Block<'source>,
         span: SourceSpan<'source>,
@@ -317,6 +334,15 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             span,
         })?;
         let body_start = self.operations.len();
+        if let Some(annotation) = type_annotation {
+            let contract = self.types.resolve(Some(annotation), binding.span)?;
+            self.operations.push(Operation::WireDecode {
+                source: item,
+                destination: item,
+                schema: self.types.wire_schema(&contract),
+                span: binding.span,
+            });
+        }
         let cell = self.captured_names.contains(&binding.name);
         if cell {
             self.operations.push(Operation::CellNew {

@@ -207,6 +207,19 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
+            Operation::WireDecode {
+                source,
+                destination,
+                schema,
+                span,
+            } => {
+                self.get_slot(*source, *span)?;
+                self.string(schema, *span)?;
+                self.call_runtime("__exs_rt_decode_wire", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.complete_if_error(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::CellNew {
                 value,
                 destination,

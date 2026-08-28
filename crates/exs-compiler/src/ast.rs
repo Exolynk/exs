@@ -223,6 +223,8 @@ pub struct TypeAnnotation<'a> {
 pub struct TypeName<'a> {
     /// Type name spelling.
     pub name: String,
+    /// Optional recursive generic argument, currently supported by `List<T>`.
+    pub argument: Option<Box<TypeAnnotation<'a>>>,
     /// Source span of this type name.
     pub span: SourceSpan<'a>,
 }
@@ -244,6 +246,8 @@ pub enum Statement<'a> {
     Let {
         /// Declared name.
         name: Identifier<'a>,
+        /// Optional type used to decode a host-boundary value at this binding.
+        type_annotation: Option<TypeAnnotation<'a>>,
         /// Initializer expression.
         value: Expression<'a>,
         /// Full statement span.
@@ -296,6 +300,8 @@ pub enum Statement<'a> {
     For {
         /// Binding introduced for the current iteration value.
         binding: Identifier<'a>,
+        /// Optional type used to decode each host-boundary iteration value.
+        type_annotation: Option<TypeAnnotation<'a>>,
         /// Expression evaluated once before iteration begins.
         iterable: Expression<'a>,
         /// Repeated once for each snapshot value.

@@ -13,20 +13,102 @@ mod browser {
     use birei::code_editor::CodeLanguageService;
     use exs_autocomplete::ExsBireiLanguageService;
     use exs_compiler::{CompileOptions, DocumentationPage, SourceInput, compile, format};
-    use exs_runner::{BrowserRunner, BrowserRunnerConfig, ExsValue};
+    use exs_runner::{BrowserRunner, BrowserRunnerConfig, Bytes, ExsError, ExsValue};
     use leptos::prelude::*;
     use leptos::task::spawn_local;
+    use serde::{Deserialize, Serialize};
     use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
     use web_sys::Element;
 
     use crate::documentation::{PLAYGROUND_SOURCE_ID, documentation_pages};
     use crate::markdown::render_documentation_markdown;
 
-    const DEFAULT_SOURCE: &str = r#"fn main() {
-    let value = 21 * 2;
-    Host::call("println", "The result is", value);
-    ret value;
+    const DEFAULT_SOURCE: &str = r#"type Vehicle {
+    id: String,
+    registration: String,
+    status: VehicleStatus,
+    odometer_km: Int,
+    maintenance_dates: List<String>,
+    inspection_photo: Bytes,
+    note: String | None,
+}
+
+enum VehicleStatus {
+    Available,
+    InService(until: String),
+    Retired(reason: String),
+}
+
+type ServiceVisit {
+    id: String,
+    performed_on: String,
+    operations: List<String>,
+    invoice_pdf: Bytes,
+    advisor: String | None,
+}
+
+fn main() -> Vehicle | Error {
+    let vehicle: Vehicle = Host::call("fleet.vehicle", "veh_0042")?;
+    Host::call("println", "Vehicle", vehicle.registration, "at", vehicle.odometer_km, "km");
+
+    let visits = Host::stream("fleet.visits", vehicle.id)?;
+    for visit: ServiceVisit in visits {
+        Host::call("println", visit.performed_on, visit.operations.length(), "operations");
+    }
+
+    ret vehicle;
 }"#;
+
+    /// One host-side vehicle DTO transferred through the Serde wire adapter.
+    #[derive(Clone, Deserialize, Serialize)]
+    struct Vehicle {
+        /// Stable fleet identifier.
+        id: String,
+        /// Human-readable license registration.
+        registration: String,
+        /// Current operational status.
+        status: VehicleStatus,
+        /// Most recently recorded odometer value.
+        odometer_km: i64,
+        /// ISO-8601 dates of recent maintenance activity.
+        maintenance_dates: Vec<String>,
+        /// Binary inspection photo attachment.
+        inspection_photo: Bytes,
+        /// Optional service desk note.
+        note: Option<String>,
+    }
+
+    /// One vehicle lifecycle state transferred as a tagged ExS Object.
+    #[derive(Clone, Deserialize, Serialize)]
+    enum VehicleStatus {
+        /// Vehicle may be scheduled immediately.
+        Available,
+        /// Vehicle is reserved for maintenance through an ISO-8601 date.
+        InService {
+            /// Planned completion date.
+            until: String,
+        },
+        /// Vehicle was permanently removed from active service.
+        Retired {
+            /// Human-readable retirement reason.
+            reason: String,
+        },
+    }
+
+    /// One service visit transferred through the host iterator boundary.
+    #[derive(Clone, Deserialize, Serialize)]
+    struct ServiceVisit {
+        /// Stable visit identifier.
+        id: String,
+        /// ISO-8601 completion date.
+        performed_on: String,
+        /// Completed work entries.
+        operations: Vec<String>,
+        /// Binary invoice attachment.
+        invoice_pdf: Bytes,
+        /// Optional named service advisor.
+        advisor: Option<String>,
+    }
 
     /// Entry page for the generated standard-library documentation.
     const STANDARD_DOCUMENTATION_INDEX: &str = "modules/std/index.md";
@@ -285,6 +367,10 @@ mod browser {
             output.set(format!("Could not configure output: {error}"));
             return;
         }
+        if let Err(error) = register_fleet_hosts(&mut configuration) {
+            output.set(format!("Could not configure fleet services: {error}"));
+            return;
+        }
         let runner = match BrowserRunner::new(&compiled.wasm, configuration).await {
             Ok(runner) => runner,
             Err(error) => {
@@ -305,17 +391,60 @@ mod browser {
     ) -> Result<(), exs_runner::BrowserRegistryError> {
         configuration
             .registry_mut()
-            .register_sync("print", move |arguments| {
+            .fn_sync_raw("print", move |arguments| {
                 append_output(output, &format_arguments(&arguments));
                 ExsValue::None
             })?;
 
         configuration
             .registry_mut()
-            .register_sync("println", move |arguments| {
+            .fn_sync_raw("println", move |arguments| {
                 append_output(output, &format!("{}\n", format_arguments(&arguments)));
                 ExsValue::None
             })
+    }
+
+    /// Registers typed fleet DTO services used by the default playground program.
+    fn register_fleet_hosts(
+        configuration: &mut BrowserRunnerConfig,
+    ) -> Result<(), exs_runner::BrowserRegistryError> {
+        configuration.registry_mut().fn_sync(
+            "fleet.vehicle",
+            |id: String| -> Result<Vehicle, ExsError> {
+                Ok(Vehicle {
+                    id,
+                    registration: "ZH 421 742".into(),
+                    status: VehicleStatus::InService {
+                        until: "2026-09-04".into(),
+                    },
+                    odometer_km: 48_120,
+                    maintenance_dates: vec!["2026-02-12".into(), "2026-08-20".into()],
+                    inspection_photo: Bytes::new(vec![0x89, 0x50, 0x4e, 0x47]),
+                    note: Some("Awaiting replacement front sensor.".into()),
+                })
+            },
+        )?;
+        configuration.registry_mut().stream(
+            "fleet.visits",
+            |_vehicle_id: String| -> Result<Vec<ServiceVisit>, ExsError> {
+                Ok(vec![
+                    ServiceVisit {
+                        id: "svc_2026_08_20".into(),
+                        performed_on: "2026-08-20".into(),
+                        operations: vec!["replace brake pads".into(), "calibrate radar".into()],
+                        invoice_pdf: Bytes::new(vec![0x25, 0x50, 0x44, 0x46]),
+                        advisor: Some("M. Keller".into()),
+                    },
+                    ServiceVisit {
+                        id: "svc_2026_02_12".into(),
+                        performed_on: "2026-02-12".into(),
+                        operations: vec!["annual inspection".into()],
+                        invoice_pdf: Bytes::new(vec![0x25, 0x50, 0x44, 0x46, 0x2d, 0x32]),
+                        advisor: None,
+                    },
+                ])
+            },
+        )
     }
 
     /// Appends one message to the browser output panel without replacing prior host output.

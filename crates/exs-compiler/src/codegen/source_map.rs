@@ -235,7 +235,9 @@ impl<'a> SourceMap<'a> {
     /// Collects all spans reachable from one statement.
     fn collect_statement(&mut self, statement: &Statement<'a>) {
         match statement {
-            Statement::Let { name, value, span } => {
+            Statement::Let {
+                name, value, span, ..
+            } => {
                 self.insert(*span);
                 self.insert(name.span);
                 self.collect_expression(value);
@@ -289,6 +291,7 @@ impl<'a> SourceMap<'a> {
                 iterable,
                 body,
                 span,
+                ..
             } => {
                 self.insert(*span);
                 self.insert(binding.span);

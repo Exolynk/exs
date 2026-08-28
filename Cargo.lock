@@ -803,6 +803,7 @@ name = "exs-abi"
 version = "0.1.0"
 dependencies = [
  "minicbor",
+ "serde",
 ]
 
 [[package]]
@@ -850,6 +851,7 @@ dependencies = [
  "exs-runner",
  "leptos",
  "pulldown-cmark",
+ "serde",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -864,6 +866,7 @@ dependencies = [
  "exs-value",
  "jiff",
  "js-sys",
+ "serde",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasmtime",

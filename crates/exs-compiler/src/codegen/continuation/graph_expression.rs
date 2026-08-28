@@ -1172,6 +1172,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         builtin_mask: 0,
                         nominal_type_ids: Vec::new(),
                         enum_type_ids: Vec::new(),
+                        list_item: None,
                     },
                     span: property.key_span,
                 });

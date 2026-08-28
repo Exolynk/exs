@@ -72,7 +72,7 @@ fn register_print(runner: &mut ServerRunner, checksum: Arc<AtomicU64>) {
     let registration =
         runner
             .registry_mut()
-            .register_sync("print", move |arguments: Vec<ExsValue>| {
+            .fn_sync_raw("print", move |arguments: Vec<ExsValue>| {
                 let value = match arguments.as_slice() {
                     [ExsValue::Int(value)] => *value,
                     _ => 0,

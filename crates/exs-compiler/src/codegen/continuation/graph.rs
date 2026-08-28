@@ -66,6 +66,17 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Decodes one host boundary value using a compiler-emitted schema string.
+    WireDecode {
+        /// Frame slot containing the raw boundary value.
+        source: u32,
+        /// Frame slot receiving the decoded ExS value.
+        destination: u32,
+        /// Opaque compiler/runtime schema contract.
+        schema: String,
+        /// Source location for decoder diagnostics.
+        span: SourceSpan<'source>,
+    },
     /// Allocates shared Cell storage for one captured lexical binding.
     CellNew {
         value: u32,
@@ -637,6 +648,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::None { span, .. }
         | Operation::Boolean { span, .. }
         | Operation::Copy { span, .. }
+        | Operation::WireDecode { span, .. }
         | Operation::CellNew { span, .. }
         | Operation::CellGet { span, .. }
         | Operation::CellSet { span, .. }

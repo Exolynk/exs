@@ -391,8 +391,14 @@ fn highlight_block(
 ) {
     for statement in &block.statements {
         match statement {
-            Statement::Let { name, value, .. } => {
+            Statement::Let {
+                name,
+                type_annotation,
+                value,
+                ..
+            } => {
                 highlight_identifier(name, HighlightKind::Binding, spans, len);
+                highlight_type_annotation(type_annotation.as_ref(), spans, len);
                 highlight_expression(value, spans, len);
             }
             Statement::Assign { target, value, .. } => {
@@ -428,11 +434,13 @@ fn highlight_block(
             }
             Statement::For {
                 binding,
+                type_annotation,
                 iterable,
                 body,
                 ..
             } => {
                 highlight_identifier(binding, HighlightKind::Binding, spans, len);
+                highlight_type_annotation(type_annotation.as_ref(), spans, len);
                 highlight_expression(iterable, spans, len);
                 highlight_block(body, spans, len);
             }

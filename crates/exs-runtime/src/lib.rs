@@ -23,5 +23,8 @@ mod state;
 #[cfg(all(feature = "runtime", target_arch = "wasm32"))]
 mod wasm;
 
+#[cfg(all(feature = "runtime", target_arch = "wasm32"))]
+mod wire;
+
 /// The committed runtime template linked into every compiled ExS module.
 pub const WASM_TEMPLATE: &[u8] = include_bytes!("../exs-runtime.wasm");

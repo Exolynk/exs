@@ -43,7 +43,7 @@ mod native {
         let mut runner = ServerRunner::new(ExecutionLimits::default());
         runner
             .registry_mut()
-            .register_stream("counter", |arguments: Vec<ExsValue>| {
+            .stream_raw("counter", |arguments: Vec<ExsValue>| {
                 let end = match arguments.as_slice() {
                     [ExsValue::Int(end)] if *end >= 0 => *end,
                     _ => 0,

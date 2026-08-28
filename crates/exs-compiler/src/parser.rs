@@ -551,7 +551,24 @@ impl<'a> Parser<'a> {
             name.push_str(&member);
             span = span.through(member_span);
         }
-        Ok(TypeName { name, span })
+        let argument = if self.matches(&TokenKind::Less) {
+            let argument = self.type_annotation()?;
+            let end = self
+                .expect_simple(
+                    TokenKind::Greater,
+                    "expected `>` after generic type argument",
+                )?
+                .span;
+            span = span.through(end);
+            Some(Box::new(argument))
+        } else {
+            None
+        };
+        Ok(TypeName {
+            name,
+            argument,
+            span,
+        })
     }
 
     /// Parses one identifier or reserved built-in type-name token.
@@ -603,6 +620,11 @@ impl<'a> Parser<'a> {
         if self.matches(&TokenKind::Let) {
             let start = self.previous().span;
             let name = self.identifier("expected binding name after `let`")?;
+            let type_annotation = if self.matches(&TokenKind::Colon) {
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
             let value = if self.matches(&TokenKind::Equal) {
                 self.expression()?
             } else {
@@ -614,6 +636,7 @@ impl<'a> Parser<'a> {
             )?;
             return Ok(Statement::Let {
                 name,
+                type_annotation,
                 value,
                 span: start.through(end),
             });
@@ -672,11 +695,17 @@ impl<'a> Parser<'a> {
         if self.matches(&TokenKind::For) {
             let start = self.previous().span;
             let binding = self.identifier("expected binding name after for")?;
+            let type_annotation = if self.matches(&TokenKind::Colon) {
+                Some(self.type_annotation()?)
+            } else {
+                None
+            };
             self.expect_simple(TokenKind::In, "expected in after for-loop binding")?;
             let iterable = self.expression()?;
             let body = self.block()?;
             return Ok(Statement::For {
                 binding,
+                type_annotation,
                 iterable,
                 span: start.through(body.span),
                 body,

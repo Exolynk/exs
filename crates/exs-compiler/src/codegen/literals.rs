@@ -7,8 +7,9 @@ use exs_runtime::WASM_TEMPLATE;
 use wasmparser::{Parser as WasmParser, Payload};
 
 use crate::ast::{AssignmentTarget, Block, Expression, Module, Statement};
+use crate::codegen::types::TypeRegistry;
 use crate::codegen::{diagnostics, module_span, standard};
-use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
+use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 /// Compiler-owned passive data segments for unique UTF-8 string literals.
 pub(super) struct LiteralPool {
@@ -19,7 +20,10 @@ pub(super) struct LiteralPool {
 
 impl LiteralPool {
     /// Collects each unique string literal in source traversal order.
-    pub(super) fn collect(module: &Module<'_>) -> Self {
+    pub(super) fn collect<'a>(
+        module: &Module<'a>,
+        types: &TypeRegistry,
+    ) -> Result<Self, CompileDiagnostics<'a>> {
         let mut pool = Self {
             bytes: Vec::new(),
             indices: HashMap::new(),
@@ -60,14 +64,14 @@ impl LiteralPool {
         pool.insert(standard::ASSERT_DEFAULT_DESCRIPTION);
         pool.insert(standard::ASSERT_EQ_DEFAULT_DESCRIPTION);
         for function in &module.functions {
-            collect_block_literals(&function.body, &mut pool);
+            collect_block_literals(&function.body, &mut pool, types)?;
         }
         for implementation in &module.implementations {
             for method in &implementation.methods {
-                collect_block_literals(&method.body, &mut pool);
+                collect_block_literals(&method.body, &mut pool, types)?;
             }
         }
-        pool
+        Ok(pool)
     }
 
     /// Assigns final Wasm data indexes after the runtime template's segments.
@@ -130,42 +134,61 @@ pub(super) fn template_data_layout<'a>(
 }
 
 /// Collects literals recursively from one statement block.
-fn collect_block_literals(block: &Block<'_>, pool: &mut LiteralPool) {
+fn collect_block_literals<'a>(
+    block: &Block<'a>,
+    pool: &mut LiteralPool,
+    types: &TypeRegistry,
+) -> Result<(), CompileDiagnostics<'a>> {
     for statement in &block.statements {
-        collect_statement_literals(statement, pool);
+        collect_statement_literals(statement, pool, types)?;
     }
+    Ok(())
 }
 
 /// Collects literals recursively from one statement.
-fn collect_statement_literals(statement: &Statement<'_>, pool: &mut LiteralPool) {
+fn collect_statement_literals<'a>(
+    statement: &Statement<'a>,
+    pool: &mut LiteralPool,
+    types: &TypeRegistry,
+) -> Result<(), CompileDiagnostics<'a>> {
     match statement {
-        Statement::Let { value, .. }
-        | Statement::Expression {
+        Statement::Let {
+            type_annotation,
+            value,
+            span,
+            ..
+        } => {
+            collect_wire_schema(type_annotation.as_ref(), *span, pool, types)?;
+            collect_expression_literals(value, pool, types)?;
+        }
+        Statement::Expression {
             expression: value, ..
-        } => collect_expression_literals(value, pool),
+        } => collect_expression_literals(value, pool, types)?,
         Statement::Assign { target, value, .. } => {
-            collect_assignment_target_literals(target, pool);
-            collect_expression_literals(value, pool);
+            collect_assignment_target_literals(target, pool, types)?;
+            collect_expression_literals(value, pool, types)?;
         }
         Statement::Return { value, .. } => {
             if let Some(value) = value {
-                collect_expression_literals(value, pool);
+                collect_expression_literals(value, pool, types)?;
             }
         }
-        Statement::Block { block, .. } => collect_block_literals(block, pool),
+        Statement::Block { block, .. } => collect_block_literals(block, pool, types)?,
         Statement::If {
             condition,
             then_block,
             else_branch,
             ..
         } => {
-            collect_expression_literals(condition, pool);
-            collect_block_literals(then_block, pool);
+            collect_expression_literals(condition, pool, types)?;
+            collect_block_literals(then_block, pool, types)?;
             if let Some(else_branch) = else_branch {
                 match else_branch {
-                    crate::ast::ElseBranch::Block(block) => collect_block_literals(block, pool),
+                    crate::ast::ElseBranch::Block(block) => {
+                        collect_block_literals(block, pool, types)?
+                    }
                     crate::ast::ElseBranch::If(statement) => {
-                        collect_statement_literals(statement, pool)
+                        collect_statement_literals(statement, pool, types)?
                     }
                 }
             }
@@ -173,37 +196,69 @@ fn collect_statement_literals(statement: &Statement<'_>, pool: &mut LiteralPool)
         Statement::While {
             condition, body, ..
         } => {
-            collect_expression_literals(condition, pool);
-            collect_block_literals(body, pool);
+            collect_expression_literals(condition, pool, types)?;
+            collect_block_literals(body, pool, types)?;
         }
-        Statement::For { iterable, body, .. } => {
-            collect_expression_literals(iterable, pool);
-            collect_block_literals(body, pool);
+        Statement::For {
+            type_annotation,
+            iterable,
+            body,
+            span,
+            ..
+        } => {
+            collect_wire_schema(type_annotation.as_ref(), *span, pool, types)?;
+            collect_expression_literals(iterable, pool, types)?;
+            collect_block_literals(body, pool, types)?;
         }
         Statement::Break { .. } | Statement::Continue { .. } => {}
     }
+    Ok(())
+}
+
+/// Adds the compiler-owned schema literal for one typed host-boundary binding.
+fn collect_wire_schema<'a>(
+    annotation: Option<&crate::ast::TypeAnnotation<'a>>,
+    span: SourceSpan<'a>,
+    pool: &mut LiteralPool,
+    types: &TypeRegistry,
+) -> Result<(), CompileDiagnostics<'a>> {
+    let Some(annotation) = annotation else {
+        return Ok(());
+    };
+    let contract = types.resolve(Some(annotation), span)?;
+    pool.insert(&types.wire_schema(&contract));
+    Ok(())
 }
 
 /// Collects literal-bearing expressions contained in one assignment target.
-fn collect_assignment_target_literals(target: &AssignmentTarget<'_>, pool: &mut LiteralPool) {
+fn collect_assignment_target_literals<'a>(
+    target: &AssignmentTarget<'a>,
+    pool: &mut LiteralPool,
+    types: &TypeRegistry,
+) -> Result<(), CompileDiagnostics<'a>> {
     if let AssignmentTarget::Index {
         receiver, index, ..
     } = target
     {
-        collect_expression_literals(receiver, pool);
-        collect_expression_literals(index, pool);
+        collect_expression_literals(receiver, pool, types)?;
+        collect_expression_literals(index, pool, types)?;
     }
     if let AssignmentTarget::Property {
         receiver, property, ..
     } = target
     {
-        collect_expression_literals(receiver, pool);
+        collect_expression_literals(receiver, pool, types)?;
         pool.insert(&property.name);
     }
+    Ok(())
 }
 
 /// Collects literals recursively from one expression.
-fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPool) {
+fn collect_expression_literals<'a>(
+    expression: &Expression<'a>,
+    pool: &mut LiteralPool,
+    types: &TypeRegistry,
+) -> Result<(), CompileDiagnostics<'a>> {
     match expression {
         Expression::String(value, _) | Expression::Bytes(value, _) => pool.insert(value),
         Expression::FormattedString { parts, .. } => {
@@ -212,7 +267,7 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
                 match part {
                     crate::ast::FormattedStringPart::Text(value) => pool.insert(value),
                     crate::ast::FormattedStringPart::Expression(expression) => {
-                        collect_expression_literals(expression, pool);
+                        collect_expression_literals(expression, pool, types)?;
                     }
                 }
             }
@@ -220,29 +275,29 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
         Expression::Unary { operand, .. }
         | Expression::IsError { value: operand, .. }
         | Expression::Propagate { value: operand, .. } => {
-            collect_expression_literals(operand, pool)
+            collect_expression_literals(operand, pool, types)?
         }
         Expression::Binary { left, right, .. } => {
-            collect_expression_literals(left, pool);
-            collect_expression_literals(right, pool);
+            collect_expression_literals(left, pool, types)?;
+            collect_expression_literals(right, pool, types)?;
         }
         Expression::Call { arguments, .. } => {
             for argument in arguments {
-                collect_expression_literals(argument, pool);
+                collect_expression_literals(argument, pool, types)?;
             }
         }
         Expression::HostCall {
             name, arguments, ..
         } => {
-            collect_expression_literals(name, pool);
+            collect_expression_literals(name, pool, types)?;
             for argument in arguments {
-                collect_expression_literals(argument, pool);
+                collect_expression_literals(argument, pool, types)?;
             }
         }
         Expression::HostStream { arguments, .. } => {
             pool.insert(exs_abi::HOST_STREAM_OPEN_HOST_NAME);
             for argument in arguments {
-                collect_expression_literals(argument, pool);
+                collect_expression_literals(argument, pool, types)?;
             }
         }
         Expression::HostTime {
@@ -263,28 +318,30 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
                 }
             }
             for argument in arguments {
-                collect_expression_literals(argument, pool);
+                collect_expression_literals(argument, pool, types)?;
             }
         }
         Expression::List { elements, .. } => {
             for element in elements {
-                collect_expression_literals(element, pool);
+                collect_expression_literals(element, pool, types)?;
             }
         }
         Expression::Object { properties, .. } | Expression::TypedObject { properties, .. } => {
             for property in properties {
                 pool.insert(&property.key);
-                collect_expression_literals(&property.value, pool);
+                collect_expression_literals(&property.value, pool, types)?;
             }
         }
         Expression::Match { value, arms, .. } => {
-            collect_expression_literals(value, pool);
+            collect_expression_literals(value, pool, types)?;
             for arm in arms {
                 match &arm.body {
                     crate::ast::MatchArmBody::Expression(value) => {
-                        collect_expression_literals(value, pool);
+                        collect_expression_literals(value, pool, types)?;
                     }
-                    crate::ast::MatchArmBody::Block(block) => collect_block_literals(block, pool),
+                    crate::ast::MatchArmBody::Block(block) => {
+                        collect_block_literals(block, pool, types)?
+                    }
                 }
             }
         }
@@ -294,27 +351,27 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
             arguments,
             ..
         } => {
-            collect_expression_literals(receiver, pool);
+            collect_expression_literals(receiver, pool, types)?;
             pool.insert(&method.name);
             for argument in arguments {
-                collect_expression_literals(argument, pool);
+                collect_expression_literals(argument, pool, types)?;
             }
         }
         Expression::StaticMethodCall { arguments, .. } => {
             for argument in arguments {
-                collect_expression_literals(argument, pool);
+                collect_expression_literals(argument, pool, types)?;
             }
         }
         Expression::Index {
             receiver, index, ..
         } => {
-            collect_expression_literals(receiver, pool);
-            collect_expression_literals(index, pool);
+            collect_expression_literals(receiver, pool, types)?;
+            collect_expression_literals(index, pool, types)?;
         }
         Expression::Property {
             receiver, property, ..
         } => {
-            collect_expression_literals(receiver, pool);
+            collect_expression_literals(receiver, pool, types)?;
             pool.insert(&property.name);
         }
         Expression::Integer(_, _)
@@ -322,14 +379,15 @@ fn collect_expression_literals(expression: &Expression<'_>, pool: &mut LiteralPo
         | Expression::Bool(_, _)
         | Expression::None(_)
         | Expression::Variable(_) => {}
-        Expression::Closure { body, .. } => collect_block_literals(body, pool),
+        Expression::Closure { body, .. } => collect_block_literals(body, pool, types)?,
         Expression::ParallelStatic { tasks, .. } => {
             for task in tasks {
-                collect_expression_literals(task, pool);
+                collect_expression_literals(task, pool, types)?;
             }
         }
         Expression::ParallelDynamic { functions, .. } => {
-            collect_expression_literals(functions, pool)
+            collect_expression_literals(functions, pool, types)?
         }
     }
+    Ok(())
 }

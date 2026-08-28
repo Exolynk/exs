@@ -89,6 +89,12 @@ pub extern "C" fn __exs_rt_type_matches(value: ValueRef, allowed_types: i32) -> 
     i32::from(value_type_mask(runtime::value(value)) & allowed_types != 0)
 }
 
+/// Decodes a host boundary value into compiler-owned nominal values using one emitted schema.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_decode_wire(value: ValueRef, schema: ValueRef) -> ValueRef {
+    crate::wire::decode(value, schema)
+}
+
 /// Returns whether a value is an Object carrying one compiler-owned nominal type tag.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_object_is_type(value: ValueRef, type_id: i32) -> i32 {

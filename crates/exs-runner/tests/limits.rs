@@ -108,7 +108,7 @@ fn rejects_pending_host_call_after_the_configured_timeout() {
     assert!(
         runner
             .registry_mut()
-            .register_async("wait", |_| std::future::pending::<ExsValue>())
+            .fn_async_raw("wait", |_| std::future::pending::<ExsValue>())
             .is_ok()
     );
     let result =
@@ -205,7 +205,7 @@ fn rejects_host_response_over_the_cbor_payload_limit() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("large", |_| ExsValue::String("response".to_owned()))
+            .fn_sync_raw("large", |_| ExsValue::String("response".to_owned()))
             .is_ok()
     );
     let result =
@@ -233,7 +233,7 @@ fn rejects_host_request_over_the_cbor_nesting_limit() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("accept", |_| ExsValue::None)
+            .fn_sync_raw("accept", |_| ExsValue::None)
             .is_ok()
     );
     let result =
@@ -287,7 +287,7 @@ fn rejects_host_calls_over_the_configured_total_limit() {
     assert!(
         runner
             .registry_mut()
-            .register_sync("value", |_| ExsValue::Int(1))
+            .fn_sync_raw("value", |_| ExsValue::Int(1))
             .is_ok()
     );
     let result =
@@ -318,7 +318,7 @@ fn rejects_pending_host_calls_over_the_configured_limit() {
     assert!(
         runner
             .registry_mut()
-            .register_async("wait", |_| std::future::pending::<ExsValue>())
+            .fn_async_raw("wait", |_| std::future::pending::<ExsValue>())
             .is_ok()
     );
     let result =
