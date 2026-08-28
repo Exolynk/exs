@@ -3,6 +3,7 @@
 mod support;
 
 use std::time::Duration;
+use std::{sync::mpsc, thread};
 
 use exs_abi::ExsValue;
 use exs_runner::{ExecutionCancellation, ExecutionLimits, LimitKind, RunnerError, ServerRunner};
@@ -67,6 +68,45 @@ fn rejects_guest_execution_after_the_configured_timeout() {
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Timeout))
     ));
+}
+
+/// Interrupts an active guest loop when the caller requests cancellation.
+#[test]
+fn cancels_an_active_guest_execution() {
+    let compiled = compile_source(
+        r#"
+        fn main() {
+            let started = Host::call("started");
+            while started == None {}
+        }
+        "#,
+    );
+    let (started_sender, started_receiver) = mpsc::channel();
+    let mut runner = ServerRunner::new(ExecutionLimits {
+        max_fuel: u64::MAX,
+        timeout: Duration::from_secs(1),
+        ..ExecutionLimits::default()
+    });
+    assert!(
+        runner
+            .registry_mut()
+            .fn_sync_raw("started", move |_| {
+                let _ = started_sender.send(());
+                ExsValue::None
+            })
+            .is_ok()
+    );
+    let cancellation = ExecutionCancellation::new();
+    let execution_cancellation = cancellation.clone();
+    let execution = thread::spawn(move || {
+        block_on(runner.execute(&compiled.wasm, "main", &[], &execution_cancellation))
+    });
+    started_receiver
+        .recv_timeout(Duration::from_secs(30))
+        .expect("guest execution did not reach the synchronization host call");
+    cancellation.cancel();
+    let result = execution.join().expect("guest execution thread panicked");
+    assert!(matches!(result, Err(RunnerError::Cancelled)));
 }
 
 /// Rejects a completed guest call when elapsed time exceeds the deadline before its timer runs.

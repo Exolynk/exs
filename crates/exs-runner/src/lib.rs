@@ -147,13 +147,21 @@ impl ServerRunner {
         let start = instance
             .get_typed_func::<(i32, i32), i32>(&mut store, &entry_export_name(function))
             .map_err(|error| RunnerError::Abi(error.to_string()))?;
-        let mut status = start
-            .call(&mut store, (input_pointer, input_length))
-            .map_err(|error| execution_error(&mut store, &deadline, error))?;
+        let mut status = {
+            let interruption = cancellation.register_interrupt(engine.clone());
+            if interruption.is_cancelled() {
+                return Err(RunnerError::Cancelled);
+            }
+            start.call(&mut store, (input_pointer, input_length))
+        }
+        .map_err(|error| execution_error(&mut store, &deadline, cancellation, error))?;
         let mut pending = Vec::new();
         loop {
             match status {
                 STATUS_COMPLETE => {
+                    if cancellation.is_cancelled() {
+                        return Err(RunnerError::Cancelled);
+                    }
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
@@ -222,9 +230,14 @@ impl ServerRunner {
                     let resume = instance
                         .get_typed_func::<(i64, i32, i32), i32>(&mut store, RESUME_HOST_EXPORT)
                         .map_err(|error| RunnerError::Abi(error.to_string()))?;
-                    status = resume
-                        .call(&mut store, (call_id, pointer, length))
-                        .map_err(|error| execution_error(&mut store, &deadline, error))?;
+                    status = {
+                        let interruption = cancellation.register_interrupt(engine.clone());
+                        if interruption.is_cancelled() {
+                            return Err(RunnerError::Cancelled);
+                        }
+                        resume.call(&mut store, (call_id, pointer, length))
+                    }
+                    .map_err(|error| execution_error(&mut store, &deadline, cancellation, error))?;
                 }
                 STATUS_CANCELLED => return Err(RunnerError::Cancelled),
                 status => return Err(RunnerError::Status(status)),
@@ -298,8 +311,12 @@ fn cancel_execution(
 fn execution_error(
     store: &mut Store<host_abi::HostAbiState>,
     deadline: &deadline::ExecutionDeadline,
+    cancellation: &ExecutionCancellation,
     error: wasmtime::Error,
 ) -> RunnerError {
+    if cancellation.is_cancelled() {
+        return RunnerError::Cancelled;
+    }
     if deadline.is_expired() {
         return RunnerError::LimitExceeded(LimitKind::Timeout);
     }

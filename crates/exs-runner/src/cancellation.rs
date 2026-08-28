@@ -3,6 +3,8 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::Waker;
 
+use wasmtime::Engine;
+
 use crate::{ExsValue, HostFuture, deadline::ExecutionDeadline};
 
 /// Cloneable cancellation control supplied to one runner execution.
@@ -20,6 +22,10 @@ struct CancellationState {
     next_waker_id: u64,
     /// Executor wakers currently blocked on cancellable host futures.
     wakers: Vec<(u64, Waker)>,
+    /// Monotonic identifier assigned to one registered Wasm interruption target.
+    next_interrupt_id: u64,
+    /// Wasmtime engines whose active guest executions must be interrupted on cancellation.
+    interrupts: Vec<(u64, Engine)>,
 }
 
 impl Default for CancellationState {
@@ -29,6 +35,8 @@ impl Default for CancellationState {
             cancelled: false,
             next_waker_id: 1,
             wakers: Vec::new(),
+            next_interrupt_id: 1,
+            interrupts: Vec::new(),
         }
     }
 }
@@ -40,16 +48,22 @@ impl ExecutionCancellation {
         Self::default()
     }
 
-    /// Requests cancellation and wakes every blocked host-future poller.
+    /// Requests cancellation, interrupts guest Wasm, and wakes blocked host-future pollers.
     pub fn cancel(&self) {
-        let wakers = {
+        let (interrupts, wakers) = {
             let mut state = self.state();
             if state.cancelled {
                 return;
             }
             state.cancelled = true;
-            std::mem::take(&mut state.wakers)
+            (
+                std::mem::take(&mut state.interrupts),
+                std::mem::take(&mut state.wakers),
+            )
         };
+        for (_, engine) in interrupts {
+            engine.increment_epoch();
+        }
         for (_, waker) in wakers {
             waker.wake();
         }
@@ -102,9 +116,71 @@ impl ExecutionCancellation {
         }
     }
 
+    /// Registers one engine to interrupt if cancellation occurs during guest execution.
+    pub(crate) fn register_interrupt(&self, engine: Engine) -> CancellationInterrupt<'_> {
+        let mut state = self.state();
+        if state.cancelled {
+            return CancellationInterrupt {
+                cancellation: self,
+                registration: None,
+            };
+        }
+        let identifier = state.next_interrupt_id;
+        let Some(next_identifier) = identifier.checked_add(1) else {
+            return CancellationInterrupt {
+                cancellation: self,
+                registration: None,
+            };
+        };
+        state.next_interrupt_id = next_identifier;
+        state.interrupts.push((identifier, engine));
+        CancellationInterrupt {
+            cancellation: self,
+            registration: Some(identifier),
+        }
+    }
+
+    /// Removes one guest-Wasm interruption target after its execution returns.
+    fn unregister_interrupt(&self, registration: &mut Option<u64>) {
+        let Some(identifier) = registration.take() else {
+            return;
+        };
+        let mut state = self.state();
+        if let Some(position) = state
+            .interrupts
+            .iter()
+            .position(|(registered_id, _)| *registered_id == identifier)
+        {
+            state.interrupts.swap_remove(position);
+        }
+    }
+
     /// Locks the shared cancellation state, recovering consistently after a panic.
     fn state(&self) -> MutexGuard<'_, CancellationState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Registered guest-Wasm interruption target owned by one runner execution.
+pub(crate) struct CancellationInterrupt<'cancellation> {
+    /// Caller-owned cancellation control for this execution.
+    cancellation: &'cancellation ExecutionCancellation,
+    /// Registered engine identifier removed when execution completes.
+    registration: Option<u64>,
+}
+
+impl CancellationInterrupt<'_> {
+    /// Returns whether cancellation was already requested before registration completed.
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+}
+
+impl Drop for CancellationInterrupt<'_> {
+    /// Releases the engine interruption target once guest execution has returned.
+    fn drop(&mut self) {
+        self.cancellation
+            .unregister_interrupt(&mut self.registration);
     }
 }
 
