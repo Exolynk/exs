@@ -149,11 +149,6 @@ The [language reference](SPECIFICATION.md) defines only the ExS source language 
        Synchronous responses accumulate in [ready_responses](/Users/roba/Code/exs/crates/exs-runner/src/host_abi.rs:27), with only a per-response size check at [host_abi.rs](/Users/roba/Code/exs/crates/exs-runner/src/host_abi.rs:545). A custom Wasm module can issue unique calls without copying their responses, potentially retaining roughly `10,000 × 2 MiB` using default limits. Additionally, module compilation occurs before the timeout starts at [lib.rs](/Users/roba/Code/exs/crates/exs-runner/src/lib.rs:117). Add a total host-owned byte budget, outstanding-ready-response limit, module-size limit, and compilation isolation/caching.
 - [x] **Medium: the documented `exs-guest` no-std build is broken.**  
        [host.rs](/Users/roba/Code/exs/crates/exs-guest/src/host.rs:114) uses `vec!` without importing `alloc::vec`. The advertised configuration fails for `wasm32-unknown-unknown`. CI should explicitly build this feature combination.
-- [] **Medium: the “strict RFC 3339” parser accepts invalid offsets.**  
-   [datetime.exs](/Users/roba/Code/exs/crates/exs-compiler/src/prelude/datetime.exs:310) parses offset minutes but only validates the combined offset seconds later. Values such as `+01:60` are accepted as `+02:00`. Validate hours and minutes independently and add invalid-offset tests.
-- [] **Medium: CI does not verify the committed runtime matches its source.**  
-   Compilers embed the committed artifact at [exs-runtime/src/lib.rs](/Users/roba/Code/exs/crates/exs-runtime/src/lib.rs:30). CI rebuilds the runtime at [ci.yml](/Users/roba/Code/exs/.github/workflows/ci.yml:40), but never compares that output with the committed file. Runtime source changes could therefore pass tests while the old runtime still ships. The artifact currently matches a deterministic fresh build, but CI should enforce this.
-- [ ] Lower priority: the CLI’s [custom `block_on`](/Users/roba/Code/exs/crates/exs-cli/src/main.rs:365) repeatedly polls with `yield_now`, consuming significant CPU during sleeps or other pending host calls.
 
 ### Backlog: Further Ideas
 
