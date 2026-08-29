@@ -134,6 +134,22 @@ pub const HOST_DATETIME_FROM_COMPONENTS_HOST_NAME: &str = "__exs.host.datetime_f
 pub const HOST_STREAM_OPEN_HOST_NAME: &str = "__exs.host.stream_open";
 /// Runner-internal host name used to advance one host-owned pull stream.
 pub const HOST_STREAM_NEXT_HOST_NAME: &str = "__exs.host.stream_next";
+/// Host names reserved for runner-provided `Host` operations.
+pub const RESERVED_HOST_NAMES: &[&str] = &[
+    HOST_SLEEP_HOST_NAME,
+    HOST_NOW_HOST_NAME,
+    HOST_ELAPSED_HOST_NAME,
+    HOST_DATETIME_IN_TIMEZONE_HOST_NAME,
+    HOST_DATETIME_FROM_COMPONENTS_HOST_NAME,
+    HOST_STREAM_OPEN_HOST_NAME,
+    HOST_STREAM_NEXT_HOST_NAME,
+];
+
+/// Returns whether `name` is reserved for one runner-provided `Host` operation.
+#[must_use]
+pub fn is_reserved_host_name(name: &str) -> bool {
+    RESERVED_HOST_NAMES.contains(&name)
+}
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";
 /// Prefix for compiler-generated entry exports invoked by runners.

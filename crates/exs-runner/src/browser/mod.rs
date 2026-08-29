@@ -7,10 +7,8 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use exs_abi::{
-    ABI_VERSION, ErrorSeverity, ExsError, ExsValue, HOST_DATETIME_FROM_COMPONENTS_HOST_NAME,
-    HOST_DATETIME_IN_TIMEZONE_HOST_NAME, HOST_ELAPSED_HOST_NAME, HOST_NOW_HOST_NAME,
-    HOST_SLEEP_HOST_NAME, HOST_STREAM_NEXT_HOST_NAME, HOST_STREAM_OPEN_HOST_NAME,
-    STANDARD_ITERATOR_STEP_TYPE_IDENTITY, SourcePositionId,
+    ABI_VERSION, ErrorSeverity, ExsError, ExsValue, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
+    SourcePositionId, is_reserved_host_name,
 };
 use jiff::{Timestamp, Zoned, civil::DateTime as CivilDateTime};
 use js_sys::{Array, Error as JsError, Function, Promise, Uint8Array};
@@ -514,16 +512,21 @@ impl std::fmt::Display for BrowserRegistryError {
 
 impl std::error::Error for BrowserRegistryError {}
 
-/// Returns whether one name is intercepted by the browser Host ABI.
-fn is_reserved_host_name(name: &str) -> bool {
-    matches!(
-        name,
-        HOST_SLEEP_HOST_NAME
-            | HOST_NOW_HOST_NAME
-            | HOST_ELAPSED_HOST_NAME
-            | HOST_DATETIME_IN_TIMEZONE_HOST_NAME
-            | HOST_DATETIME_FROM_COMPONENTS_HOST_NAME
-            | HOST_STREAM_OPEN_HOST_NAME
-            | HOST_STREAM_NEXT_HOST_NAME
-    )
+#[cfg(test)]
+mod tests {
+    use exs_abi::RESERVED_HOST_NAMES;
+
+    use super::{BrowserHostFunctionRegistry, BrowserRegistryError, ExsValue};
+
+    /// Ensures browser registration rejects every runner-provided Host operation.
+    #[test]
+    fn rejects_every_reserved_host_name() {
+        for &name in RESERVED_HOST_NAMES {
+            let mut registry = BrowserHostFunctionRegistry::new();
+            assert_eq!(
+                registry.fn_sync_raw(name, |_| ExsValue::None),
+                Err(BrowserRegistryError::ReservedName(name.to_owned()))
+            );
+        }
+    }
 }

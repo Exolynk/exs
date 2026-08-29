@@ -5,7 +5,7 @@ mod support;
 use std::sync::{Arc, Mutex};
 
 use exs_abi::{ErrorSeverity, ExsValue};
-use exs_runner::{ExecutionCancellation, ExecutionLimits, ServerRunner};
+use exs_runner::{ExecutionCancellation, ServerRunner};
 use support::{block_on, compile_source};
 
 /// Registers the host functions used by the continuation source-position matrix.
@@ -235,7 +235,7 @@ fn executes_sequential_continuation_states_for_synchronous_host_calls() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -267,7 +267,7 @@ fn executes_the_minimum_signed_64_bit_literal_in_a_continuation() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -299,7 +299,7 @@ fn terminates_continuation_after_a_fatal_direct_call_result() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -334,7 +334,7 @@ fn executes_sequential_continuation_states_for_asynchronous_host_calls() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -379,7 +379,7 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -422,7 +422,7 @@ fn executes_asynchronous_host_calls_after_scheduler_quantum_yields() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -448,7 +448,7 @@ fn executes_asynchronous_host_calls_after_scheduler_quantum_yields() {
 fn short_circuits_logical_continuations_for_synchronous_host_calls() {
     let compiled = logical_continuation_module();
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     register_logical_host(&mut runner, false, Arc::clone(&calls));
 
     let result = match block_on(runner.execute(
@@ -475,7 +475,7 @@ fn short_circuits_logical_continuations_for_synchronous_host_calls() {
 fn short_circuits_logical_continuations_for_asynchronous_host_calls() {
     let compiled = logical_continuation_module();
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     register_logical_host(&mut runner, true, Arc::clone(&calls));
 
     let result = match block_on(runner.execute(
@@ -501,7 +501,7 @@ fn short_circuits_logical_continuations_for_asynchronous_host_calls() {
 #[test]
 fn constructs_typed_objects_for_synchronous_host_calls() {
     let compiled = typed_object_continuation_module();
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -527,7 +527,7 @@ fn constructs_typed_objects_for_synchronous_host_calls() {
 #[test]
 fn constructs_typed_objects_for_asynchronous_host_calls() {
     let compiled = typed_object_continuation_module();
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -558,7 +558,7 @@ fn validates_typed_object_fields_after_asynchronous_host_calls() {
         fn main() -> Error { ret User { name: Host::call("wrong") }; }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -589,7 +589,7 @@ fn validates_typed_object_fields_after_asynchronous_host_calls() {
 fn executes_continuation_source_positions_for_synchronous_host_calls() {
     let compiled = continuation_matrix_module();
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     register_continuation_matrix_hosts(&mut runner, false, Arc::clone(&calls));
 
     let result = match block_on(runner.execute(
@@ -610,7 +610,7 @@ fn executes_continuation_source_positions_for_synchronous_host_calls() {
 fn executes_continuation_source_positions_for_asynchronous_host_calls() {
     let compiled = continuation_matrix_module();
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     register_continuation_matrix_hosts(&mut runner, true, Arc::clone(&calls));
 
     let result = match block_on(runner.execute(
@@ -636,7 +636,7 @@ fn validates_resumable_function_type_contracts() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -674,7 +674,7 @@ fn executes_transitive_suspendable_direct_calls() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -707,7 +707,7 @@ fn executes_transitive_suspendable_static_calls() {
         fn main(input) { ret Math::double(input) + 1; }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -741,7 +741,7 @@ fn executes_transitive_suspendable_instance_calls() {
         fn main(input) { ret Number::new(input).double() + 1; }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -779,7 +779,7 @@ fn executes_transitive_suspendable_trait_calls() {
         fn main(input) { ret render(Number::new(input)) + 1; }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()

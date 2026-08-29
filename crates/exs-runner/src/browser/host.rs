@@ -1,5 +1,10 @@
 use super::bindings::{browser_host_elapsed, browser_host_now, browser_host_sleep};
 use super::*;
+use exs_abi::{
+    HOST_DATETIME_FROM_COMPONENTS_HOST_NAME, HOST_DATETIME_IN_TIMEZONE_HOST_NAME,
+    HOST_ELAPSED_HOST_NAME, HOST_NOW_HOST_NAME, HOST_SLEEP_HOST_NAME, HOST_STREAM_NEXT_HOST_NAME,
+    HOST_STREAM_OPEN_HOST_NAME,
+};
 
 /// Starts one Rust browser host function and converts its result into the JavaScript bridge form.
 pub(super) fn start_host_call(

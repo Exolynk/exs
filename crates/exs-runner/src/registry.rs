@@ -6,10 +6,7 @@ use std::fmt;
 use std::future::{Future, ready};
 use std::sync::Arc;
 
-use exs_abi::{
-    ErrorSeverity, ExsError, ExsValue, HOST_SLEEP_HOST_NAME, HOST_STREAM_NEXT_HOST_NAME,
-    HOST_STREAM_OPEN_HOST_NAME,
-};
+use exs_abi::{ErrorSeverity, ExsError, ExsValue, is_reserved_host_name};
 #[cfg(feature = "serde")]
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -329,14 +326,6 @@ fn typed_error(kind: &str, message: String) -> ExsValue {
         trace: Vec::new(),
         cause: None,
     })
-}
-
-/// Returns whether one name is intercepted by the runner Host ABI.
-fn is_reserved_host_name(name: &str) -> bool {
-    matches!(
-        name,
-        HOST_SLEEP_HOST_NAME | HOST_STREAM_OPEN_HOST_NAME | HOST_STREAM_NEXT_HOST_NAME
-    )
 }
 
 /// Builds the recoverable language value used for an unregistered dynamic stream name.

@@ -8,7 +8,7 @@ use std::task::{Context, Poll, Waker};
 
 use exs_abi::ExsValue;
 use exs_compiler::{CompileOptions, SourceInput, compile};
-use exs_runner::{ExecutionCancellation, ExecutionLimits, ServerRunner};
+use exs_runner::{ExecutionCancellation, ServerRunner};
 
 /// Compiles source text for native runner integration tests.
 pub fn compile_source(source: &str) -> exs_compiler::CompiledModule {
@@ -32,7 +32,7 @@ pub fn execute_source(source: &str, input: ExsValue) -> ExsValue {
 /// Executes source text with all supplied main inputs and unwraps a successful runner result.
 pub fn execute_source_with_inputs(source: &str, inputs: &[ExsValue]) -> ExsValue {
     let compiled = compile_source(source);
-    let runner = ServerRunner::new(ExecutionLimits::default());
+    let runner = ServerRunner::default();
     let cancellation = ExecutionCancellation::new();
     match block_on(runner.execute(&compiled.wasm, "main", inputs, &cancellation)) {
         Ok(result) => result,

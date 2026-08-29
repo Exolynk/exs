@@ -14,9 +14,10 @@ use exs_abi::{
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter, StoreLimits, StoreLimitsBuilder};
 
+use crate::limits::ExecutionLimits;
 use crate::{
-    ExecutionLimits, HostCborError, HostFunctionRegistry, HostFuture, HostStream, LimitKind,
-    RegistryError, decode_arguments_with_limits, encode_result_with_limits,
+    HostCborError, HostFunctionRegistry, HostFuture, HostStream, LimitKind, RegistryError,
+    decode_arguments_with_limits, encode_result_with_limits,
 };
 
 /// Runner-owned state accessed by imported host functions for one Wasm instance.
@@ -77,6 +78,10 @@ impl HostAbiState {
             pending_host_calls: 0,
             store_limits: StoreLimitsBuilder::new()
                 .memory_size(limits.max_memory_bytes)
+                .table_elements(limits.max_table_elements)
+                .instances(1)
+                .tables(limits.max_tables)
+                .memories(limits.max_memories)
                 .trap_on_grow_failure(true)
                 .build(),
             limits,

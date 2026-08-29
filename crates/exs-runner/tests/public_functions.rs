@@ -1,7 +1,7 @@
 //! External public-function execution integration tests.
 
 use exs_compiler::{CompileOptions, SourceInput, compile};
-use exs_runner::{ExecutionCancellation, ExecutionLimits, ExsValue, ServerRunner};
+use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
 
 /// Executes one future to completion without adding a test-only async dependency.
 fn block_on<Output>(future: impl std::future::Future<Output = Output>) -> Output {
@@ -37,7 +37,7 @@ fn executes_named_public_function() {
         Ok(compiled) => compiled,
         Err(error) => panic!("could not compile public function fixture: {error}"),
     };
-    let runner = ServerRunner::new(ExecutionLimits::default());
+    let runner = ServerRunner::default();
     let cancellation = ExecutionCancellation::new();
     let result = block_on(runner.execute(
         &compiled.wasm,
@@ -71,7 +71,7 @@ fn executes_root_main_without_visibility_modifier() {
         Ok(compiled) => compiled,
         Err(error) => panic!("could not compile private main fixture: {error}"),
     };
-    let runner = ServerRunner::new(ExecutionLimits::default());
+    let runner = ServerRunner::default();
     let cancellation = ExecutionCancellation::new();
     let result = block_on(runner.execute(&compiled.wasm, "main", &[], &cancellation));
     assert!(matches!(result, Ok(ExsValue::Int(0))));

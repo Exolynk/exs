@@ -2,7 +2,7 @@
 
 use std::task::{Context, Poll, Waker};
 
-use exs_abi::CborError;
+use exs_abi::{CborError, RESERVED_HOST_NAMES};
 use exs_runner::{
     ErrorSeverity, ExsError, ExsValue, HostCall, HostCborError, HostFunctionRegistry,
     RegistryError, decode_arguments, encode_result,
@@ -120,4 +120,16 @@ fn rejects_duplicate_and_unknown_host_names() {
         panic!("registered synchronous host function unexpectedly became pending");
     };
     assert_eq!(value, ExsValue::Int(1));
+}
+
+/// Rejects every name implemented directly by the runner Host ABI.
+#[test]
+fn rejects_every_reserved_host_name() {
+    for &name in RESERVED_HOST_NAMES {
+        let mut registry = HostFunctionRegistry::new();
+        assert_eq!(
+            registry.fn_sync_raw(name, |_| ExsValue::None),
+            Err(RegistryError::ReservedName(name.to_owned()))
+        );
+    }
 }

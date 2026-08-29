@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 
 use exs_abi::{ErrorSeverity, ExsValue};
-use exs_runner::{ExecutionCancellation, ExecutionLimits, RunnerError, ServerRunner};
+use exs_runner::{ExecutionCancellation, RunnerError, ServerRunner};
 use support::{block_on, compile_source, execute_source, execute_source_with_inputs};
 
 /// Executes an arithmetic result through the linked runtime.
@@ -250,7 +250,7 @@ fn executes_host_calls_inside_formatted_strings() {
     let compiled = compile_source(
         r#"fn main(input: Int) -> String { ret f"value: {Host::call("echo", input)}"; }"#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -290,7 +290,7 @@ fn executes_host_calls_inside_to_string_implementations() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -337,7 +337,7 @@ fn executes_resumable_variadic_calls() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -385,7 +385,7 @@ fn returns_a_language_error_for_an_unregistered_dynamic_host_function() {
 #[test]
 fn executes_a_synchronous_dynamic_host_function() {
     let compiled = compile_source("fn main(input) { ret Host::call(\"echo\", input); }");
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -428,7 +428,7 @@ fn rejects_unserializable_host_call_arguments() {
     ] {
         let compiled = compile_source(source);
         let calls = Arc::new(AtomicUsize::new(0));
-        let mut runner = ServerRunner::new(ExecutionLimits::default());
+        let mut runner = ServerRunner::default();
         assert!(
             runner
                 .registry_mut()
@@ -463,7 +463,7 @@ fn rejects_unserializable_host_call_arguments() {
 #[test]
 fn executes_an_asynchronous_dynamic_host_function() {
     let compiled = compile_source("fn main(input) { ret Host::call(\"echo\", input); }");
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -490,7 +490,7 @@ fn cancels_a_pending_host_execution() {
     let compiled = compile_source("fn main() { ret Host::call(\"wait\"); }");
     let cancellation = ExecutionCancellation::new();
     let cancellation_for_host = cancellation.clone();
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -520,7 +520,7 @@ fn cancels_a_pending_host_call_inside_a_closure() {
     );
     let cancellation = ExecutionCancellation::new();
     let cancellation_for_host = cancellation.clone();
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -557,7 +557,7 @@ fn reports_pending_execution_without_host_future_as_deadlock() {
         exs_abi::ABI_VERSION
     );
     let cancellation = ExecutionCancellation::new();
-    let runner = ServerRunner::new(ExecutionLimits::default());
+    let runner = ServerRunner::default();
     let result = block_on(runner.execute(wasm.as_bytes(), "main", &[], &cancellation));
     assert!(
         matches!(result, Err(RunnerError::Deadlock(message)) if message.contains("without a runner host future"))
@@ -593,7 +593,7 @@ fn executes_a_host_stream_in_for_loop() {
     }
     "#;
     let compiled = compile_source(source);
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -628,7 +628,7 @@ fn propagates_a_host_stream_open_error() {
     }
     "#;
     let compiled = compile_source(source);
-    let runner = ServerRunner::new(ExecutionLimits::default());
+    let runner = ServerRunner::default();
     let result = match block_on(runner.execute(
         &compiled.wasm,
         "main",
@@ -657,7 +657,7 @@ fn closes_a_host_stream_after_end() {
     }
     "#;
     let compiled = compile_source(source);
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -692,7 +692,7 @@ fn rejects_concurrent_host_stream_advances() {
     }
     "#;
     let compiled = compile_source(source);
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -782,7 +782,7 @@ fn decodes_typed_host_call_results_recursively() {
     }
     "#;
     let compiled = compile_source(source);
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()

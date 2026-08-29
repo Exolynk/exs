@@ -14,6 +14,8 @@ use std::pin::Pin;
 use std::task::Poll;
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+use self::limits::ExecutionLimits;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, CborError, INPUT_ALLOC_EXPORT,
     RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, RUNNER_IMPORT_MODULE,
@@ -61,7 +63,7 @@ pub use self::host_function::{
     AsyncHostFunction, HostCall, HostFuture, HostStream, HostStreamFunction, HostStreamFuture,
     HostStreamItem, SyncHostFunction,
 };
-pub use self::limits::{ExecutionLimits, LimitKind};
+pub use self::limits::{LimitKind, ProtectionLevel};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::registry::{HostFunctionRegistry, RegistryError};
 pub use exs_abi::{Bytes, ErrorSeverity, ExsError, ExsValue, SourcePositionId};
@@ -77,19 +79,28 @@ pub struct ServerRunner {
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl ServerRunner {
-    /// Creates a server runner with one explicit resource policy and no host functions.
+    /// Creates a server runner with one public execution policy and no host functions.
     #[must_use]
-    pub fn new(limits: ExecutionLimits) -> Self {
+    pub fn new(
+        max_memory_bytes: usize,
+        max_fuel: u64,
+        timeout: std::time::Duration,
+        protection: ProtectionLevel,
+    ) -> Self {
+        Self::with_limits(ExecutionLimits::new(
+            max_memory_bytes,
+            max_fuel,
+            timeout,
+            protection,
+        ))
+    }
+
+    /// Creates a runner from one private, derived resource policy.
+    fn with_limits(limits: ExecutionLimits) -> Self {
         Self {
             registry: HostFunctionRegistry::new(),
             limits,
         }
-    }
-
-    /// Returns the resource policy applied to each execution.
-    #[must_use]
-    pub fn limits(&self) -> &ExecutionLimits {
-        &self.limits
     }
 
     /// Returns mutable access to the runner-owned dynamic host-function registry.
@@ -249,6 +260,14 @@ impl ServerRunner {
     }
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+impl Default for ServerRunner {
+    /// Creates a runner with the standard public execution policy.
+    fn default() -> Self {
+        Self::with_limits(ExecutionLimits::default())
+    }
+}
+
 /// Creates a native Wasmtime engine instrumented for one explicit runner policy.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn limited_engine(limits: &ExecutionLimits) -> Result<Engine, RunnerError> {
@@ -256,6 +275,16 @@ fn limited_engine(limits: &ExecutionLimits) -> Result<Engine, RunnerError> {
     configuration.consume_fuel(true);
     configuration.epoch_interruption(true);
     configuration.max_wasm_stack(limits.max_wasm_stack_bytes);
+    // The runner ABI accounts for one linear memory; retain broadly used core features otherwise.
+    configuration.wasm_multi_memory(false);
+    configuration.wasm_memory64(false);
+    configuration.wasm_threads(false);
+    configuration.wasm_shared_everything_threads(false);
+    configuration.wasm_gc(false);
+    configuration.wasm_function_references(false);
+    configuration.wasm_exceptions(false);
+    configuration.wasm_stack_switching(false);
+    configuration.wasm_custom_page_sizes(false);
     Engine::new(&configuration).map_err(|error| RunnerError::Wasm(error.to_string()))
 }
 

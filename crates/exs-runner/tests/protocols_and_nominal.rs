@@ -3,7 +3,7 @@
 mod support;
 
 use exs_abi::{ErrorSeverity, ExsValue};
-use exs_runner::{ExecutionCancellation, ExecutionLimits, ServerRunner};
+use exs_runner::{ExecutionCancellation, ServerRunner};
 use support::{block_on, compile_source, execute_source, execute_source_with_inputs};
 
 /// Resolves Self in inherited trait methods to the concrete implementation target.
@@ -216,7 +216,7 @@ fn suspends_through_standard_add_implementations() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -257,7 +257,7 @@ fn suspends_through_standard_div_implementations() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -298,7 +298,7 @@ fn suspends_through_standard_compare_implementations() {
         }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -328,7 +328,7 @@ fn traces_errors_through_suspendable_child_frames() {
         fn main(input) -> Error { ret child(input)?; }
         "#,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -434,7 +434,7 @@ fn constructs_enum_after_a_host_call() {
     let compiled = compile_source(
         "enum Color { Gray(value: Int), } fn main() -> Color { let value = Host::call(\"value\"); ret Color::Gray(value); }",
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()
@@ -551,7 +551,7 @@ fn resumes_host_call_inside_enum_match_arm() {
     let compiled = compile_source(
         "enum Color { Red, Blue, } fn main() -> Int { let color = Color::Blue; ret match color { Color::Red => 1, Color::Blue => Host::call(\"value\"), }; }",
     );
-    let mut runner = ServerRunner::new(ExecutionLimits::default());
+    let mut runner = ServerRunner::default();
     assert!(
         runner
             .registry_mut()

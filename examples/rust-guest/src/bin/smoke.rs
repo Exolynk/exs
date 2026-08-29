@@ -9,8 +9,7 @@ mod native {
     use std::task::{Context, Poll, Waker};
 
     use exs_runner::{
-        ExecutionCancellation, ExecutionLimits, ExsValue, HostStream, HostStreamFuture,
-        HostStreamItem, ServerRunner,
+        ExecutionCancellation, ExsValue, HostStream, HostStreamFuture, HostStreamItem, ServerRunner,
     };
 
     /// A finite integer stream registered exclusively by this example smoke test.
@@ -40,7 +39,7 @@ mod native {
         let wasm = guest_wasm_path();
         let wasm = fs::read(&wasm)
             .map_err(|error| format!("could not read {}: {error}", wasm.display()))?;
-        let mut runner = ServerRunner::new(ExecutionLimits::default());
+        let mut runner = ServerRunner::default();
         runner
             .registry_mut()
             .stream_raw("counter", |arguments: Vec<ExsValue>| {

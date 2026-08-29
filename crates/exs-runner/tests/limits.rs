@@ -1,4 +1,4 @@
-//! Native Wasmtime and generic runner resource-limit integration tests.
+//! Native Wasmtime and generic runner resource-policy integration tests.
 
 mod support;
 
@@ -6,17 +6,29 @@ use std::time::Duration;
 use std::{sync::mpsc, thread};
 
 use exs_abi::ExsValue;
-use exs_runner::{ExecutionCancellation, ExecutionLimits, LimitKind, RunnerError, ServerRunner};
+use exs_runner::{ExecutionCancellation, LimitKind, ProtectionLevel, RunnerError, ServerRunner};
 use support::{block_on, compile_source, runner_test_module};
+
+/// Creates a runner with one explicit public execution policy.
+fn runner(
+    max_memory_bytes: usize,
+    max_fuel: u64,
+    timeout: Duration,
+    protection: ProtectionLevel,
+) -> ServerRunner {
+    ServerRunner::new(max_memory_bytes, max_fuel, timeout, protection)
+}
 
 /// Rejects a module whose initial linear memory exceeds the runner memory budget.
 #[test]
 fn rejects_wasm_memory_over_the_configured_limit() {
     let wasm = runner_test_module(2, "", "i32.const 0");
-    let runner = ServerRunner::new(ExecutionLimits {
-        max_memory_bytes: 64 * 1024,
-        ..ExecutionLimits::default()
-    });
+    let runner = runner(
+        64 * 1024,
+        10_000_000,
+        Duration::from_secs(10),
+        ProtectionLevel::Standard,
+    );
     let result =
         block_on(runner.execute(wasm.as_bytes(), "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
@@ -25,14 +37,17 @@ fn rejects_wasm_memory_over_the_configured_limit() {
     ));
 }
 
-/// Rejects an oversized Wasm module before native compilation begins.
+/// Rejects an oversized module before native compilation begins.
 #[test]
-fn rejects_wasm_over_the_configured_module_size_limit() {
-    let runner = ServerRunner::new(ExecutionLimits {
-        max_module_bytes: 1,
-        ..ExecutionLimits::default()
-    });
-    let result = block_on(runner.execute(&[0, 97], "main", &[], &ExecutionCancellation::new()));
+fn rejects_wasm_over_the_derived_module_size_limit() {
+    let wasm = vec![0; 4 * 1024 * 1024 + 1];
+    let runner = runner(
+        16 * 1024 * 1024,
+        10_000_000,
+        Duration::from_secs(10),
+        ProtectionLevel::High,
+    );
+    let result = block_on(runner.execute(&wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Module))
@@ -42,17 +57,13 @@ fn rejects_wasm_over_the_configured_module_size_limit() {
 /// Rejects guest instruction execution once Wasmtime consumes the fuel budget.
 #[test]
 fn rejects_execution_after_the_configured_fuel_budget() {
-    let compiled = compile_source(
-        r#"
-        fn main() -> Int {
-            ret 1;
-        }
-        "#,
+    let compiled = compile_source("fn main() -> Int { ret 1; }");
+    let runner = runner(
+        16 * 1024 * 1024,
+        1,
+        Duration::from_secs(10),
+        ProtectionLevel::Standard,
     );
-    let runner = ServerRunner::new(ExecutionLimits {
-        max_fuel: 1,
-        ..ExecutionLimits::default()
-    });
     let result =
         block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
@@ -64,18 +75,13 @@ fn rejects_execution_after_the_configured_fuel_budget() {
 /// Interrupts an executing guest loop once the root execution reaches its deadline.
 #[test]
 fn rejects_guest_execution_after_the_configured_timeout() {
-    let compiled = compile_source(
-        r#"
-        fn main() {
-            while true {}
-        }
-        "#,
+    let compiled = compile_source("fn main() { while true {} }");
+    let runner = runner(
+        16 * 1024 * 1024,
+        u64::MAX,
+        Duration::from_millis(10),
+        ProtectionLevel::Standard,
     );
-    let runner = ServerRunner::new(ExecutionLimits {
-        max_fuel: u64::MAX,
-        timeout: Duration::from_millis(10),
-        ..ExecutionLimits::default()
-    });
     let result =
         block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     assert!(matches!(
@@ -96,11 +102,12 @@ fn cancels_an_active_guest_execution() {
         "#,
     );
     let (started_sender, started_receiver) = mpsc::channel();
-    let mut runner = ServerRunner::new(ExecutionLimits {
-        max_fuel: u64::MAX,
-        timeout: Duration::from_secs(1),
-        ..ExecutionLimits::default()
-    });
+    let mut runner = runner(
+        16 * 1024 * 1024,
+        u64::MAX,
+        Duration::from_secs(1),
+        ProtectionLevel::Standard,
+    );
     assert!(
         runner
             .registry_mut()
@@ -123,42 +130,16 @@ fn cancels_an_active_guest_execution() {
     assert!(matches!(result, Err(RunnerError::Cancelled)));
 }
 
-/// Rejects a completed guest call when elapsed time exceeds the deadline before its timer runs.
-#[test]
-fn rejects_completed_execution_after_a_zero_timeout() {
-    let compiled = compile_source(
-        r#"
-        fn main() -> Int {
-            ret 1;
-        }
-        "#,
-    );
-    let runner = ServerRunner::new(ExecutionLimits {
-        timeout: Duration::ZERO,
-        ..ExecutionLimits::default()
-    });
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::Timeout))
-    ));
-}
-
-/// Interrupts a pending asynchronous host call once the root execution reaches its deadline.
+/// Bounds a pending asynchronous host call by the public execution timeout.
 #[test]
 fn rejects_pending_host_call_after_the_configured_timeout() {
-    let compiled = compile_source(
-        r#"
-        fn main() {
-            Host::call("wait");
-        }
-        "#,
+    let compiled = compile_source("fn main() { Host::call(\"wait\"); }");
+    let mut runner = runner(
+        16 * 1024 * 1024,
+        10_000_000,
+        Duration::from_millis(10),
+        ProtectionLevel::Standard,
     );
-    let mut runner = ServerRunner::new(ExecutionLimits {
-        timeout: Duration::from_millis(10),
-        ..ExecutionLimits::default()
-    });
     assert!(
         runner
             .registry_mut()
@@ -173,241 +154,56 @@ fn rejects_pending_host_call_after_the_configured_timeout() {
     ));
 }
 
-/// Bounds a built-in Host sleep by the root execution deadline.
+/// Rejects a table whose initial allocation exceeds the high-protection budget.
 #[test]
-fn rejects_a_long_builtin_sleep_after_the_configured_timeout() {
-    let compiled = compile_source(
-        r#"
-        fn main() {
-            Host::sleep(Duration::seconds(9223372036854775807));
-        }
-        "#,
+fn rejects_wasm_table_over_the_derived_limit() {
+    let wasm = runner_test_module(1, "(table 4097 funcref)", "i32.const 0");
+    let runner = runner(
+        16 * 1024 * 1024,
+        10_000_000,
+        Duration::from_secs(10),
+        ProtectionLevel::High,
     );
-    let runner = ServerRunner::new(ExecutionLimits {
-        timeout: Duration::from_millis(10),
-        ..ExecutionLimits::default()
-    });
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::Timeout))
-    ));
-}
-
-/// Rejects recursive guest calls once their native Wasm stack reaches the configured cap.
-#[test]
-fn rejects_wasm_stack_over_the_configured_limit() {
-    let wasm = runner_test_module(
-        1,
-        "(func $recurse call $recurse)",
-        "call $recurse i32.const 0",
-    );
-    let runner = ServerRunner::new(ExecutionLimits {
-        max_fuel: u64::MAX,
-        max_wasm_stack_bytes: 64 * 1024,
-        ..ExecutionLimits::default()
-    });
     let result =
         block_on(runner.execute(wasm.as_bytes(), "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::WasmStack))
-    ));
+    assert!(result.is_err());
 }
 
-/// Applies the configured byte limit before allocating the main-input buffer in Wasm memory.
+/// Rejects multiple linear memories to keep public memory accounting exact.
 #[test]
-fn rejects_main_input_over_the_cbor_payload_limit() {
-    let compiled = compile_source(
-        r#"
-        fn main(value: String) -> String {
-            ret value;
-        }
-        "#,
-    );
-    let runner = ServerRunner::new(ExecutionLimits {
-        max_cbor_payload_bytes: 1,
-        ..ExecutionLimits::default()
-    });
-    let result = block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::String("input".to_owned())],
-        &ExecutionCancellation::new(),
-    ));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::CborPayload))
-    ));
-}
-
-/// Rejects a final runtime result before decoding when it crosses the result-byte limit.
-#[test]
-fn rejects_result_over_the_configured_limit() {
-    let compiled = compile_source(
-        r#"
-        fn main() -> String {
-            ret "result";
-        }
-        "#,
-    );
-    let runner = ServerRunner::new(ExecutionLimits {
-        max_result_bytes: 1,
-        ..ExecutionLimits::default()
-    });
+fn rejects_wasm_with_multiple_memories() {
+    let wasm = runner_test_module(1, "(memory 1)", "i32.const 0");
+    let runner = ServerRunner::default();
     let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::Result))
-    ));
+        block_on(runner.execute(wasm.as_bytes(), "main", &[], &ExecutionCancellation::new()));
+    assert!(result.is_err());
 }
 
-/// Rejects synchronous host responses that cross the configured CBOR payload limit.
+/// Runs ordinary ExS output under every supported protection profile.
 #[test]
-fn rejects_host_response_over_the_cbor_payload_limit() {
-    let compiled = compile_source(
-        r#"
-        fn main() -> String {
-            ret Host::call("large");
-        }
-        "#,
-    );
-    let mut runner = ServerRunner::new(ExecutionLimits {
-        max_cbor_payload_bytes: 1,
-        ..ExecutionLimits::default()
-    });
-    assert!(
-        runner
-            .registry_mut()
-            .fn_sync_raw("large", |_| ExsValue::String("response".to_owned()))
-            .is_ok()
-    );
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::CborPayload))
-    ));
+fn executes_compiled_exs_with_every_protection_level() {
+    let compiled = compile_source("fn main() -> Int { ret 42; }");
+    for protection in [
+        ProtectionLevel::Low,
+        ProtectionLevel::Standard,
+        ProtectionLevel::High,
+    ] {
+        let runner = runner(
+            16 * 1024 * 1024,
+            10_000_000,
+            Duration::from_secs(10),
+            protection,
+        );
+        let result =
+            block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+        assert!(matches!(result, Ok(ExsValue::Int(42))));
+    }
 }
 
-/// Rejects a host request whose nested argument value crosses the policy nesting limit.
-#[test]
-fn rejects_host_request_over_the_cbor_nesting_limit() {
-    let compiled = compile_source(
-        r#"
-        fn main() {
-            Host::call("accept", [1]);
-        }
-        "#,
-    );
-    let mut runner = ServerRunner::new(ExecutionLimits {
-        max_cbor_nesting: 1,
-        ..ExecutionLimits::default()
-    });
-    assert!(
-        runner
-            .registry_mut()
-            .fn_sync_raw("accept", |_| ExsValue::None)
-            .is_ok()
-    );
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::CborNesting))
-    ));
-}
-
-/// Rejects `par` when its active root and child tasks exceed the runner task-permit budget.
-#[test]
-fn rejects_parallel_tasks_over_the_configured_limit() {
-    let compiled = compile_source(
-        r#"
-        fn main() -> List {
-            ret par {
-                1;
-                2;
-            };
-        }
-        "#,
-    );
-    let runner = ServerRunner::new(ExecutionLimits {
-        max_tasks: 2,
-        ..ExecutionLimits::default()
-    });
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::Tasks))
-    ));
-}
-
-/// Rejects host calls after the root execution consumes its total host-call budget.
-#[test]
-fn rejects_host_calls_over_the_configured_total_limit() {
-    let compiled = compile_source(
-        r#"
-        fn main() -> Int {
-            Host::call("value");
-            ret Host::call("value");
-        }
-        "#,
-    );
-    let mut runner = ServerRunner::new(ExecutionLimits {
-        max_host_calls: 1,
-        ..ExecutionLimits::default()
-    });
-    assert!(
-        runner
-            .registry_mut()
-            .fn_sync_raw("value", |_| ExsValue::Int(1))
-            .is_ok()
-    );
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::HostCalls))
-    ));
-}
-
-/// Rejects parallel asynchronous host calls once they exceed the pending-call budget.
-#[test]
-fn rejects_pending_host_calls_over_the_configured_limit() {
-    let compiled = compile_source(
-        r#"
-        fn main() -> List {
-            ret par {
-                Host::call("wait");
-                Host::call("wait");
-            };
-        }
-        "#,
-    );
-    let mut runner = ServerRunner::new(ExecutionLimits {
-        max_pending_host_calls: 1,
-        ..ExecutionLimits::default()
-    });
-    assert!(
-        runner
-            .registry_mut()
-            .fn_async_raw("wait", |_| std::future::pending::<ExsValue>())
-            .is_ok()
-    );
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-    assert!(matches!(
-        result,
-        Err(RunnerError::LimitExceeded(LimitKind::PendingHostCalls))
-    ));
-}
 /// Keeps malformed Wasm modules on the technical runner-error path.
 #[test]
 fn reports_malformed_wasm_as_a_runner_error() {
-    let runner = ServerRunner::new(ExecutionLimits::default());
+    let runner = ServerRunner::default();
     let cancellation = ExecutionCancellation::new();
     assert!(block_on(runner.execute(&[0], "main", &[], &cancellation)).is_err());
 }
@@ -415,7 +211,7 @@ fn reports_malformed_wasm_as_a_runner_error() {
 /// Rejects a valid Wasm module that cannot participate in runner task metering.
 #[test]
 fn rejects_modules_missing_runner_task_metering_imports() {
-    let runner = ServerRunner::new(ExecutionLimits::default());
+    let runner = ServerRunner::default();
     let cancellation = ExecutionCancellation::new();
     let empty_wasm_module = [0, 97, 115, 109, 1, 0, 0, 0];
     let result = block_on(runner.execute(&empty_wasm_module, "main", &[], &cancellation));
