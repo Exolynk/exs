@@ -10,11 +10,12 @@ use exs_abi::{
     ABI_VERSION, ErrorSeverity, ExsError, ExsValue, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
     SourcePositionId, is_reserved_host_name,
 };
-use jiff::{Timestamp, Zoned, civil::DateTime as CivilDateTime};
 use js_sys::{Array, Error as JsError, Function, Promise, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
+#[cfg(feature = "serde")]
+use crate::typed_registry::{decode_typed_request, typed_encode_error};
 use crate::{HostCborError, RunnerError, decode_arguments, encode_result};
 #[cfg(feature = "serde")]
 use serde::{Serialize, de::DeserializeOwned};
@@ -430,52 +431,6 @@ where
     }
 }
 
-/// Decodes the zero-or-one request argument accepted by one typed browser host function.
-#[cfg(feature = "serde")]
-fn decode_typed_request<Request: DeserializeOwned>(
-    arguments: Vec<ExsValue>,
-) -> Result<Request, ExsValue> {
-    let value = match arguments.as_slice() {
-        [] => ExsValue::None,
-        [value] => value.clone(),
-        values => {
-            return Err(typed_decode_error(format!(
-                "typed host functions expect zero or one argument, received {}",
-                values.len()
-            )));
-        }
-    };
-    value
-        .into_deserialize()
-        .map_err(|error| typed_decode_error(error.to_string()))
-}
-
-/// Builds one recoverable language error for typed browser host request decoding.
-#[cfg(feature = "serde")]
-fn typed_decode_error(message: String) -> ExsValue {
-    typed_error("WireDecodeError", message)
-}
-
-/// Builds one recoverable language error for typed browser host response encoding.
-#[cfg(feature = "serde")]
-fn typed_encode_error(message: String) -> ExsValue {
-    typed_error("WireEncodeError", message)
-}
-
-/// Builds one recoverable error emitted by the typed browser host adapter.
-#[cfg(feature = "serde")]
-fn typed_error(kind: &str, message: String) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: kind.to_owned(),
-        message,
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    })
-}
-
 /// An error caused by browser host-function registration or lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BrowserRegistryError {
@@ -514,14 +469,15 @@ impl std::error::Error for BrowserRegistryError {}
 
 #[cfg(test)]
 mod tests {
-    use exs_abi::RESERVED_HOST_NAMES;
+    use exs_abi::BuiltinHostOperation;
 
     use super::{BrowserHostFunctionRegistry, BrowserRegistryError, ExsValue};
 
     /// Ensures browser registration rejects every runner-provided Host operation.
     #[test]
     fn rejects_every_reserved_host_name() {
-        for &name in RESERVED_HOST_NAMES {
+        for operation in BuiltinHostOperation::ALL {
+            let name = operation.host_name();
             let mut registry = BrowserHostFunctionRegistry::new();
             assert_eq!(
                 registry.fn_sync_raw(name, |_| ExsValue::None),

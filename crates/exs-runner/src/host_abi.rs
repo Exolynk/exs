@@ -4,13 +4,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
 use exs_abi::{
-    ErrorSeverity, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
+    BuiltinHostOperation, ErrorSeverity, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
     HOST_CALL_RESPONSE_COPY_IMPORT, HOST_CALL_RESPONSE_LENGTH_IMPORT, HOST_CALL_START_IMPORT,
-    HOST_DATETIME_FROM_COMPONENTS_HOST_NAME, HOST_DATETIME_IN_TIMEZONE_HOST_NAME,
-    HOST_ELAPSED_HOST_NAME, HOST_IMPORT_MODULE, HOST_NOW_HOST_NAME, HOST_SLEEP_HOST_NAME,
-    HOST_STREAM_NEXT_HOST_NAME, HOST_STREAM_OPEN_HOST_NAME, RUNNER_IMPORT_MODULE,
-    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
-    SourcePositionId,
+    HOST_IMPORT_MODULE, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
+    RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY, SourcePositionId,
+    builtin_host_operation,
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter, StoreLimits, StoreLimitsBuilder};
 
@@ -417,30 +415,27 @@ fn host_call_start(
         .map_err(|error| host_cbor_error(&mut caller, error))?;
     let origin = u32::try_from(source_position).ok().map(SourcePositionId);
 
-    let call = if name == HOST_SLEEP_HOST_NAME {
-        Ok(crate::host_sleep::start(
+    let call = match builtin_host_operation(name) {
+        Some(BuiltinHostOperation::Sleep) => Ok(crate::host_sleep::start(
             arguments,
             caller.data().remaining_until_deadline(),
             origin,
-        ))
-    } else if name == HOST_NOW_HOST_NAME {
-        Ok(crate::host_time::now(arguments, origin))
-    } else if name == HOST_ELAPSED_HOST_NAME {
-        Ok(crate::host_time::elapsed(
+        )),
+        Some(BuiltinHostOperation::Now) => Ok(crate::host_time::now(arguments, origin)),
+        Some(BuiltinHostOperation::Elapsed) => Ok(crate::host_time::elapsed(
             arguments,
             caller.data().elapsed(),
             origin,
-        ))
-    } else if name == HOST_DATETIME_IN_TIMEZONE_HOST_NAME {
-        Ok(crate::host_time::in_timezone(arguments, origin))
-    } else if name == HOST_DATETIME_FROM_COMPONENTS_HOST_NAME {
-        Ok(crate::host_time::from_components(arguments, origin))
-    } else if name == HOST_STREAM_OPEN_HOST_NAME {
-        caller.data_mut().stream_open(arguments, origin)
-    } else if name == HOST_STREAM_NEXT_HOST_NAME {
-        caller.data_mut().stream_next(arguments, origin)
-    } else {
-        caller.data().registry.start(name, arguments)
+        )),
+        Some(BuiltinHostOperation::DateTimeInTimezone) => {
+            Ok(crate::host_time::in_timezone(arguments, origin))
+        }
+        Some(BuiltinHostOperation::DateTimeFromComponents) => {
+            Ok(crate::host_time::from_components(arguments, origin))
+        }
+        Some(BuiltinHostOperation::StreamOpen) => caller.data_mut().stream_open(arguments, origin),
+        Some(BuiltinHostOperation::StreamNext) => caller.data_mut().stream_next(arguments, origin),
+        None => caller.data().registry.start(name, arguments),
     };
     match call {
         Ok(crate::HostCall::Ready(value)) => {

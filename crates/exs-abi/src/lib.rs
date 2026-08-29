@@ -134,21 +134,65 @@ pub const HOST_DATETIME_FROM_COMPONENTS_HOST_NAME: &str = "__exs.host.datetime_f
 pub const HOST_STREAM_OPEN_HOST_NAME: &str = "__exs.host.stream_open";
 /// Runner-internal host name used to advance one host-owned pull stream.
 pub const HOST_STREAM_NEXT_HOST_NAME: &str = "__exs.host.stream_next";
-/// Host names reserved for runner-provided `Host` operations.
-pub const RESERVED_HOST_NAMES: &[&str] = &[
-    HOST_SLEEP_HOST_NAME,
-    HOST_NOW_HOST_NAME,
-    HOST_ELAPSED_HOST_NAME,
-    HOST_DATETIME_IN_TIMEZONE_HOST_NAME,
-    HOST_DATETIME_FROM_COMPONENTS_HOST_NAME,
-    HOST_STREAM_OPEN_HOST_NAME,
-    HOST_STREAM_NEXT_HOST_NAME,
-];
+/// One Host operation implemented directly by every runner backend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuiltinHostOperation {
+    /// Suspends execution for one Duration.
+    Sleep,
+    /// Returns the current wall-clock DateTime.
+    Now,
+    /// Returns elapsed monotonic Duration for the root execution.
+    Elapsed,
+    /// Converts one DateTime to an IANA time zone.
+    DateTimeInTimezone,
+    /// Resolves civil DateTime components in an IANA time zone.
+    DateTimeFromComponents,
+    /// Opens one host-owned pull stream.
+    StreamOpen,
+    /// Advances one host-owned pull stream.
+    StreamNext,
+}
+
+impl BuiltinHostOperation {
+    /// Every operation reserved by the runner Host ABI.
+    pub const ALL: &[Self] = &[
+        Self::Sleep,
+        Self::Now,
+        Self::Elapsed,
+        Self::DateTimeInTimezone,
+        Self::DateTimeFromComponents,
+        Self::StreamOpen,
+        Self::StreamNext,
+    ];
+
+    /// Returns the stable Host ABI name for this operation.
+    #[must_use]
+    pub const fn host_name(self) -> &'static str {
+        match self {
+            Self::Sleep => HOST_SLEEP_HOST_NAME,
+            Self::Now => HOST_NOW_HOST_NAME,
+            Self::Elapsed => HOST_ELAPSED_HOST_NAME,
+            Self::DateTimeInTimezone => HOST_DATETIME_IN_TIMEZONE_HOST_NAME,
+            Self::DateTimeFromComponents => HOST_DATETIME_FROM_COMPONENTS_HOST_NAME,
+            Self::StreamOpen => HOST_STREAM_OPEN_HOST_NAME,
+            Self::StreamNext => HOST_STREAM_NEXT_HOST_NAME,
+        }
+    }
+}
+
+/// Resolves one stable Host ABI name to its runner-provided operation.
+#[must_use]
+pub fn builtin_host_operation(name: &str) -> Option<BuiltinHostOperation> {
+    BuiltinHostOperation::ALL
+        .iter()
+        .copied()
+        .find(|operation| operation.host_name() == name)
+}
 
 /// Returns whether `name` is reserved for one runner-provided `Host` operation.
 #[must_use]
 pub fn is_reserved_host_name(name: &str) -> bool {
-    RESERVED_HOST_NAMES.contains(&name)
+    builtin_host_operation(name).is_some()
 }
 /// The custom section emitted by compiled modules.
 pub const MODULE_METADATA_SECTION: &str = "exs.meta";

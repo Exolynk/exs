@@ -11,6 +11,8 @@ use exs_abi::{ErrorSeverity, ExsError, ExsValue, is_reserved_host_name};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::host_function::{RegisteredHostFunction, SyncHostFunction};
+#[cfg(feature = "serde")]
+use crate::typed_registry::{decode_typed_request, typed_encode_error};
 use crate::{AsyncHostFunction, HostCall, HostStream, HostStreamFunction};
 
 /// An error caused by host-function registration or lookup.
@@ -280,52 +282,6 @@ where
         };
         Box::pin(ready(item))
     }
-}
-
-/// Decodes the zero-or-one request argument accepted by one typed host function.
-#[cfg(feature = "serde")]
-fn decode_typed_request<Request: DeserializeOwned>(
-    arguments: Vec<ExsValue>,
-) -> Result<Request, ExsValue> {
-    let value = match arguments.as_slice() {
-        [] => ExsValue::None,
-        [value] => value.clone(),
-        values => {
-            return Err(typed_decode_error(format!(
-                "typed host functions expect zero or one argument, received {}",
-                values.len()
-            )));
-        }
-    };
-    value
-        .into_deserialize()
-        .map_err(|error| typed_decode_error(error.to_string()))
-}
-
-/// Builds one recoverable language error for typed host request decoding.
-#[cfg(feature = "serde")]
-fn typed_decode_error(message: String) -> ExsValue {
-    typed_error("WireDecodeError", message)
-}
-
-/// Builds one recoverable language error for typed host response encoding.
-#[cfg(feature = "serde")]
-fn typed_encode_error(message: String) -> ExsValue {
-    typed_error("WireEncodeError", message)
-}
-
-/// Builds one recoverable error emitted by the typed host adapter.
-#[cfg(feature = "serde")]
-fn typed_error(kind: &str, message: String) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: kind.to_owned(),
-        message,
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    })
 }
 
 /// Builds the recoverable language value used for an unregistered dynamic stream name.

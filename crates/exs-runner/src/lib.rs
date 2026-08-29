@@ -40,11 +40,18 @@ mod host_function;
 mod host_sleep;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_time;
+#[cfg(any(
+    all(feature = "server", not(target_arch = "wasm32")),
+    all(feature = "browser", target_arch = "wasm32")
+))]
+mod host_values;
 mod limits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod timer;
+#[cfg(feature = "serde")]
+mod typed_registry;
 
 #[cfg(all(feature = "browser", target_arch = "wasm32"))]
 pub use self::browser::{
