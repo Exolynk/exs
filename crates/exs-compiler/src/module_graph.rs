@@ -6,6 +6,7 @@ use crate::ast::{
     BinaryOperator, Block, Expression, FunctionDeclaration, FunctionVisibility, Identifier, Module,
     Parameter, Statement, TestDeclaration, TypeAnnotation,
 };
+use crate::loaded_project::{ImportEdge, LoadedProject};
 use crate::{
     CompileOptions, CompiledModule, CompiledTest, CompiledTests, ModuleResolver, SourceInput,
 };
@@ -15,14 +16,6 @@ const PROGRAM_MAIN: &str = "$exs_program_main";
 
 /// Compiler-private name assigned to the generated test dispatcher entry.
 const TEST_MAIN: &str = "main";
-
-/// One source file retained for the lifetime of graph compilation.
-struct SourceFile {
-    /// Canonical source identity.
-    source_id: String,
-    /// Complete UTF-8 source text.
-    text: String,
-}
 
 /// Compiles a resolved source graph into one linked executable module.
 pub(super) fn compile<R: ModuleResolver>(
@@ -53,82 +46,12 @@ fn compile_target<R: ModuleResolver>(
     resolver: &mut R,
     test_target: bool,
 ) -> Result<(CompiledModule, Vec<CompiledTest>), String> {
-    let mut files = vec![SourceFile {
-        source_id: source.source_id.to_owned(),
-        text: source.text.to_owned(),
-    }];
-    let mut edges: Vec<Vec<(String, usize)>> = vec![Vec::new()];
-    let mut indices = HashMap::from([(source.source_id.to_owned(), 0_usize)]);
-    let mut index = 0;
-    while index < files.len() {
-        let source_id = files[index].source_id.clone();
-        let text = files[index].text.clone();
-        let lexed = crate::lexer::lex(SourceInput {
-            source_id: &source_id,
-            text: &text,
-        });
-        if !lexed.diagnostics.is_empty() {
-            return Err(lexed.diagnostics.render(&text));
-        }
-        let parsed = crate::parser::parse(&source_id, lexed.tokens, false)
-            .map_err(|error| error.render(&text))?;
-        let imports = parsed.imports;
-        for import in imports {
-            let resolved = resolver
-                .resolve(&source_id, &import.path)
-                .map_err(|error| {
-                    format!(
-                        "{}:{}-{}: could not resolve import `{}`: {error}",
-                        source_id, import.span.start_byte, import.span.end_byte, import.path
-                    )
-                })?;
-            let next = if let Some(existing) = indices.get(&resolved.source_id) {
-                *existing
-            } else {
-                let next = files.len();
-                indices.insert(resolved.source_id.clone(), next);
-                files.push(SourceFile {
-                    source_id: resolved.source_id,
-                    text: resolved.text,
-                });
-                edges.push(Vec::new());
-                next
-            };
-            let alias = import
-                .alias
-                .map_or_else(|| default_namespace(&import.path), |alias| alias.name);
-            if !is_identifier(&alias) {
-                return Err(format!(
-                    "{}:{}-{}: import namespace `{alias}` is not a valid identifier; use `as`",
-                    source_id, import.span.start_byte, import.span.end_byte
-                ));
-            }
-            edges[index].push((alias, next));
-        }
-        index += 1;
-    }
-    if let Some(cycle) = find_cycle(&edges) {
-        let names = cycle
-            .iter()
-            .map(|index| files[*index].source_id.as_str())
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        return Err(format!("{}: import cycle: {names}", files[0].source_id));
-    }
-    let mut modules = Vec::new();
-    for file in &files {
-        let lexed = crate::lexer::lex(SourceInput {
-            source_id: &file.source_id,
-            text: &file.text,
-        });
-        if !lexed.diagnostics.is_empty() {
-            return Err(lexed.diagnostics.render(&file.text));
-        }
-        modules.push(
-            crate::parser::parse(&file.source_id, lexed.tokens, false)
-                .map_err(|error| error.render(&file.text))?,
-        );
-    }
+    let project = LoadedProject::load(source, resolver)?;
+    validate_import_names(&project)?;
+    project.validate_no_cycles()?;
+    let files = project.files();
+    let edges = project.edges();
+    let mut modules = project.parse_modules()?;
     let mut exports = Vec::new();
     for (index, module) in modules.iter().enumerate() {
         if index != 0
@@ -382,17 +305,18 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<HashMap<String, 
 fn bindings_for(
     module: &Module<'_>,
     index: usize,
-    edges: &[(String, usize)],
+    edges: &[ImportEdge],
     exports: &[HashMap<String, String>],
 ) -> Result<HashMap<String, String>, String> {
     let mut bindings = collect_exports(module, index)?;
     let mut namespaces: HashMap<&str, HashSet<&str>> = HashMap::new();
-    for (alias, target) in edges {
+    for edge in edges {
+        let alias = &edge.namespace;
         if alias == "std" {
             return Err("`std` is a reserved built-in type namespace".to_owned());
         }
         let names = namespaces.entry(alias).or_default();
-        for (name, canonical) in &exports[*target] {
+        for (name, canonical) in &exports[edge.target] {
             if !names.insert(name) {
                 return Err(format!(
                     "duplicate export `{name}` in merged namespace `{alias}`"
@@ -766,16 +690,6 @@ fn canonical(index: usize, name: &str) -> String {
     }
 }
 
-/// Derives an import namespace from a relative `.exs` path.
-fn default_namespace(path: &str) -> String {
-    path.rsplit('/')
-        .next()
-        .unwrap_or(path)
-        .strip_suffix(".exs")
-        .unwrap_or(path)
-        .to_owned()
-}
-
 /// Checks the restricted identifier shape accepted for a default namespace.
 fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
@@ -783,41 +697,20 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
-/// Finds one directed cycle in an import graph.
-fn find_cycle(edges: &[Vec<(String, usize)>]) -> Option<Vec<usize>> {
-    fn visit(
-        node: usize,
-        edges: &[Vec<(String, usize)>],
-        states: &mut [u8],
-        stack: &mut Vec<usize>,
-    ) -> Option<Vec<usize>> {
-        states[node] = 1;
-        stack.push(node);
-        for (_, next) in &edges[node] {
-            if states[*next] == 1 {
-                let start = stack.iter().position(|item| item == next)?;
-                let mut cycle = stack[start..].to_vec();
-                cycle.push(*next);
-                return Some(cycle);
-            }
-            if states[*next] == 0
-                && let Some(cycle) = visit(*next, edges, states, stack)
-            {
-                return Some(cycle);
+/// Validates namespaces whose legality is specific to executable module linking.
+fn validate_import_names(project: &LoadedProject) -> Result<(), String> {
+    for (source_index, edges) in project.edges().iter().enumerate() {
+        for edge in edges {
+            if !is_identifier(&edge.namespace) {
+                return Err(format!(
+                    "{}:{}-{}: import namespace `{}` is not a valid identifier; use `as`",
+                    project.files()[source_index].source_id,
+                    edge.start_byte,
+                    edge.end_byte,
+                    edge.namespace
+                ));
             }
         }
-        stack.pop();
-        states[node] = 2;
-        None
     }
-    let mut states = vec![0; edges.len()];
-    let mut stack = Vec::new();
-    for node in 0..edges.len() {
-        if states[node] == 0
-            && let Some(cycle) = visit(node, edges, &mut states, &mut stack)
-        {
-            return Some(cycle);
-        }
-    }
-    None
+    Ok(())
 }

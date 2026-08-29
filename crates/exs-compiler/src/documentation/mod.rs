@@ -1,6 +1,5 @@
 //! Markdown language and source-API documentation generation.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use crate::ast::{
@@ -18,24 +17,6 @@ mod standard;
 
 pub(crate) use source::generate;
 pub use standard::standard_library_types;
-
-/// One source file retained while its module graph is documented.
-struct SourceFile {
-    /// Resolver-provided canonical module identity.
-    source_id: String,
-    /// Source-defined path displayed in generated Markdown.
-    display_path: String,
-    /// Complete UTF-8 source text.
-    text: String,
-}
-
-/// One resolved import edge used when rendering module links.
-struct ImportEdge {
-    /// Namespace available in the importing module.
-    namespace: String,
-    /// Resolved target module index.
-    target: usize,
-}
 
 /// One source-visible standard-library type and its documentation metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

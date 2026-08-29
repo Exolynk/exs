@@ -9,6 +9,7 @@ mod formatter_trivia;
 mod highlighting;
 mod hir;
 mod lexer;
+mod loaded_project;
 mod module_graph;
 mod parser;
 mod prelude;

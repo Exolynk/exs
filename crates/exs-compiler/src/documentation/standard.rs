@@ -1,6 +1,7 @@
 use super::shared::*;
 use super::source::{parse, render_enum_page, render_trait_page, render_type_page};
 use super::*;
+use crate::loaded_project::LoadedSource;
 
 /// Returns every documented source-visible standard-library type.
 #[must_use]
@@ -368,14 +369,14 @@ pub(super) fn standard_pages() -> Result<Vec<DocumentationPage>, String> {
 }
 
 /// Parses every bundled ExS prelude source for standard-library documentation rendering.
-fn standard_prelude_modules() -> Result<Vec<(Module<'static>, SourceFile)>, String> {
+fn standard_prelude_modules() -> Result<Vec<(Module<'static>, LoadedSource)>, String> {
     crate::prelude::source_inputs()
         .into_iter()
         .map(|source| {
             let module = parse(source.source_id, source.text)?;
             Ok((
                 module,
-                SourceFile {
+                LoadedSource {
                     source_id: source.source_id.to_owned(),
                     display_path: source.source_id.to_owned(),
                     text: source.text.to_owned(),
@@ -386,7 +387,7 @@ fn standard_prelude_modules() -> Result<Vec<(Module<'static>, SourceFile)>, Stri
 }
 
 /// Builds standard-library declaration pages from one bundled ExS prelude source.
-fn standard_prelude_pages(module: &Module<'_>, source: &SourceFile) -> Vec<DocumentationPage> {
+fn standard_prelude_pages(module: &Module<'_>, source: &LoadedSource) -> Vec<DocumentationPage> {
     let mut pages = Vec::new();
     for declaration in &module.types {
         pages.push(DocumentationPage {

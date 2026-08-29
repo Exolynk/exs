@@ -130,3 +130,34 @@ fn rejects_import_cycles() {
     };
     assert!(error.contains("import cycle"));
 }
+
+/// Uses the shared project graph to report matching cycles for compilation and documentation.
+#[test]
+fn compilation_and_documentation_report_the_same_import_cycle() {
+    let sources = HashMap::from([
+        (
+            "./a.exs".to_owned(),
+            "import \"./b.exs\"; fn value() { ret 1; }".to_owned(),
+        ),
+        (
+            "./b.exs".to_owned(),
+            "import \"./a.exs\"; fn value() { ret 2; }".to_owned(),
+        ),
+    ]);
+    let source = SourceInput {
+        source_id: "./main.exs",
+        text: "import \"./a.exs\"; fn main() { ret 0; }",
+    };
+    let compilation_error = compile_with_resolver(
+        source,
+        CompileOptions::default(),
+        &mut TestResolver {
+            sources: sources.clone(),
+        },
+    )
+    .expect_err("cyclic imports compiled");
+    let documentation_error = document_with_resolver(source, &mut TestResolver { sources })
+        .expect_err("cyclic imports generated documentation");
+
+    assert_eq!(compilation_error, documentation_error);
+}

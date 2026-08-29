@@ -1,17 +1,18 @@
 use super::shared::*;
 use super::standard::{render_clone_method, standard_pages};
 use super::*;
+use crate::loaded_project::{ImportEdge, LoadedProject, LoadedSource, parse_source};
 
 /// Generates Markdown documentation for one root source and its import graph.
 pub(crate) fn generate<R: ModuleResolver>(
     source: SourceInput<'_>,
     resolver: &mut R,
 ) -> Result<Documentation, String> {
-    let (files, edges) = load_graph(source, resolver)?;
-    let modules = files
-        .iter()
-        .map(|file| parse(&file.source_id, &file.text))
-        .collect::<Result<Vec<_>, _>>()?;
+    let project = LoadedProject::load(source, resolver)?;
+    project.validate_no_cycles()?;
+    let files = project.files();
+    let edges = project.edges();
+    let modules = project.parse_modules()?;
     let directories = files
         .iter()
         .enumerate()
@@ -28,81 +29,18 @@ pub(crate) fn generate<R: ModuleResolver>(
         ));
     }
     Ok(Documentation {
-        index: render_index(&files, &directories),
+        index: render_index(files, &directories),
         pages,
     })
 }
 
-/// Loads one root source and its complete relative-import graph.
-fn load_graph<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    resolver: &mut R,
-) -> Result<(Vec<SourceFile>, Vec<Vec<ImportEdge>>), String> {
-    let mut files = vec![SourceFile {
-        source_id: source.source_id.to_owned(),
-        display_path: root_display_path(source.source_id),
-        text: source.text.to_owned(),
-    }];
-    let mut edges = vec![Vec::new()];
-    let mut indices = HashMap::from([(source.source_id.to_owned(), 0_usize)]);
-    let mut index = 0;
-    while index < files.len() {
-        let source_id = files[index].source_id.clone();
-        let text = files[index].text.clone();
-        let module = parse(&source_id, &text)?;
-        for import in module.imports {
-            let resolved = resolver
-                .resolve(&source_id, &import.path)
-                .map_err(|error| {
-                    format!(
-                        "{}:{}-{}: could not resolve import `{}`: {error}",
-                        source_id, import.span.start_byte, import.span.end_byte, import.path
-                    )
-                })?;
-            let target = if let Some(target) = indices.get(&resolved.source_id) {
-                *target
-            } else {
-                let target = files.len();
-                indices.insert(resolved.source_id.clone(), target);
-                files.push(SourceFile {
-                    source_id: resolved.source_id,
-                    display_path: import.path.clone(),
-                    text: resolved.text,
-                });
-                edges.push(Vec::new());
-                target
-            };
-            edges[index].push(ImportEdge {
-                namespace: import
-                    .alias
-                    .map_or_else(|| default_namespace(&import.path), |alias| alias.name),
-                target,
-            });
-        }
-        index += 1;
-    }
-    if let Some(cycle) = find_cycle(&edges) {
-        let chain = cycle
-            .iter()
-            .map(|index| files[*index].source_id.as_str())
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        return Err(format!("{}: import cycle: {chain}", files[0].source_id));
-    }
-    Ok((files, edges))
-}
-
 /// Parses one documentation source unit without requiring a root entry point.
 pub(super) fn parse<'a>(source_id: &'a str, text: &'a str) -> Result<Module<'a>, String> {
-    let lexed = crate::lexer::lex(SourceInput { source_id, text });
-    if !lexed.diagnostics.is_empty() {
-        return Err(lexed.diagnostics.render(text));
-    }
-    crate::parser::parse(source_id, lexed.tokens, false).map_err(|error| error.render(text))
+    parse_source(source_id, text)
 }
 
 /// Renders the project index and concise language overview.
-fn render_index(files: &[SourceFile], directories: &[String]) -> String {
+fn render_index(files: &[LoadedSource], directories: &[String]) -> String {
     let mut output = String::from("# ExS API Documentation\n\n");
     output.push_str("This reference is generated from the root module and every reachable relative import. Adjacent `///` comments describe source declarations.\n\n");
     output.push_str("## Language\n\n");
@@ -123,7 +61,7 @@ fn render_index(files: &[SourceFile], directories: &[String]) -> String {
 /// Generates a module index and dedicated nominal, trait, and function pages.
 fn module_pages(
     module: &Module<'_>,
-    source: &SourceFile,
+    source: &LoadedSource,
     imports: &[ImportEdge],
     directories: &[String],
     directory: &str,
@@ -163,7 +101,7 @@ fn module_pages(
 /// Renders one user-module declaration index without inline API details.
 fn render_module_index(
     module: &Module<'_>,
-    source: &SourceFile,
+    source: &LoadedSource,
     imports: &[ImportEdge],
     directories: &[String],
 ) -> String {
@@ -242,7 +180,7 @@ fn render_module_index(
 pub(super) fn render_enum_page(
     module: &Module<'_>,
     declaration: &EnumDeclaration<'_>,
-    source: &SourceFile,
+    source: &LoadedSource,
 ) -> String {
     let mut output = format!("# Enum `{}`\n\n", declaration.name.name);
     append_comment(&mut output, &source.text, declaration.span);
@@ -311,7 +249,7 @@ fn link_section<T>(
 pub(super) fn render_type_page(
     module: &Module<'_>,
     declaration: &TypeDeclaration<'_>,
-    source: &SourceFile,
+    source: &LoadedSource,
 ) -> String {
     let mut output = format!("# Type `{}`\n\n", declaration.name.name);
     append_comment(&mut output, &source.text, declaration.span);
@@ -342,7 +280,7 @@ fn render_nominal_implementations(
     output: &mut String,
     module: &Module<'_>,
     name: &str,
-    source: &SourceFile,
+    source: &LoadedSource,
 ) {
     let implementations = module
         .implementations
@@ -392,7 +330,7 @@ fn trait_method_documentation(
     module: &Module<'_>,
     trait_name: &str,
     method_name: &str,
-    source: &SourceFile,
+    source: &LoadedSource,
 ) -> Option<String> {
     if let Some(descriptor) = codegen_standard::trait_descriptor(trait_name) {
         return descriptor
@@ -415,7 +353,10 @@ fn trait_method_documentation(
 }
 
 /// Renders one user-defined trait and all of its method details.
-pub(super) fn render_trait_page(declaration: &TraitDeclaration<'_>, source: &SourceFile) -> String {
+pub(super) fn render_trait_page(
+    declaration: &TraitDeclaration<'_>,
+    source: &LoadedSource,
+) -> String {
     let mut output = format!("# Trait `{}`\n\n", declaration.name.name);
     append_comment(&mut output, &source.text, declaration.span);
     if declaration.methods.is_empty() {
@@ -432,7 +373,7 @@ pub(super) fn render_trait_page(declaration: &TraitDeclaration<'_>, source: &Sou
 /// Renders one direct-function page.
 fn render_function_page(
     declaration: &FunctionDeclaration<'_>,
-    source: &SourceFile,
+    source: &LoadedSource,
     kind: &str,
 ) -> String {
     let mut output = format!("# {kind} `{}`\n\n", declaration.name.name);
