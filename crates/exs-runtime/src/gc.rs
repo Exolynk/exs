@@ -100,8 +100,7 @@ pub(crate) fn collect() {
     let live_values = sweep();
     let state = unsafe { runtime() };
     state.next_gc_at = live_values
-        .checked_mul(2)
-        .unwrap_or(usize::MAX)
+        .saturating_mul(2)
         .max(INITIAL_COLLECTION_THRESHOLD);
 }
 
