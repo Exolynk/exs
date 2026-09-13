@@ -35,7 +35,7 @@ Validation
 After implementing Rust code, run:
 
 - cargo fmt
-- cargo test -q
+- cargo test --release -q
 - cargo check
 - cargo clippy
 
