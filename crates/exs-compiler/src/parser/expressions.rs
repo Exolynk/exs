@@ -25,7 +25,7 @@ impl<'a> Parser<'a> {
 
     pub(super) fn comparison(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
         let mut expression = self.binary(
-            Self::term,
+            Self::range,
             &[
                 (TokenKind::Less, BinaryOperator::LessThan),
                 (TokenKind::LessEqual, BinaryOperator::LessOrEqual),
@@ -42,6 +42,35 @@ impl<'a> Parser<'a> {
             };
         }
         Ok(expression)
+    }
+
+    /// Parses an Int Range expression and desugars it to the prelude constructor.
+    pub(super) fn range(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
+        let start = self.term()?;
+        let inclusive = if self.matches(&TokenKind::RangeInclusive) {
+            Some(true)
+        } else if self.matches(&TokenKind::Range) {
+            Some(false)
+        } else {
+            None
+        };
+        let Some(inclusive) = inclusive else {
+            return Ok(start);
+        };
+        let end = self.term()?;
+        let span = expression_span(&start).through(expression_span(&end));
+        Ok(Expression::StaticMethodCall {
+            type_name: Identifier {
+                name: "Range".to_owned(),
+                span: expression_span(&start),
+            },
+            method: Identifier {
+                name: if inclusive { "through" } else { "until" }.to_owned(),
+                span,
+            },
+            arguments: vec![start, end],
+            span,
+        })
     }
 
     pub(super) fn term(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {

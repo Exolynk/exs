@@ -63,6 +63,36 @@ fn iterates_a_shallow_list_snapshot() {
     );
 }
 
+/// Iterates half-open and inclusive Range syntax in either direction.
+#[test]
+fn iterates_range_expressions() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) -> List {
+                let values = [];
+                for value in 0..3 {
+                    values.push(value);
+                }
+                for value in 3..=1 {
+                    values.push(value);
+                }
+                ret values;
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(0),
+            ExsValue::Int(1),
+            ExsValue::Int(2),
+            ExsValue::Int(3),
+            ExsValue::Int(2),
+            ExsValue::Int(1),
+        ]),
+    );
+}
+
 /// Gives closures created in separate for-loop iterations distinct captured bindings.
 #[test]
 fn preserves_for_loop_closure_captures_per_iteration() {

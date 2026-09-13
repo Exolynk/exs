@@ -608,6 +608,12 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 arguments,
                 ..
             } => {
+                if let Some(key) = crate::prelude::list_callback_helper(&method.name) {
+                    self.calls.push(CallEdge {
+                        key: key.to_owned(),
+                        span: method.span,
+                    });
+                }
                 if let Some(targets) = self.instance_targets.method(&method.name) {
                     self.calls
                         .extend(targets.iter().cloned().map(|key| CallEdge {

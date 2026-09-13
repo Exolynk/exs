@@ -291,6 +291,205 @@ fn preserves_object_identity_and_deletion_behavior() {
     );
 }
 
+/// Applies every callback-based List operation through frame-backed closures.
+#[test]
+fn executes_list_callback_operations() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List | Error {
+                    let values = [1, 2, 3, 4];
+                    let mapped = values.map((value) => { ret value * 2; });
+                    let filtered = mapped.filter((value) => { ret value > 4; });
+                    let found = filtered.find((value) => { ret value == 6; });
+                    let any = filtered.any((value) => { ret value == 8; });
+                    let all = filtered.all((value) => { ret value > 4; });
+                    let total = values.reduce(10, (total, value) => { ret total + value; });
+                    let seen = [];
+                    values.each((value) => { seen.push(value); ret None; });
+                    ret [mapped, filtered, found, any, all, total, seen];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![
+                ExsValue::Int(2),
+                ExsValue::Int(4),
+                ExsValue::Int(6),
+                ExsValue::Int(8),
+            ]),
+            ExsValue::List(vec![ExsValue::Int(6), ExsValue::Int(8)]),
+            ExsValue::Int(6),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Int(20),
+            ExsValue::List(vec![
+                ExsValue::Int(1),
+                ExsValue::Int(2),
+                ExsValue::Int(3),
+                ExsValue::Int(4),
+            ]),
+        ]),
+    );
+}
+
+/// Propagates callback Errors whether returned directly or produced through `?`.
+#[test]
+fn list_callbacks_propagate_returned_errors() {
+    let direct = execute_source_with_inputs(
+        r#"
+            fn main() -> Error {
+                ret [1, 2, 3].map((value) => {
+                    if value == 2 {
+                        ret Error("Blocked", "the callback stopped", value);
+                    }
+                    ret value;
+                });
+            }
+        "#,
+        &[],
+    );
+    let propagated = execute_source_with_inputs(
+        r#"
+            fn main() -> Error {
+                ret ["1", "bad", "3"].map((text) => {
+                    ret Int::parse(text)?;
+                });
+            }
+        "#,
+        &[],
+    );
+    let ExsValue::Error(direct) = direct else {
+        panic!("direct callback failure did not return an Error");
+    };
+    let ExsValue::Error(propagated) = propagated else {
+        panic!("propagated callback failure did not return an Error");
+    };
+    assert_eq!(direct.kind, "Blocked");
+    assert_eq!(direct.data, Box::new(ExsValue::Int(2)));
+    assert_eq!(propagated.kind, "ParseError");
+    assert_eq!(
+        propagated.data,
+        Box::new(ExsValue::String("bad".to_owned()))
+    );
+}
+
+/// Treats existing Error values as ordinary List data until a callback returns an Error.
+#[test]
+fn list_callbacks_can_process_error_values() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List | Error {
+                    let failures = [
+                        Error("Input", "first", 1),
+                        Error("Input", "second", 2),
+                    ];
+                    let messages = failures.map((failure) => { ret failure.message(); });
+                    let second = failures.find((failure) => { ret failure.data() == 2; });
+                    ret [messages, second.message()];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![
+                ExsValue::String("first".to_owned()),
+                ExsValue::String("second".to_owned()),
+            ]),
+            ExsValue::String("second".to_owned()),
+        ]),
+    );
+}
+
+/// Provides List reads, slices, searches, reordering, extension, and String joining.
+#[test]
+fn executes_list_convenience_operations() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List | Error {
+                    let values = ["a", "b", "a"];
+                    let slice = values.slice(1, 3)?;
+                    let reversed = values.reversed();
+                    let first = values.first();
+                    let last = values.last();
+                    let missing = values.get(9);
+                    let length = values.extend(["c"]);
+                    values.reverse();
+                    ret [
+                        slice,
+                        reversed,
+                        first,
+                        last,
+                        missing,
+                        values.contains("a"),
+                        values.index_of("a"),
+                        values.last_index_of("a"),
+                        length,
+                        values.join(",")?,
+                    ];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![
+                ExsValue::String("b".to_owned()),
+                ExsValue::String("a".to_owned()),
+            ]),
+            ExsValue::List(vec![
+                ExsValue::String("a".to_owned()),
+                ExsValue::String("b".to_owned()),
+                ExsValue::String("a".to_owned()),
+            ]),
+            ExsValue::String("a".to_owned()),
+            ExsValue::String("a".to_owned()),
+            ExsValue::None,
+            ExsValue::Bool(true),
+            ExsValue::Int(1),
+            ExsValue::Int(3),
+            ExsValue::Int(4),
+            ExsValue::String("c,a,b,a".to_owned()),
+        ]),
+    );
+}
+
+/// Provides Object defaults, ordered entry conversion, merging, and in-place clearing.
+#[test]
+fn executes_object_convenience_operations() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List | Error {
+                    let base = { name: "Ada", score: 1 };
+                    let merged = base.merge({ score: 2, role: "admin" });
+                    let rebuilt = Object::from_entries(merged.entries())?;
+                    let missing = rebuilt.get_or("missing", "fallback");
+                    base.clear();
+                    ret [merged, rebuilt, missing, base];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Object(vec![
+                ("name".to_owned(), ExsValue::String("Ada".to_owned())),
+                ("score".to_owned(), ExsValue::Int(2)),
+                ("role".to_owned(), ExsValue::String("admin".to_owned())),
+            ]),
+            ExsValue::Object(vec![
+                ("name".to_owned(), ExsValue::String("Ada".to_owned())),
+                ("score".to_owned(), ExsValue::Int(2)),
+                ("role".to_owned(), ExsValue::String("admin".to_owned())),
+            ]),
+            ExsValue::String("fallback".to_owned()),
+            ExsValue::Object(vec![]),
+        ]),
+    );
+}
+
 /// Decodes a host object for the root input and returns it as an ordered CBOR map.
 #[test]
 fn passes_object_cbor_input_to_main() {

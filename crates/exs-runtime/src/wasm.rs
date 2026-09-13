@@ -506,6 +506,120 @@ pub extern "C" fn __exs_rt_bytes_from_utf8(value: ValueRef) -> ValueRef {
     value::operations::bytes_from_utf8(value)
 }
 
+/// Decodes hexadecimal text into immutable runtime Bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_bytes_from_hex(value: ValueRef) -> ValueRef {
+    value::operations::bytes_from_hex(value)
+}
+
+/// Decodes padded base64 text into immutable runtime Bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_bytes_from_base64(value: ValueRef) -> ValueRef {
+    value::operations::bytes_from_base64(value)
+}
+
+/// Parses one decimal String into an exact runtime Int.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_integer_parse(value: ValueRef) -> ValueRef {
+    value::operations::integer_parse(value)
+}
+
+/// Parses one decimal String into a runtime Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_float_parse(value: ValueRef) -> ValueRef {
+    value::operations::float_parse(value)
+}
+
+/// Returns the Float constant pi.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_pi() -> ValueRef {
+    value::operations::math_pi()
+}
+
+/// Returns the Float constant tau.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_tau() -> ValueRef {
+    value::operations::math_tau()
+}
+
+/// Returns the Float constant e.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_e() -> ValueRef {
+    value::operations::math_e()
+}
+
+/// Computes the sine of one radian Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_sin(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::sin, "sin")
+}
+
+/// Computes the cosine of one radian Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_cos(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::cos, "cos")
+}
+
+/// Computes the tangent of one radian Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_tan(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::tan, "tan")
+}
+
+/// Computes the inverse sine of one Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_asin(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::asin, "asin")
+}
+
+/// Computes the inverse cosine of one Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_acos(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::acos, "acos")
+}
+
+/// Computes the inverse tangent of one Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_atan(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::atan, "atan")
+}
+
+/// Computes e raised to one Float power.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_exp(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::exp, "exp")
+}
+
+/// Computes the natural logarithm of one Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_ln(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::log, "ln")
+}
+
+/// Computes the base-two logarithm of one Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_log2(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::log2, "log2")
+}
+
+/// Computes the base-ten logarithm of one Float.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_log10(value: ValueRef) -> ValueRef {
+    value::operations::math_unary(value, libm::log10, "log10")
+}
+
+/// Computes the quadrant-aware inverse tangent of two Floats.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_atan2(y: ValueRef, x: ValueRef) -> ValueRef {
+    value::operations::math_binary(y, x, libm::atan2, "atan2")
+}
+
+/// Computes the Euclidean length of two Floats.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_math_hypot(x: ValueRef, y: ValueRef) -> ValueRef {
+    value::operations::math_binary(x, y, libm::hypot, "hypot")
+}
+
 /// Allocates an empty mutable runtime list.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_list_new() -> ValueRef {
@@ -516,6 +630,12 @@ pub extern "C" fn __exs_rt_list_new() -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_object_new() -> ValueRef {
     value::object::operations::new_value()
+}
+
+/// Builds one mutable Object from a List of two-item key-value List entries.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_object_from_entries(entries: ValueRef) -> ValueRef {
+    value::object::operations::from_entries(entries)
 }
 
 /// Allocates an empty nominal Object with a compiler-owned type tag.

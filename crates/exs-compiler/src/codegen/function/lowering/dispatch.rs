@@ -9,28 +9,49 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         arguments: &[Expression<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if type_name.name == "Bytes" && matches!(method.name.as_str(), "from_list" | "from_utf8") {
-            if arguments.len() != 1 {
+        let static_export = match (type_name.name.as_str(), method.name.as_str()) {
+            ("Bytes", "from_list") => Some(("__exs_rt_bytes_from_list", 1)),
+            ("Bytes", "from_utf8") => Some(("__exs_rt_bytes_from_utf8", 1)),
+            ("Bytes", "from_hex") => Some(("__exs_rt_bytes_from_hex", 1)),
+            ("Bytes", "from_base64") => Some(("__exs_rt_bytes_from_base64", 1)),
+            ("Int", "parse") => Some(("__exs_rt_integer_parse", 1)),
+            ("Float", "parse") => Some(("__exs_rt_float_parse", 1)),
+            ("Object", "from_entries") => Some(("__exs_rt_object_from_entries", 1)),
+            ("Math", "pi") => Some(("__exs_rt_math_pi", 0)),
+            ("Math", "tau") => Some(("__exs_rt_math_tau", 0)),
+            ("Math", "e") => Some(("__exs_rt_math_e", 0)),
+            ("Math", "sin") => Some(("__exs_rt_math_sin", 1)),
+            ("Math", "cos") => Some(("__exs_rt_math_cos", 1)),
+            ("Math", "tan") => Some(("__exs_rt_math_tan", 1)),
+            ("Math", "asin") => Some(("__exs_rt_math_asin", 1)),
+            ("Math", "acos") => Some(("__exs_rt_math_acos", 1)),
+            ("Math", "atan") => Some(("__exs_rt_math_atan", 1)),
+            ("Math", "exp") => Some(("__exs_rt_math_exp", 1)),
+            ("Math", "ln") => Some(("__exs_rt_math_ln", 1)),
+            ("Math", "log2") => Some(("__exs_rt_math_log2", 1)),
+            ("Math", "log10") => Some(("__exs_rt_math_log10", 1)),
+            ("Math", "atan2") => Some(("__exs_rt_math_atan2", 2)),
+            ("Math", "hypot") => Some(("__exs_rt_math_hypot", 2)),
+            _ => None,
+        };
+        if let Some((static_export, arity)) = static_export {
+            if arguments.len() != arity as usize {
                 return Err(diagnostics(CompileDiagnostic::new(
                     "E0208",
                     span,
                     format!(
-                        "static method `Bytes::{}` expects 1 argument but received {}",
+                        "static method `{}::{}` expects {} arguments but received {}",
+                        type_name.name,
                         method.name,
+                        arity,
                         arguments.len()
                     ),
                 )));
             }
-            self.compile_expression(&arguments[0])?;
-            self.runtime_value_call(
-                if method.name == "from_utf8" {
-                    "__exs_rt_bytes_from_utf8"
-                } else {
-                    "__exs_rt_bytes_from_list"
-                },
-                1,
-                span,
-            )?;
+            for argument in arguments {
+                self.compile_expression(argument)?;
+            }
+            self.runtime_value_call(static_export, arity, span)?;
             return Ok(());
         }
         let key = format!("{}::{}", type_name.name, method.name);
@@ -150,6 +171,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let Some(target) = targets.get(index) else {
+            if let Some(helper) = crate::prelude::list_callback_helper(&method.name) {
+                return self.compile_standard_callback_method_call(
+                    receiver, arguments, method, helper, span,
+                );
+            }
             return self.compile_runtime_method_call(receiver, arguments, method, span);
         };
         self.function.instruction(&Instruction::LocalGet(receiver));
@@ -182,6 +208,36 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.emit_instance_method_dispatch(targets, index + 1, receiver, arguments, method, span)?;
         self.function.instruction(&Instruction::End);
         self.exit_control()
+    }
+
+    /// Calls one private callback-based List helper after nominal method dispatch misses.
+    fn compile_standard_callback_method_call(
+        &mut self,
+        receiver: u32,
+        arguments: &[u32],
+        method: &crate::ast::Identifier<'a>,
+        helper: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let signature = self.signatures.get(helper).cloned().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                method.span,
+                "missing standard List callback helper",
+            ))
+        })?;
+        if !signature.accepts_arity(arguments.len() + 1) {
+            self.function.instruction(&Instruction::LocalGet(receiver));
+            return self.runtime_value_call("__exs_rt_method_arity_error", 1, span);
+        }
+        self.function.instruction(&Instruction::LocalGet(receiver));
+        for argument in arguments {
+            self.function.instruction(&Instruction::LocalGet(*argument));
+        }
+        self.set_runtime_call_site(span)?;
+        self.function
+            .instruction(&Instruction::Call(signature.index));
+        self.return_if_fatal_error(span)
     }
 
     /// Emits nominal trait dispatch before preserving one operator's runtime built-in fallback.

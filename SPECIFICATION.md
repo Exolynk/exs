@@ -151,6 +151,7 @@ ExS is dynamically typed. Types describe values, not variable bindings. The sour
 | `Bytes` | An immutable raw-octet sequence. |
 | `List` | A mutable ordered sequence of values. |
 | `Object` | A mutable insertion-ordered String-keyed mapping. |
+| `Range` | A finite Int iterator created by range syntax. |
 | `Error` | A recoverable failure value. |
 | `Fn` | A callable closure value. |
 | nominal type | A value constructed by a `type` declaration. |
@@ -168,7 +169,7 @@ fn describe(value: String | Int | None) -> String | Error {
 }
 ```
 
-The built-in contract names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `Bytes`, `List`, `Object`, and `Fn`. User-defined nominal types, enums, and traits are also valid contract names. A type may optionally be written with the `std::` qualifier, such as `std::Int` or `std::None`.
+The built-in contract names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `Bytes`, `List`, `Object`, `Range`, and `Fn`. User-defined nominal types, enums, and traits are also valid contract names. A type may optionally be written with the `std::` qualifier, such as `std::Int` or `std::None`.
 
 An omitted annotation means `Any`. Contracts are checked at function entry and at each explicit or implicit return.
 
@@ -307,7 +308,7 @@ for item in iterable {
 
 `while` evaluates its Bool condition before every iteration.
 
-`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. Bytes yields one Int octet from 0 through 255. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
+`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. Bytes yields one Int octet from 0 through 255. `start..end` creates a half-open Int Range and `start..=end` creates an inclusive Int Range; both infer direction from their endpoints. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
 
 Each loop iteration creates a fresh binding for the loop variable. Closures created in separate iterations therefore capture distinct loop bindings.
 
@@ -534,6 +535,10 @@ Every value supports `clone()`.
 
 Numeric values support `add(other)`, `sub(other)`, `mul(other)`, and `div(other)`. `Int` also supports `div_euclid(other)` and `rem_euclid(other)` for exact Euclidean calculations. `Int` and `Float` support `abs()`. `Float` also supports `floor()`, `ceil()`, and `round()`.
 
+`Int::parse(value)` and `Float::parse(value)` perform checked decimal parsing and return `ParseError` for invalid input. Int values additionally provide `signum()`, `is_even()`, `is_odd()`, `min(other)`, `max(other)`, `clamp(minimum, maximum)`, `pow(exponent)`, `gcd(other)`, `lcm(other)`, and `to_float()`. Float values additionally provide `trunc()`, `fract()`, `min(other)`, `max(other)`, `clamp(minimum, maximum)`, `pow(exponent)`, `sqrt()`, `to_int()`, `is_nan()`, `is_finite()`, and `is_infinite()`. Checked operations return `Error` rather than coercing or saturating.
+
+`Math` provides strict-Float static constants `pi()`, `tau()`, and `e()`, plus `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `ln`, `log2`, `log10`, and `hypot`. Trigonometric values use radians. Every function argument must be a Float; Int values are not coerced and return `TypeError`.
+
 Strings, Bytes, Lists, and Objects support `length()` and `is_empty()`.
 
 Bytes are immutable and support:
@@ -545,7 +550,17 @@ bytes.to_list()             // new List of Int octets
 bytes.slice(start, end)     // new Bytes or IndexError
 bytes.concat(other)         // new Bytes or TypeError
 bytes.decode_utf8()         // String or EncodingError
+bytes.starts_with(other)    // Bool or TypeError
+bytes.ends_with(other)      // Bool or TypeError
+bytes.contains(other)       // Bool or TypeError
+bytes.repeat(count)         // new Bytes or Error
+bytes.to_hex()              // lowercase String
+Bytes::from_hex(value)      // Bytes or ParseError
+bytes.to_base64()           // padded RFC 4648 String
+Bytes::from_base64(value)   // Bytes or ParseError
 ```
+
+Strings additionally provide Unicode-scalar `slice(start, end)`, `contains`, `starts_with`, `ends_with`, `split`, `trim`, `trim_start`, `trim_end`, `replace`, `to_lowercase`, `to_uppercase`, `repeat`, and `encode_utf8()`. String ranges are half-open scalar ranges, matching `String.length()` and String iteration; they are never UTF-8 byte offsets.
 
 Lists support:
 
@@ -555,6 +570,24 @@ list.pop()              // removes the last value; None when empty
 list.insert(index, v)   // mutates; None or IndexError
 list.remove(index)      // mutates; removed value or IndexError
 list.clear()            // mutates; None
+list.get(index)         // value or None when out of bounds
+list.first()            // first value or None
+list.last()             // final value or None
+list.slice(start, end)  // new shallow List or IndexError
+list.extend(other)      // mutates and returns the new length
+list.reverse()          // mutates; None
+list.reversed()         // new shallow reversed List
+list.contains(value)    // Bool under ExS equality
+list.index_of(value)    // first Int index or None
+list.last_index_of(v)   // final Int index or None
+list.join(separator)    // String or TypeError for non-String items
+list.map(callback)      // new List or the first callback Error
+list.filter(callback)   // new List or the first callback Error
+list.find(callback)     // matching value, None, or callback Error
+list.any(callback)      // Bool or callback Error
+list.all(callback)      // Bool or callback Error
+list.each(callback)     // None or callback Error
+list.reduce(initial, callback) // accumulated value or callback Error
 ```
 
 Objects support:
@@ -564,6 +597,11 @@ object.has(key)         // Bool
 object.delete(key)      // removed value or None
 object.keys()           // new List of String keys in insertion order
 object.values()         // new shallow List in insertion order
+object.get_or(key, d)   // value or d when absent
+object.clear()          // mutates; None
+object.entries()        // new [String, value] Lists in insertion order
+object.merge(other)     // new Object with right-hand values winning
+Object::from_entries(entries) // Object from [String, value] Lists
 ```
 
 Calling an unsupported method produces `MethodNotFound`.
@@ -665,7 +703,8 @@ assignment      = logicOr [ "=" assignment ] ;
 logicOr         = logicAnd { "||" logicAnd } ;
 logicAnd        = equality { "&&" equality } ;
 equality        = comparison { ( "==" | "!=" ) comparison } ;
-comparison      = term { ( "<" | "<=" | ">" | ">=" | "is" ) term } ;
+comparison      = range { ( "<" | "<=" | ">" | ">=" | "is" ) range } ;
+range           = term [ ( ".." | "..=" ) term ] ;
 term            = factor { ( "+" | "-" ) factor } ;
 factor          = unary { ( "*" | "/" ) unary } ;
 unary           = ( "!" | "-" ) unary | postfix ;

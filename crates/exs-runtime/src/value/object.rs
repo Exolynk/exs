@@ -107,6 +107,26 @@ pub(crate) mod operations {
         }
     }
 
+    /// Reads one Object property or returns a caller-provided default when it is absent.
+    pub(crate) fn get_or(receiver: ValueRef, index: ValueRef, default: ValueRef) -> ValueRef {
+        let key = match operations::string_value(index) {
+            Ok(key) => key,
+            Err(error) => return error,
+        };
+        match runtime::value(receiver) {
+            RtValue::Object(object) => object
+                .entries
+                .iter()
+                .find_map(|(entry_key, value)| (entry_key.as_ref() == key).then_some(*value))
+                .unwrap_or(default),
+            _ => runtime::recoverable_error(
+                "TypeError",
+                "get_or requires an Object receiver",
+                receiver,
+            ),
+        }
+    }
+
     /// Creates or replaces one Object property.
     pub(crate) fn set(receiver: ValueRef, index: ValueRef, replacement: ValueRef) -> ValueRef {
         let key = match operations::string_value(index) {
@@ -226,5 +246,140 @@ pub(crate) mod operations {
             }
         };
         runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })))
+    }
+
+    /// Removes every Object property while retaining the Object identity.
+    pub(crate) fn clear(receiver: ValueRef) -> ValueRef {
+        match runtime::value_mut(receiver) {
+            RtValue::Object(object) => object.entries.clear(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "clear requires an Object receiver",
+                    receiver,
+                );
+            }
+        }
+        runtime::allocate(RtValue::None)
+    }
+
+    /// Returns key-value pair Lists in Object insertion order.
+    pub(crate) fn entries(receiver: ValueRef) -> ValueRef {
+        let entries = match runtime::value(receiver) {
+            RtValue::Object(object) => object
+                .entries
+                .iter()
+                .map(|(key, value)| (String::from(key.as_ref()), *value))
+                .collect::<Vec<_>>(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "entries requires an Object receiver",
+                    receiver,
+                );
+            }
+        };
+        let checkpoint = gc::temporary_root_checkpoint();
+        let mut pairs = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            let key = runtime::allocate(RtValue::String(Box::new(RuntimeString::from_string(key))));
+            gc::push_temporary_root(key);
+            let pair = runtime::allocate(RtValue::List(Box::new(RuntimeList {
+                elements: alloc::vec![key, value],
+            })));
+            gc::push_temporary_root(pair);
+            pairs.push(pair);
+        }
+        let result = runtime::allocate(RtValue::List(Box::new(RuntimeList { elements: pairs })));
+        gc::restore_temporary_roots(checkpoint);
+        result
+    }
+
+    /// Returns a new Object whose right-hand properties overwrite matching left-hand keys.
+    pub(crate) fn merge(receiver: ValueRef, other: ValueRef) -> ValueRef {
+        let mut entries = match runtime::value(receiver) {
+            RtValue::Object(object) => object.entries.clone(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "merge requires an Object receiver",
+                    receiver,
+                );
+            }
+        };
+        let other_entries = match runtime::value(other) {
+            RtValue::Object(object) => object.entries.clone(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "merge requires an Object argument",
+                    other,
+                );
+            }
+        };
+        for (key, value) in other_entries {
+            if let Some((_, existing)) = entries
+                .iter_mut()
+                .find(|(existing_key, _)| existing_key.as_ref() == key.as_ref())
+            {
+                *existing = value;
+            } else {
+                entries.push((key, value));
+            }
+        }
+        runtime::allocate(RtValue::Object(Box::new(RuntimeObject {
+            type_id: None,
+            entries,
+            enum_data: None,
+        })))
+    }
+
+    /// Builds an Object from two-item List entries whose keys are Strings.
+    pub(crate) fn from_entries(entries: ValueRef) -> ValueRef {
+        let entries = match runtime::value(entries) {
+            RtValue::List(entries) => entries.elements.clone(),
+            _ => {
+                return runtime::recoverable_error(
+                    "TypeError",
+                    "Object::from_entries requires a List",
+                    entries,
+                );
+            }
+        };
+        let mut result = RuntimeObject::new();
+        for entry in entries {
+            let (key, value) = match runtime::value(entry) {
+                RtValue::List(pair) if pair.elements.len() == 2 => {
+                    let key = match runtime::value(pair.elements[0]) {
+                        RtValue::String(key) => String::from(key.as_str()),
+                        _ => {
+                            return runtime::recoverable_error(
+                                "TypeError",
+                                "Object::from_entries requires String keys",
+                                pair.elements[0],
+                            );
+                        }
+                    };
+                    (key, pair.elements[1])
+                }
+                _ => {
+                    return runtime::recoverable_error(
+                        "TypeError",
+                        "Object::from_entries requires two-item List entries",
+                        entry,
+                    );
+                }
+            };
+            if let Some((_, existing)) = result
+                .entries
+                .iter_mut()
+                .find(|(existing_key, _)| existing_key.as_ref() == key)
+            {
+                *existing = value;
+            } else {
+                result.entries.push((key.into_boxed_str(), value));
+            }
+        }
+        runtime::allocate(RtValue::Object(Box::new(result)))
     }
 }

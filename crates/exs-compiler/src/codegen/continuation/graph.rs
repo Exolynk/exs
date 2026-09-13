@@ -32,13 +32,13 @@ pub(super) enum Operation<'source, 'function> {
         /// Source location for this literal fragment.
         span: SourceSpan<'source>,
     },
-    /// Constructs native immutable Bytes through one compiler-recognized static method.
-    BytesStatic {
-        /// Frame slot containing the List or String source value.
-        value: u32,
-        /// Whether to encode the source String rather than validate a List of octets.
-        from_utf8: bool,
-        /// Frame slot receiving the Bytes result or Error.
+    /// Calls one compiler-recognized runtime static method with ordered source values.
+    RuntimeStatic {
+        /// Frame slots containing the source values.
+        values: Vec<u32>,
+        /// Runtime export implementing the static method.
+        export: &'static str,
+        /// Frame slot receiving the result or Error.
         destination: u32,
         /// Source location for the static method call.
         span: SourceSpan<'source>,
@@ -362,6 +362,8 @@ pub(super) enum Operation<'source, 'function> {
         method_span: SourceSpan<'source>,
         arguments: Vec<u32>,
         targets: Vec<InstanceMethod>,
+        /// Private standard-library callback helper used after nominal dispatch misses.
+        fallback: Option<FunctionSignature>,
         destination: u32,
         span: SourceSpan<'source>,
     },
@@ -643,7 +645,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
     match operation {
         Operation::Literal { expression, .. } => expression_span(expression),
         Operation::String { span, .. }
-        | Operation::BytesStatic { span, .. }
+        | Operation::RuntimeStatic { span, .. }
         | Operation::Integer { span, .. }
         | Operation::None { span, .. }
         | Operation::Boolean { span, .. }

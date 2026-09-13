@@ -65,6 +65,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                                         crate::codegen::standard::TO_STRING_METHOD,
                                     )
                                     .map_or_else(Vec::new, ToOwned::to_owned),
+                                fallback: None,
                                 destination,
                                 span: *span,
                             });
@@ -571,25 +572,53 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 arguments,
                 span,
             } => {
-                if type_name.name == "Bytes"
-                    && matches!(method.name.as_str(), "from_list" | "from_utf8")
-                {
-                    if arguments.len() != 1 {
+                let static_export = match (type_name.name.as_str(), method.name.as_str()) {
+                    ("Bytes", "from_list") => Some(("__exs_rt_bytes_from_list", 1)),
+                    ("Bytes", "from_utf8") => Some(("__exs_rt_bytes_from_utf8", 1)),
+                    ("Bytes", "from_hex") => Some(("__exs_rt_bytes_from_hex", 1)),
+                    ("Bytes", "from_base64") => Some(("__exs_rt_bytes_from_base64", 1)),
+                    ("Int", "parse") => Some(("__exs_rt_integer_parse", 1)),
+                    ("Float", "parse") => Some(("__exs_rt_float_parse", 1)),
+                    ("Object", "from_entries") => Some(("__exs_rt_object_from_entries", 1)),
+                    ("Math", "pi") => Some(("__exs_rt_math_pi", 0)),
+                    ("Math", "tau") => Some(("__exs_rt_math_tau", 0)),
+                    ("Math", "e") => Some(("__exs_rt_math_e", 0)),
+                    ("Math", "sin") => Some(("__exs_rt_math_sin", 1)),
+                    ("Math", "cos") => Some(("__exs_rt_math_cos", 1)),
+                    ("Math", "tan") => Some(("__exs_rt_math_tan", 1)),
+                    ("Math", "asin") => Some(("__exs_rt_math_asin", 1)),
+                    ("Math", "acos") => Some(("__exs_rt_math_acos", 1)),
+                    ("Math", "atan") => Some(("__exs_rt_math_atan", 1)),
+                    ("Math", "exp") => Some(("__exs_rt_math_exp", 1)),
+                    ("Math", "ln") => Some(("__exs_rt_math_ln", 1)),
+                    ("Math", "log2") => Some(("__exs_rt_math_log2", 1)),
+                    ("Math", "log10") => Some(("__exs_rt_math_log10", 1)),
+                    ("Math", "atan2") => Some(("__exs_rt_math_atan2", 2)),
+                    ("Math", "hypot") => Some(("__exs_rt_math_hypot", 2)),
+                    _ => None,
+                };
+                if let Some((export, arity)) = static_export {
+                    if arguments.len() != arity as usize {
                         return Err(diagnostics(CompileDiagnostic::new(
                             "E0208",
                             *span,
                             format!(
-                                "static method `Bytes::{}` expects 1 argument but received {}",
+                                "static method `{}::{}` expects {} arguments but received {}",
+                                type_name.name,
                                 method.name,
+                                arity,
                                 arguments.len()
                             ),
                         )));
                     }
-                    let value = self.lower_expression(&arguments[0])?;
+                    let mut values = Vec::with_capacity(arguments.len());
+                    for argument in arguments {
+                        values.push(self.lower_expression(argument)?);
+                    }
                     let destination = self.temporary(*span)?;
-                    self.operations.push(Operation::BytesStatic {
-                        value,
-                        from_utf8: method.name == "from_utf8",
+                    self.operations.push(Operation::RuntimeStatic {
+                        values,
+                        export,
                         destination,
                         span: *span,
                     });
@@ -702,6 +731,17 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     slots.push(self.lower_expression(argument)?);
                 }
                 let destination = self.temporary(*span)?;
+                let fallback = crate::prelude::list_callback_helper(&method.name)
+                    .map(|key| {
+                        self.signatures.get(key).cloned().ok_or_else(|| {
+                            diagnostics(CompileDiagnostic::new(
+                                "E0999",
+                                method.span,
+                                "missing standard List callback helper",
+                            ))
+                        })
+                    })
+                    .transpose()?;
                 self.operations.push(Operation::InstanceCall {
                     receiver,
                     method: &method.name,
@@ -712,6 +752,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         .instance(&method.name)
                         .unwrap_or_default()
                         .to_vec(),
+                    fallback,
                     destination,
                     span: *span,
                 });

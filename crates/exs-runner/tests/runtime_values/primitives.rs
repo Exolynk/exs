@@ -269,6 +269,136 @@ fn executes_standard_numeric_methods() {
     );
 }
 
+/// Evaluates checked numeric parsing, conversions, and extended numeric helpers.
+#[test]
+fn executes_extended_numeric_methods() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List | Error {
+                    let integer = Int::parse("-42")?;
+                    let float = Float::parse("3.5")?;
+                    ret [
+                        integer.signum(),
+                        integer.abs(),
+                        (12).gcd(18),
+                        (12).lcm(18),
+                        (2).pow(10),
+                        (9).clamp(0, 5),
+                        (7).to_float(),
+                        float.trunc(),
+                        float.fract(),
+                        (2.0).pow(3.0),
+                        (4.0).sqrt(),
+                        (3.5).to_int()?,
+                        (1.0).is_finite(),
+                    ];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(-1),
+            ExsValue::Int(42),
+            ExsValue::Int(6),
+            ExsValue::Int(36),
+            ExsValue::Int(1024),
+            ExsValue::Int(5),
+            ExsValue::Float(7.0),
+            ExsValue::Float(3.0),
+            ExsValue::Float(0.5),
+            ExsValue::Float(8.0),
+            ExsValue::Float(2.0),
+            ExsValue::Int(3),
+            ExsValue::Bool(true),
+        ]),
+    );
+}
+
+/// Returns recoverable parse and range errors from checked numeric operations.
+#[test]
+fn reports_extended_numeric_method_errors() {
+    for (source, kind) in [
+        (
+            "fn main() -> Error { ret Int::parse(\"4.2\"); }",
+            "ParseError",
+        ),
+        ("fn main() -> Error { ret (2).pow(-1); }", "ValueError"),
+        (
+            "fn main() -> Error { ret (9223372036854775807).lcm(2); }",
+            "IntOverflowError",
+        ),
+        (
+            "fn main() -> Error { ret (3.0).clamp(4.0, 2.0); }",
+            "ValueError",
+        ),
+    ] {
+        let ExsValue::Error(error) = execute_source_with_inputs(source, &[]) else {
+            panic!("numeric operation did not return an Error");
+        };
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.severity, ErrorSeverity::Recoverable);
+    }
+}
+
+/// Evaluates Unicode-aware String and binary Bytes convenience methods.
+#[test]
+fn executes_extended_string_and_bytes_methods() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List | Error {
+                    let text = "  A🙂b  ";
+                    let bytes = Bytes::from_hex("00ff41")?;
+                    ret [
+                        text.slice(2, 5)?,
+                        text.trim(),
+                        text.contains("🙂"),
+                        text.starts_with("  A"),
+                        text.ends_with("  "),
+                        "a,b,c".split(","),
+                        "Hello".replace("l", "x"),
+                        "SS".to_lowercase(),
+                        "ha".repeat(3),
+                        text.encode_utf8().decode_utf8()?,
+                        bytes.to_hex(),
+                        bytes.to_base64(),
+                        Bytes::from_base64("AP9B")?,
+                        bytes.starts_with(Bytes::from_list([0])?),
+                        bytes.ends_with(b"A"),
+                        bytes.contains(Bytes::from_list([255])?),
+                        b"go".repeat(2),
+                    ];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::String("A🙂b".to_owned()),
+            ExsValue::String("A🙂b".to_owned()),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::List(vec![
+                ExsValue::String("a".to_owned()),
+                ExsValue::String("b".to_owned()),
+                ExsValue::String("c".to_owned()),
+            ]),
+            ExsValue::String("Hexxo".to_owned()),
+            ExsValue::String("ss".to_owned()),
+            ExsValue::String("hahaha".to_owned()),
+            ExsValue::String("  A🙂b  ".to_owned()),
+            ExsValue::String("00ff41".to_owned()),
+            ExsValue::String("AP9B".to_owned()),
+            ExsValue::Bytes(vec![0, 255, 65]),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bytes(b"gogo".to_vec()),
+        ]),
+    );
+}
+
 /// Executes standard length and emptiness methods for String, List, and Object values.
 #[test]
 fn executes_standard_collection_methods() {
@@ -316,4 +446,63 @@ fn executes_standard_error_methods() {
         ),
         ExsValue::Int(7)
     );
+}
+
+/// Executes strict-Float static Math constants and functions.
+#[test]
+fn executes_static_math_functions() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List | Error {
+                    ret [
+                        Math::pi(),
+                        Math::tau(),
+                        Math::e(),
+                        Math::sin(0.0),
+                        Math::cos(0.0),
+                        Math::tan(0.0),
+                        Math::asin(0.0),
+                        Math::acos(1.0),
+                        Math::atan(0.0),
+                        Math::atan2(0.0, 1.0),
+                        Math::exp(0.0),
+                        Math::ln(1.0),
+                        Math::log2(1.0),
+                        Math::log10(1.0),
+                        Math::hypot(3.0, 4.0),
+                    ];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Float(core::f64::consts::PI),
+            ExsValue::Float(core::f64::consts::TAU),
+            ExsValue::Float(core::f64::consts::E),
+            ExsValue::Float(0.0),
+            ExsValue::Float(1.0),
+            ExsValue::Float(0.0),
+            ExsValue::Float(0.0),
+            ExsValue::Float(0.0),
+            ExsValue::Float(0.0),
+            ExsValue::Float(0.0),
+            ExsValue::Float(1.0),
+            ExsValue::Float(0.0),
+            ExsValue::Float(0.0),
+            ExsValue::Float(0.0),
+            ExsValue::Float(5.0),
+        ]),
+    );
+}
+
+/// Rejects non-Float Math inputs rather than coercing Int values.
+#[test]
+fn static_math_functions_require_float_arguments() {
+    let ExsValue::Error(error) =
+        execute_source_with_inputs("fn main() -> Error { ret Math::sin(1); }", &[])
+    else {
+        panic!("Math::sin accepted an Int argument");
+    };
+    assert_eq!(error.kind, "TypeError");
 }

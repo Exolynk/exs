@@ -17,6 +17,11 @@ struct PreludeSource {
 /// Prelude units linked in deterministic dependency order.
 const SOURCES: &[PreludeSource] = &[
     PreludeSource {
+        source_id: "<std>/collections.exs",
+        text: include_str!("collections.exs"),
+        type_names: &[],
+    },
+    PreludeSource {
         source_id: "<std>/datetime.exs",
         text: include_str!("datetime.exs"),
         type_names: &["DateTime"],
@@ -31,6 +36,11 @@ const SOURCES: &[PreludeSource] = &[
         text: include_str!("iterator.exs"),
         type_names: &["IteratorStep", "HostStream"],
     },
+    PreludeSource {
+        source_id: "<std>/range.exs",
+        text: include_str!("range.exs"),
+        type_names: &["Range"],
+    },
 ];
 
 /// Returns all named prelude source units in linking order.
@@ -43,7 +53,21 @@ pub(crate) fn type_names() -> impl Iterator<Item = &'static str> {
     sources()
         .iter()
         .flat_map(|source| source.type_names.iter().copied())
-        .chain(["Bytes"])
+        .chain(["Bytes", "Int", "Float", "Object", "Math"])
+}
+
+/// Returns the private prelude helper implementing one callback-based List method.
+pub(crate) fn list_callback_helper(method: &str) -> Option<&'static str> {
+    match method {
+        "map" => Some("__exs_list_map"),
+        "filter" => Some("__exs_list_filter"),
+        "find" => Some("__exs_list_find"),
+        "any" => Some("__exs_list_any"),
+        "all" => Some("__exs_list_all"),
+        "each" => Some("__exs_list_each"),
+        "reduce" => Some("__exs_list_reduce"),
+        _ => None,
+    }
 }
 
 /// Returns source metadata for all prelude units with a caller-selected lifetime.

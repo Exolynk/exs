@@ -99,6 +99,56 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     description: "Returns the non-negative Euclidean remainder of two Int values. A zero divisor returns DivisionByZeroError and the only overflowing pair, the smallest Int divided by -1, returns IntOverflowError.",
                     example: "let milliseconds = 1001.rem_euclid(1000); // 1",
                 },
+                StandardMethod {
+                    signature: "signum() -> Int",
+                    description: "Returns -1, 0, or 1 according to the receiver sign.",
+                    example: "let direction = change.signum();",
+                },
+                StandardMethod {
+                    signature: "is_even() -> Bool",
+                    description: "Returns whether the receiver is evenly divisible by two.",
+                    example: "let even = count.is_even();",
+                },
+                StandardMethod {
+                    signature: "is_odd() -> Bool",
+                    description: "Returns whether the receiver is not evenly divisible by two.",
+                    example: "let odd = count.is_odd();",
+                },
+                StandardMethod {
+                    signature: "min(other: Int) -> Int",
+                    description: "Returns the smaller exact integer.",
+                    example: "let lower = start.min(end);",
+                },
+                StandardMethod {
+                    signature: "max(other: Int) -> Int",
+                    description: "Returns the larger exact integer.",
+                    example: "let upper = start.max(end);",
+                },
+                StandardMethod {
+                    signature: "clamp(minimum: Int, maximum: Int) -> Int | Error",
+                    description: "Restricts the receiver to an inclusive range. An inverted range returns ValueError.",
+                    example: "let page = requested.clamp(1, 100);",
+                },
+                StandardMethod {
+                    signature: "pow(exponent: Int) -> Int | Error",
+                    description: "Raises the receiver to a non-negative Int exponent. Negative exponents return ValueError and overflow returns IntOverflowError.",
+                    example: "let value = 12;\nlet square = value.pow(2);",
+                },
+                StandardMethod {
+                    signature: "gcd(other: Int) -> Int | Error",
+                    description: "Returns the non-negative greatest common divisor, or IntOverflowError when it is not representable.",
+                    example: "let value = 12;\nlet divisor = value.gcd(18);",
+                },
+                StandardMethod {
+                    signature: "lcm(other: Int) -> Int | Error",
+                    description: "Returns the non-negative least common multiple, or IntOverflowError when it is not representable.",
+                    example: "let value = 12;\nlet period = value.lcm(18);",
+                },
+                StandardMethod {
+                    signature: "to_float() -> Float",
+                    description: "Converts the receiver to binary64 Float using standard IEEE-754 conversion.",
+                    example: "let ratio = count.to_float();",
+                },
             ],
         },
         StandardType {
@@ -126,7 +176,68 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     description: "Rounds to the nearest integral Float. Exact halfway values are rounded away from zero, so `1.5` becomes `2.0` and `-1.5` becomes `-2.0`.",
                     example: "let rating = 4.5;\nlet displayed = rating.round(); // 5.0",
                 },
+                StandardMethod {
+                    signature: "trunc() -> Float",
+                    description: "Removes the fractional component while preserving the Float result type.",
+                    example: "let whole = value.trunc();",
+                },
+                StandardMethod {
+                    signature: "fract() -> Float",
+                    description: "Returns the signed fractional component of the receiver.",
+                    example: "let fraction = value.fract();",
+                },
+                StandardMethod {
+                    signature: "min(other: Float) -> Float",
+                    description: "Returns the IEEE-754 minimum of two Float values.",
+                    example: "let lower = start.min(end);",
+                },
+                StandardMethod {
+                    signature: "max(other: Float) -> Float",
+                    description: "Returns the IEEE-754 maximum of two Float values.",
+                    example: "let upper = start.max(end);",
+                },
+                StandardMethod {
+                    signature: "clamp(minimum: Float, maximum: Float) -> Float | Error",
+                    description: "Restricts the receiver to an inclusive Float range. An inverted range returns ValueError.",
+                    example: "let opacity = value.clamp(0.0, 1.0);",
+                },
+                StandardMethod {
+                    signature: "pow(exponent: Float) -> Float",
+                    description: "Raises the receiver to a Float exponent with IEEE-754 semantics.",
+                    example: "let area = radius.pow(2.0);",
+                },
+                StandardMethod {
+                    signature: "sqrt() -> Float",
+                    description: "Returns the IEEE-754 square root; a negative input produces NaN.",
+                    example: "let root = value.sqrt();",
+                },
+                StandardMethod {
+                    signature: "to_int() -> Int | Error",
+                    description: "Truncates a finite Float to Int. Out-of-range values return IntOverflowError and non-finite values return ValueError.",
+                    example: "let count = value.to_int();",
+                },
+                StandardMethod {
+                    signature: "is_nan() -> Bool",
+                    description: "Returns whether the receiver is NaN.",
+                    example: "let invalid = value.is_nan();",
+                },
+                StandardMethod {
+                    signature: "is_finite() -> Bool",
+                    description: "Returns whether the receiver is neither infinite nor NaN.",
+                    example: "let usable = value.is_finite();",
+                },
+                StandardMethod {
+                    signature: "is_infinite() -> Bool",
+                    description: "Returns whether the receiver is positive or negative infinity.",
+                    example: "let unbounded = value.is_infinite();",
+                },
             ],
+        },
+        StandardType {
+            name: "Math",
+            description: "`Math` is the static namespace for strict-Float mathematical constants and functions. Trigonometric inputs and outputs use radians.",
+            usage: "fn main() -> Float {\n    ret Math::sin(Math::pi() / 2.0);\n}",
+            methods: &[],
         },
         StandardType {
             name: "String",
@@ -142,6 +253,71 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     signature: "is_empty() -> Bool",
                     description: "Returns true when the String contains no Unicode scalar values and false otherwise. It does not trim or normalize the String.",
                     example: "let input = \"\";\nif input.is_empty() {\n    Host::call(\"println\", \"missing input\");\n}",
+                },
+                StandardMethod {
+                    signature: "slice(start: Int, end: Int) -> String | Error",
+                    description: "Returns the half-open Unicode-scalar range. Invalid scalar offsets return IndexError.",
+                    example: "let middle = text.slice(1, 3);",
+                },
+                StandardMethod {
+                    signature: "contains(needle: String) -> Bool | Error",
+                    description: "Returns whether the receiver contains the exact String needle.",
+                    example: "let found = text.contains(\"ExS\");",
+                },
+                StandardMethod {
+                    signature: "starts_with(prefix: String) -> Bool | Error",
+                    description: "Returns whether the receiver starts with the exact String prefix.",
+                    example: "let header = text.starts_with(\"ExS\");",
+                },
+                StandardMethod {
+                    signature: "ends_with(suffix: String) -> Bool | Error",
+                    description: "Returns whether the receiver ends with the exact String suffix.",
+                    example: "let footer = text.ends_with(\"!\");",
+                },
+                StandardMethod {
+                    signature: "split(delimiter: String) -> List | Error",
+                    description: "Returns new String values separated by the exact delimiter, including empty fields.",
+                    example: "let fields = text.split(\",\");",
+                },
+                StandardMethod {
+                    signature: "trim() -> String",
+                    description: "Removes Unicode whitespace from both ends.",
+                    example: "let clean = text.trim();",
+                },
+                StandardMethod {
+                    signature: "trim_start() -> String",
+                    description: "Removes Unicode whitespace from the start.",
+                    example: "let clean = text.trim_start();",
+                },
+                StandardMethod {
+                    signature: "trim_end() -> String",
+                    description: "Removes Unicode whitespace from the end.",
+                    example: "let clean = text.trim_end();",
+                },
+                StandardMethod {
+                    signature: "replace(from: String, to: String) -> String | Error",
+                    description: "Replaces every non-overlapping exact String match.",
+                    example: "let updated = text.replace(\"old\", \"new\");",
+                },
+                StandardMethod {
+                    signature: "to_lowercase() -> String",
+                    description: "Applies Unicode lowercase mapping.",
+                    example: "let lower = text.to_lowercase();",
+                },
+                StandardMethod {
+                    signature: "to_uppercase() -> String",
+                    description: "Applies Unicode uppercase mapping.",
+                    example: "let upper = text.to_uppercase();",
+                },
+                StandardMethod {
+                    signature: "repeat(count: Int) -> String | Error",
+                    description: "Returns a new String repeated a non-negative number of times.",
+                    example: "let divider = \"-\".repeat(3);",
+                },
+                StandardMethod {
+                    signature: "encode_utf8() -> Bytes | Error",
+                    description: "Encodes the immutable UTF-8 contents as raw Bytes.",
+                    example: "let bytes = text.encode_utf8();",
                 },
             ],
         },
@@ -179,6 +355,36 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     signature: "decode_utf8() -> String | Error",
                     description: "Decodes the receiver as UTF-8. Invalid byte sequences return EncodingError rather than replacing or dropping octets.",
                     example: "let text = b\"hello\".decode_utf8(); // \"hello\"",
+                },
+                StandardMethod {
+                    signature: "starts_with(prefix: Bytes) -> Bool | Error",
+                    description: "Returns whether the receiver starts with the exact byte prefix.",
+                    example: "let header = payload.starts_with(b\"EX\");",
+                },
+                StandardMethod {
+                    signature: "ends_with(suffix: Bytes) -> Bool | Error",
+                    description: "Returns whether the receiver ends with the exact byte suffix.",
+                    example: "let trailer = payload.ends_with(b\"!\");",
+                },
+                StandardMethod {
+                    signature: "contains(needle: Bytes) -> Bool | Error",
+                    description: "Returns whether the receiver contains the exact byte sequence.",
+                    example: "let found = payload.contains(b\"EX\");",
+                },
+                StandardMethod {
+                    signature: "repeat(count: Int) -> Bytes | Error",
+                    description: "Returns new Bytes repeated a non-negative number of times.",
+                    example: "let padded = b\"0\".repeat(4);",
+                },
+                StandardMethod {
+                    signature: "to_hex() -> String",
+                    description: "Encodes every byte as two lowercase hexadecimal digits.",
+                    example: "let hex = payload.to_hex();",
+                },
+                StandardMethod {
+                    signature: "to_base64() -> String",
+                    description: "Encodes the Bytes as padded RFC 4648 base64 text.",
+                    example: "let encoded = payload.to_base64();",
                 },
             ],
         },
@@ -222,6 +428,96 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     description: "Removes every element from the existing List and returns None. Aliases continue to refer to the now-empty same List.",
                     example: "let items = [1, 2, 3];\nitems.clear();\nlet empty = items.is_empty(); // true",
                 },
+                StandardMethod {
+                    signature: "get(index: Int) -> Any | None | Error",
+                    description: "Returns the zero-based item, or None when the index is beyond the List. Negative or unsupported indexes return IndexError.",
+                    example: "let value = items.get(3);",
+                },
+                StandardMethod {
+                    signature: "first() -> Any | None",
+                    description: "Returns the first item, or None when the List is empty.",
+                    example: "let first = items.first();",
+                },
+                StandardMethod {
+                    signature: "last() -> Any | None",
+                    description: "Returns the final item, or None when the List is empty.",
+                    example: "let last = items.last();",
+                },
+                StandardMethod {
+                    signature: "slice(start: Int, end: Int) -> List | Error",
+                    description: "Returns a new shallow List for the validated half-open range. Invalid bounds return IndexError.",
+                    example: "let middle = items.slice(1, 3);",
+                },
+                StandardMethod {
+                    signature: "extend(other: List) -> Int | Error",
+                    description: "Mutates this List by appending a shallow copy of other and returns the new length.",
+                    example: "items.extend(more_items);",
+                },
+                StandardMethod {
+                    signature: "reverse() -> None",
+                    description: "Reverses this List in place and returns None.",
+                    example: "items.reverse();",
+                },
+                StandardMethod {
+                    signature: "reversed() -> List",
+                    description: "Returns a new shallow List in reverse order without mutating the receiver.",
+                    example: "let latest_first = items.reversed();",
+                },
+                StandardMethod {
+                    signature: "contains(value) -> Bool",
+                    description: "Tests for a value using ExS equality semantics.",
+                    example: "let found = items.contains(target);",
+                },
+                StandardMethod {
+                    signature: "index_of(value) -> Int | None",
+                    description: "Returns the first matching index, or None when absent.",
+                    example: "let index = items.index_of(target);",
+                },
+                StandardMethod {
+                    signature: "last_index_of(value) -> Int | None",
+                    description: "Returns the final matching index, or None when absent.",
+                    example: "let index = items.last_index_of(target);",
+                },
+                StandardMethod {
+                    signature: "join(separator: String) -> String | Error",
+                    description: "Joins String items using a String separator. Non-String items return TypeError.",
+                    example: "let csv = names.join(\",\");",
+                },
+                StandardMethod {
+                    signature: "map(callback: Fn) -> List | Error",
+                    description: "Maps every item and returns the first Error returned by the callback. Existing Error items remain normal callback inputs.",
+                    example: "let names = users.map((user) => { ret user.name; });",
+                },
+                StandardMethod {
+                    signature: "filter(callback: Fn) -> List | Error",
+                    description: "Keeps callback-accepted items and returns the first callback Error.",
+                    example: "let active = users.filter((user) => { ret user.active; });",
+                },
+                StandardMethod {
+                    signature: "find(callback: Fn) -> Any | None | Error",
+                    description: "Returns the first callback-accepted item, or None. Callback Errors are returned.",
+                    example: "let user = users.find((user) => { ret user.id == id; });",
+                },
+                StandardMethod {
+                    signature: "any(callback: Fn) -> Bool | Error",
+                    description: "Returns whether a callback accepts any item. Callback Errors are returned.",
+                    example: "let has_admin = users.any((user) => { ret user.admin; });",
+                },
+                StandardMethod {
+                    signature: "all(callback: Fn) -> Bool | Error",
+                    description: "Returns whether a callback accepts every item. Callback Errors are returned.",
+                    example: "let valid = values.all((value) => { ret value > 0; });",
+                },
+                StandardMethod {
+                    signature: "each(callback: Fn) -> None | Error",
+                    description: "Invokes the callback for each item and returns the first callback Error.",
+                    example: "items.each((item) => { Host::call(\"record\", item); ret None; });",
+                },
+                StandardMethod {
+                    signature: "reduce(initial, callback: Fn) -> Any | Error",
+                    description: "Folds every item from an explicit initial accumulator and returns the first callback Error.",
+                    example: "let total = values.reduce(0, (total, value) => { ret total + value; });",
+                },
             ],
         },
         StandardType {
@@ -258,6 +554,26 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     signature: "values() -> List",
                     description: "Returns a new shallow List of values in the same insertion order as `keys()`. The values themselves retain their original identity.",
                     example: "let user = { name: \"Ada\", role: \"admin\" };\nlet values = user.values(); // [\"Ada\", \"admin\"]",
+                },
+                StandardMethod {
+                    signature: "get_or(key: String, default) -> Any | Error",
+                    description: "Returns the key value or the supplied default when the key is absent.",
+                    example: "let role = user.get_or(\"role\", \"guest\");",
+                },
+                StandardMethod {
+                    signature: "clear() -> None",
+                    description: "Removes all keys from this Object while preserving its identity.",
+                    example: "user.clear();",
+                },
+                StandardMethod {
+                    signature: "entries() -> List",
+                    description: "Returns new two-item [key, value] Lists in insertion order.",
+                    example: "let entries = user.entries();",
+                },
+                StandardMethod {
+                    signature: "merge(other: Object) -> Object | Error",
+                    description: "Returns a new plain Object; matching right-hand keys replace left-hand values while retaining their original position.",
+                    example: "let merged = defaults.merge(overrides);",
                 },
             ],
         },

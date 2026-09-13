@@ -154,21 +154,16 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
-            Operation::BytesStatic {
-                value,
-                from_utf8,
+            Operation::RuntimeStatic {
+                values,
+                export,
                 destination,
                 span,
             } => {
-                self.get_slot(*value, *span)?;
-                self.call_runtime(
-                    if *from_utf8 {
-                        "__exs_rt_bytes_from_utf8"
-                    } else {
-                        "__exs_rt_bytes_from_list"
-                    },
-                    *span,
-                )?;
+                for value in values {
+                    self.get_slot(*value, *span)?;
+                }
+                self.call_runtime(export, *span)?;
                 self.set_slot(*destination, *span)?;
                 self.complete_if_error(*destination, *span)?;
                 self.ready(next, *span)?;
@@ -687,6 +682,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 method_span,
                 arguments,
                 targets,
+                fallback,
                 destination,
                 span,
             } => self.instance_call(
@@ -696,6 +692,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 *method_span,
                 arguments,
                 targets,
+                fallback.as_ref(),
                 *destination,
                 *span,
             )?,
@@ -813,7 +810,6 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.function.instruction(&Instruction::I32Const(0));
                 self.call_runtime("__exs_rt_enum_field", *span)?;
                 self.set_slot(*item, *span)?;
-                self.complete_if_error(*item, *span)?;
                 self.ready(*when_item, *span)?;
                 self.function.instruction(&Instruction::Else);
                 self.get_slot(*step, *span)?;
@@ -1046,6 +1042,9 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function.instruction(&Instruction::Br(0));
         self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::End);
+        self.get_slot(closure, span)?;
+        self.call_runtime("__exs_rt_closure_arity", span)?;
+        self.function.instruction(&Instruction::LocalSet(5));
         for (index, argument) in arguments.iter().enumerate() {
             let index = i32::try_from(index).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(

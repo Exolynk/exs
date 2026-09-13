@@ -157,6 +157,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         method_span: SourceSpan<'source>,
         arguments: &[u32],
         targets: &[InstanceMethod],
+        fallback: Option<&crate::codegen::function::FunctionSignature>,
         destination: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
@@ -167,6 +168,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             method_span,
             arguments,
             targets,
+            fallback,
             0,
             destination,
             span,
@@ -183,11 +185,22 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         method_span: SourceSpan<'source>,
         arguments: &[u32],
         targets: &[InstanceMethod],
+        fallback: Option<&crate::codegen::function::FunctionSignature>,
         index: usize,
         destination: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         let Some(target) = targets.get(index) else {
+            if let Some(fallback) = fallback {
+                return self.standard_callback_call(
+                    next,
+                    receiver,
+                    arguments,
+                    fallback,
+                    destination,
+                    span,
+                );
+            }
             return self.runtime_method_call(
                 next,
                 receiver,
@@ -249,12 +262,52 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             method_span,
             arguments,
             targets,
+            fallback,
             index + 1,
             destination,
             span,
         )?;
         self.function.instruction(&Instruction::End);
         Ok(())
+    }
+
+    /// Calls one private standard callback helper after nominal method dispatch misses.
+    fn standard_callback_call(
+        &mut self,
+        next: u32,
+        receiver: u32,
+        arguments: &[u32],
+        signature: &crate::codegen::function::FunctionSignature,
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        if !signature.accepts_arity(arguments.len() + 1) {
+            self.get_slot(receiver, span)?;
+            self.call_runtime("__exs_rt_method_arity_error", span)?;
+            self.set_slot(destination, span)?;
+            return self.ready(next, span);
+        }
+        if let Some(layout) = self
+            .frame_layouts
+            .values()
+            .find(|layout| layout.function_id == signature.function_id)
+            .copied()
+        {
+            let mut child_arguments = Vec::with_capacity(arguments.len() + 1);
+            child_arguments.push(receiver);
+            child_arguments.extend_from_slice(arguments);
+            return self.child_call(next, layout, &child_arguments, destination, span);
+        }
+        self.get_slot(receiver, span)?;
+        for argument in arguments {
+            self.get_slot(*argument, span)?;
+        }
+        self.set_call_site(span)?;
+        self.function
+            .instruction(&Instruction::Call(signature.index));
+        self.set_slot(destination, span)?;
+        self.complete_if_fatal_error(destination, span)?;
+        self.ready(next, span)
     }
 
     /// Packs a source argument suffix into a durable List slot for one variadic child call.

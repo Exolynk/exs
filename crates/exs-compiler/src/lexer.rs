@@ -122,6 +122,10 @@ pub enum TokenKind {
     Dot,
     /// `...`.
     Ellipsis,
+    /// `..`.
+    Range,
+    /// `..=`.
+    RangeInclusive,
     /// `:`.
     Colon,
     /// `::`.
@@ -240,7 +244,7 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                 continue;
             }
             let mut is_float = false;
-            if bytes.get(index) == Some(&b'.') {
+            if bytes.get(index) == Some(&b'.') && bytes.get(index + 1) != Some(&b'.') {
                 is_float = true;
                 index += 1;
                 let fraction_start = index;
@@ -387,6 +391,16 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                     {
                         index += 2;
                         TokenKind::Ellipsis
+                    }
+                    b'.' if bytes.get(index) == Some(&b'.')
+                        && bytes.get(index + 1) == Some(&b'=') =>
+                    {
+                        index += 2;
+                        TokenKind::RangeInclusive
+                    }
+                    b'.' if bytes.get(index) == Some(&b'.') => {
+                        index += 1;
+                        TokenKind::Range
                     }
                     b'.' => TokenKind::Dot,
                     b':' if bytes.get(index) == Some(&b':') => {

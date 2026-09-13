@@ -291,6 +291,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 .methods
                 .trait_instance("Iterator", "next")
                 .map_or_else(Vec::new, ToOwned::to_owned),
+            fallback: None,
             destination: step,
             span,
         });
