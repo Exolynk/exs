@@ -390,7 +390,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
         },
         StandardType {
             name: "List",
-            description: "`List` is a mutable ordered collection. Variables and closure captures preserve List identity, so mutations through one alias are visible through every alias of the same List.",
+            description: "`List` is a mutable ordered collection. Variables and closure captures preserve List identity, so mutations through one alias are visible through every alias of the same List. Its shared eager iterable methods are documented by the [`Iterator`](../traits/iterator.md) trait.",
             usage: "fn main() -> Int {\n    let items = [\"Ada\", \"Lin\"];\n    ret items.push(\"Mia\");\n}",
             methods: &[
                 StandardMethod {
@@ -482,41 +482,6 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     signature: "join(separator: String) -> String | Error",
                     description: "Joins String items using a String separator. Non-String items return TypeError.",
                     example: "let csv = names.join(\",\");",
-                },
-                StandardMethod {
-                    signature: "map(callback: Fn) -> List | Error",
-                    description: "Maps every item and returns the first Error returned by the callback. Existing Error items remain normal callback inputs.",
-                    example: "let names = users.map((user) => { ret user.name; });",
-                },
-                StandardMethod {
-                    signature: "filter(callback: Fn) -> List | Error",
-                    description: "Keeps callback-accepted items and returns the first callback Error.",
-                    example: "let active = users.filter((user) => { ret user.active; });",
-                },
-                StandardMethod {
-                    signature: "find(callback: Fn) -> Any | None | Error",
-                    description: "Returns the first callback-accepted item, or None. Callback Errors are returned.",
-                    example: "let user = users.find((user) => { ret user.id == id; });",
-                },
-                StandardMethod {
-                    signature: "any(callback: Fn) -> Bool | Error",
-                    description: "Returns whether a callback accepts any item. Callback Errors are returned.",
-                    example: "let has_admin = users.any((user) => { ret user.admin; });",
-                },
-                StandardMethod {
-                    signature: "all(callback: Fn) -> Bool | Error",
-                    description: "Returns whether a callback accepts every item. Callback Errors are returned.",
-                    example: "let valid = values.all((value) => { ret value > 0; });",
-                },
-                StandardMethod {
-                    signature: "each(callback: Fn) -> None | Error",
-                    description: "Invokes the callback for each item and returns the first callback Error.",
-                    example: "items.each((item) => { Host::call(\"record\", item); ret None; });",
-                },
-                StandardMethod {
-                    signature: "reduce(initial, callback: Fn) -> Any | Error",
-                    description: "Folds every item from an explicit initial accumulator and returns the first callback Error.",
-                    example: "let total = values.reduce(0, (total, value) => { ret total + value; });",
                 },
             ],
         },
@@ -817,12 +782,117 @@ fn standard_trait_page(descriptor: &StandardTraitDescriptor) -> DocumentationPag
     } else {
         "Required Methods"
     };
+    let automatic_methods = automatic_trait_methods(descriptor.name);
+    let automatic_section = render_automatic_trait_methods(automatic_methods);
     DocumentationPage {
         path: format!("modules/std/traits/{}.md", slug(descriptor.name)),
         markdown: format!(
-            "# Trait `std::{}`\n\n{}\n\n## {method_heading}\n\n{methods}\n\n## Built-in Implementations\n\n{implementations}\n\n## Usage\n\n```exs\n{}\n```\n",
+            "# Trait `std::{}`\n\n{}\n\n## {method_heading}\n\n{methods}{automatic_section}\n## Built-in Implementations\n\n{implementations}\n\n## Usage\n\n```exs\n{}\n```\n",
             descriptor.name, descriptor.description, descriptor.usage,
         ),
+    }
+}
+
+/// Returns standard-library methods automatically available through one trait.
+pub(super) fn automatic_trait_methods(trait_name: &str) -> &'static [StandardMethod] {
+    match trait_name {
+        "Iterator" => &[
+            StandardMethod {
+                signature: "map(callback: Fn) -> List | Error",
+                description: "Maps every yielded item and returns the first Error returned by the callback. Error values already yielded remain normal callback inputs.",
+                example: "let doubled = (0..3).map((value) => { ret value * 2; });",
+            },
+            StandardMethod {
+                signature: "filter(callback: Fn) -> List | Error",
+                description: "Collects items whose callback result is true. The first callback Error is returned.",
+                example: "let even = (0..6).filter((value) => { ret value % 2 == 0; });",
+            },
+            StandardMethod {
+                signature: "find(callback: Fn) -> Any | None | Error",
+                description: "Returns the first item whose callback result is true, or None when no item matches. The first callback Error is returned.",
+                example: "let first = (0..6).find((value) => { ret value > 3; });",
+            },
+            StandardMethod {
+                signature: "any(callback: Fn) -> Bool | Error",
+                description: "Returns whether any yielded item produces true. The first callback Error is returned.",
+                example: "let present = (0..6).any((value) => { ret value == 4; });",
+            },
+            StandardMethod {
+                signature: "all(callback: Fn) -> Bool | Error",
+                description: "Returns whether every yielded item produces true. The first callback Error is returned.",
+                example: "let valid = (1..4).all((value) => { ret value > 0; });",
+            },
+            StandardMethod {
+                signature: "each(callback: Fn) -> None | Error",
+                description: "Invokes the callback once for every yielded item. The first callback Error is returned.",
+                example: "(0..3).each((value) => { Host::call(\"record\", value); ret None; });",
+            },
+            StandardMethod {
+                signature: "reduce(initial, callback: Fn) -> Any | Error",
+                description: "Folds yielded items from an explicit initial accumulator. The first callback Error is returned.",
+                example: "let total = (1..4).reduce(0, (total, value) => { ret total + value; });",
+            },
+            StandardMethod {
+                signature: "collect() -> List | Error",
+                description: "Returns a new List containing every yielded item.",
+                example: "let values = (0..3).collect(); // [0, 1, 2]",
+            },
+            StandardMethod {
+                signature: "count() -> Int | Error",
+                description: "Returns the number of yielded items.",
+                example: "let count = \"Ada\".count(); // 3",
+            },
+            StandardMethod {
+                signature: "to_list() -> List | Error",
+                description: "Returns a new List containing every yielded item. This is an alias for `collect()`.",
+                example: "let values = (0..3).to_list(); // [0, 1, 2]",
+            },
+        ],
+        _ => &[],
+    }
+}
+
+/// Renders automatic methods supplied to values that satisfy one trait.
+pub(super) fn render_automatic_trait_methods(methods: &[StandardMethod]) -> String {
+    if methods.is_empty() {
+        return String::new();
+    }
+    let mut output = String::from("\n\n## Automatically Provided Methods\n\n");
+    output.push_str("The standard library provides these eager methods for every iterable value, including user-defined types that satisfy this trait. They do not need to be implemented by user-defined types.\n\n");
+    for method in methods {
+        render_standard_method(&mut output, method, "###");
+    }
+    output
+}
+
+/// Renders automatic trait methods inherited by one documented type or enum.
+pub(super) fn render_type_automatic_trait_methods(output: &mut String, trait_names: &[&str]) {
+    let trait_names = trait_names
+        .iter()
+        .copied()
+        .filter(|trait_name| !automatic_trait_methods(trait_name).is_empty())
+        .collect::<Vec<_>>();
+    if trait_names.is_empty() {
+        return;
+    }
+    output.push_str("\n## Automatically Provided Methods\n\n");
+    output.push_str("These methods are supplied by the listed traits and do not need to be implemented by this type.\n\n");
+    for trait_name in trait_names {
+        output.push_str(&format!(
+            "### Trait [`{trait_name}`](../traits/{}.md)\n\n",
+            slug(trait_name)
+        ));
+        for method in automatic_trait_methods(trait_name) {
+            render_standard_method(output, method, "####");
+        }
+    }
+}
+
+/// Returns traits whose automatic methods are available to one runtime-owned built-in type.
+fn automatic_traits_for_standard_type(type_name: &str) -> &'static [&'static str] {
+    match type_name {
+        "String" | "Bytes" | "List" => &["Iterator"],
+        _ => &[],
     }
 }
 
@@ -890,13 +960,12 @@ fn render_standard_type(type_info: &StandardType) -> String {
         render_standard_trait_implementation(&mut output, descriptor);
     }
     for method in type_info.methods {
-        output.push_str(&format!(
-            "### `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
-            method.signature,
-            method.description,
-            script_example(method.example)
-        ));
+        render_standard_method(&mut output, method, "###");
     }
+    render_type_automatic_trait_methods(
+        &mut output,
+        automatic_traits_for_standard_type(type_info.name),
+    );
     let static_functions = standard_library_type_static_functions(type_info.name);
     if !static_functions.is_empty() {
         output.push_str("## Static Functions\n\n");
@@ -915,6 +984,16 @@ fn render_standard_function(output: &mut String, function: &StandardFunction, he
         function.signature,
         function.description,
         script_example(function.example)
+    ));
+}
+
+/// Renders one documented standard-library instance method.
+pub(super) fn render_standard_method(output: &mut String, method: &StandardMethod, heading: &str) {
+    output.push_str(&format!(
+        "{heading} `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
+        method.signature,
+        method.description,
+        script_example(method.example)
     ));
 }
 

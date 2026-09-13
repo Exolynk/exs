@@ -608,7 +608,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 arguments,
                 ..
             } => {
-                if let Some(key) = crate::prelude::list_callback_helper(&method.name) {
+                if let Some(key) = crate::prelude::iterator_helper(&method.name) {
                     self.calls.push(CallEdge {
                         key: key.to_owned(),
                         span: method.span,

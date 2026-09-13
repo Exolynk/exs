@@ -1,5 +1,8 @@
 use super::shared::*;
-use super::standard::{render_clone_method, standard_pages};
+use super::standard::{
+    automatic_trait_methods, render_automatic_trait_methods, render_clone_method,
+    render_type_automatic_trait_methods, standard_pages,
+};
 use super::*;
 use crate::loaded_project::{ImportEdge, LoadedProject, LoadedSource, parse_source};
 
@@ -218,6 +221,7 @@ pub(super) fn render_enum_page(
         }
     }
     render_nominal_implementations(&mut output, module, &declaration.name.name, source);
+    render_nominal_automatic_trait_methods(&mut output, module, &declaration.name.name);
     output.push_str("\n## Runtime Methods\n\n");
     render_clone_method(&mut output, &declaration.name.name);
     output
@@ -270,9 +274,31 @@ pub(super) fn render_type_page(
     }
     output.push_str("}\n```\n\n");
     render_nominal_implementations(&mut output, module, &declaration.name.name, source);
+    render_nominal_automatic_trait_methods(&mut output, module, &declaration.name.name);
     output.push_str("\n## Runtime Methods\n\n");
     render_clone_method(&mut output, &declaration.name.name);
     output
+}
+
+/// Renders automatic trait methods inherited by one nominal type or enum.
+fn render_nominal_automatic_trait_methods(output: &mut String, module: &Module<'_>, name: &str) {
+    let mut traits = Vec::new();
+    for implementation in module
+        .implementations
+        .iter()
+        .filter(|implementation| implementation.type_name.name == name)
+    {
+        let Some(trait_name) = implementation.trait_name.as_ref() else {
+            continue;
+        };
+        if automatic_trait_methods(&trait_name.name).is_empty()
+            || traits.iter().any(|known| *known == trait_name.name)
+        {
+            continue;
+        }
+        traits.push(trait_name.name.as_str());
+    }
+    render_type_automatic_trait_methods(output, &traits);
 }
 
 /// Renders all inherent and trait-provided methods of one nominal declaration.
@@ -359,14 +385,18 @@ pub(super) fn render_trait_page(
 ) -> String {
     let mut output = format!("# Trait `{}`\n\n", declaration.name.name);
     append_comment(&mut output, &source.text, declaration.span);
-    if declaration.methods.is_empty() {
+    let automatic_methods = automatic_trait_methods(&declaration.name.name);
+    if declaration.methods.is_empty() && automatic_methods.is_empty() {
         output.push_str("This trait declares no methods.\n");
         return output;
     }
-    output.push_str("## Methods\n\n");
-    for method in &declaration.methods {
-        render_trait_method_details(&mut output, method, &source.text);
+    if !declaration.methods.is_empty() {
+        output.push_str("## Required Methods\n\n");
+        for method in &declaration.methods {
+            render_trait_method_details(&mut output, method, &source.text);
+        }
     }
+    output.push_str(&render_automatic_trait_methods(automatic_methods));
     output
 }
 

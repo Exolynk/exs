@@ -56,8 +56,8 @@ pub(crate) fn type_names() -> impl Iterator<Item = &'static str> {
         .chain(["Bytes", "Int", "Float", "Object", "Math"])
 }
 
-/// Returns the private prelude helper implementing one callback-based List method.
-pub(crate) fn list_callback_helper(method: &str) -> Option<&'static str> {
+/// Returns the private prelude helper implementing one eager iterable method.
+pub(crate) fn iterator_helper(method: &str) -> Option<&'static str> {
     match method {
         "map" => Some("__exs_list_map"),
         "filter" => Some("__exs_list_filter"),
@@ -66,6 +66,9 @@ pub(crate) fn list_callback_helper(method: &str) -> Option<&'static str> {
         "all" => Some("__exs_list_all"),
         "each" => Some("__exs_list_each"),
         "reduce" => Some("__exs_list_reduce"),
+        "collect" => Some("__exs_iterator_collect"),
+        "count" => Some("__exs_iterator_count"),
+        "to_list" => Some("__exs_iterator_to_list"),
         _ => None,
     }
 }

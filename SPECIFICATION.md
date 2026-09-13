@@ -308,7 +308,7 @@ for item in iterable {
 
 `while` evaluates its Bool condition before every iteration.
 
-`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. Bytes yields one Int octet from 0 through 255. `start..end` creates a half-open Int Range and `start..=end` creates an inclusive Int Range; both infer direction from their endpoints. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
+`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. Bytes yields one Int octet from 0 through 255. `start..end` creates a half-open Int Range and `start..=end` creates an inclusive Int Range; both infer direction from their endpoints. `Range::step(start, end, step)` is an explicit half-open range, while `Range::step_through(start, end, step)` is inclusive. A step must be non-zero and move toward its endpoint. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
 
 Each loop iteration creates a fresh binding for the loop variable. Closures created in separate iterations therefore capture distinct loop bindings.
 
@@ -588,7 +588,12 @@ list.any(callback)      // Bool or callback Error
 list.all(callback)      // Bool or callback Error
 list.each(callback)     // None or callback Error
 list.reduce(initial, callback) // accumulated value or callback Error
+list.collect()            // new shallow List snapshot
+list.count()              // number of yielded items
+list.to_list()            // alias for collect()
 ```
+
+Every iterable supports `map`, `filter`, `find`, `any`, `all`, `each`, `reduce`, `collect`, `count`, and `to_list`. These operations are eager. Callback-based operations return the first Error produced by their callback; Error values already present in the iterable are ordinary items.
 
 Objects support:
 

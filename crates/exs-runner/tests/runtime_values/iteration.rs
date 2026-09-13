@@ -93,6 +93,50 @@ fn iterates_range_expressions() {
     );
 }
 
+/// Iterates explicit stepped Ranges and applies eager helpers to every iterable kind.
+#[test]
+fn iterates_stepped_ranges_and_eager_iterable_helpers() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) -> List | Error {
+                let stepped = Range::step(0, 8, 2)?;
+                let through = Range::step_through(6, 0, -3)?;
+                let doubled = stepped.map((value) => { ret value * 2; })?;
+                ret [doubled, through.to_list()?, "A🙂".count()?, b"AB".collect()?];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![
+                ExsValue::Int(0),
+                ExsValue::Int(4),
+                ExsValue::Int(8),
+                ExsValue::Int(12),
+            ]),
+            ExsValue::List(vec![ExsValue::Int(6), ExsValue::Int(3), ExsValue::Int(0)]),
+            ExsValue::Int(2),
+            ExsValue::List(vec![ExsValue::Int(65), ExsValue::Int(66)]),
+        ]),
+    );
+}
+
+/// Rejects explicit Range steps that cannot produce a valid progression.
+#[test]
+fn rejects_invalid_explicit_range_steps() {
+    for source in [
+        "fn main(input) -> Error { ret Range::step(0, 1, 0); }",
+        "fn main(input) -> Error { ret Range::step(0, 1, -1); }",
+        "fn main(input) -> Error { ret Range::step(1, 0, 1); }",
+    ] {
+        let ExsValue::Error(error) = execute_source(source, ExsValue::None) else {
+            panic!("invalid Range step did not return an Error");
+        };
+        assert_eq!(error.kind, "ValueError");
+    }
+}
+
 /// Gives closures created in separate for-loop iterations distinct captured bindings.
 #[test]
 fn preserves_for_loop_closure_captures_per_iteration() {

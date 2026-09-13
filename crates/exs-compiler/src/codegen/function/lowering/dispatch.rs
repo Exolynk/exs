@@ -171,7 +171,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let Some(target) = targets.get(index) else {
-            if let Some(helper) = crate::prelude::list_callback_helper(&method.name) {
+            if let Some(helper) = crate::prelude::iterator_helper(&method.name) {
                 return self.compile_standard_callback_method_call(
                     receiver, arguments, method, helper, span,
                 );
@@ -210,7 +210,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.exit_control()
     }
 
-    /// Calls one private callback-based List helper after nominal method dispatch misses.
+    /// Calls one private eager iterable helper after nominal method dispatch misses.
     fn compile_standard_callback_method_call(
         &mut self,
         receiver: u32,
@@ -223,7 +223,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             diagnostics(CompileDiagnostic::new(
                 "E0999",
                 method.span,
-                "missing standard List callback helper",
+                "missing standard iterable helper",
             ))
         })?;
         if !signature.accepts_arity(arguments.len() + 1) {

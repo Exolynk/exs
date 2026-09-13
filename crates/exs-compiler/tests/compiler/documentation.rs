@@ -157,6 +157,30 @@ fn generates_markdown_api_documentation() {
             .markdown
             .contains("fn next(self) -> IteratorStep | Error;")
     );
+    assert!(iterator.markdown.contains("## Required Methods"));
+    assert!(
+        iterator
+            .markdown
+            .contains("## Automatically Provided Methods")
+    );
+    assert!(
+        iterator
+            .markdown
+            .contains("`map(callback: Fn) -> List | Error`")
+    );
+    assert!(iterator.markdown.contains("`collect() -> List | Error`"));
+    let range = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/range.md")
+        .unwrap_or_else(|| panic!("missing std Range type page"));
+    assert!(range.markdown.contains("## Automatically Provided Methods"));
+    assert!(
+        range
+            .markdown
+            .contains("Trait [`Iterator`](../traits/iterator.md)")
+    );
+    assert!(range.markdown.contains("#### `collect() -> List | Error`"));
     let host_stream = documentation
         .pages
         .iter()
@@ -171,6 +195,11 @@ fn generates_markdown_api_documentation() {
         host_stream
             .markdown
             .contains("Trait [`Iterator`](../traits/iterator.md)")
+    );
+    assert!(
+        host_stream
+            .markdown
+            .contains("## Automatically Provided Methods")
     );
     let standard = documentation
         .pages
@@ -277,6 +306,22 @@ fn generates_markdown_api_documentation() {
     assert!(list.markdown.contains("### `length() -> Int`"));
     assert!(list.markdown.contains("mutates the existing List"));
     assert!(list.markdown.contains("let items = [\"Ada\"];"));
+    assert!(list.markdown.contains("## Automatically Provided Methods"));
+    assert!(
+        list.markdown
+            .contains("Trait [`Iterator`](../traits/iterator.md)")
+    );
+    assert!(
+        list.markdown
+            .contains("#### `map(callback: Fn) -> List | Error`")
+    );
+    let bytes = documentation
+        .pages
+        .iter()
+        .find(|page| page.path == "modules/std/types/bytes.md")
+        .unwrap_or_else(|| panic!("missing standard Bytes page"));
+    assert!(bytes.markdown.contains("## Automatically Provided Methods"));
+    assert!(bytes.markdown.contains("#### `count() -> Int | Error`"));
     let float = documentation
         .pages
         .iter()

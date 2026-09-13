@@ -731,13 +731,13 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     slots.push(self.lower_expression(argument)?);
                 }
                 let destination = self.temporary(*span)?;
-                let fallback = crate::prelude::list_callback_helper(&method.name)
+                let fallback = crate::prelude::iterator_helper(&method.name)
                     .map(|key| {
                         self.signatures.get(key).cloned().ok_or_else(|| {
                             diagnostics(CompileDiagnostic::new(
                                 "E0999",
                                 method.span,
-                                "missing standard List callback helper",
+                                "missing standard iterable helper",
                             ))
                         })
                     })
