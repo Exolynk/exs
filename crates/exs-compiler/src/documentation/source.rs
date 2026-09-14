@@ -37,6 +37,249 @@ pub(crate) fn generate<R: ModuleResolver>(
     })
 }
 
+/// Generates a compact language and API reference suitable for an LLM context window.
+pub(crate) fn generate_llm<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    resolver: &mut R,
+) -> Result<String, String> {
+    let project = LoadedProject::load(source, resolver)?;
+    project.validate_no_cycles()?;
+    let files = project.files();
+    let modules = project.parse_modules()?;
+    let mut output = String::from(LANGUAGE_SPECIFICATION.trim_end());
+    output.push_str("\n\n# Compact API Reference\n\n");
+    output.push_str(
+        "This reference lists callable signatures, type contracts, enum variants, and source documentation. It intentionally omits examples, navigation, and repeated implementation details.\n\n",
+    );
+    output.push_str(&super::standard::render_compact_standard_library()?);
+    for (module, source) in modules.iter().zip(files) {
+        render_compact_module(&mut output, module, source, true, true);
+    }
+    Ok(output)
+}
+
+/// Appends the compact declaration surface of one standard or project module.
+pub(super) fn render_compact_module(
+    output: &mut String,
+    module: &Module<'_>,
+    source: &LoadedSource,
+    include_comments: bool,
+    include_functions: bool,
+) {
+    if module.types.is_empty()
+        && module.enums.is_empty()
+        && module.traits.is_empty()
+        && (!include_functions || module.functions.is_empty())
+    {
+        return;
+    }
+    output.push_str(&format!("## Module `{}`\n\n", source.display_path));
+    for declaration in &module.types {
+        render_compact_type(output, module, declaration, source, include_comments);
+    }
+    for declaration in &module.enums {
+        render_compact_enum(output, module, declaration, source, include_comments);
+    }
+    for declaration in &module.traits {
+        render_compact_trait(output, declaration, source, include_comments);
+    }
+    if include_functions {
+        for declaration in &module.functions {
+            render_compact_function(output, declaration, source, include_comments);
+        }
+    }
+}
+
+/// Appends one compact nominal type declaration and its methods.
+fn render_compact_type(
+    output: &mut String,
+    module: &Module<'_>,
+    declaration: &TypeDeclaration<'_>,
+    source: &LoadedSource,
+    include_comments: bool,
+) {
+    output.push_str(&format!("### Type `{}`\n\n", declaration.name.name));
+    append_compact_comment(output, &source.text, declaration.span, include_comments);
+    output.push_str("```exs\n");
+    output.push_str(&format!("type {} {{\n", declaration.name.name));
+    for field in &declaration.fields {
+        output.push_str(&format!(
+            "    {}{},\n",
+            field.name.name,
+            field
+                .type_annotation
+                .as_ref()
+                .map_or_else(String::new, |annotation| format!(
+                    ": {}",
+                    type_annotation(annotation)
+                ))
+        ));
+    }
+    output.push_str("}\n");
+    render_compact_implementations(
+        output,
+        module,
+        &declaration.name.name,
+        source,
+        include_comments,
+    );
+    output.push_str("```\n\n");
+}
+
+/// Appends one compact enum declaration and its methods.
+fn render_compact_enum(
+    output: &mut String,
+    module: &Module<'_>,
+    declaration: &EnumDeclaration<'_>,
+    source: &LoadedSource,
+    include_comments: bool,
+) {
+    output.push_str(&format!("### Enum `{}`\n\n", declaration.name.name));
+    append_compact_comment(output, &source.text, declaration.span, include_comments);
+    output.push_str("```exs\n");
+    output.push_str(&format!("enum {} {{\n", declaration.name.name));
+    for variant in &declaration.variants {
+        output.push_str(&format!("    {}", variant.name.name));
+        if !variant.fields.is_empty() {
+            output.push('(');
+            output.push_str(
+                &variant
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        field.type_annotation.as_ref().map_or_else(
+                            || field.name.name.clone(),
+                            |annotation| {
+                                format!("{}: {}", field.name.name, type_annotation(annotation))
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push(')');
+        }
+        output.push_str(",\n");
+    }
+    output.push_str("}\n");
+    render_compact_implementations(
+        output,
+        module,
+        &declaration.name.name,
+        source,
+        include_comments,
+    );
+    output.push_str("```\n\n");
+}
+
+/// Appends one compact trait declaration.
+fn render_compact_trait(
+    output: &mut String,
+    declaration: &TraitDeclaration<'_>,
+    source: &LoadedSource,
+    include_comments: bool,
+) {
+    output.push_str(&format!("### Trait `{}`\n\n", declaration.name.name));
+    append_compact_comment(output, &source.text, declaration.span, include_comments);
+    output.push_str("```exs\n");
+    output.push_str(&format!("trait {} {{\n", declaration.name.name));
+    for method in &declaration.methods {
+        output.push_str("    ");
+        output.push_str(&function_signature(
+            &method.name.name,
+            &method.parameters,
+            method.return_type.as_ref(),
+        ));
+        output.push_str(if method.body.is_some() {
+            " { ... }\n"
+        } else {
+            ";\n"
+        });
+    }
+    output.push_str("}\n```\n\n");
+}
+
+/// Appends one compact top-level function declaration.
+fn render_compact_function(
+    output: &mut String,
+    declaration: &FunctionDeclaration<'_>,
+    source: &LoadedSource,
+    include_comments: bool,
+) {
+    output.push_str(&format!("### Function `{}`\n\n", declaration.name.name));
+    append_compact_comment(output, &source.text, declaration.span, include_comments);
+    output.push_str("```exs\n");
+    output.push_str(&function_signature(
+        &declaration.name.name,
+        &declaration.parameters,
+        declaration.return_type.as_ref(),
+    ));
+    output.push_str(" { ... }\n```\n\n");
+}
+
+/// Appends all inherent and trait implementation signatures inside one compact declaration block.
+fn render_compact_implementations(
+    output: &mut String,
+    module: &Module<'_>,
+    type_name: &str,
+    source: &LoadedSource,
+    include_comments: bool,
+) {
+    for implementation in module
+        .implementations
+        .iter()
+        .filter(|implementation| implementation.type_name.name == type_name)
+    {
+        output.push_str("\nimpl");
+        if let Some(trait_name) = &implementation.trait_name {
+            output.push_str(&format!(" {} for", trait_name.name));
+        }
+        output.push_str(&format!(" {type_name} {{\n"));
+        for method in &implementation.methods {
+            append_compact_code_comment(output, &source.text, method.span, include_comments);
+            output.push_str("    ");
+            output.push_str(&function_signature(
+                &method.name.name,
+                &method.parameters,
+                method.return_type.as_ref(),
+            ));
+            output.push_str(" { ... }\n");
+        }
+        output.push_str("}\n");
+    }
+}
+
+/// Appends a source declaration comment when the compact context needs authored documentation.
+fn append_compact_comment(
+    output: &mut String,
+    source: &str,
+    span: SourceSpan<'_>,
+    include_comments: bool,
+) {
+    if include_comments {
+        append_comment(output, source, span);
+    }
+}
+
+/// Appends a source documentation comment inside one compact ExS declaration block.
+fn append_compact_code_comment(
+    output: &mut String,
+    source: &str,
+    span: SourceSpan<'_>,
+    include_comments: bool,
+) {
+    if !include_comments {
+        return;
+    }
+    if let Some(comment) = documentation_comment(source, span) {
+        for line in comment.lines() {
+            output.push_str("    /// ");
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+}
+
 /// Parses one documentation source unit without requiring a root entry point.
 pub(super) fn parse<'a>(source_id: &'a str, text: &'a str) -> Result<Module<'a>, String> {
     parse_source(source_id, text)

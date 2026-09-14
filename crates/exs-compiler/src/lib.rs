@@ -205,3 +205,18 @@ pub fn document_with_resolver<R: ModuleResolver>(
 ) -> Result<Documentation, String> {
     documentation::generate(source, resolver)
 }
+
+/// Generates one self-contained Markdown language and API reference for an LLM.
+///
+/// The result starts with the authoritative ExS language specification, followed by generated
+/// standard-library and reachable-project API documentation.
+///
+/// # Errors
+///
+/// Returns a rendered diagnostic report when source loading or parsing fails.
+pub fn document_llm_with_resolver<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    resolver: &mut R,
+) -> Result<String, String> {
+    documentation::generate_llm(source, resolver)
+}

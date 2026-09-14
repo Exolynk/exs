@@ -431,6 +431,41 @@ fn generates_markdown_api_documentation() {
     assert!(debug_trait.markdown.contains("fn debug(self) -> String;"));
 }
 
+/// Combines the language specification and generated standard and source API documentation.
+#[test]
+fn generates_single_llm_markdown_documentation() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./math.exs".to_owned(),
+            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\ntype Counter {}\n\nimpl Counter {\n/// Returns the current count.\nfn count(self) -> Int { ret 0; }\n}"
+                .to_owned(),
+        )]),
+    };
+    let documentation = match document_llm_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./math.exs\" as math;\n/// Runs the program.\nfn main() -> Int { ret math::add(20, 22); }",
+        },
+        &mut resolver,
+    ) {
+        Ok(documentation) => documentation,
+        Err(error) => panic!("LLM documentation generation failed: {error}"),
+    };
+    assert!(documentation.starts_with("# Exolynk Script (ExS) LLM Specification"));
+    assert!(documentation.contains("# Compact API Reference"));
+    assert!(documentation.contains("Host::stream(name, arguments...) -> HostStream | Error"));
+    assert!(documentation.contains("fn next(self) -> IteratorStep | Error;"));
+    assert!(documentation.contains("Adds two integers."));
+    assert!(documentation.contains("Runs the program."));
+    assert!(
+        documentation.contains("impl Counter {\n    /// Returns the current count.\n    fn count")
+    );
+    assert!(documentation.contains("type Counter {\n}\n\nimpl Counter {"));
+    assert!(!documentation.contains("#### `impl Counter`"));
+    assert!(!documentation.contains("Opens a runner-registered pull stream"));
+    assert!(!documentation.contains("__exs_list_any"));
+}
+
 /// Links a standard trait implementation and inherits its method documentation on an enum page.
 #[test]
 fn documents_standard_add_implementations_on_nominal_pages() {

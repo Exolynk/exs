@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use exs_compiler::{
     CompileOptions, ModuleResolver, ResolvedSource, SourceInput, compile, compile_with_resolver,
-    document_with_resolver, format, read_debug_info,
+    document_llm_with_resolver, document_with_resolver, format, read_debug_info,
 };
 use wasmparser::{Parser, Payload, Validator};
 

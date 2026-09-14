@@ -12,8 +12,8 @@ use std::task::{Context, Poll, Waker};
 
 use exs_compiler::{
     CompileOptions, ModuleDebugInfo, ModuleResolver, ResolvedSource, SourceInput,
-    compile_tests_with_resolver, compile_with_resolver, document_with_resolver, format, has_tests,
-    read_debug_info,
+    compile_tests_with_resolver, compile_with_resolver, document_llm_with_resolver,
+    document_with_resolver, format, has_tests, read_debug_info,
 };
 use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
 
@@ -47,6 +47,9 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         "fmt" if arguments.len() == 2 => format_file(&arguments[1]),
         "docs" if arguments.len() == 4 && arguments[2] == "-o" => {
             generate_docs(&arguments[1], &arguments[3])
+        }
+        "docs" if arguments.len() == 5 && arguments[2] == "-o" && arguments[4] == "--llm" => {
+            generate_llm_docs(&arguments[1], &arguments[3])
         }
         "run" if arguments.len() >= 2 => {
             let inputs = match arguments.get(2) {
@@ -104,6 +107,24 @@ fn generate_docs(path: &str, output: &str) -> Result<(), String> {
             .map_err(|error| format!("could not write {}: {error}", path.display()))?;
     }
     Ok(())
+}
+
+/// Generates one self-contained Markdown language and API reference for an LLM.
+fn generate_llm_docs(path: &str, output: &str) -> Result<(), String> {
+    let source =
+        fs::read_to_string(path).map_err(|error| format!("could not read {path}: {error}"))?;
+    let canonical =
+        fs::canonicalize(path).map_err(|error| format!("could not resolve {path}: {error}"))?;
+    let source_id = canonical.to_string_lossy().into_owned();
+    let mut resolver = FileResolver;
+    let documentation = document_llm_with_resolver(
+        SourceInput {
+            source_id: &source_id,
+            text: &source,
+        },
+        &mut resolver,
+    )?;
+    fs::write(output, documentation).map_err(|error| format!("could not write {output}: {error}"))
 }
 
 /// Formats one source file in place using the compiler library formatter.
@@ -579,5 +600,5 @@ fn line_and_column(source: &str, offset: u32) -> (usize, usize) {
 
 /// Returns CLI usage text.
 fn usage() -> String {
-    "usage: exs check <file.exs> | exs fmt <file.exs> | exs docs <file.exs> -o <directory> | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...] | exs call <file.exs|file.wasm> <function> [-- <value> ...] | exs test [file.exs|directory]".to_owned()
+    "usage: exs check <file.exs> | exs fmt <file.exs> | exs docs <file.exs> -o <directory> | exs docs <file.exs> -o <file.md> --llm | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...] | exs call <file.exs|file.wasm> <function> [-- <value> ...] | exs test [file.exs|directory]".to_owned()
 }

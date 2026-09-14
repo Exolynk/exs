@@ -107,6 +107,46 @@ fn generates_markdown_documentation() {
     assert!(function.contains("fn main(value: Int) -> Int"));
 }
 
+/// Writes one self-contained language and API reference through the LLM documentation mode.
+#[test]
+fn generates_single_llm_markdown_documentation() {
+    let directory = std::env::temp_dir().join(format!("exs-cli-llm-docs-{}", std::process::id()));
+    let source_path = directory.join("main.exs");
+    let output_path = directory.join("exs-llm.md");
+    if let Err(error) = fs::create_dir_all(&directory) {
+        panic!("could not create LLM documentation fixture directory: {error}");
+    }
+    if let Err(error) = fs::write(
+        &source_path,
+        "/// Runs the program.\nfn main(value: Int) -> Int { ret value + 1; }",
+    ) {
+        panic!("could not write LLM documentation fixture source: {error}");
+    }
+    let output = match Command::new(env!("CARGO_BIN_EXE_exs"))
+        .arg("docs")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&output_path)
+        .arg("--llm")
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => panic!("could not execute LLM documentation command: {error}"),
+    };
+    assert!(output.status.success());
+    let documentation = match fs::read_to_string(&output_path) {
+        Ok(documentation) => documentation,
+        Err(error) => panic!("could not read LLM documentation: {error}"),
+    };
+    if let Err(error) = fs::remove_dir_all(&directory) {
+        panic!("could not remove LLM documentation fixture directory: {error}");
+    }
+    assert!(documentation.starts_with("# Exolynk Script (ExS) LLM Specification"));
+    assert!(documentation.contains("# Compact API Reference"));
+    assert!(documentation.contains("#### `Int`"));
+    assert!(documentation.contains("Runs the program."));
+}
+
 /// Prints the completed floating-point `main` result for a source program.
 #[test]
 fn prints_the_main_result() {

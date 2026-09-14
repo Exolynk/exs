@@ -18,6 +18,17 @@ mod standard;
 pub(crate) use source::generate;
 pub use standard::standard_library_types;
 
+/// Compact source-language reference included in generated LLM documentation.
+const LANGUAGE_SPECIFICATION: &str = include_str!("../../../../LLM_SPECIFICATION.md");
+
+/// Generates one self-contained Markdown reference for an LLM.
+pub(crate) fn generate_llm<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    resolver: &mut R,
+) -> Result<String, String> {
+    source::generate_llm(source, resolver)
+}
+
 /// One source-visible standard-library type and its documentation metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StandardType {

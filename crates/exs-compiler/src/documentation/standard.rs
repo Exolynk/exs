@@ -1,5 +1,7 @@
 use super::shared::*;
-use super::source::{parse, render_enum_page, render_trait_page, render_type_page};
+use super::source::{
+    parse, render_compact_module, render_enum_page, render_trait_page, render_type_page,
+};
 use super::*;
 use crate::loaded_project::LoadedSource;
 
@@ -647,6 +649,104 @@ pub(super) fn standard_pages() -> Result<Vec<DocumentationPage>, String> {
         pages.extend(standard_prelude_pages(module, source));
     }
     Ok(pages)
+}
+
+/// Renders the compact standard-library surface without descriptive prose or examples.
+pub(super) fn render_compact_standard_library() -> Result<String, String> {
+    let prelude_modules = standard_prelude_modules()?;
+    let prelude_type_names = prelude_modules
+        .iter()
+        .flat_map(|(module, _)| {
+            module
+                .types
+                .iter()
+                .map(|declaration| declaration.name.name.as_str())
+        })
+        .collect::<Vec<_>>();
+    let prelude_enum_names = prelude_modules
+        .iter()
+        .flat_map(|(module, _)| {
+            module
+                .enums
+                .iter()
+                .map(|declaration| declaration.name.name.as_str())
+        })
+        .collect::<Vec<_>>();
+    let prelude_trait_names = prelude_modules
+        .iter()
+        .flat_map(|(module, _)| {
+            module
+                .traits
+                .iter()
+                .map(|declaration| declaration.name.name.as_str())
+        })
+        .collect::<Vec<_>>();
+    let mut output = String::from("## Standard Library\n\n");
+    output.push_str(
+        "All standard items are globally available; `std::` qualification is optional. Every source-visible value provides `clone() -> T | Error`, where `T` is the receiver type.\n\n",
+    );
+    output.push_str("### Runtime Types\n\n");
+    for type_info in standard_library_types()
+        .into_iter()
+        .filter(|type_info| !prelude_type_names.contains(&type_info.name))
+    {
+        output.push_str(&format!("#### `{}`\n\n", type_info.name));
+        for method in type_info.methods {
+            output.push_str(&format!("- `{}`\n", method.signature));
+        }
+        for function in standard_library_type_static_functions(type_info.name) {
+            output.push_str(&format!("- `{}`\n", function.signature));
+        }
+        if type_info.methods.is_empty()
+            && standard_library_type_static_functions(type_info.name).is_empty()
+        {
+            output.push_str("- No type-specific methods.\n");
+        }
+        output.push('\n');
+    }
+    output.push_str("### Global Functions\n\n");
+    for function in standard_library_functions() {
+        output.push_str(&format!("- `{}`\n", function.signature));
+    }
+    output.push_str("\n### Namespaces\n\n");
+    for namespace in standard_library_namespaces() {
+        output.push_str(&format!("#### `{}`\n\n", namespace.name));
+        for function in namespace.functions {
+            output.push_str(&format!("- `{}`\n", function.signature));
+        }
+        output.push('\n');
+    }
+    output.push_str("### Built-in Traits\n\n");
+    for trait_info in codegen_standard::traits()
+        .iter()
+        .filter(|trait_info| !prelude_trait_names.contains(&trait_info.name))
+    {
+        output.push_str(&format!("#### `{}`\n\n", trait_info.name));
+        for method in trait_info.methods {
+            output.push_str(&format!("- `{}`\n", method.signature));
+        }
+        output.push('\n');
+    }
+    output.push_str("### Built-in Enums\n\n");
+    for enum_info in codegen_standard::enums()
+        .iter()
+        .filter(|enum_info| !prelude_enum_names.contains(&enum_info.name))
+    {
+        output.push_str(&format!("#### `{}`\n\n", enum_info.name));
+        for variant in enum_info.variants {
+            output.push_str(&format!("- `{}::{variant}`\n", enum_info.name));
+        }
+        output.push('\n');
+    }
+    for (module, source) in &prelude_modules {
+        render_compact_module(&mut output, module, source, false, false);
+    }
+    output.push_str("### Automatically Provided Iterator Methods\n\n");
+    for method in automatic_trait_methods("Iterator") {
+        output.push_str(&format!("- `{}`\n", method.signature));
+    }
+    output.push('\n');
+    Ok(output)
 }
 
 /// Parses every bundled ExS prelude source for standard-library documentation rendering.
