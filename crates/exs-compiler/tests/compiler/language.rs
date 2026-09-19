@@ -123,9 +123,9 @@ fn validates_wasm_for_nominal_object_construction() {
     }
 }
 
-/// Rejects an implementation declaration that shadows one built-in method name.
+/// Allows an implementation declaration to use a built-in runtime method name.
 #[test]
-fn rejects_reserved_implementation_method_name() {
+fn allows_nominal_implementation_method_names() {
     let result = compile(
         SourceInput {
             source_id: "reserved-method.exs",
@@ -133,7 +133,7 @@ fn rejects_reserved_implementation_method_name() {
         },
         CompileOptions::default(),
     );
-    assert!(result.is_err());
+    assert!(result.is_ok(), "{result:?}");
 }
 
 /// Rejects a type name that is not in the current built-in type set.

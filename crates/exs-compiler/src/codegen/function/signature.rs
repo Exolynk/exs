@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use exs_abi::RESERVED_METHOD_NAMES;
 use wasm_encoder::{TypeSection, ValType};
 
 use crate::ast::{FunctionDeclaration, Module};
@@ -58,13 +57,6 @@ pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostic
         }
         let allows_self = implementation.trait_name.is_some();
         for method in &implementation.methods {
-            if RESERVED_METHOD_NAMES.contains(&method.name.name.as_str()) {
-                diagnostics.push(CompileDiagnostic::new(
-                    "E0223",
-                    method.name.span,
-                    format!("method `{}` is reserved by the runtime", method.name.name),
-                ));
-            }
             validate_function(
                 module,
                 method,
@@ -236,13 +228,6 @@ pub(in crate::codegen) fn build_signatures<'a>(
             ))
         })?;
         for method in &implementation.methods {
-            if RESERVED_METHOD_NAMES.contains(&method.name.name.as_str()) {
-                return Err(diagnostics(CompileDiagnostic::new(
-                    "E0223",
-                    method.name.span,
-                    format!("method `{}` is reserved by the runtime", method.name.name),
-                )));
-            }
             let key = format!("{}::{}", implementation.type_name.name, method.name.name);
             let receiver_type = method
                 .parameters

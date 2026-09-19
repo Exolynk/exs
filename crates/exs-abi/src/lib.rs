@@ -55,34 +55,6 @@ pub use cbor::{
 /// Version 25 adds native immutable Bytes values to the host boundary.
 pub const ABI_VERSION: u32 = 25;
 
-/// Receiver method names implemented by the built-in runtime.
-pub const RESERVED_METHOD_NAMES: &[&str] = &[
-    "abs",
-    "floor",
-    "ceil",
-    "round",
-    "clone",
-    "length",
-    "is_empty",
-    "kind",
-    "message",
-    "data",
-    "cause",
-    "push",
-    "pop",
-    "insert",
-    "remove",
-    "clear",
-    "has",
-    "delete",
-    "keys",
-    "values",
-    "to_list",
-    "slice",
-    "concat",
-    "decode_utf8",
-];
-
 /// Runtime type-mask bit for None.
 pub const TYPE_NONE: u32 = 1 << 0;
 /// Runtime type-mask bit for Error.

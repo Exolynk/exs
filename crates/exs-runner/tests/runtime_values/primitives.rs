@@ -45,6 +45,18 @@ fn round_trips_native_bytes() {
     );
 }
 
+/// Dispatches a nominal method before the built-in runtime method with the same name.
+#[test]
+fn dispatches_nominal_is_empty_before_the_runtime_fallback() {
+    assert_eq!(
+        execute_source(
+            "type Toggle { value: Bool } impl Toggle { fn is_empty(self) -> Bool { ret self.value; } } fn main(input) -> Bool { let toggle = Toggle { value: true }; ret toggle.is_empty(); }",
+            ExsValue::None,
+        ),
+        ExsValue::Bool(true)
+    );
+}
+
 /// Evaluates Bytes literals, construction, methods, indexing, and Iterator-backed for loops.
 #[test]
 fn evaluates_native_bytes_operations() {
