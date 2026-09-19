@@ -473,8 +473,17 @@ fn rewrite_block(block: &mut Block<'_>, bindings: &HashMap<String, String>) {
 /// Rewrites source-level symbol references in one statement.
 fn rewrite_statement(statement: &mut Statement<'_>, bindings: &HashMap<String, String>) {
     match statement {
-        Statement::Let { value, .. }
-        | Statement::Expression {
+        Statement::Let {
+            type_annotation,
+            value,
+            ..
+        } => {
+            if let Some(annotation) = type_annotation {
+                rewrite_annotation(annotation, bindings);
+            }
+            rewrite_expression(value, bindings);
+        }
+        Statement::Expression {
             expression: value, ..
         } => rewrite_expression(value, bindings),
         Statement::Assign { target, value, .. } => {
@@ -519,7 +528,16 @@ fn rewrite_statement(statement: &mut Statement<'_>, bindings: &HashMap<String, S
             rewrite_expression(condition, bindings);
             rewrite_block(body, bindings);
         }
-        Statement::For { iterable, body, .. } => {
+        Statement::For {
+            binding: _,
+            type_annotation,
+            iterable,
+            body,
+            ..
+        } => {
+            if let Some(annotation) = type_annotation {
+                rewrite_annotation(annotation, bindings);
+            }
             rewrite_expression(iterable, bindings);
             rewrite_block(body, bindings);
         }

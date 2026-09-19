@@ -102,6 +102,28 @@ fn compiles_imported_types_and_static_methods() {
     }
 }
 
+/// Resolves nominal types used by typed bindings inside imported function bodies.
+#[test]
+fn compiles_imported_typed_host_bindings() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./fleet.exs".to_owned(),
+            "type Vehicle { id: String } fn current() -> Vehicle | Error { let vehicle: Vehicle = Host::call(\"fleet.current\")?; ret vehicle; }".to_owned(),
+        )]),
+    };
+    let compiled = compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./fleet.exs\" as fleet; fn main() -> Any { ret fleet::current(); }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    );
+    if let Err(error) = compiled {
+        panic!("compilation failed: {error}");
+    }
+}
+
 /// Rejects cycles before attempting to merge imported declarations.
 #[test]
 fn rejects_import_cycles() {
