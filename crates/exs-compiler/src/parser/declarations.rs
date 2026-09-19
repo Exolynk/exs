@@ -209,7 +209,7 @@ impl<'a> Parser<'a> {
         ),
         CompileDiagnostic<'a>,
     > {
-        let name = self.identifier("expected function name")?;
+        let name = self.qualified_identifier("expected function name")?;
         self.expect_simple(TokenKind::LeftParen, "expected `(` after function name")?;
         let mut parameters = Vec::new();
         if !self.check(&TokenKind::RightParen) {

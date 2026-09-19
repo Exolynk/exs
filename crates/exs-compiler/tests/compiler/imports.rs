@@ -102,6 +102,28 @@ fn compiles_imported_types_and_static_methods() {
     }
 }
 
+/// Resolves a nested exported function namespace through an imported module.
+#[test]
+fn compiles_imported_nested_function_namespaces() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./ui.exs".to_owned(),
+            "fn ui::reload() -> String { ret \"reloaded\"; }".to_owned(),
+        )]),
+    };
+    let compiled = compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./ui.exs\" as exo; fn main() -> String { ret exo::ui::reload(); }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    );
+    if let Err(error) = compiled {
+        panic!("compilation failed: {error}");
+    }
+}
+
 /// Resolves nominal types used by typed bindings inside imported function bodies.
 #[test]
 fn compiles_imported_typed_host_bindings() {

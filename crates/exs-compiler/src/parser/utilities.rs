@@ -101,13 +101,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parses one optionally namespace-qualified identifier.
+    /// Parses one identifier with zero or more namespace qualifiers.
     pub(super) fn qualified_identifier(
         &mut self,
         message: &str,
     ) -> Result<Identifier<'a>, CompileDiagnostic<'a>> {
         let mut identifier = self.identifier(message)?;
-        if self.matches(&TokenKind::DoubleColon) {
+        while self.matches(&TokenKind::DoubleColon) {
             let member = self.identifier("expected identifier after `::`")?;
             identifier.name.push_str("::");
             identifier.name.push_str(&member.name);
