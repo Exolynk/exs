@@ -6,6 +6,23 @@ use exs_compiler::{
 
 use crate::{CompletionItem, CompletionKind};
 
+/// Text shown in the compact completion list and its optional documentation panel.
+#[derive(Clone, Copy)]
+pub(crate) struct CompletionPresentation<'a> {
+    detail: Option<&'a str>,
+    documentation: Option<&'a str>,
+}
+
+impl<'a> CompletionPresentation<'a> {
+    /// Builds completion presentation text with an optional long-form explanation.
+    pub(crate) const fn new(detail: Option<&'a str>, documentation: Option<&'a str>) -> Self {
+        Self {
+            detail,
+            documentation,
+        }
+    }
+}
+
 /// Adds one catalog item when its label starts with the active source prefix.
 pub(crate) fn push_if_matching(
     items: &mut Vec<CompletionItem>,
@@ -16,10 +33,32 @@ pub(crate) fn push_if_matching(
     cursor: Option<usize>,
     kind: CompletionKind,
 ) {
+    push_documented_if_matching(
+        items,
+        prefix,
+        label,
+        CompletionPresentation::new(detail, None),
+        insert_text,
+        cursor,
+        kind,
+    );
+}
+
+/// Adds one documented catalog item when its label starts with the active source prefix.
+pub(crate) fn push_documented_if_matching(
+    items: &mut Vec<CompletionItem>,
+    prefix: &str,
+    label: &str,
+    presentation: CompletionPresentation<'_>,
+    insert_text: &str,
+    cursor: Option<usize>,
+    kind: CompletionKind,
+) {
     if label.starts_with(prefix) {
         items.push(CompletionItem {
             label: label.to_owned(),
-            detail: detail.map(str::to_owned),
+            detail: presentation.detail.map(str::to_owned),
+            documentation: presentation.documentation.map(str::to_owned),
             insert_text: insert_text.to_owned(),
             cursor,
             kind,
@@ -65,11 +104,11 @@ pub(crate) fn append_keywords(items: &mut Vec<CompletionItem>, prefix: &str) {
 /// Appends the standard ExS type, trait, and enum names.
 pub(crate) fn append_standard_symbols(items: &mut Vec<CompletionItem>, prefix: &str) {
     for type_info in standard_library_types() {
-        push_if_matching(
+        push_documented_if_matching(
             items,
             prefix,
             type_info.name,
-            Some("Built-in type"),
+            CompletionPresentation::new(Some("Built-in type"), Some(type_info.description)),
             type_info.name,
             None,
             CompletionKind::Type,
@@ -105,14 +144,14 @@ pub(crate) fn append_standard_namespaces(items: &mut Vec<CompletionItem>, prefix
         .iter()
         .filter(|namespace| namespace.name != "Duration")
     {
-        push_if_matching(
+        push_documented_if_matching(
             items,
             prefix,
             namespace.name,
-            Some(namespace.description),
+            CompletionPresentation::new(Some("Standard namespace"), Some(namespace.description)),
             namespace.name,
             None,
-            CompletionKind::Type,
+            CompletionKind::Module,
         );
     }
 }
@@ -134,11 +173,11 @@ pub(crate) fn append_standard_namespace_functions(
             .split_once('(')
             .is_some_and(|(_, arguments)| !arguments.starts_with(')'))
             .then_some(function.name.len() + 1);
-        push_if_matching(
+        push_documented_if_matching(
             items,
             prefix,
             function.name,
-            Some(function.signature),
+            CompletionPresentation::new(Some(function.signature), Some(function.description)),
             &insert_text,
             cursor,
             CompletionKind::Function,
@@ -158,11 +197,11 @@ pub(crate) fn append_standard_functions(items: &mut Vec<CompletionItem>, prefix:
             .split_once('(')
             .is_some_and(|(_, arguments)| !arguments.starts_with(')'));
         let cursor = has_arguments.then_some(function.name.len() + 1);
-        push_if_matching(
+        push_documented_if_matching(
             items,
             prefix,
             function.name,
-            Some(function.signature),
+            CompletionPresentation::new(Some(function.signature), Some(function.description)),
             &insert_text,
             cursor,
             CompletionKind::Function,

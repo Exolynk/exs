@@ -172,7 +172,6 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "birei"
 version = "0.1.0"
-source = "git+https://github.com/Exolynk/birei?branch=main#79e6ca287f19ac8c4291a390f12edd9d777d429c"
 dependencies = [
  "base64",
  "grass",

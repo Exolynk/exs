@@ -12,13 +12,19 @@ use crate::syntax::tokenize;
 use crate::{CompletionEngine, CompletionKind, CompletionRequest as ExsCompletionRequest};
 
 /// Birei language service backed by the reusable ExS completion engine.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ExsBireiLanguageService {
-    /// Stateless ExS completion engine shared across every editor request.
+    /// ExS completion engine shared across every editor request.
     engine: CompletionEngine,
 }
 
 impl ExsBireiLanguageService {
+    /// Builds a Birei service using one configured ExS completion engine.
+    #[must_use]
+    pub fn new(engine: CompletionEngine) -> Self {
+        Self { engine }
+    }
+
     /// Produces one Birei completion response for the active editor selection.
     fn completion_response(
         &self,
@@ -43,6 +49,7 @@ impl ExsBireiLanguageService {
                 .map(|item| CodeCompletionItem {
                     label: item.label,
                     detail: item.detail,
+                    documentation: item.documentation,
                     insert_text: item.insert_text,
                     cursor: item.cursor,
                     kind: map_kind(item.kind),
@@ -135,17 +142,18 @@ fn highlight_class(kind: HighlightKind) -> &'static str {
     }
 }
 
-/// Converts detailed ExS categories into Birei's current display categories.
+/// Converts detailed ExS categories into Birei's compact display categories.
 fn map_kind(kind: CompletionKind) -> CodeCompletionKind {
     match kind {
         CompletionKind::Snippet => CodeCompletionKind::Snippet,
-        CompletionKind::Keyword | CompletionKind::HostMember => CodeCompletionKind::Keyword,
-        CompletionKind::Function
-        | CompletionKind::Variable
-        | CompletionKind::Type
-        | CompletionKind::Enum
-        | CompletionKind::Trait
-        | CompletionKind::Variant => CodeCompletionKind::Attribute,
+        CompletionKind::Keyword => CodeCompletionKind::Keyword,
+        CompletionKind::Function | CompletionKind::HostMember => CodeCompletionKind::Function,
+        CompletionKind::Variable => CodeCompletionKind::Variable,
+        CompletionKind::Module => CodeCompletionKind::Module,
+        CompletionKind::Type => CodeCompletionKind::Type,
+        CompletionKind::Enum => CodeCompletionKind::Enum,
+        CompletionKind::Trait => CodeCompletionKind::Trait,
+        CompletionKind::Variant => CodeCompletionKind::Variant,
     }
 }
 
@@ -223,9 +231,9 @@ fn clamp_byte_offset(text: &str, offset: usize) -> usize {
 /// Verifies Birei newline edits follow existing ExS indentation rules.
 #[cfg(test)]
 mod tests {
-    use birei::code_editor::CodeSelection;
+    use birei::code_editor::{CodeCompletionKind, CodeSelection};
 
-    use super::{ExsBireiLanguageService, newline_indent};
+    use super::{CompletionEngine, ExsBireiLanguageService, map_kind, newline_indent};
 
     /// Preserves the active line's existing indentation when adding a statement line.
     #[test]
@@ -276,5 +284,35 @@ mod tests {
             assert!(response.items.is_empty());
             assert_eq!(response.replace, None);
         }
+    }
+
+    /// Forwards ExS documentation to Birei's selected-completion panel payload.
+    #[test]
+    fn forwards_completion_documentation_to_birei() {
+        let service = ExsBireiLanguageService::new(
+            CompletionEngine::default()
+                .with_module_source("exo", "/// Reloads the browser page.\nfn ui::reload() {}"),
+        );
+        let source = "exo::ui::re";
+        let response = service.completion_response(source, source.len(), true);
+        let reload = response
+            .items
+            .iter()
+            .find(|item| item.label == "reload")
+            .expect("reload completion");
+
+        assert_eq!(
+            reload.documentation.as_deref(),
+            Some("Reloads the browser page.")
+        );
+    }
+
+    /// Maps importable ExS modules to Birei's explicit module category.
+    #[test]
+    fn maps_modules_to_birei_modules() {
+        assert_eq!(
+            map_kind(crate::CompletionKind::Module),
+            CodeCompletionKind::Module
+        );
     }
 }

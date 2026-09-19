@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use exs_compiler::{
     SourceInput, source_lex, standard_library_enums, standard_library_namespace,
@@ -6,22 +6,35 @@ use exs_compiler::{
 };
 
 use crate::catalog::{
-    append_keywords, append_standard_functions, append_standard_namespace_functions,
-    append_standard_namespaces, append_standard_symbols, push_if_matching,
+    CompletionPresentation, append_keywords, append_standard_functions,
+    append_standard_namespace_functions, append_standard_namespaces, append_standard_symbols,
+    push_documented_if_matching, push_if_matching,
 };
 use crate::syntax::{
-    FunctionHeaderContext, FunctionParameter, FunctionSignature, SymbolKind, call_argument_context,
-    document_symbols, function_header_context, identifier_prefix,
+    DocumentSymbols, FunctionHeaderContext, FunctionParameter, FunctionSignature, SymbolKind,
+    call_argument_context, document_symbols, function_header_context, identifier_prefix,
     is_function_name_declaration_context, is_host_member_context, is_type_context, member_receiver,
     namespace_receiver, visible_binding_types, visible_bindings,
 };
 use crate::{CompletionItem, CompletionKind, CompletionRequest, CompletionResponse};
 
-/// Stateless completion engine for one ExS source document.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct CompletionEngine;
+/// Completion engine for one ExS source document and its configured virtual modules.
+#[derive(Clone, Debug, Default)]
+pub struct CompletionEngine {
+    modules: BTreeMap<String, DocumentSymbols>,
+}
 
 impl CompletionEngine {
+    /// Adds declarations from one importable virtual module to completion responses.
+    #[must_use]
+    pub fn with_module_source(mut self, namespace: &str, source: &str) -> Self {
+        self.modules.insert(
+            namespace.to_owned(),
+            document_symbols(source, &crate::syntax::tokenize(source)),
+        );
+        self
+    }
+
     /// Produces context-sensitive ExS completions for one document position.
     #[must_use]
     pub fn complete(&self, request: CompletionRequest<'_>) -> CompletionResponse {
@@ -34,7 +47,7 @@ impl CompletionEngine {
         }
         let (prefix_start, prefix) = identifier_prefix(request.source, request.cursor);
         let tokens = lexed.tokens;
-        let symbols = document_symbols(&tokens);
+        let symbols = document_symbols(request.source, &tokens);
         if is_function_name_declaration_context(request.source, prefix_start) {
             return CompletionResponse::default();
         }
@@ -65,9 +78,6 @@ impl CompletionEngine {
                 &visible_bindings(&bindings),
             );
         }
-        if prefix.is_empty() {
-            return CompletionResponse::default();
-        }
         let tokens_before_cursor = tokens
             .iter()
             .filter(|token| token.end <= prefix_start)
@@ -87,7 +97,17 @@ impl CompletionEngine {
             );
         }
         if let Some(receiver) = namespace_receiver(request.source, prefix_start) {
-            return response_for_namespace(prefix, prefix_start, request.cursor, &tokens, receiver);
+            return response_for_namespace(
+                prefix,
+                prefix_start,
+                request.cursor,
+                &symbols,
+                receiver,
+                &self.modules,
+            );
+        }
+        if prefix.is_empty() {
+            return CompletionResponse::default();
         }
 
         let mut items = Vec::new();
@@ -99,6 +119,7 @@ impl CompletionEngine {
             append_standard_functions(&mut items, prefix);
             append_standard_symbols(&mut items, prefix);
             append_standard_namespaces(&mut items, prefix);
+            append_module_namespaces(&mut items, prefix, &self.modules);
             append_document_symbols(&mut items, prefix, &symbols);
             append_visible_bindings(&mut items, prefix, &visible_bindings(&tokens_before_cursor));
         }
@@ -125,25 +146,35 @@ fn response_for_member(
     };
     let mut items = Vec::new();
     for method in type_info.methods {
-        append_method_completion(&mut items, prefix, method.signature);
+        append_method_completion(
+            &mut items,
+            prefix,
+            method.signature,
+            Some(method.description),
+        );
     }
     let clone_signature = format!("clone() -> {} | Error", type_info.name);
-    append_method_completion(&mut items, prefix, &clone_signature);
+    append_method_completion(&mut items, prefix, &clone_signature, None);
     unique_response(items, prefix_start, cursor)
 }
 
 /// Appends one documented method call with parentheses and a suitable caret position.
-fn append_method_completion(items: &mut Vec<CompletionItem>, prefix: &str, signature: &str) {
+fn append_method_completion(
+    items: &mut Vec<CompletionItem>,
+    prefix: &str,
+    signature: &str,
+    documentation: Option<&str>,
+) {
     let Some((name, arguments)) = signature.split_once('(') else {
         return;
     };
     let insert_text = format!("{name}()");
     let cursor = (!arguments.starts_with(')')).then_some(name.len() + 1);
-    push_if_matching(
+    push_documented_if_matching(
         items,
         prefix,
         name,
-        Some(signature),
+        CompletionPresentation::new(Some(signature), documentation),
         &insert_text,
         cursor,
         CompletionKind::Function,
@@ -197,11 +228,11 @@ fn response_for_host_member(
                 Some(function.name.len() + 1),
             )
         };
-        push_if_matching(
+        push_documented_if_matching(
             &mut items,
             prefix,
             function.name,
-            Some(function.signature),
+            CompletionPresentation::new(Some(function.signature), Some(function.description)),
             &insert_text,
             cursor_offset,
             CompletionKind::HostMember,
@@ -215,8 +246,9 @@ fn response_for_namespace(
     prefix: &str,
     prefix_start: usize,
     cursor: usize,
-    tokens: &[crate::syntax::Token],
+    symbols: &DocumentSymbols,
     receiver: &str,
+    modules: &BTreeMap<String, DocumentSymbols>,
 ) -> CompletionResponse {
     let mut items = Vec::new();
     if receiver == "std" {
@@ -229,10 +261,106 @@ fn response_for_namespace(
     {
         append_variants(&mut items, prefix, enum_info.variants.iter().copied());
     }
-    if let Some(variants) = document_symbols(tokens).variants.get(receiver) {
+    if let Some(variants) = symbols.variants.get(receiver) {
         append_variants(&mut items, prefix, variants.iter().map(String::as_str));
     }
+    append_module_members(&mut items, prefix, receiver, modules);
     unique_response(items, prefix_start, cursor)
+}
+
+/// Appends configured module roots as expression completions.
+fn append_module_namespaces(
+    items: &mut Vec<CompletionItem>,
+    prefix: &str,
+    modules: &BTreeMap<String, DocumentSymbols>,
+) {
+    for namespace in modules.keys() {
+        push_if_matching(
+            items,
+            prefix,
+            namespace,
+            Some("Imported module"),
+            &format!("{namespace}::"),
+            Some(namespace.len() + 2),
+            CompletionKind::Module,
+        );
+    }
+}
+
+/// Appends functions and child namespaces declared by one configured module.
+fn append_module_members(
+    items: &mut Vec<CompletionItem>,
+    prefix: &str,
+    receiver: &str,
+    modules: &BTreeMap<String, DocumentSymbols>,
+) {
+    let (root, path) = receiver.split_once("::").unwrap_or((receiver, ""));
+    let Some(symbols) = modules.get(root) else {
+        return;
+    };
+    let namespace_prefix = if path.is_empty() {
+        String::new()
+    } else {
+        format!("{path}::")
+    };
+    let mut child_namespaces = BTreeSet::new();
+    for (full_name, signature) in &symbols.functions {
+        let Some(name) = full_name.strip_prefix(&namespace_prefix) else {
+            continue;
+        };
+        if let Some((child, _)) = name.split_once("::") {
+            child_namespaces.insert(child);
+            continue;
+        }
+        append_function_completion(
+            items,
+            prefix,
+            name,
+            signature,
+            symbols.documentation.get(full_name).map(String::as_str),
+        );
+    }
+    for (full_name, kind) in &symbols.declarations {
+        if *kind == SymbolKind::Function {
+            continue;
+        }
+        let Some(name) = full_name.strip_prefix(&namespace_prefix) else {
+            continue;
+        };
+        if let Some((child, _)) = name.split_once("::") {
+            child_namespaces.insert(child);
+            continue;
+        }
+        let (detail, completion_kind) = match kind {
+            SymbolKind::Type => ("Imported type", CompletionKind::Type),
+            SymbolKind::Enum => ("Imported enum", CompletionKind::Enum),
+            SymbolKind::Trait => ("Imported trait", CompletionKind::Trait),
+            SymbolKind::Function => continue,
+        };
+        push_documented_if_matching(
+            items,
+            prefix,
+            name,
+            CompletionPresentation::new(
+                Some(detail),
+                symbols.documentation.get(full_name).map(String::as_str),
+            ),
+            name,
+            None,
+            completion_kind,
+        );
+    }
+    for namespace in child_namespaces {
+        push_if_matching(
+            items,
+            prefix,
+            namespace,
+            Some("Module namespace"),
+            &format!("{namespace}::"),
+            Some(namespace.len() + 2),
+            CompletionKind::Module,
+        );
+    }
 }
 
 /// Appends source declarations that are valid in a type annotation context.
@@ -248,11 +376,14 @@ fn append_document_types(
             SymbolKind::Trait => ("Source trait", CompletionKind::Trait),
             SymbolKind::Function => continue,
         };
-        push_if_matching(
+        push_documented_if_matching(
             items,
             prefix,
             name,
-            Some(detail),
+            CompletionPresentation::new(
+                Some(detail),
+                symbols.documentation.get(name).map(String::as_str),
+            ),
             name,
             None,
             completion_kind,
@@ -272,18 +403,27 @@ fn append_document_symbols(
                 let Some(signature) = symbols.functions.get(name) else {
                     continue;
                 };
-                append_function_completion(items, prefix, name, signature);
+                append_function_completion(
+                    items,
+                    prefix,
+                    name,
+                    signature,
+                    symbols.documentation.get(name).map(String::as_str),
+                );
                 continue;
             }
             SymbolKind::Type => ("Source type", CompletionKind::Type),
             SymbolKind::Enum => ("Source enum", CompletionKind::Enum),
             SymbolKind::Trait => ("Source trait", CompletionKind::Trait),
         };
-        push_if_matching(
+        push_documented_if_matching(
             items,
             prefix,
             name,
-            Some(detail),
+            CompletionPresentation::new(
+                Some(detail),
+                symbols.documentation.get(name).map(String::as_str),
+            ),
             name,
             None,
             completion_kind,
@@ -297,6 +437,7 @@ fn append_function_completion(
     prefix: &str,
     name: &str,
     signature: &FunctionSignature,
+    documentation: Option<&str>,
 ) {
     let insert_text = format!("{name}()");
     let cursor = if signature.parameters.is_empty() {
@@ -304,11 +445,11 @@ fn append_function_completion(
     } else {
         Some(name.len() + 1)
     };
-    push_if_matching(
+    push_documented_if_matching(
         items,
         prefix,
         name,
-        Some(&function_detail(name, signature)),
+        CompletionPresentation::new(Some(&function_detail(name, signature)), documentation),
         &insert_text,
         cursor,
         CompletionKind::Function,
@@ -408,7 +549,7 @@ mod tests {
     #[test]
     fn completes_visible_local_bindings() {
         let source = "fn main(value: Int) {\n    let total = value;\n    tot\n}";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.find("tot\n").unwrap_or_default() + 3,
         });
@@ -420,7 +561,7 @@ mod tests {
     #[test]
     fn completes_user_enum_variants() {
         let source = "enum Choice { First, Second }\nfn main() { Choice::Fi }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -431,7 +572,7 @@ mod tests {
     #[test]
     fn completes_host_call() {
         let source = "fn main() { Host::ca }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -444,7 +585,7 @@ mod tests {
     #[test]
     fn completes_duration_factories() {
         let source = "fn main() { Duration::mil }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -456,7 +597,7 @@ mod tests {
     #[test]
     fn completes_host_sleep() {
         let source = "fn main() { Host::sl }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -468,7 +609,7 @@ mod tests {
     #[test]
     fn completes_host_now() {
         let source = "fn main() { Host::no }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -480,18 +621,18 @@ mod tests {
     #[test]
     fn completes_host_namespace() {
         let source = "fn main() { Hos }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
-        assert_eq!(item(&response, "Host").kind, CompletionKind::Type);
+        assert_eq!(item(&response, "Host").kind, CompletionKind::Module);
     }
 
     /// Inserts required whitespace after accepting a local binding declaration keyword.
     #[test]
     fn completes_let_with_trailing_whitespace() {
         let source = "fn main() { le }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -502,7 +643,7 @@ mod tests {
     #[test]
     fn completes_parameterized_function_calls() {
         let source = "fn greet(name: String) {}\nfn main() { gre }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -517,7 +658,7 @@ mod tests {
     fn completes_first_function_argument() {
         let source = "fn greet(name: String) {}\nfn main(value: String) { greet() }";
         let cursor = source.rfind("greet()").unwrap_or_default() + 6;
-        let response = CompletionEngine.complete(CompletionRequest { source, cursor });
+        let response = CompletionEngine::default().complete(CompletionRequest { source, cursor });
         let completion = item(&response, "value");
         assert_eq!(completion.kind, CompletionKind::Variable);
         assert_eq!(
@@ -531,7 +672,7 @@ mod tests {
     fn closes_after_selecting_an_exact_call_argument_binding() {
         let source = "fn greet(name: String) {}\nfn main(value: String) { greet(value) }";
         let cursor = source.rfind("value)").unwrap_or_default() + 5;
-        let response = CompletionEngine.complete(CompletionRequest { source, cursor });
+        let response = CompletionEngine::default().complete(CompletionRequest { source, cursor });
         assert!(response.items.is_empty());
     }
 
@@ -539,7 +680,7 @@ mod tests {
     #[test]
     fn suppresses_function_call_completion_while_declaring_a_function() {
         let source = "fn gre";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len(),
         });
@@ -550,7 +691,7 @@ mod tests {
     #[test]
     fn suppresses_completions_while_declaring_a_parameter_name() {
         let source = "fn greet(na";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len(),
         });
@@ -561,7 +702,7 @@ mod tests {
     #[test]
     fn completes_types_while_declaring_a_parameter_annotation() {
         let source = "fn greet(name: Str";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len(),
         });
@@ -578,7 +719,7 @@ mod tests {
     #[test]
     fn completes_documented_standard_error_constructor() {
         let source = "fn main() { Err }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -595,7 +736,7 @@ mod tests {
     #[test]
     fn completes_documented_methods_for_typed_parameters() {
         let source = "fn main(text: String) { text.le }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
@@ -608,18 +749,91 @@ mod tests {
     #[test]
     fn completes_standard_symbols_through_the_std_namespace() {
         let source = "fn main() { std::Str }";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.len() - 2,
         });
         assert_eq!(item(&response, "String").kind, CompletionKind::Type);
     }
 
+    /// Sends standard-library explanations separately from the compact list detail.
+    #[test]
+    fn completes_standard_namespace_with_documentation() {
+        let source = "Mat";
+        let response = CompletionEngine::default().complete(CompletionRequest {
+            source,
+            cursor: source.len(),
+        });
+        let math = item(&response, "Math");
+        assert_eq!(math.detail.as_deref(), Some("Built-in type"));
+        assert!(
+            math.documentation
+                .as_deref()
+                .is_some_and(|documentation| documentation.contains("static namespace"))
+        );
+    }
+
+    /// Completes functions, types, and nested namespaces from a virtual import source.
+    #[test]
+    fn completes_configured_virtual_module_members() {
+        let engine = CompletionEngine::default().with_module_source(
+            "exo",
+            "/// Localized text.\ntype Language {}\n/// Returns the active environment.\nfn get_environment() {}\n/// Reloads the browser page.\nfn ui::reload() {}",
+        );
+
+        let module_source = "ex";
+        let module_response = engine.complete(CompletionRequest {
+            source: module_source,
+            cursor: module_source.len(),
+        });
+        assert_eq!(item(&module_response, "exo").insert_text, "exo::");
+
+        let root_source = "exo::get";
+        let root_response = engine.complete(CompletionRequest {
+            source: root_source,
+            cursor: root_source.len(),
+        });
+        assert_eq!(
+            item(&root_response, "get_environment").insert_text,
+            "get_environment()"
+        );
+
+        let type_source = "exo::Lan";
+        let type_response = engine.complete(CompletionRequest {
+            source: type_source,
+            cursor: type_source.len(),
+        });
+        let language = item(&type_response, "Language");
+        assert_eq!(language.kind, CompletionKind::Type);
+        assert_eq!(language.documentation.as_deref(), Some("Localized text."));
+
+        let namespace_source = "exo::u";
+        let namespace_response = engine.complete(CompletionRequest {
+            source: namespace_source,
+            cursor: namespace_source.len(),
+        });
+        let namespace = item(&namespace_response, "ui");
+        assert_eq!(namespace.kind, CompletionKind::Module);
+        assert_eq!(namespace.insert_text, "ui::");
+
+        let nested_source = "exo::ui::re";
+        let nested_response = engine.complete(CompletionRequest {
+            source: nested_source,
+            cursor: nested_source.len(),
+        });
+        let reload = item(&nested_response, "reload");
+        assert_eq!(reload.insert_text, "reload()");
+        assert_eq!(
+            reload.documentation.as_deref(),
+            Some("Reloads the browser page.")
+        );
+    }
+
     /// Avoids opening an unsolicited completion list on an empty source position.
     #[test]
     fn suppresses_empty_prefix_completions() {
         let source = "fn main() {\n    \n}";
-        let response = CompletionEngine.complete(CompletionRequest {
+        let response = CompletionEngine::default().complete(CompletionRequest {
             source,
             cursor: source.find("    \n").unwrap_or_default() + 4,
         });
@@ -631,7 +845,7 @@ mod tests {
     #[test]
     fn suppresses_completions_inside_comments() {
         for source in ["// Err", "/* Error"] {
-            let response = CompletionEngine.complete(CompletionRequest {
+            let response = CompletionEngine::default().complete(CompletionRequest {
                 source,
                 cursor: source.len(),
             });

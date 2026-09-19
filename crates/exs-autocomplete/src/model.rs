@@ -20,6 +20,8 @@ pub enum CompletionKind {
     Function,
     /// A visible lexical binding.
     Variable,
+    /// An importable namespace.
+    Module,
     /// A built-in or user-defined source type.
     Type,
     /// A built-in or user-defined enum.
@@ -39,6 +41,8 @@ pub struct CompletionItem {
     pub label: String,
     /// Optional concise signature or category shown beside `label`.
     pub detail: Option<String>,
+    /// Optional longer documentation shown beside the completion list.
+    pub documentation: Option<String>,
     /// Text that replaces the response's selected source range.
     pub insert_text: String,
     /// Optional caret byte offset relative to the inserted text.

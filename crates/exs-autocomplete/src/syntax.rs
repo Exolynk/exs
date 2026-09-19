@@ -10,6 +10,8 @@ pub(crate) type Token = SourceToken;
 pub(crate) struct DocumentSymbols {
     /// Top-level declarations keyed by their exact source spelling.
     pub(crate) declarations: BTreeMap<String, SymbolKind>,
+    /// Documentation comments keyed by their declared source names.
+    pub(crate) documentation: BTreeMap<String, String>,
     /// Function signatures keyed by their declared source names.
     pub(crate) functions: BTreeMap<String, FunctionSignature>,
     /// Variants keyed by their enclosing enum name.
@@ -63,8 +65,8 @@ pub(crate) fn tokenize(source: &str) -> Vec<Token> {
     .tokens
 }
 
-/// Collects declarations from a best-effort token stream, including incomplete documents.
-pub(crate) fn document_symbols(tokens: &[Token]) -> DocumentSymbols {
+/// Collects declarations and their preceding documentation comments from source.
+pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbols {
     let mut symbols = DocumentSymbols::default();
     let mut depth = 0usize;
     let mut index = 0usize;
@@ -74,7 +76,7 @@ pub(crate) fn document_symbols(tokens: &[Token]) -> DocumentSymbols {
             "{" => depth += 1,
             "}" => depth = depth.saturating_sub(1),
             "fn" | "type" | "enum" | "trait" if depth == 0 => {
-                let Some(name) = next_identifier(tokens, index + 1) else {
+                let Some((name, end)) = qualified_identifier(tokens, index + 1) else {
                     index += 1;
                     continue;
                 };
@@ -85,23 +87,43 @@ pub(crate) fn document_symbols(tokens: &[Token]) -> DocumentSymbols {
                     "trait" => SymbolKind::Trait,
                     _ => unreachable!(),
                 };
-                symbols.declarations.insert(name.text.clone(), kind);
+                symbols.declarations.insert(name.clone(), kind);
+                if let Some(documentation) = preceding_documentation(source, token.start) {
+                    symbols.documentation.insert(name.clone(), documentation);
+                }
                 if kind == SymbolKind::Function
                     && let Some(signature) = function_signature(tokens, index)
                 {
-                    symbols.functions.insert(name.text.clone(), signature);
+                    symbols.functions.insert(name.clone(), signature);
                 }
                 if kind == SymbolKind::Enum {
-                    symbols
-                        .variants
-                        .insert(name.text.clone(), enum_variants(tokens, index));
+                    symbols.variants.insert(name, enum_variants(tokens, index));
                 }
+                index = end;
             }
             _ => {}
         }
         index += 1;
     }
     symbols
+}
+
+/// Collects adjacent `///` lines immediately preceding one declaration.
+fn preceding_documentation(source: &str, declaration_start: usize) -> Option<String> {
+    let prefix = source
+        .get(..declaration_start)?
+        .trim_end_matches([' ', '\t', '\r', '\n']);
+    let mut lines = Vec::new();
+    for line in prefix.lines().rev() {
+        let Some(line) = line.trim_start().strip_prefix("///") else {
+            break;
+        };
+        lines.push(line.strip_prefix(' ').unwrap_or(line));
+    }
+    (!lines.is_empty()).then(|| {
+        lines.reverse();
+        lines.join("\n")
+    })
 }
 
 /// Returns lexical bindings visible at the end of the provided token stream.
@@ -193,13 +215,21 @@ pub(crate) fn identifier_prefix(source: &str, cursor: usize) -> (usize, &str) {
     (start, &source[start..cursor])
 }
 
-/// Returns the identifier immediately before a namespace separator.
+/// Returns the namespace path immediately before a namespace separator.
 pub(crate) fn namespace_receiver(source: &str, before_prefix: usize) -> Option<&str> {
     let before = &source[..before_prefix];
     let separator = before.trim_end().strip_suffix("::")?;
     let end = separator.len();
-    let (start, receiver) = identifier_prefix(separator, end);
-    if start == end || receiver.is_empty() {
+    let start = separator
+        .char_indices()
+        .rev()
+        .find_map(|(index, character)| {
+            (!(character.is_ascii_alphanumeric() || character == '_' || character == ':'))
+                .then_some(index + character.len_utf8())
+        })
+        .unwrap_or(0);
+    let receiver = &separator[start..end];
+    if receiver.is_empty() || receiver.starts_with(':') || receiver.ends_with(':') {
         None
     } else {
         Some(receiver)
@@ -333,6 +363,23 @@ fn next_identifier(tokens: &[Token], start: usize) -> Option<&Token> {
             .first()
             .is_some_and(|byte| is_identifier_start(*byte))
     })
+}
+
+/// Returns a namespace-qualified identifier beginning at one token index.
+fn qualified_identifier(tokens: &[Token], start: usize) -> Option<(String, usize)> {
+    let first = next_identifier(tokens, start)?;
+    let mut name = first.text.clone();
+    let mut index = tokens.iter().position(|token| token.start == first.start)? + 1;
+    while tokens.get(index).is_some_and(|token| token.text == "::") {
+        let member = tokens.get(index + 1)?;
+        if !token_is_identifier(member) {
+            return None;
+        }
+        name.push_str("::");
+        name.push_str(&member.text);
+        index += 2;
+    }
+    Some((name, index))
 }
 
 /// Extracts direct enum variants from the body associated with one enum declaration.
