@@ -190,7 +190,7 @@ fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
         Expression::Variable(identifier) => identifier.span,
         Expression::Closure { span, .. } => *span,
         Expression::Unary { span, .. }
-        | Expression::IsError { span, .. }
+        | Expression::IsType { span, .. }
         | Expression::Propagate { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }

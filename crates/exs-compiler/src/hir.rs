@@ -529,7 +529,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                     }
                 }
             }
-            Expression::IsError { value, .. }
+            Expression::IsType { value, .. }
             | Expression::Propagate { value, .. }
             | Expression::Unary { operand: value, .. } => self.lower_expression(value),
             Expression::Binary {

@@ -522,7 +522,7 @@ fn highlight_expression(
                 }
             }
         }
-        Expression::IsError { value, .. }
+        Expression::IsType { value, .. }
         | Expression::Propagate { value, .. }
         | Expression::Unary { operand: value, .. } => highlight_expression(value, spans, len),
         Expression::List { elements, .. } => {

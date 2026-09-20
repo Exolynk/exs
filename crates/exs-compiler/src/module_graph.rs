@@ -629,10 +629,15 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
                 rewrite_expression(task, bindings);
             }
         }
-        Expression::ParallelDynamic { functions, .. }
-        | Expression::IsError {
-            value: functions, ..
+        Expression::IsType {
+            value,
+            type_annotation,
+            ..
+        } => {
+            rewrite_annotation(type_annotation, bindings);
+            rewrite_expression(value, bindings);
         }
+        Expression::ParallelDynamic { functions, .. }
         | Expression::Propagate {
             value: functions, ..
         }

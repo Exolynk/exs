@@ -336,11 +336,19 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 });
                 Ok(destination)
             }
-            Expression::IsError { value, span } => {
+            Expression::IsType {
+                value,
+                type_annotation,
+                span,
+            } => {
                 let value = self.lower_expression(value)?;
                 let destination = self.temporary(*span)?;
-                self.operations.push(Operation::IsError {
+                let contract = self
+                    .types
+                    .resolve(Some(type_annotation), type_annotation.span)?;
+                self.operations.push(Operation::IsType {
                     value,
+                    contract,
                     destination,
                     span: *span,
                 });

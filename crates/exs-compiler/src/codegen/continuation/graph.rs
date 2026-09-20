@@ -235,9 +235,10 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
-    /// Tests one value for the Error variant.
-    IsError {
+    /// Tests one value against a resolved runtime type contract.
+    IsType {
         value: u32,
+        contract: TypeContract,
         destination: u32,
         span: SourceSpan<'source>,
     },
@@ -668,7 +669,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::EnumMatches { span, .. }
         | Operation::EnumField { span, .. }
         | Operation::MatchError { span, .. }
-        | Operation::IsError { span, .. }
+        | Operation::IsType { span, .. }
         | Operation::Propagate { span, .. }
         | Operation::Index { span, .. }
         | Operation::Property { span, .. }
@@ -708,7 +709,7 @@ pub(super) fn expression_span<'source>(expression: &Expression<'source>) -> Sour
         Expression::FormattedString { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Closure { span, .. } => *span,
-        Expression::IsError { span, .. }
+        Expression::IsType { span, .. }
         | Expression::Propagate { span, .. }
         | Expression::List { span, .. }
         | Expression::Object { span, .. }

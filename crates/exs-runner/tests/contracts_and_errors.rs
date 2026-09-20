@@ -233,6 +233,43 @@ fn tests_error_values_in_source() {
     );
 }
 
+/// Tests built-in, nominal, enum, and union contracts without raising a type error.
+#[test]
+fn tests_every_source_visible_type_category() {
+    assert_eq!(
+        execute_source(
+            r#"
+            type Label { text: String }
+            enum Outcome { Ready(Int) }
+
+            fn main(input) {
+                let label = Label {text: "ready"};
+                let outcome = Outcome::Ready(1);
+                ret [
+                    input is Int,
+                    input is String | Int,
+                    input is Label,
+                    label is Label,
+                    label is Object,
+                    outcome is Outcome,
+                    outcome is Label,
+                ];
+            }
+            "#,
+            ExsValue::Int(42),
+        ),
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(false),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(false),
+        ]),
+    );
+}
+
 /// Constructs a source-level recoverable Error with its data and source trace intact.
 #[test]
 fn constructs_errors_with_the_error_builtin() {

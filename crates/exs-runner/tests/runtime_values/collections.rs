@@ -456,7 +456,7 @@ fn executes_list_convenience_operations() {
     );
 }
 
-/// Provides Object defaults, ordered entry conversion, merging, and in-place clearing.
+/// Provides Object reads, defaults, ordered entry conversion, merging, and in-place clearing.
 #[test]
 fn executes_object_convenience_operations() {
     assert_eq!(
@@ -466,9 +466,11 @@ fn executes_object_convenience_operations() {
                     let base = { name: "Ada", score: 1 };
                     let merged = base.merge({ score: 2, role: "admin" });
                     let rebuilt = Object::from_entries(merged.entries())?;
+                    let name = rebuilt.get("name");
+                    let absent = rebuilt.get("missing");
                     let missing = rebuilt.get_or("missing", "fallback");
                     base.clear();
-                    ret [merged, rebuilt, missing, base];
+                    ret [merged, rebuilt, name, absent, missing, base];
                 }
             "#,
             &[],
@@ -484,6 +486,8 @@ fn executes_object_convenience_operations() {
                 ("score".to_owned(), ExsValue::Int(2)),
                 ("role".to_owned(), ExsValue::String("admin".to_owned())),
             ]),
+            ExsValue::String("Ada".to_owned()),
+            ExsValue::None,
             ExsValue::String("fallback".to_owned()),
             ExsValue::Object(vec![]),
         ]),

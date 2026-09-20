@@ -639,8 +639,16 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
         Expression::Bool(value, _) => value.to_string(),
         Expression::None(_) => "None".to_owned(),
         Expression::Variable(identifier) => identifier.name.clone(),
-        Expression::IsError { value, .. } => {
-            format!("{} is Error", expression_at(value, precedence))
+        Expression::IsType {
+            value,
+            type_annotation: annotation,
+            ..
+        } => {
+            format!(
+                "{} is {}",
+                expression_at(value, precedence),
+                type_annotation(annotation)
+            )
         }
         Expression::Propagate { value, .. } => format!("{}?", expression_at(value, precedence)),
         Expression::List { elements, .. } => format!("[{}]", expressions(elements)),
@@ -997,7 +1005,7 @@ fn expression_precedence(expression: &Expression<'_>) -> u8 {
             BinaryOperator::Add | BinaryOperator::Subtract => 5,
             BinaryOperator::Multiply | BinaryOperator::Divide => 6,
         },
-        Expression::IsError { .. } => 4,
+        Expression::IsType { .. } => 4,
         Expression::Unary { .. } => 7,
         Expression::Propagate { .. }
         | Expression::Call { .. }

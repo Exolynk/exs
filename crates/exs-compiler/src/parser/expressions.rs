@@ -34,10 +34,11 @@ impl<'a> Parser<'a> {
             ],
         )?;
         if self.matches(&TokenKind::Is) {
-            self.expect_simple(TokenKind::Error, "expected Error after is")?;
-            let span = expression_span(&expression).through(self.previous().span);
-            expression = Expression::IsError {
+            let type_annotation = self.type_annotation()?;
+            let span = expression_span(&expression).through(type_annotation.span);
+            expression = Expression::IsType {
                 value: Box::new(expression),
+                type_annotation,
                 span,
             };
         }

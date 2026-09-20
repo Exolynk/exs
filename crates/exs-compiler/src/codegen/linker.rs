@@ -249,7 +249,7 @@ fn collect_closures_expression<'source, 'ast>(
         Expression::ParallelDynamic { functions, .. } => {
             collect_closures_expression(functions, closures);
         }
-        Expression::IsError { value, .. }
+        Expression::IsType { value, .. }
         | Expression::Propagate { value, .. }
         | Expression::Unary { operand: value, .. }
         | Expression::Property {

@@ -487,13 +487,15 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.complete_if_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
-            Operation::IsError {
+            Operation::IsType {
                 value,
+                contract,
                 destination,
                 span,
             } => {
-                self.get_slot(*value, *span)?;
-                self.call_runtime("__exs_rt_is_error", *span)?;
+                self.validate_slot_matches(*value, contract, *span)?;
+                self.function.instruction(&Instruction::LocalGet(2));
+                self.call_runtime("__exs_rt_bool_new", *span)?;
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }

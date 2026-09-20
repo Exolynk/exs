@@ -1972,7 +1972,15 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
             Err(error) => error,
         },
         "get" => match list::operations::single_argument(arguments) {
-            Ok(index) => list::operations::get_or_none(receiver, index),
+            Ok(index) => match runtime::value(receiver) {
+                RtValue::List(_) => list::operations::get_or_none(receiver, index),
+                RtValue::Object(_) => object::operations::get(receiver, index),
+                _ => runtime::recoverable_error(
+                    "TypeError",
+                    "get requires a List or Object receiver",
+                    receiver,
+                ),
+            },
             Err(error) => error,
         },
         "first" => match list::operations::require_no_arguments(arguments) {

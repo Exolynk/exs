@@ -40,10 +40,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             Expression::None(span) => {
                 self.runtime_call("__exs_rt_none_new", *span)?;
             }
-            Expression::IsError { value, span } => {
-                self.compile_expression(value)?;
-                self.runtime_value_call("__exs_rt_is_error", 1, *span)?;
-            }
+            Expression::IsType {
+                value,
+                type_annotation,
+                span,
+            } => self.compile_is_type(value, type_annotation, *span)?,
             Expression::Propagate { value, span } => self.compile_propagate(value, *span)?,
             Expression::Variable(identifier) => {
                 if let Some(variant) = self.types.enum_variant(&identifier.name) {

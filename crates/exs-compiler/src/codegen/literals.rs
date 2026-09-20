@@ -273,7 +273,7 @@ fn collect_expression_literals<'a>(
             }
         }
         Expression::Unary { operand, .. }
-        | Expression::IsError { value: operand, .. }
+        | Expression::IsType { value: operand, .. }
         | Expression::Propagate { value: operand, .. } => {
             collect_expression_literals(operand, pool, types)?
         }

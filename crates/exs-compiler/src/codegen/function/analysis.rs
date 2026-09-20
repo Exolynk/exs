@@ -147,7 +147,7 @@ pub(super) fn count_expressions(expression: &Expression<'_>) -> u32 {
                 })
                 .sum::<u32>()
         }
-        Expression::IsError { value, .. } | Expression::Propagate { value, .. } => {
+        Expression::IsType { value, .. } | Expression::Propagate { value, .. } => {
             1 + count_expressions(value)
         }
         Expression::Unary { operand, .. } => 1 + count_expressions(operand),
@@ -230,7 +230,7 @@ pub(in crate::codegen::function) fn condition_span<'a>(
         Expression::Closure { span, .. } => *span,
         Expression::ParallelStatic { span, .. } | Expression::ParallelDynamic { span, .. } => *span,
         Expression::Unary { span, .. }
-        | Expression::IsError { span, .. }
+        | Expression::IsType { span, .. }
         | Expression::Propagate { span, .. }
         | Expression::Binary { span, .. }
         | Expression::Call { span, .. }

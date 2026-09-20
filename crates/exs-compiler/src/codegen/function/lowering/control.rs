@@ -1,6 +1,45 @@
 use super::*;
+use crate::ast::TypeAnnotation;
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
+    /// Compiles a non-throwing runtime test against one resolved type contract.
+    pub(in crate::codegen::function) fn compile_is_type(
+        &mut self,
+        expression: &Expression<'a>,
+        annotation: &TypeAnnotation<'a>,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.compile_expression(expression)?;
+        let value = self.store_stack_value()?;
+        let contract = self.types.resolve(Some(annotation), annotation.span)?;
+        let matches = self.type_match_local;
+        self.function.instruction(&Instruction::LocalGet(value));
+        self.function
+            .instruction(&Instruction::I32Const(contract.builtin_mask.cast_signed()));
+        self.runtime_call("__exs_rt_type_matches", span)?;
+        self.function.instruction(&Instruction::LocalSet(matches));
+        for type_id in &contract.nominal_type_ids {
+            self.function.instruction(&Instruction::LocalGet(matches));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.function
+                .instruction(&Instruction::I32Const(type_id.cast_signed()));
+            self.runtime_call("__exs_rt_object_is_type", span)?;
+            self.function.instruction(&Instruction::I32Or);
+            self.function.instruction(&Instruction::LocalSet(matches));
+        }
+        for type_id in &contract.enum_type_ids {
+            self.function.instruction(&Instruction::LocalGet(matches));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.compile_string(type_id, span)?;
+            self.runtime_call("__exs_rt_enum_is_type", span)?;
+            self.function.instruction(&Instruction::I32Or);
+            self.function.instruction(&Instruction::LocalSet(matches));
+        }
+        self.function.instruction(&Instruction::LocalGet(matches));
+        self.runtime_call("__exs_rt_bool_new", span)?;
+        self.clear_root_slot(value)
+    }
+
     /// Returns the current function's recoverable or fatal generic type-contract Error.
     pub(in crate::codegen::function) fn return_type_error(
         &mut self,

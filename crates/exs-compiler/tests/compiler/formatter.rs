@@ -25,6 +25,23 @@ fn formats_source_into_canonical_layout() {
     assert_eq!(reformatted, formatted);
 }
 
+/// Preserves general source-visible type tests during canonical formatting.
+#[test]
+fn formats_general_type_tests() {
+    let source = "type Label{text:String}fn main(value:Any){ret value is String|Label;}";
+    let formatted = match format(SourceInput {
+        source_id: "format-is-type.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert_eq!(
+        formatted,
+        "type Label {\n    text: String,\n}\n\nfn main(value: Any) {\n    ret value is String | Label;\n}\n"
+    );
+}
+
 /// Retains comments and empty source lines while canonicalizing ExS syntax.
 #[test]
 fn formatter_preserves_comments_and_blank_lines() {

@@ -508,6 +508,11 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     example: "let user = { name: \"Ada\" };\nlet has_name = user.has(\"name\"); // true",
                 },
                 StandardMethod {
+                    signature: "get(key: String) -> Any | None | Error",
+                    description: "Returns the value for a String key, or None when the key is absent. A non-String key returns `TypeError`.",
+                    example: "let user = { name: \"Ada\" };\nlet name = user.get(\"name\"); // \"Ada\"",
+                },
+                StandardMethod {
                     signature: "delete(key: String) -> Any | None | Error",
                     description: "Removes a String key and returns its previous value. When the key is absent, it returns None; a non-String key returns `TypeError`.",
                     example: "let user = { name: \"Ada\" };\nlet name = user.delete(\"name\"); // \"Ada\"",

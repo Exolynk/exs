@@ -437,10 +437,12 @@ pub enum Expression<'a> {
     Bool(bool, SourceSpan<'a>),
     /// The absence value shared by Options and empty operations.
     None(SourceSpan<'a>),
-    /// Tests whether one value is a language Error.
-    IsError {
+    /// Tests whether one value satisfies a source-visible type contract.
+    IsType {
         /// Value being tested.
         value: Box<Expression<'a>>,
+        /// Types accepted by this runtime test.
+        type_annotation: TypeAnnotation<'a>,
         /// Full expression span.
         span: SourceSpan<'a>,
     },

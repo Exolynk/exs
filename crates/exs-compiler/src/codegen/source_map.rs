@@ -348,7 +348,7 @@ impl<'a> SourceMap<'a> {
                     }
                 }
             }
-            Expression::IsError { value, span } | Expression::Propagate { value, span } => {
+            Expression::IsType { value, span, .. } | Expression::Propagate { value, span } => {
                 self.insert(*span);
                 self.collect_expression(value);
             }

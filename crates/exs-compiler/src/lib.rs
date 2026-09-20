@@ -167,6 +167,27 @@ pub fn has_tests(source: SourceInput<'_>) -> Result<bool, String> {
         .map_err(|error| error.render(source.text))
 }
 
+/// Returns source-declared test descriptions in declaration order.
+///
+/// # Errors
+///
+/// Returns rendered lexer or parser diagnostics when the source is invalid.
+pub fn test_descriptions(source: SourceInput<'_>) -> Result<Vec<String>, String> {
+    let lexed = lexer::lex(source);
+    if !lexed.diagnostics.is_empty() {
+        return Err(lexed.diagnostics.render(source.text));
+    }
+    parser::parse(source.source_id, lexed.tokens, false)
+        .map(|module| {
+            module
+                .tests
+                .into_iter()
+                .map(|test| test.description)
+                .collect()
+        })
+        .map_err(|error| error.render(source.text))
+}
+
 /// Compiles one source graph with an internal entry point for source-declared tests.
 ///
 /// # Errors
