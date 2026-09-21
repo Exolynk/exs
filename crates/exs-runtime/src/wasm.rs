@@ -264,6 +264,7 @@ fn value_type_mask(value: &RtValue) -> u32 {
         RtValue::String(_) => TYPE_STRING,
         RtValue::Bytes(_) => TYPE_BYTES,
         RtValue::List(_) => TYPE_LIST,
+        RtValue::Iterator(_) => 0,
         RtValue::Object(_) => TYPE_OBJECT,
         RtValue::Closure(_) => TYPE_FN,
         RtValue::Cell(_) => 0,
@@ -528,6 +529,12 @@ pub extern "C" fn __exs_rt_integer_parse(value: ValueRef) -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_float_parse(value: ValueRef) -> ValueRef {
     value::operations::float_parse(value)
+}
+
+/// Parses strict RFC 3339 text into raw DateTime fields for compiler-owned nominal wrapping.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_datetime_parse_rfc3339(value: ValueRef) -> ValueRef {
+    value::datetime::parse_rfc3339(value)
 }
 
 /// Returns the Float constant pi.
@@ -858,6 +865,66 @@ pub extern "C" fn __exs_rt_iter_snapshot(iterable: ValueRef) -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_length(value: ValueRef) -> ValueRef {
     value::operations::length(value)
+}
+
+/// Returns whether one runtime String, Bytes, List, or Object has no entries.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_is_empty(value: ValueRef) -> ValueRef {
+    value::operations::is_empty(value)
+}
+
+/// Returns one slice without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef {
+    value::operations::slice(receiver, start, end)
+}
+
+/// Tests membership without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_contains(receiver: ValueRef, other: ValueRef) -> ValueRef {
+    value::operations::contains(receiver, other)
+}
+
+/// Tests one prefix without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_starts_with(receiver: ValueRef, other: ValueRef) -> ValueRef {
+    value::operations::starts_with(receiver, other)
+}
+
+/// Tests one suffix without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_ends_with(receiver: ValueRef, other: ValueRef) -> ValueRef {
+    value::operations::ends_with(receiver, other)
+}
+
+/// Trims Unicode whitespace without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_trim(receiver: ValueRef) -> ValueRef {
+    value::operations::trim(receiver)
+}
+
+/// Trims leading Unicode whitespace without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_trim_start(receiver: ValueRef) -> ValueRef {
+    value::operations::trim_start(receiver)
+}
+
+/// Trims trailing Unicode whitespace without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_trim_end(receiver: ValueRef) -> ValueRef {
+    value::operations::trim_end(receiver)
+}
+
+/// Replaces String fragments without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_replace(receiver: ValueRef, from: ValueRef, to: ValueRef) -> ValueRef {
+    value::operations::replace(receiver, from, to)
+}
+
+/// Splits one String without allocating a dynamic member-call argument List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_split(receiver: ValueRef, delimiter: ValueRef) -> ValueRef {
+    value::operations::split(receiver, delimiter)
 }
 
 /// Calls one statically named member method through runtime receiver dispatch.

@@ -183,6 +183,18 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.compile_assert_eq_builtin(arguments, *span)?;
                     return Ok(());
                 }
+                if is_datetime_parser_intrinsic(&callee.name) {
+                    if arguments.len() != 1 {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            *span,
+                            "DateTime parser intrinsic expects 1 argument",
+                        )));
+                    }
+                    self.compile_expression(&arguments[0])?;
+                    self.runtime_value_call("__exs_rt_datetime_parse_rfc3339", 1, *span)?;
+                    return Ok(());
+                }
                 if let Some(variant) = self.types.enum_variant(&callee.name) {
                     if variant.fields.len() != arguments.len() {
                         return Err(diagnostics(CompileDiagnostic::new(
@@ -288,4 +300,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         }
         Ok(())
     }
+}
+
+/// Returns whether one compiler-resolved prelude function is the DateTime parser intrinsic.
+fn is_datetime_parser_intrinsic(name: &str) -> bool {
+    name == "__exs_datetime_parse_rfc3339_runtime"
+        || name.ends_with("::__exs_datetime_parse_rfc3339_runtime")
 }

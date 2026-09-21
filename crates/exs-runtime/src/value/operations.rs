@@ -17,8 +17,8 @@ use exs_value::ValueRef;
 use crate::gc;
 use crate::runtime;
 use crate::value::{
-    RtValue, RuntimeBytes, RuntimeEnum, RuntimeList, RuntimeObject, RuntimeString, clone, list,
-    numeric, object,
+    RtValue, RuntimeBytes, RuntimeEnum, RuntimeIterator, RuntimeList, RuntimeObject, RuntimeString,
+    clone, list, numeric, object,
 };
 
 /// Adds two runtime values through String, List, or numeric dispatch.
@@ -780,7 +780,11 @@ fn string_slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef 
             );
         }
     };
-    let scalar_count = value.chars().count();
+    let scalar_count = if value.is_ascii() {
+        value.len()
+    } else {
+        value.chars().count()
+    };
     if start > end || end > scalar_count {
         return runtime::recoverable_error(
             "IndexError",
@@ -788,9 +792,29 @@ fn string_slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef 
             receiver,
         );
     }
-    let start = scalar_byte_offset(value, start);
-    let end = scalar_byte_offset(value, end);
+    let (start, end) = if value.is_ascii() {
+        (start, end)
+    } else {
+        (
+            scalar_byte_offset(value, start),
+            scalar_byte_offset(value, end),
+        )
+    };
     string_value_result(String::from(&value[start..end]))
+}
+
+/// Applies the built-in slice operation without allocating dynamic method arguments.
+pub(crate) fn slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef {
+    match runtime::value(receiver) {
+        RtValue::Bytes(_) => bytes_slice(receiver, start, end),
+        RtValue::String(_) => string_slice(receiver, start, end),
+        RtValue::List(_) => list::operations::slice(receiver, start, end),
+        _ => runtime::recoverable_error(
+            "TypeError",
+            "slice requires a Bytes, List, or String receiver",
+            receiver,
+        ),
+    }
 }
 
 /// Converts one Unicode scalar position into its UTF-8 byte offset.
@@ -829,6 +853,20 @@ fn string_contains(receiver: ValueRef, needle: ValueRef) -> ValueRef {
     )
 }
 
+/// Applies the built-in contains operation without allocating dynamic method arguments.
+pub(crate) fn contains(receiver: ValueRef, other: ValueRef) -> ValueRef {
+    match runtime::value(receiver) {
+        RtValue::Bytes(_) => bytes_contains(receiver, other),
+        RtValue::String(_) => string_contains(receiver, other),
+        RtValue::List(_) => list::operations::contains(receiver, other),
+        _ => runtime::recoverable_error(
+            "TypeError",
+            "contains requires a Bytes, List, or String receiver",
+            receiver,
+        ),
+    }
+}
+
 /// Tests whether one String starts with another String.
 fn string_starts_with(receiver: ValueRef, prefix: ValueRef) -> ValueRef {
     string_relation(
@@ -839,6 +877,19 @@ fn string_starts_with(receiver: ValueRef, prefix: ValueRef) -> ValueRef {
     )
 }
 
+/// Applies the built-in starts-with operation without allocating dynamic method arguments.
+pub(crate) fn starts_with(receiver: ValueRef, other: ValueRef) -> ValueRef {
+    match runtime::value(receiver) {
+        RtValue::Bytes(_) => bytes_starts_with(receiver, other),
+        RtValue::String(_) => string_starts_with(receiver, other),
+        _ => runtime::recoverable_error(
+            "TypeError",
+            "starts_with requires a Bytes or String receiver",
+            receiver,
+        ),
+    }
+}
+
 /// Tests whether one String ends with another String.
 fn string_ends_with(receiver: ValueRef, suffix: ValueRef) -> ValueRef {
     string_relation(
@@ -847,6 +898,19 @@ fn string_ends_with(receiver: ValueRef, suffix: ValueRef) -> ValueRef {
         |value, suffix| value.ends_with(suffix),
         "ends_with",
     )
+}
+
+/// Applies the built-in ends-with operation without allocating dynamic method arguments.
+pub(crate) fn ends_with(receiver: ValueRef, other: ValueRef) -> ValueRef {
+    match runtime::value(receiver) {
+        RtValue::Bytes(_) => bytes_ends_with(receiver, other),
+        RtValue::String(_) => string_ends_with(receiver, other),
+        _ => runtime::recoverable_error(
+            "TypeError",
+            "ends_with requires a Bytes or String receiver",
+            receiver,
+        ),
+    }
 }
 
 /// Applies one binary String predicate after validating both operands.
@@ -884,14 +948,29 @@ fn string_trim(receiver: ValueRef) -> ValueRef {
     string_transform(receiver, str::trim, "trim")
 }
 
+/// Trims Unicode whitespace without allocating dynamic method arguments.
+pub(crate) fn trim(receiver: ValueRef) -> ValueRef {
+    string_trim(receiver)
+}
+
 /// Trims Unicode whitespace from the start of one String.
 fn string_trim_start(receiver: ValueRef) -> ValueRef {
     string_transform(receiver, str::trim_start, "trim_start")
 }
 
+/// Trims leading Unicode whitespace without allocating dynamic method arguments.
+pub(crate) fn trim_start(receiver: ValueRef) -> ValueRef {
+    string_trim_start(receiver)
+}
+
 /// Trims Unicode whitespace from the end of one String.
 fn string_trim_end(receiver: ValueRef) -> ValueRef {
     string_transform(receiver, str::trim_end, "trim_end")
+}
+
+/// Trims trailing Unicode whitespace without allocating dynamic method arguments.
+pub(crate) fn trim_end(receiver: ValueRef) -> ValueRef {
+    string_trim_end(receiver)
 }
 
 /// Applies one String-to-String operation after validating the receiver.
@@ -944,6 +1023,11 @@ fn string_replace(receiver: ValueRef, from: ValueRef, to: ValueRef) -> ValueRef 
     string_value_result(value.replace(from, to))
 }
 
+/// Replaces String fragments without allocating dynamic method arguments.
+pub(crate) fn replace(receiver: ValueRef, from: ValueRef, to: ValueRef) -> ValueRef {
+    string_replace(receiver, from, to)
+}
+
 /// Splits one String around an exact String delimiter into a new List.
 fn string_split(receiver: ValueRef, delimiter: ValueRef) -> ValueRef {
     let value = match runtime::value(receiver) {
@@ -968,6 +1052,11 @@ fn string_split(receiver: ValueRef, delimiter: ValueRef) -> ValueRef {
     };
     let parts = value.split(delimiter).map(String::from).collect::<Vec<_>>();
     string_list(parts)
+}
+
+/// Splits one String without allocating dynamic method arguments.
+pub(crate) fn split(receiver: ValueRef, delimiter: ValueRef) -> ValueRef {
+    string_split(receiver, delimiter)
 }
 
 /// Returns a new List of runtime Strings while preserving temporary roots during allocation.
@@ -1101,7 +1190,7 @@ pub(crate) fn index_set(receiver: ValueRef, index: ValueRef, replacement: ValueR
     }
 }
 
-/// Creates the shallow List or scalar-String snapshot consumed by a for loop.
+/// Creates the shallow List snapshot or lazy immutable iterator consumed by a for loop.
 pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
     match runtime::value(iterable) {
         RtValue::List(list) => {
@@ -1109,36 +1198,24 @@ pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
             elements.reverse();
             runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })))
         }
-        RtValue::String(string) => {
-            let scalars = string
-                .as_str()
-                .chars()
-                .map(|scalar| scalar.to_string())
-                .collect::<Vec<_>>();
+        RtValue::String(_) => {
             let checkpoint = gc::temporary_root_checkpoint();
-            let mut elements = Vec::with_capacity(scalars.len());
-            for scalar in scalars {
-                let value = runtime::allocate(RtValue::String(Box::new(
-                    crate::value::RuntimeString::from_string(scalar),
-                )));
-                gc::push_temporary_root(value);
-                elements.push(value);
-            }
-            elements.reverse();
-            let snapshot = runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })));
+            gc::push_temporary_root(iterable);
+            let snapshot =
+                runtime::allocate(RtValue::Iterator(Box::new(RuntimeIterator::String {
+                    source: iterable,
+                    next_byte: 0,
+                })));
             gc::restore_temporary_roots(checkpoint);
             snapshot
         }
-        RtValue::Bytes(bytes) => {
+        RtValue::Bytes(_) => {
             let checkpoint = gc::temporary_root_checkpoint();
-            let mut elements = Vec::with_capacity(bytes.as_slice().len());
-            for byte in bytes.as_slice() {
-                let value = runtime::allocate(RtValue::Int(i64::from(*byte)));
-                gc::push_temporary_root(value);
-                elements.push(value);
-            }
-            elements.reverse();
-            let snapshot = runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })));
+            gc::push_temporary_root(iterable);
+            let snapshot = runtime::allocate(RtValue::Iterator(Box::new(RuntimeIterator::Bytes {
+                source: iterable,
+                next_index: 0,
+            })));
             gc::restore_temporary_roots(checkpoint);
             snapshot
         }
@@ -1151,16 +1228,71 @@ pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
     }
 }
 
-/// Advances one built-in List snapshot and returns a prelude IteratorStep value.
+/// Advances one compiler-created iterator and returns a prelude IteratorStep value.
 fn iterator_next(receiver: ValueRef) -> ValueRef {
-    let item = match runtime::value_mut(receiver) {
+    let item = match runtime::value(receiver) {
         RtValue::List(list) => {
             if list.elements.is_empty() {
                 None
             } else {
-                list.elements.pop()
+                match runtime::value_mut(receiver) {
+                    RtValue::List(list) => list.elements.pop(),
+                    _ => crate::runtime::trap(),
+                }
             }
         }
+        RtValue::Iterator(iterator) => match iterator.as_ref() {
+            RuntimeIterator::String { source, next_byte } => {
+                let source = *source;
+                let next_byte = *next_byte;
+                let RtValue::String(value) = runtime::value(source) else {
+                    crate::runtime::trap();
+                };
+                let Some(suffix) = value.as_str().get(next_byte..) else {
+                    crate::runtime::trap();
+                };
+                match suffix.chars().next() {
+                    Some(scalar) => {
+                        let next_byte = next_byte.saturating_add(scalar.len_utf8());
+                        match runtime::value_mut(receiver) {
+                            RtValue::Iterator(iterator) => match iterator.as_mut() {
+                                RuntimeIterator::String {
+                                    next_byte: cursor, ..
+                                } => *cursor = next_byte,
+                                _ => crate::runtime::trap(),
+                            },
+                            _ => crate::runtime::trap(),
+                        }
+                        Some(runtime::allocate(RtValue::String(Box::new(
+                            RuntimeString::from_string(scalar.to_string()),
+                        ))))
+                    }
+                    None => None,
+                }
+            }
+            RuntimeIterator::Bytes { source, next_index } => {
+                let source = *source;
+                let next_index = *next_index;
+                let RtValue::Bytes(value) = runtime::value(source) else {
+                    crate::runtime::trap();
+                };
+                let item = value.as_slice().get(next_index).copied();
+                item.map(|byte| {
+                    match runtime::value_mut(receiver) {
+                        RtValue::Iterator(iterator) => match iterator.as_mut() {
+                            RuntimeIterator::Bytes {
+                                next_index: cursor, ..
+                            } => {
+                                *cursor = next_index.saturating_add(1);
+                            }
+                            _ => crate::runtime::trap(),
+                        },
+                        _ => crate::runtime::trap(),
+                    }
+                    runtime::allocate(RtValue::Int(i64::from(byte)))
+                })
+            }
+        },
         _ => {
             return runtime::recoverable_error(
                 "NotIterable",
@@ -1169,6 +1301,11 @@ fn iterator_next(receiver: ValueRef) -> ValueRef {
             );
         }
     };
+    iterator_step(item)
+}
+
+/// Wraps one optional iterator item in the compiler-owned IteratorStep enum.
+fn iterator_step(item: Option<ValueRef>) -> ValueRef {
     let checkpoint = gc::temporary_root_checkpoint();
     let (variant, fields) = match item {
         Some(item) => {
@@ -1192,7 +1329,14 @@ fn iterator_next(receiver: ValueRef) -> ValueRef {
 /// Returns the scalar or entry count for runtime values with a visible length.
 pub(crate) fn length(value: ValueRef) -> ValueRef {
     let length = match runtime::value(value) {
-        RtValue::String(value) => value.as_str().chars().count(),
+        RtValue::String(value) => {
+            let value = value.as_str();
+            if value.is_ascii() {
+                value.len()
+            } else {
+                value.chars().count()
+            }
+        }
         RtValue::Bytes(value) => value.as_slice().len(),
         RtValue::List(value) => value.elements.len(),
         RtValue::Object(value) => value.entries.len(),
@@ -2086,6 +2230,7 @@ fn render_default(receiver: ValueRef) -> ValueRef {
         RtValue::String(value) => String::from(value.as_str()),
         RtValue::Bytes(value) => format!("Bytes({})", value.as_slice().len()),
         RtValue::List(_) => "[]".to_owned(),
+        RtValue::Iterator(_) => "Iterator".to_owned(),
         RtValue::Object(object) => object.enum_data.as_ref().map_or_else(
             || "{}".to_owned(),
             |enumeration| format!("{}::{}", enumeration.type_identity, enumeration.variant),

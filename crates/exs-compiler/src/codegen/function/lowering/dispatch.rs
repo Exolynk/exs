@@ -298,6 +298,13 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         method: &crate::ast::Identifier<'a>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        if let Some(export) = builtin_runtime_method_export(&method.name, arguments.len()) {
+            self.function.instruction(&Instruction::LocalGet(receiver));
+            for argument in arguments {
+                self.function.instruction(&Instruction::LocalGet(*argument));
+            }
+            return self.runtime_value_call(export, arguments.len() as u32 + 1, span);
+        }
         self.runtime_call("__exs_rt_list_new", span)?;
         let list = self.store_stack_value()?;
         for argument in arguments {
@@ -314,5 +321,23 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.runtime_value_call("__exs_rt_call_method", 3, span)?;
         self.clear_root_slot(method)?;
         self.clear_root_slot(list)
+    }
+}
+
+/// Returns the direct runtime export for one fixed-arity built-in member fallback.
+fn builtin_runtime_method_export(method: &str, arity: usize) -> Option<&'static str> {
+    match (method, arity) {
+        ("length", 0) => Some("__exs_rt_length"),
+        ("is_empty", 0) => Some("__exs_rt_is_empty"),
+        ("slice", 2) => Some("__exs_rt_slice"),
+        ("contains", 1) => Some("__exs_rt_contains"),
+        ("starts_with", 1) => Some("__exs_rt_starts_with"),
+        ("ends_with", 1) => Some("__exs_rt_ends_with"),
+        ("trim", 0) => Some("__exs_rt_trim"),
+        ("trim_start", 0) => Some("__exs_rt_trim_start"),
+        ("trim_end", 0) => Some("__exs_rt_trim_end"),
+        ("replace", 2) => Some("__exs_rt_replace"),
+        ("split", 1) => Some("__exs_rt_split"),
+        _ => None,
     }
 }

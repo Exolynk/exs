@@ -341,6 +341,15 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         destination: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        if let Some(export) = builtin_runtime_method_export(method, arguments.len()) {
+            self.get_slot(receiver, span)?;
+            for argument in arguments {
+                self.get_slot(*argument, span)?;
+            }
+            self.call_runtime(export, span)?;
+            self.set_slot(destination, span)?;
+            return self.ready(next, span);
+        }
         self.call_runtime("__exs_rt_list_new", span)?;
         // The method-name allocation below can collect values held only in Wasm locals. Keep
         // this temporary argument List in the destination's durable async-frame slot instead.
@@ -815,6 +824,24 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<u32, CompileDiagnostics<'source>> {
         runtime_index(self.runtime, name, span)
+    }
+}
+
+/// Returns the direct runtime export for one fixed-arity built-in member fallback.
+fn builtin_runtime_method_export(method: &str, arity: usize) -> Option<&'static str> {
+    match (method, arity) {
+        ("length", 0) => Some("__exs_rt_length"),
+        ("is_empty", 0) => Some("__exs_rt_is_empty"),
+        ("slice", 2) => Some("__exs_rt_slice"),
+        ("contains", 1) => Some("__exs_rt_contains"),
+        ("starts_with", 1) => Some("__exs_rt_starts_with"),
+        ("ends_with", 1) => Some("__exs_rt_ends_with"),
+        ("trim", 0) => Some("__exs_rt_trim"),
+        ("trim_start", 0) => Some("__exs_rt_trim_start"),
+        ("trim_end", 0) => Some("__exs_rt_trim_end"),
+        ("replace", 2) => Some("__exs_rt_replace"),
+        ("split", 1) => Some("__exs_rt_split"),
+        _ => None,
     }
 }
 

@@ -345,6 +345,11 @@ fn __exs_datetime_parse_rfc3339(value: String) -> DateTime | Error {
     ret __exs_datetime_from_fixed_components(year, month, day, hour, minute, second, nanosecond, offset, None);
 }
 
+/// Compiler-lowered runtime parser that returns raw DateTime fields.
+fn __exs_datetime_parse_rfc3339_runtime(value: String) -> Object | Error {
+    ret Error("RuntimeError", "DateTime parser intrinsic was not lowered", value);
+}
+
 impl DateTime {
     /// Captures the current runner wall clock as a DateTime snapshot.
     fn now() -> DateTime {
@@ -408,7 +413,13 @@ impl DateTime {
 
     /// Parses a strict whole-second RFC 3339 timestamp with Z or a ±HH:MM offset.
     fn parse_rfc3339(value: String) -> DateTime | Error {
-        ret __exs_datetime_parse_rfc3339(value);
+        let parsed = __exs_datetime_parse_rfc3339_runtime(value)?;
+        ret DateTime {
+            unix_seconds: parsed.unix_seconds,
+            nanoseconds: parsed.nanoseconds,
+            utc_offset_seconds: parsed.utc_offset_seconds,
+            timezone: parsed.timezone,
+        };
     }
 
     /// Returns this instant rendered in one validated IANA time zone.

@@ -1060,9 +1060,10 @@ fn runtime_to_exs_value_inner(
             let _removed = active_containers.pop();
             result
         }
-        RtValue::Cell(_) | RtValue::Closure(_) | RtValue::BoxedFutureValue(_) => {
-            Err(BoundarySerializationError::UnsupportedValue)
-        }
+        RtValue::Cell(_)
+        | RtValue::Closure(_)
+        | RtValue::Iterator(_)
+        | RtValue::BoxedFutureValue(_) => Err(BoundarySerializationError::UnsupportedValue),
     }
 }
 

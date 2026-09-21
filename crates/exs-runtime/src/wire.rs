@@ -391,6 +391,7 @@ fn value_type_mask(value: &RtValue) -> u32 {
         RtValue::String(_) => TYPE_STRING,
         RtValue::Bytes(_) => TYPE_BYTES,
         RtValue::List(_) => TYPE_LIST,
+        RtValue::Iterator(_) => 0,
         RtValue::Object(_) => TYPE_OBJECT,
         RtValue::Closure(_) => TYPE_FN,
         RtValue::Cell(_) | RtValue::BoxedFutureValue(_) => 0,

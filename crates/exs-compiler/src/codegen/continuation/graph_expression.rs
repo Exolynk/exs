@@ -532,6 +532,24 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     });
                     return Ok(destination);
                 }
+                if is_datetime_parser_intrinsic(&callee.name) {
+                    if arguments.len() != 1 {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0208",
+                            *span,
+                            "DateTime parser intrinsic expects 1 argument",
+                        )));
+                    }
+                    let value = self.lower_expression(&arguments[0])?;
+                    let destination = self.temporary(*span)?;
+                    self.operations.push(Operation::RuntimeStatic {
+                        values: vec![value],
+                        export: "__exs_rt_datetime_parse_rfc3339",
+                        destination,
+                        span: *span,
+                    });
+                    return Ok(destination);
+                }
                 let signature = self.signatures.get(&callee.name).cloned().ok_or_else(|| {
                     diagnostics(CompileDiagnostic::new(
                         "E0207",
@@ -1454,4 +1472,10 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             .rev()
             .find_map(|scope| scope.get(name).copied())
     }
+}
+
+/// Returns whether one compiler-resolved prelude function is the DateTime parser intrinsic.
+fn is_datetime_parser_intrinsic(name: &str) -> bool {
+    name == "__exs_datetime_parse_rfc3339_runtime"
+        || name.ends_with("::__exs_datetime_parse_rfc3339_runtime")
 }

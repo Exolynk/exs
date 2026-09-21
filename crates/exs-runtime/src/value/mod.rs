@@ -4,7 +4,9 @@ mod bytes;
 mod cell;
 pub(crate) mod clone;
 mod closure;
+pub(crate) mod datetime;
 mod error;
+mod iterator;
 pub(crate) mod list;
 pub(crate) mod object;
 mod string;
@@ -16,6 +18,7 @@ pub(crate) use bytes::RuntimeBytes;
 pub(crate) use cell::RuntimeCellValue;
 pub(crate) use closure::RuntimeClosure;
 pub(crate) use error::RuntimeError;
+pub(crate) use iterator::RuntimeIterator;
 pub(crate) use list::RuntimeList;
 pub(crate) use object::{RuntimeEnum, RuntimeObject};
 pub(crate) use string::RuntimeString;
@@ -45,6 +48,8 @@ pub(crate) enum RtValue {
     Bytes(Box<RuntimeBytes>),
     /// A mutable ordered sequence.
     List(Box<RuntimeList>),
+    /// A compiler-created lazy cursor over one immutable String or Bytes value.
+    Iterator(Box<RuntimeIterator>),
     /// A mutable insertion-ordered string-keyed mapping.
     Object(Box<RuntimeObject>),
     /// Internal mutable storage shared by captured lexical bindings.
