@@ -456,13 +456,20 @@ fn generates_single_llm_markdown_documentation() {
     assert!(documentation.contains("Host::stream(name, arguments...) -> HostStream | Error"));
     assert!(documentation.contains("fn next(self) -> IteratorStep | Error;"));
     assert!(documentation.contains("Adds two integers."));
-    assert!(documentation.contains("Runs the program."));
+    assert!(documentation.contains("```exs\n/// Runs the program.\nfn main() -> Int { ... }"));
     assert!(
         documentation.contains("impl Counter {\n    /// Returns the current count.\n    fn count")
     );
     assert!(documentation.contains("type Counter {\n}\n\nimpl Counter {"));
     assert!(!documentation.contains("#### `impl Counter`"));
-    assert!(!documentation.contains("Opens a runner-registered pull stream"));
+    assert!(
+        documentation.contains(
+            "/// Opens a runner-registered pull stream selected by a runtime String name."
+        )
+    );
+    assert!(
+        documentation.contains("fn Host::stream(name, arguments...) -> HostStream | Error { ... }")
+    );
     assert!(!documentation.contains("__exs_list_any"));
 }
 

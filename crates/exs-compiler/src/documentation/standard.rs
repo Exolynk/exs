@@ -656,7 +656,7 @@ pub(super) fn standard_pages() -> Result<Vec<DocumentationPage>, String> {
     Ok(pages)
 }
 
-/// Renders the compact standard-library surface without descriptive prose or examples.
+/// Renders the compact standard-library surface with declaration-local API contracts.
 pub(super) fn render_compact_standard_library() -> Result<String, String> {
     let prelude_modules = standard_prelude_modules()?;
     let prelude_type_names = prelude_modules
@@ -695,31 +695,22 @@ pub(super) fn render_compact_standard_library() -> Result<String, String> {
         .into_iter()
         .filter(|type_info| !prelude_type_names.contains(&type_info.name))
     {
-        output.push_str(&format!("#### `{}`\n\n", type_info.name));
-        for method in type_info.methods {
-            output.push_str(&format!("- `{}`\n", method.signature));
-        }
-        for function in standard_library_type_static_functions(type_info.name) {
-            output.push_str(&format!("- `{}`\n", function.signature));
-        }
-        if type_info.methods.is_empty()
-            && standard_library_type_static_functions(type_info.name).is_empty()
-        {
-            output.push_str("- No type-specific methods.\n");
-        }
-        output.push('\n');
+        render_compact_standard_type(&mut output, &type_info);
     }
     output.push_str("### Global Functions\n\n");
     for function in standard_library_functions() {
-        output.push_str(&format!("- `{}`\n", function.signature));
+        render_compact_standard_function(&mut output, function);
     }
-    output.push_str("\n### Namespaces\n\n");
+    output.push_str("### Namespaces\n\n");
     for namespace in standard_library_namespaces() {
-        output.push_str(&format!("#### `{}`\n\n", namespace.name));
+        output.push_str(&format!(
+            "#### Namespace `{}`\n\n{}\n\n```exs\n",
+            namespace.name, namespace.description
+        ));
         for function in namespace.functions {
-            output.push_str(&format!("- `{}`\n", function.signature));
+            render_compact_standard_function_declaration(&mut output, function, "");
         }
-        output.push('\n');
+        output.push_str("```\n\n");
     }
     output.push_str("### Built-in Traits\n\n");
     for trait_info in codegen_standard::traits()
@@ -744,7 +735,7 @@ pub(super) fn render_compact_standard_library() -> Result<String, String> {
         output.push('\n');
     }
     for (module, source) in &prelude_modules {
-        render_compact_module(&mut output, module, source, false, false);
+        render_compact_module(&mut output, module, source, true, false);
     }
     output.push_str("### Automatically Provided Iterator Methods\n\n");
     for method in automatic_trait_methods("Iterator") {
@@ -752,6 +743,76 @@ pub(super) fn render_compact_standard_library() -> Result<String, String> {
     }
     output.push('\n');
     Ok(output)
+}
+
+/// Renders one runtime-owned standard type and its callable operations as ExS declarations.
+fn render_compact_standard_type(output: &mut String, type_info: &StandardType) {
+    let static_functions = standard_library_type_static_functions(type_info.name);
+    output.push_str(&format!(
+        "#### Type `{}`\n\n{}\n\n```exs\ntype {}\n",
+        type_info.name, type_info.description, type_info.name
+    ));
+    if !type_info.methods.is_empty() || !static_functions.is_empty() {
+        output.push_str(&format!("\nimpl {} {{\n", type_info.name));
+        for method in type_info.methods {
+            render_compact_standard_method_declaration(output, method, "    ");
+        }
+        for function in static_functions {
+            render_compact_standard_function_declaration(output, function, "    ");
+        }
+        output.push_str("}\n");
+    }
+    output.push_str("```\n\n");
+}
+
+/// Renders one globally callable standard function as a compact ExS declaration block.
+fn render_compact_standard_function(output: &mut String, function: &StandardFunction) {
+    output.push_str(&format!("#### Function `{}`\n\n```exs\n", function.name));
+    render_compact_standard_function_declaration(output, function, "");
+    output.push_str("```\n\n");
+}
+
+/// Renders one documented standard static or namespace function inside a declaration block.
+fn render_compact_standard_function_declaration(
+    output: &mut String,
+    function: &StandardFunction,
+    indentation: &str,
+) {
+    render_compact_documentation_comment(output, function.description, indentation);
+    output.push_str(indentation);
+    output.push_str("fn ");
+    output.push_str(function.signature);
+    output.push_str(" { ... }\n");
+}
+
+/// Renders one documented standard instance method inside a declaration block.
+fn render_compact_standard_method_declaration(
+    output: &mut String,
+    method: &StandardMethod,
+    indentation: &str,
+) {
+    render_compact_documentation_comment(output, method.description, indentation);
+    output.push_str(indentation);
+    output.push_str("fn ");
+    output.push_str(method.signature);
+    output.push_str(" { ... }\n");
+}
+
+/// Appends prose metadata as ExS documentation comments at a declaration's indentation level.
+fn render_compact_documentation_comment(
+    output: &mut String,
+    documentation: &str,
+    indentation: &str,
+) {
+    for line in documentation.lines() {
+        output.push_str(indentation);
+        output.push_str("///");
+        if !line.is_empty() {
+            output.push(' ');
+            output.push_str(line);
+        }
+        output.push('\n');
+    }
 }
 
 /// Parses every bundled ExS prelude source for standard-library documentation rendering.

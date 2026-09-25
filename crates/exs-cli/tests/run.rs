@@ -143,7 +143,7 @@ fn generates_single_llm_markdown_documentation() {
     }
     assert!(documentation.starts_with("# Exolynk Script (ExS) LLM Specification"));
     assert!(documentation.contains("# Compact API Reference"));
-    assert!(documentation.contains("#### `Int`"));
+    assert!(documentation.contains("#### Type `Int`"));
     assert!(documentation.contains("Runs the program."));
 }
 

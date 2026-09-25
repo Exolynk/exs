@@ -245,8 +245,8 @@ fn render_compact_function(
     include_comments: bool,
 ) {
     output.push_str(&format!("### Function `{}`\n\n", declaration.name.name));
-    append_compact_comment(output, &source.text, declaration.span, include_comments);
     output.push_str("```exs\n");
+    append_compact_code_comment(output, &source.text, declaration.span, include_comments, "");
     output.push_str(&function_signature(
         &declaration.name.name,
         &declaration.parameters,
@@ -274,7 +274,13 @@ fn render_compact_implementations(
         }
         output.push_str(&format!(" {type_name} {{\n"));
         for method in &implementation.methods {
-            append_compact_code_comment(output, &source.text, method.span, include_comments);
+            append_compact_code_comment(
+                output,
+                &source.text,
+                method.span,
+                include_comments,
+                "    ",
+            );
             output.push_str("    ");
             output.push_str(&function_signature(
                 &method.name.name,
@@ -305,14 +311,19 @@ fn append_compact_code_comment(
     source: &str,
     span: SourceSpan<'_>,
     include_comments: bool,
+    indentation: &str,
 ) {
     if !include_comments {
         return;
     }
     if let Some(comment) = documentation_comment(source, span) {
         for line in comment.lines() {
-            output.push_str("    /// ");
-            output.push_str(line);
+            output.push_str(indentation);
+            output.push_str("///");
+            if !line.is_empty() {
+                output.push(' ');
+                output.push_str(line);
+            }
             output.push('\n');
         }
     }
