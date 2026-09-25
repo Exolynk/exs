@@ -814,9 +814,22 @@ fn render_standard_index(
             slug(type_name)
         ));
     }
-    if !namespaces.is_empty() {
-        output.push_str("\n## Namespaces\n\n");
-        for namespace in namespaces {
+    for namespace in namespaces
+        .iter()
+        .filter(|namespace| namespace.name == "Host")
+    {
+        output.push_str(&format!(
+            "- [`{}`](namespaces/{}.md)\n",
+            namespace.name,
+            slug(namespace.name)
+        ));
+    }
+    if namespaces.iter().any(|namespace| namespace.name == "test") {
+        output.push_str("\n## Components\n\n");
+        for namespace in namespaces
+            .iter()
+            .filter(|namespace| namespace.name == "test")
+        {
             output.push_str(&format!(
                 "- [`{}`](namespaces/{}.md)\n",
                 namespace.name,

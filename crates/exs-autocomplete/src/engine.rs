@@ -778,7 +778,7 @@ mod tests {
     fn completes_configured_virtual_module_members() {
         let engine = CompletionEngine::default().with_module_source(
             "exo",
-            "/// Localized text.\ntype Language {}\n/// Returns the active environment.\nfn get_environment() {}\n/// Reloads the browser page.\nfn ui::reload() {}",
+            "/// Localized text.\ntype Language {}\n/// Returns the active environment.\nfn get_environment() {}\nfn __exo_hydrate_environment() {}\n/// Reloads the browser page.\nfn ui::reload() {}",
         );
 
         let module_source = "ex";
@@ -827,6 +827,13 @@ mod tests {
             reload.documentation.as_deref(),
             Some("Reloads the browser page.")
         );
+
+        let private_source = "exo::__exo";
+        let private_response = engine.complete(CompletionRequest {
+            source: private_source,
+            cursor: private_source.len(),
+        });
+        assert!(private_response.items.is_empty());
     }
 
     /// Avoids opening an unsolicited completion list on an empty source position.

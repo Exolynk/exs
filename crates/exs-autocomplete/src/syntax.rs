@@ -87,6 +87,10 @@ pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbol
                     "trait" => SymbolKind::Trait,
                     _ => unreachable!(),
                 };
+                if is_private_declaration(&name) {
+                    index = end;
+                    continue;
+                }
                 symbols.declarations.insert(name.clone(), kind);
                 if let Some(documentation) = preceding_documentation(source, token.start) {
                     symbols.documentation.insert(name.clone(), documentation);
@@ -106,6 +110,11 @@ pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbol
         index += 1;
     }
     symbols
+}
+
+/// Reports whether a declaration is reserved for ExS or host implementation details.
+fn is_private_declaration(name: &str) -> bool {
+    name.starts_with("__")
 }
 
 /// Collects adjacent `///` lines immediately preceding one declaration.

@@ -66,28 +66,66 @@ pub(super) fn render_compact_module(
     include_comments: bool,
     include_functions: bool,
 ) {
-    if module.types.is_empty()
-        && module.enums.is_empty()
-        && module.traits.is_empty()
-        && (!include_functions || module.functions.is_empty())
-    {
+    if !has_public_declarations(module, include_functions) {
         return;
     }
     output.push_str(&format!("## Module `{}`\n\n", source.display_path));
-    for declaration in &module.types {
+    for declaration in module
+        .types
+        .iter()
+        .filter(|declaration| is_public(&declaration.name.name))
+    {
         render_compact_type(output, module, declaration, source, include_comments);
     }
-    for declaration in &module.enums {
+    for declaration in module
+        .enums
+        .iter()
+        .filter(|declaration| is_public(&declaration.name.name))
+    {
         render_compact_enum(output, module, declaration, source, include_comments);
     }
-    for declaration in &module.traits {
+    for declaration in module
+        .traits
+        .iter()
+        .filter(|declaration| is_public(&declaration.name.name))
+    {
         render_compact_trait(output, declaration, source, include_comments);
     }
     if include_functions {
-        for declaration in &module.functions {
+        for declaration in module
+            .functions
+            .iter()
+            .filter(|declaration| is_public(&declaration.name.name))
+        {
             render_compact_function(output, declaration, source, include_comments);
         }
     }
+}
+
+/// Reports whether a module contains declarations suitable for public documentation.
+fn has_public_declarations(module: &Module<'_>, include_functions: bool) -> bool {
+    module
+        .types
+        .iter()
+        .any(|declaration| is_public(&declaration.name.name))
+        || module
+            .enums
+            .iter()
+            .any(|declaration| is_public(&declaration.name.name))
+        || module
+            .traits
+            .iter()
+            .any(|declaration| is_public(&declaration.name.name))
+        || (include_functions
+            && module
+                .functions
+                .iter()
+                .any(|declaration| is_public(&declaration.name.name)))
+}
+
+/// Reports whether a declaration name is part of the public ExS API.
+fn is_public(name: &str) -> bool {
+    !name.starts_with("__")
 }
 
 /// Appends one compact nominal type declaration and its methods.
@@ -317,25 +355,41 @@ fn module_pages(
         path: format!("{directory}/index.md"),
         markdown: render_module_index(module, source, imports, directories),
     });
-    for declaration in &module.types {
+    for declaration in module
+        .types
+        .iter()
+        .filter(|declaration| is_public(&declaration.name.name))
+    {
         pages.push(DocumentationPage {
             path: format!("{directory}/types/{}.md", slug(&declaration.name.name)),
             markdown: render_type_page(module, declaration, source),
         });
     }
-    for declaration in &module.enums {
+    for declaration in module
+        .enums
+        .iter()
+        .filter(|declaration| is_public(&declaration.name.name))
+    {
         pages.push(DocumentationPage {
             path: format!("{directory}/enums/{}.md", slug(&declaration.name.name)),
             markdown: render_enum_page(module, declaration, source),
         });
     }
-    for declaration in &module.traits {
+    for declaration in module
+        .traits
+        .iter()
+        .filter(|declaration| is_public(&declaration.name.name))
+    {
         pages.push(DocumentationPage {
             path: format!("{directory}/traits/{}.md", slug(&declaration.name.name)),
             markdown: render_trait_page(declaration, source),
         });
     }
-    for declaration in &module.functions {
+    for declaration in module
+        .functions
+        .iter()
+        .filter(|declaration| is_public(&declaration.name.name))
+    {
         pages.push(DocumentationPage {
             path: format!("{directory}/fn/{}.md", slug(&declaration.name.name)),
             markdown: render_function_page(declaration, source, "Function"),
@@ -412,11 +466,7 @@ fn render_module_index(
         |declaration| format!("fn/{}.md", slug(&declaration.name.name)),
         |declaration| declaration.name.name.as_str(),
     );
-    if module.types.is_empty()
-        && module.enums.is_empty()
-        && module.traits.is_empty()
-        && module.functions.is_empty()
-    {
+    if !has_public_declarations(module, true) {
         output.push_str("No public declarations.\n");
     }
     output
@@ -478,11 +528,15 @@ fn link_section<T>(
     path: impl Fn(&T) -> String,
     name: impl Fn(&T) -> &str,
 ) {
-    if declarations.is_empty() {
-        return;
-    }
-    output.push_str(&format!("## {heading}\n\n"));
+    let mut wrote_heading = false;
     for declaration in declarations {
+        if !is_public(name(declaration)) {
+            continue;
+        }
+        if !wrote_heading {
+            output.push_str(&format!("## {heading}\n\n"));
+            wrote_heading = true;
+        }
         output.push_str(&format!(
             "- [`{}`]({})\n",
             name(declaration),
