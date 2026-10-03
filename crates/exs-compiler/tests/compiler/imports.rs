@@ -102,6 +102,65 @@ fn compiles_imported_types_and_static_methods() {
     }
 }
 
+/// Resolves static methods through a module-qualified nominal type.
+#[test]
+fn compiles_module_qualified_static_methods() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./geometry.exs".to_owned(),
+            "type Point { value: Int } impl Point { fn new(value: Int) -> Point { ret Point { value: value }; } }".to_owned(),
+        )]),
+    };
+    compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./geometry.exs\" as geo; fn main() -> Int { ret geo::Point::new(42).value; }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    ).expect("module-qualified static method compiles");
+}
+
+/// Resolves bare enum variants inside imported methods and through module or use aliases.
+#[test]
+fn compiles_imported_enum_variant_values() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./status.exs".to_owned(),
+            "enum Status { Booked, Pending, Unknown(code: String), } impl Status { fn booked() -> Status { ret Status::Booked; } fn is_booked(self) -> Bool { ret self == Status::Booked; } }".to_owned(),
+        )]),
+    };
+    compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./status.exs\" as status; use status::{Status}; fn main() -> Bool { let booked = status::Status::Booked; let unknown = status::Status::Unknown(\"CUSTOM\"); ret booked.is_booked() && Status::Booked == status::Status::booked() && Status::Pending != booked; }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    ).expect("imported enum values compile");
+}
+
+/// Preserves lexical variables that shadow unqualified declarations during import rewriting.
+#[test]
+fn imported_modules_preserve_local_bindings() {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([(
+            "./math.exs".to_owned(),
+            "fn value() -> Int { ret 1; } fn answer() -> Int { let value = 42; ret value; }"
+                .to_owned(),
+        )]),
+    };
+    compile_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "import \"./math.exs\"; fn main() -> Int { ret math::answer(); }",
+        },
+        CompileOptions::default(),
+        &mut resolver,
+    )
+    .expect("lexical binding remains local");
+}
+
 /// Resolves a nested exported function namespace through an imported module.
 #[test]
 fn compiles_imported_nested_function_namespaces() {

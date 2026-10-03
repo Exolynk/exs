@@ -303,13 +303,18 @@ fn append_module_members(
     } else {
         format!("{path}::")
     };
+    if let Some(variants) = symbols.variants.get(path) {
+        append_variants(items, prefix, variants.iter().map(String::as_str));
+    }
     let mut child_namespaces = BTreeSet::new();
     for (full_name, signature) in &symbols.functions {
         let Some(name) = full_name.strip_prefix(&namespace_prefix) else {
             continue;
         };
         if let Some((child, _)) = name.split_once("::") {
-            child_namespaces.insert(child);
+            if !symbols.declarations.contains_key(child) {
+                child_namespaces.insert(child);
+            }
             continue;
         }
         append_function_completion(
@@ -770,6 +775,43 @@ mod tests {
             math.documentation
                 .as_deref()
                 .is_some_and(|documentation| documentation.contains("static namespace"))
+        );
+    }
+
+    /// Completes static imported type methods without exposing instance or private methods.
+    #[test]
+    fn completes_configured_type_static_methods() {
+        let engine = CompletionEngine::default().with_module_source(
+            "camt",
+            "type Transaction {} impl Transaction {\n/// Parses a document.\nfn parse(content: String) -> Transaction {} fn status(self) {} fn __internal() {} }",
+        );
+        let source = "camt::Transaction::";
+        let response = engine.complete(CompletionRequest {
+            source,
+            cursor: source.len(),
+        });
+        let parse = item(&response, "parse");
+        assert_eq!(parse.insert_text, "parse()");
+        assert_eq!(parse.documentation.as_deref(), Some("Parses a document."));
+        assert!(
+            !response
+                .items
+                .iter()
+                .any(|item| matches!(item.label.as_str(), "status" | "__internal"))
+        );
+        let source = "camt::Trans";
+        let response = engine.complete(CompletionRequest {
+            source,
+            cursor: source.len(),
+        });
+        assert_eq!(item(&response, "Transaction").kind, CompletionKind::Type);
+        assert_eq!(
+            response
+                .items
+                .iter()
+                .filter(|item| item.label == "Transaction")
+                .count(),
+            1
         );
     }
 

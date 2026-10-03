@@ -69,12 +69,46 @@ pub(crate) fn tokenize(source: &str) -> Vec<Token> {
 pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbols {
     let mut symbols = DocumentSymbols::default();
     let mut depth = 0usize;
+    let mut implementation = None;
     let mut index = 0usize;
     while index < tokens.len() {
         let token = &tokens[index];
         match token.text.as_str() {
             "{" => depth += 1,
-            "}" => depth = depth.saturating_sub(1),
+            "}" => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    implementation = None;
+                }
+            }
+            "impl" if depth == 0 => {
+                if let Some((name, end)) = qualified_identifier(tokens, index + 1)
+                    && tokens.get(end).is_some_and(|token| token.text == "{")
+                    && !is_private_declaration(&name)
+                {
+                    implementation = Some(name);
+                }
+            }
+            "fn" if depth == 1 => {
+                if let Some(type_name) = &implementation
+                    && let Some((method, _)) = qualified_identifier(tokens, index + 1)
+                    && !is_private_declaration(&method)
+                    && let Some(signature) = function_signature(tokens, index)
+                    && !signature
+                        .parameters
+                        .iter()
+                        .any(|parameter| parameter.name == "self")
+                {
+                    let name = format!("{type_name}::{method}");
+                    symbols
+                        .declarations
+                        .insert(name.clone(), SymbolKind::Function);
+                    if let Some(documentation) = preceding_documentation(source, token.start) {
+                        symbols.documentation.insert(name.clone(), documentation);
+                    }
+                    symbols.functions.insert(name, signature);
+                }
+            }
             "fn" | "type" | "enum" | "trait" if depth == 0 => {
                 let Some((name, end)) = qualified_identifier(tokens, index + 1) else {
                     index += 1;

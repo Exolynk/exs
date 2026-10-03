@@ -676,13 +676,17 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
                 }
             }
         }
+        Expression::Variable(identifier) => {
+            if identifier.name.contains("::") {
+                rewrite_identifier(identifier, bindings);
+            }
+        }
         Expression::Integer(_, _)
         | Expression::Float(_, _)
         | Expression::String(_, _)
         | Expression::Bytes(_, _)
         | Expression::Bool(_, _)
-        | Expression::None(_)
-        | Expression::Variable(_) => {}
+        | Expression::None(_) => {}
     }
 }
 
@@ -690,7 +694,7 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
 fn rewrite_identifier(identifier: &mut Identifier<'_>, bindings: &HashMap<String, String>) {
     if let Some(name) = bindings.get(&identifier.name) {
         identifier.name = name.clone();
-    } else if let Some((prefix, member)) = identifier.name.split_once("::")
+    } else if let Some((prefix, member)) = identifier.name.rsplit_once("::")
         && let Some(prefix) = bindings.get(prefix)
     {
         identifier.name = format!("{prefix}::{member}");
