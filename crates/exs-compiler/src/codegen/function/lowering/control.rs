@@ -14,16 +14,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let contract = self.types.resolve(Some(annotation), annotation.span)?;
         let matches = self.type_match_local;
         self.function.instruction(&Instruction::LocalGet(value));
-        self.function
-            .instruction(&Instruction::I32Const(contract.builtin_mask.cast_signed()));
-        self.runtime_call("__exs_rt_type_matches", span)?;
+        immediate::type_mask_test(&mut self.function, contract.builtin_mask);
         self.function.instruction(&Instruction::LocalSet(matches));
         for type_id in &contract.nominal_type_ids {
             self.function.instruction(&Instruction::LocalGet(matches));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.function
-                .instruction(&Instruction::I32Const(type_id.cast_signed()));
-            self.runtime_call("__exs_rt_object_is_type", span)?;
+            self.emit_object_type_test(*type_id, span)?;
             self.function.instruction(&Instruction::I32Or);
             self.function.instruction(&Instruction::LocalSet(matches));
         }
@@ -36,7 +32,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.function.instruction(&Instruction::LocalSet(matches));
         }
         self.function.instruction(&Instruction::LocalGet(matches));
-        self.runtime_call("__exs_rt_bool_new", span)?;
+        immediate::bool_from_condition(&mut self.function);
         self.clear_root_slot(value)
     }
 
@@ -45,7 +41,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         &mut self,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        self.runtime_call("__exs_rt_none_new", span)?;
+        self.emit_none();
         let value = self.store_stack_value()?;
         self.function.instruction(&Instruction::LocalGet(value));
         self.function
@@ -68,11 +64,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.compile_expression(left)?;
         self.compile_condition(span)?;
         self.function
-            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+            .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
         self.enter_control()?;
         if is_or {
-            self.function.instruction(&Instruction::I32Const(1));
-            self.runtime_call("__exs_rt_bool_new", span)?;
+            immediate::push(&mut self.function, ValueRef::boolean(true));
         } else {
             self.checked_boolean_expression(right)?;
         }
@@ -80,8 +75,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         if is_or {
             self.checked_boolean_expression(right)?;
         } else {
-            self.function.instruction(&Instruction::I32Const(0));
-            self.runtime_call("__exs_rt_bool_new", span)?;
+            immediate::push(&mut self.function, ValueRef::boolean(false));
         }
         self.function.instruction(&Instruction::End);
         self.exit_control()
@@ -110,9 +104,22 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         &mut self,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        // Every Bool is an immediate, so only non-Bool values take the runtime error path.
+        let value = self.immediate_scratch_local;
+        self.function.instruction(&Instruction::LocalTee(value));
+        immediate::is_bool_test(&mut self.function);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.enter_control()?;
+        self.function.instruction(&Instruction::LocalGet(value));
+        self.function.instruction(&Instruction::I32WrapI64);
+        self.function.instruction(&Instruction::Else);
+        self.function.instruction(&Instruction::LocalGet(value));
         self.runtime_value_call("__exs_rt_condition_value", 1, span)?;
         self.return_if_error(span)?;
-        self.runtime_value_call("__exs_rt_condition", 1, span)
+        self.runtime_value_call("__exs_rt_condition", 1, span)?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()
     }
 
     /// Returns a language Error from the current function or leaves the non-Error value on stack.
@@ -122,7 +129,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         let outcome = self.store_stack_value()?;
         self.function.instruction(&Instruction::LocalGet(outcome));
-        self.runtime_call("__exs_rt_is_error", span)?;
+        immediate::type_mask_test(&mut self.function, exs_abi::TYPE_ERROR);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.enter_control()?;
@@ -178,16 +185,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         let matches = self.type_match_local;
         self.function.instruction(&Instruction::LocalGet(local));
-        self.function
-            .instruction(&Instruction::I32Const(contract.builtin_mask.cast_signed()));
-        self.runtime_call("__exs_rt_type_matches", span)?;
+        immediate::type_mask_test(&mut self.function, contract.builtin_mask);
         self.function.instruction(&Instruction::LocalSet(matches));
         for type_id in &contract.nominal_type_ids {
             self.function.instruction(&Instruction::LocalGet(matches));
             self.function.instruction(&Instruction::LocalGet(local));
-            self.function
-                .instruction(&Instruction::I32Const(type_id.cast_signed()));
-            self.runtime_call("__exs_rt_object_is_type", span)?;
+            self.emit_object_type_test(*type_id, span)?;
             self.function.instruction(&Instruction::I32Or);
             self.function.instruction(&Instruction::LocalSet(matches));
         }

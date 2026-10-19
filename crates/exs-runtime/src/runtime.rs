@@ -9,13 +9,15 @@ use exs_abi::{
     CborLimits, ErrorSeverity, ExsError, ExsValue, HOST_CALL_FATAL, HOST_CALL_PENDING,
     HOST_CALL_READY, STATUS_PENDING, STATUS_READY,
 };
-use exs_value::ValueRef;
+use exs_value::{Immediate, ValueRef};
 
 use crate::gc;
 use crate::scheduler::{ExecutionContext, HostResume};
 use crate::state::{AsyncFrame, FrameContinuation, HeapSlot, RuntimeState, runtime};
+use crate::value::reference;
 use crate::value::{
     RtValue, RuntimeBytes, RuntimeEnum, RuntimeError, RuntimeList, RuntimeObject, RuntimeString,
+    Value,
 };
 
 #[link(wasm_import_module = "exs")]
@@ -69,8 +71,16 @@ pub(crate) fn task_release() {
     }
 }
 
-/// Appends one runtime value and returns its one-based table index.
+/// Stores one runtime value and returns its tagged reference.
+///
+/// An Int inside the `i32` range is returned as an immediate without allocating, so every Int
+/// producer yields the canonical representation.
 pub(crate) fn allocate(value: RtValue) -> ValueRef {
+    if let RtValue::Int(number) = value
+        && let Some(immediate) = ValueRef::small_int(number)
+    {
+        return immediate;
+    }
     let should_collect = {
         let state = unsafe { runtime() };
         state.free_slots.is_empty() && state.values.len() >= state.next_gc_at
@@ -87,7 +97,6 @@ pub(crate) fn allocate(value: RtValue) -> ValueRef {
         if slot.is_some() {
             trap();
         }
-        *slot = Some(HeapSlot::new(value));
         let Some(index) = u32::try_from(index)
             .ok()
             .and_then(|index| index.checked_add(1))
@@ -95,7 +104,9 @@ pub(crate) fn allocate(value: RtValue) -> ValueRef {
         else {
             trap();
         };
-        return unsafe { ValueRef::from_runtime_index(index) };
+        let tagged = reference::heap_reference(&value, index);
+        *slot = Some(HeapSlot::new(value));
+        return tagged;
     }
     let Some(next_index) = state.values.len().checked_add(1) else {
         trap();
@@ -106,39 +117,19 @@ pub(crate) fn allocate(value: RtValue) -> ValueRef {
     let Some(next_index) = NonZeroU32::new(next_index) else {
         trap();
     };
+    let tagged = reference::heap_reference(&value, next_index);
     state.values.push(Some(HeapSlot::new(value)));
-    unsafe { ValueRef::from_runtime_index(next_index) }
+    tagged
 }
 
-/// Returns the shared immutable `None` value, allocating it on first use.
-pub(crate) fn none_value() -> ValueRef {
-    if let Some(value) = unsafe { runtime() }.shared_values.none {
-        return value;
-    }
-    let value = allocate(RtValue::None);
-    unsafe { runtime() }.shared_values.none = Some(value);
-    value
+/// Returns the immediate `None` value.
+pub(crate) const fn none_value() -> ValueRef {
+    ValueRef::NONE
 }
 
-/// Returns the shared immutable Bool value, allocating it on first use.
-pub(crate) fn bool_value(flag: bool) -> ValueRef {
-    let shared = unsafe { runtime() }.shared_values;
-    let cached = if flag {
-        shared.true_value
-    } else {
-        shared.false_value
-    };
-    if let Some(value) = cached {
-        return value;
-    }
-    let value = allocate(RtValue::Bool(flag));
-    let shared = &mut unsafe { runtime() }.shared_values;
-    if flag {
-        shared.true_value = Some(value);
-    } else {
-        shared.false_value = Some(value);
-    }
-    value
+/// Returns the immediate Bool value.
+pub(crate) const fn bool_value(flag: bool) -> ValueRef {
+    ValueRef::boolean(flag)
 }
 
 /// Allocates one tagged enum Object after validating its runtime constructor arguments.
@@ -149,7 +140,7 @@ pub(crate) fn enum_new(
     fields: ValueRef,
 ) -> ValueRef {
     let type_identity = match value(type_identity) {
-        RtValue::String(value) => String::from(value.as_str()),
+        Value::String(value) => String::from(value.as_str()),
         _ => {
             return recoverable_error(
                 "TypeError",
@@ -159,13 +150,13 @@ pub(crate) fn enum_new(
         }
     };
     let variant = match value(variant) {
-        RtValue::String(value) => String::from(value.as_str()),
+        Value::String(value) => String::from(value.as_str()),
         _ => {
             return recoverable_error("TypeError", "enum variant requires a String value", variant);
         }
     };
     let fields = match value(fields) {
-        RtValue::List(value) => value.elements.clone(),
+        Value::List(value) => value.elements.clone(),
         _ => {
             return recoverable_error("TypeError", "enum fields require a List value", fields);
         }
@@ -182,12 +173,12 @@ pub(crate) fn enum_new(
 
 /// Returns whether one runtime value is an enum with the requested stable identity.
 pub(crate) fn enum_has_type(value_ref: ValueRef, type_identity: ValueRef) -> bool {
-    let RtValue::String(type_identity) = value(type_identity) else {
+    let Value::String(type_identity) = value(type_identity) else {
         return false;
     };
     matches!(
         value(value_ref),
-        RtValue::Object(object)
+        Value::Object(object)
             if object
                 .enum_data
                 .as_ref()
@@ -201,14 +192,14 @@ pub(crate) fn enum_matches(
     type_identity: ValueRef,
     variant: ValueRef,
 ) -> bool {
-    let (RtValue::String(type_identity), RtValue::String(variant)) =
+    let (Value::String(type_identity), Value::String(variant)) =
         (value(type_identity), value(variant))
     else {
         return false;
     };
     matches!(
         value(value_ref),
-        RtValue::Object(object)
+        Value::Object(object)
             if object.enum_data.as_ref().is_some_and(|enum_data| {
                 enum_data.type_identity.as_ref() == type_identity.as_str()
                     && enum_data.variant.as_ref() == variant.as_str()
@@ -219,7 +210,7 @@ pub(crate) fn enum_matches(
 /// Reads one ordered payload value from a matched enum or returns a recoverable Error.
 pub(crate) fn enum_field(value_ref: ValueRef, index: usize) -> ValueRef {
     match value(value_ref) {
-        RtValue::Object(object) => object
+        Value::Object(object) => object
             .enum_data
             .as_ref()
             .and_then(|enum_data| enum_data.fields.get(index))
@@ -263,18 +254,18 @@ pub(crate) fn fatal_error(kind: &str, message: &str, data: ValueRef) -> ValueRef
 pub(crate) fn is_fatal_error(value_ref: ValueRef) -> bool {
     matches!(
         value(value_ref),
-        RtValue::Error(error) if error.severity == ErrorSeverity::Fatal
+        Value::Error(error) if error.severity == ErrorSeverity::Fatal
     )
 }
 
 /// Returns whether one runtime value is a closure.
 pub(crate) fn is_closure(value_ref: ValueRef) -> bool {
-    matches!(value(value_ref), RtValue::Closure(_))
+    matches!(value(value_ref), Value::Closure(_))
 }
 
 /// Returns whether one runtime value is a List.
 pub(crate) fn is_list(value_ref: ValueRef) -> bool {
-    matches!(value(value_ref), RtValue::List(_))
+    matches!(value(value_ref), Value::List(_))
 }
 
 /// Creates the recoverable Error returned when source code calls a non-closure value.
@@ -291,20 +282,45 @@ pub(crate) fn parallel_list_error(value: ValueRef) -> ValueRef {
     )
 }
 
-/// Returns the runtime payload stored at one value-table index.
-pub(crate) fn value(reference: ValueRef) -> &'static RtValue {
-    let index = reference.runtime_index() as usize - 1;
+/// Returns the read-only view of one immediate or heap value.
+pub(crate) fn value(reference: ValueRef) -> Value<'static> {
+    match reference.immediate() {
+        Some(Immediate::None) => return Value::None,
+        Some(Immediate::Bool(flag)) => return Value::Bool(flag),
+        Some(Immediate::Int(number)) => return Value::Int(i64::from(number)),
+        None => {}
+    }
+    match heap_value(reference) {
+        RtValue::Error(error) => Value::Error(error),
+        RtValue::Int(number) => Value::Int(*number),
+        RtValue::Float(number) => Value::Float(*number),
+        RtValue::String(string) => Value::String(string),
+        RtValue::Bytes(bytes) => Value::Bytes(bytes),
+        RtValue::List(list) => Value::List(list),
+        RtValue::Iterator(iterator) => Value::Iterator(iterator),
+        RtValue::Object(object) => Value::Object(object),
+        RtValue::Cell(cell) => Value::Cell(cell),
+        RtValue::Closure(closure) => Value::Closure(closure),
+        RtValue::BoxedFutureValue(_) => Value::Future,
+    }
+}
+
+/// Returns the heap payload of one reference already known not to be immediate.
+fn heap_value(reference: ValueRef) -> &'static RtValue {
+    let index = reference::payload_index(reference);
     match unsafe { runtime().values.get(index).and_then(Option::as_ref) } {
         Some(value) => &value.value,
         None => trap(),
     }
 }
 
-/// Returns mutable access to the runtime payload stored at one value-table index.
-pub(crate) fn value_mut(reference: ValueRef) -> &'static mut RtValue {
-    let index = reference.runtime_index() as usize - 1;
+/// Returns mutable access to the heap payload of one reference, or `None` for an immediate.
+///
+/// Immediates have no mutable storage; callers report them like any other wrong receiver type.
+pub(crate) fn value_mut(reference: ValueRef) -> Option<&'static mut RtValue> {
+    let index = reference::heap_index(reference)?;
     match unsafe { runtime().values.get_mut(index).and_then(Option::as_mut) } {
-        Some(value) => &mut value.value,
+        Some(value) => Some(&mut value.value),
         None => trap(),
     }
 }
@@ -332,12 +348,12 @@ pub(crate) fn string_new(pointer_value: i32, length: i32) -> ValueRef {
         trap();
     }
     let value = RuntimeString::from_utf8(buffer).unwrap_or_else(|_| trap());
-    allocate(RtValue::String(Box::new(value)))
+    allocate(RtValue::String(value))
 }
 
 /// Pins one String literal value cached in a compiler global and returns it unchanged.
 pub(crate) fn literal_string_pin(value: ValueRef) -> ValueRef {
-    if !matches!(self::value(value), RtValue::String(_)) {
+    if !matches!(self::value(value), Value::String(_)) {
         trap();
     }
     unsafe { runtime() }.pinned_literals.push(value);
@@ -355,7 +371,7 @@ pub(crate) fn bytes_new(pointer_value: i32, length: i32) -> ValueRef {
     {
         trap();
     }
-    allocate(RtValue::Bytes(Box::new(RuntimeBytes::from_slice(buffer))))
+    allocate(RtValue::Bytes(RuntimeBytes::from_slice(buffer)))
 }
 
 /// Allocates a runtime-owned linear-memory buffer for one CBOR input value.
@@ -376,7 +392,7 @@ pub(crate) fn decode_input_value(pointer_value: i32, length: i32) -> ValueRef {
 
 /// Returns the number of CBOR-decoded values supplied to the generated entry point.
 pub(crate) fn input_argument_count(arguments: ValueRef) -> i32 {
-    let RtValue::List(arguments) = value(arguments) else {
+    let Value::List(arguments) = value(arguments) else {
         trap();
     };
     match i32::try_from(arguments.elements.len()) {
@@ -390,14 +406,14 @@ pub(crate) fn input_argument(arguments: ValueRef, index: i32) -> ValueRef {
     let Ok(index) = usize::try_from(index) else {
         trap();
     };
-    let RtValue::List(arguments) = value(arguments) else {
+    let Value::List(arguments) = value(arguments) else {
         trap();
     };
     arguments
         .elements
         .get(index)
         .copied()
-        .unwrap_or_else(|| none_value())
+        .unwrap_or(none_value())
 }
 
 /// Creates the fatal Error returned when the entry receives too many arguments.
@@ -583,7 +599,7 @@ pub(crate) fn parallel_wait(group: ValueRef) -> i32 {
 /// Replaces one compiler-internal parallel handle List with its source-order child results.
 pub(crate) fn parallel_take_results(group: ValueRef) -> ValueRef {
     let results = execution(unsafe { runtime() }).parallel_take_results(group);
-    let RtValue::List(list) = value_mut(group) else {
+    let Some(RtValue::List(list)) = value_mut(group) else {
         trap();
     };
     list.elements = results;
@@ -592,7 +608,7 @@ pub(crate) fn parallel_take_results(group: ValueRef) -> ValueRef {
 
 /// Returns the number of closure values stored in one source List for dynamic `par`.
 pub(crate) fn parallel_list_count(list: ValueRef) -> i32 {
-    let RtValue::List(list) = value(list) else {
+    let Value::List(list) = value(list) else {
         trap()
     };
     i32::try_from(list.elements.len()).unwrap_or_else(|_| trap())
@@ -600,7 +616,7 @@ pub(crate) fn parallel_list_count(list: ValueRef) -> i32 {
 
 /// Returns the number of elements stored in one runtime List.
 pub(crate) fn list_length(list: ValueRef) -> i32 {
-    let RtValue::List(list) = value(list) else {
+    let Value::List(list) = value(list) else {
         trap()
     };
     i32::try_from(list.elements.len()).unwrap_or_else(|_| trap())
@@ -611,7 +627,7 @@ pub(crate) fn list_get(list: ValueRef, index: i32) -> ValueRef {
     let Ok(index) = usize::try_from(index) else {
         trap()
     };
-    let RtValue::List(list) = value(list) else {
+    let Value::List(list) = value(list) else {
         trap()
     };
     *list.elements.get(index).unwrap_or_else(|| trap())
@@ -622,7 +638,7 @@ pub(crate) fn parallel_list_get(list: ValueRef, index: i32) -> ValueRef {
     let Ok(index) = usize::try_from(index) else {
         trap()
     };
-    let RtValue::List(list) = value(list) else {
+    let Value::List(list) = value(list) else {
         trap()
     };
     *list.elements.get(index).unwrap_or_else(|| trap())
@@ -829,7 +845,7 @@ pub(crate) fn async_frame_take_completed() -> ValueRef {
 /// Encodes and starts one generic runner-resolved host call.
 pub(crate) fn host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
     let name = match value(name) {
-        RtValue::String(name) => name.as_str(),
+        Value::String(name) => name.as_str(),
         _ => {
             return ready_host_error(
                 "TypeError",
@@ -838,7 +854,7 @@ pub(crate) fn host_call_start(name: ValueRef, arguments: ValueRef) -> i32 {
             );
         }
     };
-    if !matches!(value(arguments), RtValue::List(_)) {
+    if !matches!(value(arguments), Value::List(_)) {
         return ready_host_error(
             "TypeError",
             "Host::call arguments must be represented as a List",
@@ -1033,8 +1049,8 @@ fn runtime_to_exs_value_inner(
     active_containers: &mut Vec<ValueRef>,
 ) -> Result<ExsValue, BoundarySerializationError> {
     match value(reference) {
-        RtValue::None => Ok(ExsValue::None),
-        RtValue::Error(error) => Ok(ExsValue::Error(ExsError {
+        Value::None => Ok(ExsValue::None),
+        Value::Error(error) => Ok(ExsValue::Error(ExsError {
             severity: error.severity,
             kind: error.kind.as_ref().into(),
             message: error.message.as_ref().into(),
@@ -1046,12 +1062,12 @@ fn runtime_to_exs_value_inner(
                 .map(|cause| runtime_to_exs_value_inner(cause, active_containers).map(Box::new))
                 .transpose()?,
         })),
-        RtValue::Bool(value) => Ok(ExsValue::Bool(*value)),
-        RtValue::Int(value) => Ok(ExsValue::Int(*value)),
-        RtValue::Float(value) => Ok(ExsValue::Float(*value)),
-        RtValue::String(value) => Ok(ExsValue::String(value.as_str().into())),
-        RtValue::Bytes(value) => Ok(ExsValue::Bytes(value.as_slice().into())),
-        RtValue::List(list) => {
+        Value::Bool(value) => Ok(ExsValue::Bool(value)),
+        Value::Int(value) => Ok(ExsValue::Int(value)),
+        Value::Float(value) => Ok(ExsValue::Float(value)),
+        Value::String(value) => Ok(ExsValue::String(value.as_str().into())),
+        Value::Bytes(value) => Ok(ExsValue::Bytes(value.as_slice().into())),
+        Value::List(list) => {
             if active_containers.contains(&reference) {
                 return Err(BoundarySerializationError::Cycle);
             }
@@ -1066,7 +1082,7 @@ fn runtime_to_exs_value_inner(
             let _removed = active_containers.pop();
             result
         }
-        RtValue::Object(object) => {
+        Value::Object(object) => {
             if active_containers.contains(&reference) {
                 return Err(BoundarySerializationError::Cycle);
             }
@@ -1096,17 +1112,18 @@ fn runtime_to_exs_value_inner(
             let _removed = active_containers.pop();
             result
         }
-        RtValue::Cell(_)
-        | RtValue::Closure(_)
-        | RtValue::Iterator(_)
-        | RtValue::BoxedFutureValue(_) => Err(BoundarySerializationError::UnsupportedValue),
+        Value::Cell(_) | Value::Closure(_) | Value::Iterator(_) | Value::Future => {
+            Err(BoundarySerializationError::UnsupportedValue)
+        }
     }
 }
 
-/// Converts a host-safe ABI value into a runtime value table entry.
+/// Converts a host-safe ABI value into a temporarily rooted runtime value.
+///
+/// None, Bool and small Ints become immediates, which need no temporary root.
 fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
     let value = match value {
-        ExsValue::None => RtValue::None,
+        ExsValue::None => return none_value(),
         ExsValue::Error(error) => RtValue::Error(Box::new(RuntimeError {
             severity: error.severity,
             kind: error.kind.into_boxed_str(),
@@ -1116,11 +1133,11 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
             trace: error.trace,
             cause: error.cause.map(|cause| exs_value_to_runtime(*cause)),
         })),
-        ExsValue::Bool(value) => RtValue::Bool(value),
+        ExsValue::Bool(value) => return bool_value(value),
         ExsValue::Int(value) => RtValue::Int(value),
         ExsValue::Float(value) => RtValue::Float(value),
-        ExsValue::String(value) => RtValue::String(Box::new(RuntimeString::from_string(value))),
-        ExsValue::Bytes(value) => RtValue::Bytes(Box::new(RuntimeBytes::from_vec(value))),
+        ExsValue::String(value) => RtValue::String(RuntimeString::from_string(value)),
+        ExsValue::Bytes(value) => RtValue::Bytes(RuntimeBytes::from_vec(value)),
         ExsValue::List(elements) => RtValue::List(Box::new(RuntimeList {
             elements: elements.into_iter().map(exs_value_to_runtime).collect(),
         })),

@@ -3,6 +3,7 @@
 mod continuation;
 mod entry;
 mod function;
+mod immediate;
 mod linker;
 mod literals;
 pub mod source_map;
@@ -65,11 +66,14 @@ pub(super) fn diagnostics(diagnostic: CompileDiagnostic<'_>) -> CompileDiagnosti
     CompileDiagnostics::from(diagnostic)
 }
 
-/// Returns the `i32.store` operand addressing one root slot relative to its frame base address.
+/// Wasm value type of one `ValueRef` in generated code: a 64-bit tagged reference.
+pub(super) const VALUE_TYPE: wasm_encoder::ValType = wasm_encoder::ValType::I64;
+
+/// Returns the `i64.store` operand addressing one root slot relative to its frame base address.
 pub(super) fn root_slot_memory_arg(slot: u32) -> wasm_encoder::MemArg {
     wasm_encoder::MemArg {
-        offset: u64::from(slot) * 4,
-        align: 2,
+        offset: u64::from(slot) * 8,
+        align: 3,
         memory_index: 0,
     }
 }

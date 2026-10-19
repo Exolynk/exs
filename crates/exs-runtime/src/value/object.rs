@@ -62,10 +62,11 @@ pub(crate) mod operations {
     use alloc::vec::Vec;
 
     use exs_value::ValueRef;
+    use exs_value::layout::MAX_INLINE_TYPE_ID;
 
     use crate::gc;
     use crate::runtime;
-    use crate::value::{RtValue, RuntimeList, RuntimeObject, RuntimeString, operations};
+    use crate::value::{RtValue, RuntimeList, RuntimeObject, RuntimeString, Value, operations};
 
     /// Allocates an empty mutable runtime Object.
     pub(crate) fn new_value() -> ValueRef {
@@ -79,7 +80,11 @@ pub(crate) mod operations {
 
     /// Returns whether one value is an Object carrying the requested nominal type tag.
     pub(crate) fn has_type(receiver: ValueRef, type_id: u32) -> bool {
-        matches!(runtime::value(receiver), RtValue::Object(object) if object.type_id == Some(type_id))
+        // Small ids are always encoded in the reference, so only large ids need the heap.
+        if type_id <= MAX_INLINE_TYPE_ID {
+            return receiver.inline_type_id() == Some(type_id);
+        }
+        matches!(runtime::value(receiver), Value::Object(object) if object.type_id == Some(type_id))
     }
 
     /// Reads one Object property or returns Null when it is absent.
@@ -89,7 +94,7 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         let result = match runtime::value(receiver) {
-            RtValue::Object(object) => object
+            Value::Object(object) => object
                 .entries
                 .iter()
                 .find_map(|(entry_key, value)| (entry_key.as_ref() == key).then_some(*value)),
@@ -114,7 +119,7 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         match runtime::value(receiver) {
-            RtValue::Object(object) => object
+            Value::Object(object) => object
                 .entries
                 .iter()
                 .find_map(|(entry_key, value)| (entry_key.as_ref() == key).then_some(*value))
@@ -134,7 +139,7 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         match runtime::value_mut(receiver) {
-            RtValue::Object(object) => {
+            Some(RtValue::Object(object)) => {
                 if let Some((_, value)) = object
                     .entries
                     .iter_mut()
@@ -161,7 +166,7 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         let contains = match runtime::value(receiver) {
-            RtValue::Object(object) => object
+            Value::Object(object) => object
                 .entries
                 .iter()
                 .any(|(entry_key, _)| entry_key.as_ref() == key),
@@ -183,7 +188,7 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         let removed = match runtime::value_mut(receiver) {
-            RtValue::Object(object) => object
+            Some(RtValue::Object(object)) => object
                 .entries
                 .iter()
                 .position(|(entry_key, _)| entry_key.as_ref() == key)
@@ -206,7 +211,7 @@ pub(crate) mod operations {
     pub(crate) fn keys(receiver: ValueRef) -> ValueRef {
         let checkpoint = gc::temporary_root_checkpoint();
         let keys = match runtime::value(receiver) {
-            RtValue::Object(object) => object
+            Value::Object(object) => object
                 .entries
                 .iter()
                 .map(|(key, _)| String::from(key.as_ref()))
@@ -222,8 +227,7 @@ pub(crate) mod operations {
         let elements = keys
             .into_iter()
             .map(|key| {
-                let value =
-                    runtime::allocate(RtValue::String(Box::new(RuntimeString::from_string(key))));
+                let value = runtime::allocate(RtValue::String(RuntimeString::from_string(key)));
                 gc::push_temporary_root(value);
                 value
             })
@@ -236,7 +240,7 @@ pub(crate) mod operations {
     /// Returns a new shallow List containing Object values in insertion order.
     pub(crate) fn values(receiver: ValueRef) -> ValueRef {
         let elements = match runtime::value(receiver) {
-            RtValue::Object(object) => object.entries.iter().map(|(_, value)| *value).collect(),
+            Value::Object(object) => object.entries.iter().map(|(_, value)| *value).collect(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -251,7 +255,7 @@ pub(crate) mod operations {
     /// Removes every Object property while retaining the Object identity.
     pub(crate) fn clear(receiver: ValueRef) -> ValueRef {
         match runtime::value_mut(receiver) {
-            RtValue::Object(object) => object.entries.clear(),
+            Some(RtValue::Object(object)) => object.entries.clear(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -266,7 +270,7 @@ pub(crate) mod operations {
     /// Returns key-value pair Lists in Object insertion order.
     pub(crate) fn entries(receiver: ValueRef) -> ValueRef {
         let entries = match runtime::value(receiver) {
-            RtValue::Object(object) => object
+            Value::Object(object) => object
                 .entries
                 .iter()
                 .map(|(key, value)| (String::from(key.as_ref()), *value))
@@ -282,7 +286,7 @@ pub(crate) mod operations {
         let checkpoint = gc::temporary_root_checkpoint();
         let mut pairs = Vec::with_capacity(entries.len());
         for (key, value) in entries {
-            let key = runtime::allocate(RtValue::String(Box::new(RuntimeString::from_string(key))));
+            let key = runtime::allocate(RtValue::String(RuntimeString::from_string(key)));
             gc::push_temporary_root(key);
             let pair = runtime::allocate(RtValue::List(Box::new(RuntimeList {
                 elements: alloc::vec![key, value],
@@ -298,7 +302,7 @@ pub(crate) mod operations {
     /// Returns a new Object whose right-hand properties overwrite matching left-hand keys.
     pub(crate) fn merge(receiver: ValueRef, other: ValueRef) -> ValueRef {
         let mut entries = match runtime::value(receiver) {
-            RtValue::Object(object) => object.entries.clone(),
+            Value::Object(object) => object.entries.clone(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -308,7 +312,7 @@ pub(crate) mod operations {
             }
         };
         let other_entries = match runtime::value(other) {
-            RtValue::Object(object) => object.entries.clone(),
+            Value::Object(object) => object.entries.clone(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -337,7 +341,7 @@ pub(crate) mod operations {
     /// Builds an Object from two-item List entries whose keys are Strings.
     pub(crate) fn from_entries(entries: ValueRef) -> ValueRef {
         let entries = match runtime::value(entries) {
-            RtValue::List(entries) => entries.elements.clone(),
+            Value::List(entries) => entries.elements.clone(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -349,9 +353,9 @@ pub(crate) mod operations {
         let mut result = RuntimeObject::new();
         for entry in entries {
             let (key, value) = match runtime::value(entry) {
-                RtValue::List(pair) if pair.elements.len() == 2 => {
+                Value::List(pair) if pair.elements.len() == 2 => {
                     let key = match runtime::value(pair.elements[0]) {
-                        RtValue::String(key) => String::from(key.as_str()),
+                        Value::String(key) => String::from(key.as_str()),
                         _ => {
                             return runtime::recoverable_error(
                                 "TypeError",

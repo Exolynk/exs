@@ -18,14 +18,14 @@ use crate::gc;
 use crate::runtime;
 use crate::value::{
     RtValue, RuntimeBytes, RuntimeEnum, RuntimeIterator, RuntimeList, RuntimeObject, RuntimeString,
-    clone, list, numeric, object,
+    Value, clone, list, numeric, object,
 };
 
 /// Adds two runtime values through String, List, or numeric dispatch.
 pub(crate) fn add(left: ValueRef, right: ValueRef) -> ValueRef {
     match runtime::value(left) {
-        RtValue::String(value) => string_add(value, right),
-        RtValue::List(_) => list::operations::add(left, right),
+        Value::String(value) => string_add(value, right),
+        Value::List(_) => list::operations::add(left, right),
         _ => numeric::arithmetic(left, right, i64::checked_add, |left, right| left + right),
     }
 }
@@ -48,10 +48,10 @@ pub(crate) fn divide(left: ValueRef, right: ValueRef) -> ValueRef {
 /// Concatenates a String receiver with one supported scalar right operand.
 fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
     let right = match runtime::value(right) {
-        RtValue::String(value) => String::from(value.as_str()),
-        RtValue::Bool(value) => value.to_string(),
-        RtValue::Int(value) => value.to_string(),
-        RtValue::Float(value) => value.to_string(),
+        Value::String(value) => String::from(value.as_str()),
+        Value::Bool(value) => value.to_string(),
+        Value::Int(value) => value.to_string(),
+        Value::Float(value) => value.to_string(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -60,7 +60,9 @@ fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
             );
         }
     };
-    let mut result = String::from(left.as_str());
+    // Exact capacity avoids a growth reallocation and the shrink when boxing the result.
+    let mut result = String::with_capacity(left.as_str().len().saturating_add(right.len()));
+    result.push_str(left.as_str());
     result.push_str(&right);
     string_value_result(result)
 }
@@ -137,13 +139,11 @@ fn builtin_ordering(left: ValueRef, right: ValueRef) -> ComparisonOrdering {
                 _ => ComparisonOrdering::Unordered,
             }
         }
-        (RtValue::String(left), RtValue::String(right)) => {
-            match left.as_str().cmp(right.as_str()) {
-                core::cmp::Ordering::Less => ComparisonOrdering::Less,
-                core::cmp::Ordering::Equal => ComparisonOrdering::Equal,
-                core::cmp::Ordering::Greater => ComparisonOrdering::Greater,
-            }
-        }
+        (Value::String(left), Value::String(right)) => match left.as_str().cmp(right.as_str()) {
+            core::cmp::Ordering::Less => ComparisonOrdering::Less,
+            core::cmp::Ordering::Equal => ComparisonOrdering::Equal,
+            core::cmp::Ordering::Greater => ComparisonOrdering::Greater,
+        },
         _ if values_equal(left, right) => ComparisonOrdering::Equal,
         _ => ComparisonOrdering::Unordered,
     }
@@ -171,7 +171,7 @@ pub(crate) fn compare_test(left: ValueRef, right: ValueRef, test: i32) -> ValueR
 /// Interprets one compiler-owned Ordering value for a source comparison operator.
 pub(crate) fn ordering_test(ordering: ValueRef, test: i32) -> ValueRef {
     let variant = match runtime::value(ordering) {
-        RtValue::Object(object)
+        Value::Object(object)
             if object.type_id == Some(STANDARD_ORDERING_TYPE_ID)
                 && object.enum_data.as_ref().is_some_and(|data| {
                     data.type_identity.as_ref() == STANDARD_ORDERING_TYPE_IDENTITY
@@ -204,19 +204,19 @@ pub(crate) fn ordering_test(ordering: ValueRef, test: i32) -> ValueRef {
 /// Returns whether two runtime values satisfy ExS equality semantics without allocating a Bool.
 pub(crate) fn values_equal(left: ValueRef, right: ValueRef) -> bool {
     match (runtime::value(left), runtime::value(right)) {
-        (RtValue::None, RtValue::None) => true,
+        (Value::None, Value::None) => true,
         (left, right) if numeric::is_numeric(left) && numeric::is_numeric(right) => {
             match (numeric::number_of(left), numeric::number_of(right)) {
                 (Some(left), Some(right)) => numeric::numbers_equal(left, right),
                 _ => false,
             }
         }
-        (RtValue::String(left), RtValue::String(right)) => left.as_str() == right.as_str(),
-        (RtValue::Bytes(left), RtValue::Bytes(right)) => left.as_slice() == right.as_slice(),
-        (RtValue::List(_), RtValue::List(_))
-        | (RtValue::Object(_), RtValue::Object(_))
-        | (RtValue::Error(_), RtValue::Error(_))
-        | (RtValue::Closure(_), RtValue::Closure(_)) => left == right,
+        (Value::String(left), Value::String(right)) => left.as_str() == right.as_str(),
+        (Value::Bytes(left), Value::Bytes(right)) => left.as_slice() == right.as_slice(),
+        (Value::List(_), Value::List(_))
+        | (Value::Object(_), Value::Object(_))
+        | (Value::Error(_), Value::Error(_))
+        | (Value::Closure(_), Value::Closure(_)) => left == right,
         _ => false,
     }
 }
@@ -247,9 +247,9 @@ pub(crate) fn append(receiver: ValueRef, item: ValueRef) -> ValueRef {
 /// Reads one value through the receiver's runtime indexing dispatch.
 pub(crate) fn index_get(receiver: ValueRef, index: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::List(_) => list::operations::get(receiver, index),
-        RtValue::Object(_) => object::operations::get(receiver, index),
-        RtValue::Bytes(_) => bytes_get(receiver, index),
+        Value::List(_) => list::operations::get(receiver, index),
+        Value::Object(_) => object::operations::get(receiver, index),
+        Value::Bytes(_) => bytes_get(receiver, index),
         _ => runtime::recoverable_error(
             "TypeError",
             "index access requires a Bytes, List, or Object receiver",
@@ -261,12 +261,12 @@ pub(crate) fn index_get(receiver: ValueRef, index: ValueRef) -> ValueRef {
 /// Creates immutable Bytes from one List of integer octets.
 pub(crate) fn bytes_from_list(values: ValueRef) -> ValueRef {
     let bytes = match runtime::value(values) {
-        RtValue::List(values) => {
+        Value::List(values) => {
             let mut bytes = Vec::with_capacity(values.elements.len());
             for value in &values.elements {
                 match runtime::value(*value) {
-                    RtValue::Int(value) if (0..=255).contains(value) => bytes.push(*value as u8),
-                    RtValue::Int(_) => {
+                    Value::Int(value) if (0..=255).contains(&value) => bytes.push(value as u8),
+                    Value::Int(_) => {
                         return runtime::recoverable_error(
                             "ValueError",
                             "Bytes::from_list values must be between 0 and 255",
@@ -298,7 +298,7 @@ pub(crate) fn bytes_from_list(values: ValueRef) -> ValueRef {
 /// Encodes one UTF-8 String as immutable Bytes.
 pub(crate) fn bytes_from_utf8(value: ValueRef) -> ValueRef {
     match runtime::value(value) {
-        RtValue::String(value) => bytes_value(value.as_str().as_bytes().to_vec()),
+        Value::String(value) => bytes_value(value.as_str().as_bytes().to_vec()),
         _ => runtime::recoverable_error(
             "TypeError",
             "Bytes::from_utf8 requires a String value",
@@ -311,7 +311,7 @@ pub(crate) fn bytes_from_utf8(value: ValueRef) -> ValueRef {
 pub(crate) fn integer_parse(value: ValueRef) -> ValueRef {
     let receiver = value;
     let value = match runtime::value(value) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -334,7 +334,7 @@ pub(crate) fn integer_parse(value: ValueRef) -> ValueRef {
 pub(crate) fn float_parse(value: ValueRef) -> ValueRef {
     let receiver = value;
     let value = match runtime::value(value) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -399,7 +399,7 @@ fn bytes_get(receiver: ValueRef, index: ValueRef) -> ValueRef {
         Err(error) => return error,
     };
     match runtime::value(receiver) {
-        RtValue::Bytes(bytes) => match bytes.as_slice().get(index) {
+        Value::Bytes(bytes) => match bytes.as_slice().get(index) {
             Some(byte) => runtime::allocate(RtValue::Int(i64::from(*byte))),
             None => runtime::recoverable_error(
                 "IndexError",
@@ -426,10 +426,10 @@ fn bytes_slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef {
         Err(error) => return error,
     };
     match runtime::value(receiver) {
-        RtValue::Bytes(bytes) if start <= end && end <= bytes.as_slice().len() => {
+        Value::Bytes(bytes) if start <= end && end <= bytes.as_slice().len() => {
             bytes_value(bytes.as_slice()[start..end].to_vec())
         }
-        RtValue::Bytes(_) => runtime::recoverable_error(
+        Value::Bytes(_) => runtime::recoverable_error(
             "IndexError",
             "Bytes slice range is outside the Bytes bounds",
             receiver,
@@ -441,13 +441,13 @@ fn bytes_slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef {
 /// Concatenates two immutable Bytes values into one new Bytes value.
 fn bytes_concat(receiver: ValueRef, other: ValueRef) -> ValueRef {
     match (runtime::value(receiver), runtime::value(other)) {
-        (RtValue::Bytes(left), RtValue::Bytes(right)) => {
+        (Value::Bytes(left), Value::Bytes(right)) => {
             let mut bytes = Vec::with_capacity(left.as_slice().len() + right.as_slice().len());
             bytes.extend_from_slice(left.as_slice());
             bytes.extend_from_slice(right.as_slice());
             bytes_value(bytes)
         }
-        (RtValue::Bytes(_), _) => {
+        (Value::Bytes(_), _) => {
             runtime::recoverable_error("TypeError", "concat requires a Bytes argument", other)
         }
         _ => runtime::recoverable_error("TypeError", "concat requires a Bytes receiver", receiver),
@@ -457,7 +457,7 @@ fn bytes_concat(receiver: ValueRef, other: ValueRef) -> ValueRef {
 /// Returns a new List containing the receiver's octets as Int values.
 fn bytes_to_list(receiver: ValueRef) -> ValueRef {
     let bytes = match runtime::value(receiver) {
-        RtValue::Bytes(bytes) => bytes.as_slice().to_vec(),
+        Value::Bytes(bytes) => bytes.as_slice().to_vec(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -471,7 +471,7 @@ fn bytes_to_list(receiver: ValueRef) -> ValueRef {
     gc::push_temporary_root(list);
     for byte in bytes {
         let value = runtime::allocate(RtValue::Int(i64::from(byte)));
-        let RtValue::List(list_value) = runtime::value_mut(list) else {
+        let Some(RtValue::List(list_value)) = runtime::value_mut(list) else {
             runtime::trap();
         };
         list_value.elements.push(value);
@@ -483,7 +483,7 @@ fn bytes_to_list(receiver: ValueRef) -> ValueRef {
 /// Decodes one Bytes value as UTF-8 or returns an EncodingError.
 fn bytes_decode_utf8(receiver: ValueRef) -> ValueRef {
     let text = match runtime::value(receiver) {
-        RtValue::Bytes(bytes) => match core::str::from_utf8(bytes.as_slice()) {
+        Value::Bytes(bytes) => match core::str::from_utf8(bytes.as_slice()) {
             Ok(value) => String::from(value),
             Err(_) => {
                 return runtime::recoverable_error(
@@ -527,7 +527,7 @@ fn bytes_ends_with(receiver: ValueRef, suffix: ValueRef) -> ValueRef {
 /// Tests whether one Bytes value contains another Bytes value.
 fn bytes_contains(receiver: ValueRef, needle: ValueRef) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::Bytes(value) => value.as_slice(),
+        Value::Bytes(value) => value.as_slice(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -537,7 +537,7 @@ fn bytes_contains(receiver: ValueRef, needle: ValueRef) -> ValueRef {
         }
     };
     let needle = match runtime::value(needle) {
-        RtValue::Bytes(value) => value.as_slice(),
+        Value::Bytes(value) => value.as_slice(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -559,7 +559,7 @@ fn bytes_relation(
     name: &str,
 ) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::Bytes(value) => value.as_slice(),
+        Value::Bytes(value) => value.as_slice(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -569,7 +569,7 @@ fn bytes_relation(
         }
     };
     let other = match runtime::value(other) {
-        RtValue::Bytes(value) => value.as_slice(),
+        Value::Bytes(value) => value.as_slice(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -588,7 +588,7 @@ fn bytes_repeat(receiver: ValueRef, count: ValueRef) -> ValueRef {
         Err(error) => return error,
     };
     let bytes = match runtime::value(receiver) {
-        RtValue::Bytes(bytes) => bytes.as_slice(),
+        Value::Bytes(bytes) => bytes.as_slice(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -610,7 +610,7 @@ fn bytes_repeat(receiver: ValueRef, count: ValueRef) -> ValueRef {
 /// Encodes one Bytes value as lowercase hexadecimal text.
 fn bytes_to_hex(receiver: ValueRef) -> ValueRef {
     let bytes = match runtime::value(receiver) {
-        RtValue::Bytes(bytes) => bytes.as_slice(),
+        Value::Bytes(bytes) => bytes.as_slice(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -634,7 +634,7 @@ fn bytes_to_hex(receiver: ValueRef) -> ValueRef {
 pub(crate) fn bytes_from_hex(value: ValueRef) -> ValueRef {
     let receiver = value;
     let value = match runtime::value(value) {
-        RtValue::String(value) => value.as_str().as_bytes(),
+        Value::String(value) => value.as_str().as_bytes(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -695,7 +695,7 @@ fn bytes_to_base64(receiver: ValueRef) -> ValueRef {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let bytes = match runtime::value(receiver) {
-        RtValue::Bytes(bytes) => bytes.as_slice(),
+        Value::Bytes(bytes) => bytes.as_slice(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -734,7 +734,7 @@ fn bytes_to_base64(receiver: ValueRef) -> ValueRef {
 pub(crate) fn bytes_from_base64(value: ValueRef) -> ValueRef {
     let receiver = value;
     let value = match runtime::value(value) {
-        RtValue::String(value) => value.as_str().as_bytes(),
+        Value::String(value) => value.as_str().as_bytes(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -826,7 +826,7 @@ fn string_slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef 
         Err(error) => return error,
     };
     let value = match runtime::value(receiver) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -861,9 +861,9 @@ fn string_slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef 
 /// Applies the built-in slice operation without allocating dynamic method arguments.
 pub(crate) fn slice(receiver: ValueRef, start: ValueRef, end: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Bytes(_) => bytes_slice(receiver, start, end),
-        RtValue::String(_) => string_slice(receiver, start, end),
-        RtValue::List(_) => list::operations::slice(receiver, start, end),
+        Value::Bytes(_) => bytes_slice(receiver, start, end),
+        Value::String(_) => string_slice(receiver, start, end),
+        Value::List(_) => list::operations::slice(receiver, start, end),
         _ => runtime::recoverable_error(
             "TypeError",
             "slice requires a Bytes, List, or String receiver",
@@ -883,7 +883,7 @@ fn scalar_byte_offset(value: &str, index: usize) -> usize {
 /// Reads one non-negative Int used as a String scalar offset.
 fn scalar_index(value: ValueRef, name: &str) -> Result<usize, ValueRef> {
     match runtime::value(value) {
-        RtValue::Int(number) if *number >= 0 => usize::try_from(*number).map_err(|_| {
+        Value::Int(number) if number >= 0 => usize::try_from(number).map_err(|_| {
             runtime::recoverable_error(
                 "IndexError",
                 &format!("{name} requires a supported non-negative Int index"),
@@ -911,9 +911,9 @@ fn string_contains(receiver: ValueRef, needle: ValueRef) -> ValueRef {
 /// Applies the built-in contains operation without allocating dynamic method arguments.
 pub(crate) fn contains(receiver: ValueRef, other: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Bytes(_) => bytes_contains(receiver, other),
-        RtValue::String(_) => string_contains(receiver, other),
-        RtValue::List(_) => list::operations::contains(receiver, other),
+        Value::Bytes(_) => bytes_contains(receiver, other),
+        Value::String(_) => string_contains(receiver, other),
+        Value::List(_) => list::operations::contains(receiver, other),
         _ => runtime::recoverable_error(
             "TypeError",
             "contains requires a Bytes, List, or String receiver",
@@ -935,8 +935,8 @@ fn string_starts_with(receiver: ValueRef, prefix: ValueRef) -> ValueRef {
 /// Applies the built-in starts-with operation without allocating dynamic method arguments.
 pub(crate) fn starts_with(receiver: ValueRef, other: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Bytes(_) => bytes_starts_with(receiver, other),
-        RtValue::String(_) => string_starts_with(receiver, other),
+        Value::Bytes(_) => bytes_starts_with(receiver, other),
+        Value::String(_) => string_starts_with(receiver, other),
         _ => runtime::recoverable_error(
             "TypeError",
             "starts_with requires a Bytes or String receiver",
@@ -958,8 +958,8 @@ fn string_ends_with(receiver: ValueRef, suffix: ValueRef) -> ValueRef {
 /// Applies the built-in ends-with operation without allocating dynamic method arguments.
 pub(crate) fn ends_with(receiver: ValueRef, other: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Bytes(_) => bytes_ends_with(receiver, other),
-        RtValue::String(_) => string_ends_with(receiver, other),
+        Value::Bytes(_) => bytes_ends_with(receiver, other),
+        Value::String(_) => string_ends_with(receiver, other),
         _ => runtime::recoverable_error(
             "TypeError",
             "ends_with requires a Bytes or String receiver",
@@ -976,7 +976,7 @@ fn string_relation(
     name: &str,
 ) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -986,7 +986,7 @@ fn string_relation(
         }
     };
     let other = match runtime::value(other) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1031,7 +1031,7 @@ pub(crate) fn trim_end(receiver: ValueRef) -> ValueRef {
 /// Applies one String-to-String operation after validating the receiver.
 fn string_transform(receiver: ValueRef, transform: fn(&str) -> &str, name: &str) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1046,7 +1046,7 @@ fn string_transform(receiver: ValueRef, transform: fn(&str) -> &str, name: &str)
 /// Replaces every non-overlapping String match with another String.
 fn string_replace(receiver: ValueRef, from: ValueRef, to: ValueRef) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1056,7 +1056,7 @@ fn string_replace(receiver: ValueRef, from: ValueRef, to: ValueRef) -> ValueRef 
         }
     };
     let from = match runtime::value(from) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1066,7 +1066,7 @@ fn string_replace(receiver: ValueRef, from: ValueRef, to: ValueRef) -> ValueRef 
         }
     };
     let to = match runtime::value(to) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1086,7 +1086,7 @@ pub(crate) fn replace(receiver: ValueRef, from: ValueRef, to: ValueRef) -> Value
 /// Splits one String around an exact String delimiter into a new List.
 fn string_split(receiver: ValueRef, delimiter: ValueRef) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1096,7 +1096,7 @@ fn string_split(receiver: ValueRef, delimiter: ValueRef) -> ValueRef {
         }
     };
     let delimiter = match runtime::value(delimiter) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1122,7 +1122,7 @@ fn string_list(values: Vec<String>) -> ValueRef {
     for value in values {
         let value = string_value_result(value);
         gc::push_temporary_root(value);
-        let RtValue::List(list_value) = runtime::value_mut(list) else {
+        let Some(RtValue::List(list_value)) = runtime::value_mut(list) else {
             runtime::trap();
         };
         list_value.elements.push(value);
@@ -1134,7 +1134,7 @@ fn string_list(values: Vec<String>) -> ValueRef {
 /// Converts one String to its Unicode lowercase mapping.
 fn string_to_lowercase(receiver: ValueRef) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1149,7 +1149,7 @@ fn string_to_lowercase(receiver: ValueRef) -> ValueRef {
 /// Converts one String to its Unicode uppercase mapping.
 fn string_to_uppercase(receiver: ValueRef) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1168,7 +1168,7 @@ fn string_repeat(receiver: ValueRef, count: ValueRef) -> ValueRef {
         Err(error) => return error,
     };
     let value = match runtime::value(receiver) {
-        RtValue::String(value) => value.as_str(),
+        Value::String(value) => value.as_str(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1190,7 +1190,7 @@ fn string_repeat(receiver: ValueRef, count: ValueRef) -> ValueRef {
 /// Reads one non-negative Int repeat count.
 fn non_negative_count(value: ValueRef, name: &str) -> Result<usize, ValueRef> {
     match runtime::value(value) {
-        RtValue::Int(number) if *number >= 0 => usize::try_from(*number).map_err(|_| {
+        Value::Int(number) if number >= 0 => usize::try_from(number).map_err(|_| {
             runtime::recoverable_error(
                 "ValueError",
                 &format!("{name} count is outside the supported range"),
@@ -1208,7 +1208,7 @@ fn non_negative_count(value: ValueRef, name: &str) -> Result<usize, ValueRef> {
 /// Validates one Bytes index and converts it to the native index type.
 fn bytes_index(reference: ValueRef, allow_end: bool) -> Result<usize, ValueRef> {
     match runtime::value(reference) {
-        RtValue::Int(index) if *index >= 0 => usize::try_from(*index).map_err(|_| {
+        Value::Int(index) if index >= 0 => usize::try_from(index).map_err(|_| {
             runtime::recoverable_error(
                 "IndexError",
                 "Bytes index is outside the supported range",
@@ -1229,14 +1229,14 @@ fn bytes_index(reference: ValueRef, allow_end: bool) -> Result<usize, ValueRef> 
 
 /// Allocates one immutable Bytes result from owned raw octets.
 fn bytes_value(value: Vec<u8>) -> ValueRef {
-    runtime::allocate(RtValue::Bytes(Box::new(RuntimeBytes::from_vec(value))))
+    runtime::allocate(RtValue::Bytes(RuntimeBytes::from_vec(value)))
 }
 
 /// Replaces one value through the receiver's runtime indexing dispatch.
 pub(crate) fn index_set(receiver: ValueRef, index: ValueRef, replacement: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::List(_) => list::operations::set(receiver, index, replacement),
-        RtValue::Object(_) => object::operations::set(receiver, index, replacement),
+        Value::List(_) => list::operations::set(receiver, index, replacement),
+        Value::Object(_) => object::operations::set(receiver, index, replacement),
         _ => runtime::recoverable_error(
             "TypeError",
             "index assignment requires a List or Object receiver",
@@ -1248,12 +1248,12 @@ pub(crate) fn index_set(receiver: ValueRef, index: ValueRef, replacement: ValueR
 /// Creates the shallow List snapshot or lazy immutable iterator consumed by a for loop.
 pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
     match runtime::value(iterable) {
-        RtValue::List(list) => {
+        Value::List(list) => {
             let mut elements = list.elements.clone();
             elements.reverse();
             runtime::allocate(RtValue::List(Box::new(RuntimeList { elements })))
         }
-        RtValue::String(_) => {
+        Value::String(_) => {
             let checkpoint = gc::temporary_root_checkpoint();
             gc::push_temporary_root(iterable);
             let snapshot =
@@ -1264,7 +1264,7 @@ pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
             gc::restore_temporary_roots(checkpoint);
             snapshot
         }
-        RtValue::Bytes(_) => {
+        Value::Bytes(_) => {
             let checkpoint = gc::temporary_root_checkpoint();
             gc::push_temporary_root(iterable);
             let snapshot = runtime::allocate(RtValue::Iterator(Box::new(RuntimeIterator::Bytes {
@@ -1274,7 +1274,7 @@ pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
             gc::restore_temporary_roots(checkpoint);
             snapshot
         }
-        RtValue::Object(_) => iterable,
+        Value::Object(_) => iterable,
         _ => runtime::recoverable_error(
             "NotIterable",
             "for requires an iterable or Iterator receiver",
@@ -1301,21 +1301,21 @@ fn iterator_next(receiver: ValueRef) -> ValueRef {
 /// `Some(None)` once the iterator is exhausted.
 fn builtin_iterator_item(receiver: ValueRef) -> Option<Option<ValueRef>> {
     let item = match runtime::value(receiver) {
-        RtValue::List(list) => {
+        Value::List(list) => {
             if list.elements.is_empty() {
                 None
             } else {
                 match runtime::value_mut(receiver) {
-                    RtValue::List(list) => list.elements.pop(),
+                    Some(RtValue::List(list)) => list.elements.pop(),
                     _ => crate::runtime::trap(),
                 }
             }
         }
-        RtValue::Iterator(iterator) => match iterator.as_ref() {
+        Value::Iterator(iterator) => match iterator {
             RuntimeIterator::String { source, next_byte } => {
                 let source = *source;
                 let next_byte = *next_byte;
-                let RtValue::String(value) = runtime::value(source) else {
+                let Value::String(value) = runtime::value(source) else {
                     crate::runtime::trap();
                 };
                 let Some(suffix) = value.as_str().get(next_byte..) else {
@@ -1325,7 +1325,7 @@ fn builtin_iterator_item(receiver: ValueRef) -> Option<Option<ValueRef>> {
                     Some(scalar) => {
                         let next_byte = next_byte.saturating_add(scalar.len_utf8());
                         match runtime::value_mut(receiver) {
-                            RtValue::Iterator(iterator) => match iterator.as_mut() {
+                            Some(RtValue::Iterator(iterator)) => match iterator.as_mut() {
                                 RuntimeIterator::String {
                                     next_byte: cursor, ..
                                 } => *cursor = next_byte,
@@ -1333,9 +1333,9 @@ fn builtin_iterator_item(receiver: ValueRef) -> Option<Option<ValueRef>> {
                             },
                             _ => crate::runtime::trap(),
                         }
-                        Some(runtime::allocate(RtValue::String(Box::new(
+                        Some(runtime::allocate(RtValue::String(
                             RuntimeString::from_string(scalar.to_string()),
-                        ))))
+                        )))
                     }
                     None => None,
                 }
@@ -1343,13 +1343,13 @@ fn builtin_iterator_item(receiver: ValueRef) -> Option<Option<ValueRef>> {
             RuntimeIterator::Bytes { source, next_index } => {
                 let source = *source;
                 let next_index = *next_index;
-                let RtValue::Bytes(value) = runtime::value(source) else {
+                let Value::Bytes(value) = runtime::value(source) else {
                     crate::runtime::trap();
                 };
                 let item = value.as_slice().get(next_index).copied();
                 item.map(|byte| {
                     match runtime::value_mut(receiver) {
-                        RtValue::Iterator(iterator) => match iterator.as_mut() {
+                        Some(RtValue::Iterator(iterator)) => match iterator.as_mut() {
                             RuntimeIterator::Bytes {
                                 next_index: cursor, ..
                             } => {
@@ -1369,15 +1369,17 @@ fn builtin_iterator_item(receiver: ValueRef) -> Option<Option<ValueRef>> {
 }
 
 /// `iter_native_next` result for receivers that need `Iterator::next` dispatch.
-const NATIVE_ITER_FALLBACK: i32 = -1;
+///
+/// All bits set can never be a valid `ValueRef`, which carries exactly one type flag.
+const NATIVE_ITER_FALLBACK: i64 = -1;
 /// `iter_native_next` result for an exhausted iterator.
-const NATIVE_ITER_DONE: i32 = 0;
+const NATIVE_ITER_DONE: i64 = 0;
 
 /// Advances one for-loop snapshot natively when it is a built-in iterator or prelude Range.
 ///
 /// Returns the raw item ValueRef, `NATIVE_ITER_DONE`, or `NATIVE_ITER_FALLBACK` when the
 /// caller must dispatch `Iterator::next` instead. A fallback never mutates the receiver.
-pub(crate) fn iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i32 {
+pub(crate) fn iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i64 {
     let item = match builtin_iterator_item(snapshot) {
         Some(item) => Some(item),
         None => match u32::try_from(range_type_id) {
@@ -1386,7 +1388,7 @@ pub(crate) fn iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i32 {
         },
     };
     match item {
-        Some(Some(item)) => item.runtime_index().cast_signed(),
+        Some(Some(item)) => item.raw().cast_signed(),
         Some(None) => NATIVE_ITER_DONE,
         None => NATIVE_ITER_FALLBACK,
     }
@@ -1449,7 +1451,7 @@ fn range_next(receiver: ValueRef, range_type_id: u32) -> Option<Option<ValueRef>
 
 /// Reads the fields of one prelude Range object, or `None` when it is not well formed.
 fn range_state(receiver: ValueRef, range_type_id: u32) -> Option<RangeState> {
-    let RtValue::Object(object) = runtime::value(receiver) else {
+    let Value::Object(object) = runtime::value(receiver) else {
         return None;
     };
     if object.type_id != Some(range_type_id) || object.enum_data.is_some() {
@@ -1462,11 +1464,11 @@ fn range_state(receiver: ValueRef, range_type_id: u32) -> Option<RangeState> {
             .find_map(|(key, value)| (key.as_ref() == name).then_some(*value))
     };
     let int = |name: &str| match runtime::value(field(name)?) {
-        RtValue::Int(value) => Some(*value),
+        Value::Int(value) => Some(value),
         _ => None,
     };
     let boolean = |name: &str| match runtime::value(field(name)?) {
-        RtValue::Bool(value) => Some(*value),
+        Value::Bool(value) => Some(value),
         _ => None,
     };
     Some(RangeState {
@@ -1481,7 +1483,7 @@ fn range_state(receiver: ValueRef, range_type_id: u32) -> Option<RangeState> {
 
 /// Replaces one existing Object field value in place.
 fn set_object_field(receiver: ValueRef, name: &str, value: ValueRef) {
-    let RtValue::Object(object) = runtime::value_mut(receiver) else {
+    let Some(RtValue::Object(object)) = runtime::value_mut(receiver) else {
         crate::runtime::trap();
     };
     match object
@@ -1519,7 +1521,7 @@ fn iterator_step(item: Option<ValueRef>) -> ValueRef {
 /// Returns the scalar or entry count for runtime values with a visible length.
 pub(crate) fn length(value: ValueRef) -> ValueRef {
     let length = match runtime::value(value) {
-        RtValue::String(value) => {
+        Value::String(value) => {
             let value = value.as_str();
             if value.is_ascii() {
                 value.len()
@@ -1527,9 +1529,9 @@ pub(crate) fn length(value: ValueRef) -> ValueRef {
                 value.chars().count()
             }
         }
-        RtValue::Bytes(value) => value.as_slice().len(),
-        RtValue::List(value) => value.elements.len(),
-        RtValue::Object(value) => value.entries.len(),
+        Value::Bytes(value) => value.as_slice().len(),
+        Value::List(value) => value.elements.len(),
+        Value::Object(value) => value.entries.len(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1544,10 +1546,10 @@ pub(crate) fn length(value: ValueRef) -> ValueRef {
 /// Returns whether a String, List, or Object contains no visible entries.
 pub(crate) fn is_empty(value: ValueRef) -> ValueRef {
     let empty = match runtime::value(value) {
-        RtValue::String(value) => value.as_str().is_empty(),
-        RtValue::Bytes(value) => value.as_slice().is_empty(),
-        RtValue::List(value) => value.elements.len() == 0,
-        RtValue::Object(value) => value.entries.is_empty(),
+        Value::String(value) => value.as_str().is_empty(),
+        Value::Bytes(value) => value.as_slice().is_empty(),
+        Value::List(value) => value.elements.len() == 0,
+        Value::Object(value) => value.entries.is_empty(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1562,7 +1564,7 @@ pub(crate) fn is_empty(value: ValueRef) -> ValueRef {
 /// Returns the absolute value of one Int when it fits in the ExS signed 64-bit range.
 pub(crate) fn integer_abs(receiver: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Int(value) => match value.checked_abs() {
+        Value::Int(value) => match value.checked_abs() {
             Some(result) => runtime::allocate(RtValue::Int(result)),
             None => runtime::recoverable_error(
                 "IntOverflowError",
@@ -1611,7 +1613,7 @@ fn float_fract(value: ValueRef) -> ValueRef {
 /// Returns the sign of one Int as -1, 0, or 1.
 fn integer_signum(receiver: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Int(value) => runtime::allocate(RtValue::Int(value.signum())),
+        Value::Int(value) => runtime::allocate(RtValue::Int(value.signum())),
         _ => runtime::recoverable_error("TypeError", "signum requires an Int receiver", receiver),
     }
 }
@@ -1619,7 +1621,7 @@ fn integer_signum(receiver: ValueRef) -> ValueRef {
 /// Returns whether one Int is evenly divisible by two.
 fn integer_is_even(receiver: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Int(value) => runtime::bool_value(value % 2 == 0),
+        Value::Int(value) => runtime::bool_value(value % 2 == 0),
         _ => runtime::recoverable_error("TypeError", "is_even requires an Int receiver", receiver),
     }
 }
@@ -1627,7 +1629,7 @@ fn integer_is_even(receiver: ValueRef) -> ValueRef {
 /// Returns whether one Int is not evenly divisible by two.
 fn integer_is_odd(receiver: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Int(value) => runtime::bool_value(value % 2 != 0),
+        Value::Int(value) => runtime::bool_value(value % 2 != 0),
         _ => runtime::recoverable_error("TypeError", "is_odd requires an Int receiver", receiver),
     }
 }
@@ -1635,7 +1637,7 @@ fn integer_is_odd(receiver: ValueRef) -> ValueRef {
 /// Raises one Int to a non-negative integer exponent.
 fn integer_pow(receiver: ValueRef, exponent: ValueRef) -> ValueRef {
     let base = match runtime::value(receiver) {
-        RtValue::Int(value) => *value,
+        Value::Int(value) => value,
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1645,8 +1647,8 @@ fn integer_pow(receiver: ValueRef, exponent: ValueRef) -> ValueRef {
         }
     };
     let exponent = match runtime::value(exponent) {
-        RtValue::Int(value) if *value >= 0 => *value as u64,
-        RtValue::Int(_) => {
+        Value::Int(value) if value >= 0 => value as u64,
+        Value::Int(_) => {
             return runtime::recoverable_error(
                 "ValueError",
                 "Int pow requires a non-negative exponent",
@@ -1693,7 +1695,7 @@ fn integer_pow(receiver: ValueRef, exponent: ValueRef) -> ValueRef {
 /// Returns the greatest common divisor of two Int values when it fits in Int.
 fn integer_gcd(receiver: ValueRef, other: ValueRef) -> ValueRef {
     let left = match runtime::value(receiver) {
-        RtValue::Int(value) => value.unsigned_abs(),
+        Value::Int(value) => value.unsigned_abs(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1703,7 +1705,7 @@ fn integer_gcd(receiver: ValueRef, other: ValueRef) -> ValueRef {
         }
     };
     let right = match runtime::value(other) {
-        RtValue::Int(value) => value.unsigned_abs(),
+        Value::Int(value) => value.unsigned_abs(),
         _ => return runtime::recoverable_error("TypeError", "gcd requires an Int argument", other),
     };
     integer_from_unsigned(gcd(left, right), receiver, "gcd")
@@ -1712,7 +1714,7 @@ fn integer_gcd(receiver: ValueRef, other: ValueRef) -> ValueRef {
 /// Returns the least common multiple of two Int values when it fits in Int.
 fn integer_lcm(receiver: ValueRef, other: ValueRef) -> ValueRef {
     let left = match runtime::value(receiver) {
-        RtValue::Int(value) => value.unsigned_abs(),
+        Value::Int(value) => value.unsigned_abs(),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1722,7 +1724,7 @@ fn integer_lcm(receiver: ValueRef, other: ValueRef) -> ValueRef {
         }
     };
     let right = match runtime::value(other) {
-        RtValue::Int(value) => value.unsigned_abs(),
+        Value::Int(value) => value.unsigned_abs(),
         _ => return runtime::recoverable_error("TypeError", "lcm requires an Int argument", other),
     };
     if left == 0 || right == 0 {
@@ -1791,7 +1793,7 @@ fn integer_clamp(receiver: ValueRef, minimum: ValueRef, maximum: ValueRef) -> Va
 /// Reads one exact runtime Int for a numeric method.
 fn integer_value(value: ValueRef, message: &str) -> Result<i64, ValueRef> {
     match runtime::value(value) {
-        RtValue::Int(value) => Ok(*value),
+        Value::Int(value) => Ok(value),
         _ => Err(runtime::recoverable_error("TypeError", message, value)),
     }
 }
@@ -1815,7 +1817,7 @@ fn integer_pair(
 /// Converts one Int to an IEEE-754 binary64 Float.
 fn integer_to_float(receiver: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Int(value) => runtime::allocate(RtValue::Float(*value as f64)),
+        Value::Int(value) => runtime::allocate(RtValue::Float(value as f64)),
         _ => runtime::recoverable_error("TypeError", "to_float requires an Int receiver", receiver),
     }
 }
@@ -1823,7 +1825,7 @@ fn integer_to_float(receiver: ValueRef) -> ValueRef {
 /// Converts one finite Float to a truncated Int when the result fits in Int.
 fn float_to_int(receiver: ValueRef) -> ValueRef {
     let value = match runtime::value(receiver) {
-        RtValue::Float(value) => *value,
+        Value::Float(value) => value,
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1906,7 +1908,7 @@ fn float_pow(receiver: ValueRef, exponent: ValueRef) -> ValueRef {
 /// Reads one runtime Float for a numeric method.
 fn float_value(value: ValueRef, message: &str) -> Result<f64, ValueRef> {
     match runtime::value(value) {
-        RtValue::Float(value) => Ok(*value),
+        Value::Float(value) => Ok(value),
         _ => Err(runtime::recoverable_error("TypeError", message, value)),
     }
 }
@@ -1930,7 +1932,7 @@ fn float_pair(
 /// Tests one Float predicate after validating the receiver.
 fn float_predicate(receiver: ValueRef, predicate: fn(f64) -> bool, name: &str) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Float(value) => runtime::bool_value(predicate(*value)),
+        Value::Float(value) => runtime::bool_value(predicate(value)),
         _ => runtime::recoverable_error(
             "TypeError",
             &format!("{name} requires a Float receiver"),
@@ -1942,7 +1944,7 @@ fn float_predicate(receiver: ValueRef, predicate: fn(f64) -> bool, name: &str) -
 /// Returns the stable kind string stored by one Error.
 pub(crate) fn error_kind(value: ValueRef) -> ValueRef {
     let kind = match runtime::value(value) {
-        RtValue::Error(error) => String::from(error.kind.as_ref()),
+        Value::Error(error) => String::from(error.kind.as_ref()),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1957,7 +1959,7 @@ pub(crate) fn error_kind(value: ValueRef) -> ValueRef {
 /// Returns the human-readable message string stored by one Error.
 pub(crate) fn error_message(value: ValueRef) -> ValueRef {
     let message = match runtime::value(value) {
-        RtValue::Error(error) => String::from(error.message.as_ref()),
+        Value::Error(error) => String::from(error.message.as_ref()),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1972,7 +1974,7 @@ pub(crate) fn error_message(value: ValueRef) -> ValueRef {
 /// Returns the associated language data stored by one Error.
 pub(crate) fn error_data(value: ValueRef) -> ValueRef {
     match runtime::value(value) {
-        RtValue::Error(error) => error.data,
+        Value::Error(error) => error.data,
         _ => runtime::recoverable_error("TypeError", "data requires an Error receiver", value),
     }
 }
@@ -1980,7 +1982,7 @@ pub(crate) fn error_data(value: ValueRef) -> ValueRef {
 /// Returns the related Error cause or None when no cause is available.
 pub(crate) fn error_cause(value: ValueRef) -> ValueRef {
     let cause = match runtime::value(value) {
-        RtValue::Error(error) => error.cause,
+        Value::Error(error) => error.cause,
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -1989,7 +1991,7 @@ pub(crate) fn error_cause(value: ValueRef) -> ValueRef {
             );
         }
     };
-    cause.unwrap_or_else(|| runtime::none_value())
+    cause.unwrap_or(runtime::none_value())
 }
 
 /// Dispatches a statically named runtime member method.
@@ -2033,8 +2035,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "abs" => match list::operations::require_no_arguments(arguments) {
             Ok(()) => match runtime::value(receiver) {
-                RtValue::Int(_) => integer_abs(receiver),
-                RtValue::Float(_) => float_abs(receiver),
+                Value::Int(_) => integer_abs(receiver),
+                Value::Float(_) => float_abs(receiver),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "abs requires an Int or Float receiver",
@@ -2085,8 +2087,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "pow" => match list::operations::single_argument(arguments) {
             Ok(other) => match runtime::value(receiver) {
-                RtValue::Int(_) => integer_pow(receiver, other),
-                RtValue::Float(_) => float_pow(receiver, other),
+                Value::Int(_) => integer_pow(receiver, other),
+                Value::Float(_) => float_pow(receiver, other),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "pow requires an Int or Float receiver",
@@ -2097,8 +2099,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "min" => match list::operations::single_argument(arguments) {
             Ok(other) => match runtime::value(receiver) {
-                RtValue::Int(_) => integer_min(receiver, other),
-                RtValue::Float(_) => float_min(receiver, other),
+                Value::Int(_) => integer_min(receiver, other),
+                Value::Float(_) => float_min(receiver, other),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "min requires an Int or Float receiver",
@@ -2109,8 +2111,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "max" => match list::operations::single_argument(arguments) {
             Ok(other) => match runtime::value(receiver) {
-                RtValue::Int(_) => integer_max(receiver, other),
-                RtValue::Float(_) => float_max(receiver, other),
+                Value::Int(_) => integer_max(receiver, other),
+                Value::Float(_) => float_max(receiver, other),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "max requires an Int or Float receiver",
@@ -2121,8 +2123,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "clamp" => match list::operations::two_arguments(arguments) {
             Ok((minimum, maximum)) => match runtime::value(receiver) {
-                RtValue::Int(_) => integer_clamp(receiver, minimum, maximum),
-                RtValue::Float(_) => float_clamp(receiver, minimum, maximum),
+                Value::Int(_) => integer_clamp(receiver, minimum, maximum),
+                Value::Float(_) => float_clamp(receiver, minimum, maximum),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "clamp requires an Int or Float receiver",
@@ -2173,9 +2175,9 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "slice" => match list::operations::two_arguments(arguments) {
             Ok((start, end)) => match runtime::value(receiver) {
-                RtValue::Bytes(_) => bytes_slice(receiver, start, end),
-                RtValue::String(_) => string_slice(receiver, start, end),
-                RtValue::List(_) => list::operations::slice(receiver, start, end),
+                Value::Bytes(_) => bytes_slice(receiver, start, end),
+                Value::String(_) => string_slice(receiver, start, end),
+                Value::List(_) => list::operations::slice(receiver, start, end),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "slice requires a Bytes, List, or String receiver",
@@ -2198,9 +2200,9 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "contains" => match list::operations::single_argument(arguments) {
             Ok(other) => match runtime::value(receiver) {
-                RtValue::Bytes(_) => bytes_contains(receiver, other),
-                RtValue::String(_) => string_contains(receiver, other),
-                RtValue::List(_) => list::operations::contains(receiver, other),
+                Value::Bytes(_) => bytes_contains(receiver, other),
+                Value::String(_) => string_contains(receiver, other),
+                Value::List(_) => list::operations::contains(receiver, other),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "contains requires a Bytes, List, or String receiver",
@@ -2211,8 +2213,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "starts_with" => match list::operations::single_argument(arguments) {
             Ok(other) => match runtime::value(receiver) {
-                RtValue::Bytes(_) => bytes_starts_with(receiver, other),
-                RtValue::String(_) => string_starts_with(receiver, other),
+                Value::Bytes(_) => bytes_starts_with(receiver, other),
+                Value::String(_) => string_starts_with(receiver, other),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "starts_with requires a Bytes or String receiver",
@@ -2223,8 +2225,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "ends_with" => match list::operations::single_argument(arguments) {
             Ok(other) => match runtime::value(receiver) {
-                RtValue::Bytes(_) => bytes_ends_with(receiver, other),
-                RtValue::String(_) => string_ends_with(receiver, other),
+                Value::Bytes(_) => bytes_ends_with(receiver, other),
+                Value::String(_) => string_ends_with(receiver, other),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "ends_with requires a Bytes or String receiver",
@@ -2235,8 +2237,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "repeat" => match list::operations::single_argument(arguments) {
             Ok(count) => match runtime::value(receiver) {
-                RtValue::Bytes(_) => bytes_repeat(receiver, count),
-                RtValue::String(_) => string_repeat(receiver, count),
+                Value::Bytes(_) => bytes_repeat(receiver, count),
+                Value::String(_) => string_repeat(receiver, count),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "repeat requires a Bytes or String receiver",
@@ -2307,8 +2309,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "get" => match list::operations::single_argument(arguments) {
             Ok(index) => match runtime::value(receiver) {
-                RtValue::List(_) => list::operations::get_or_none(receiver, index),
-                RtValue::Object(_) => object::operations::get(receiver, index),
+                Value::List(_) => list::operations::get_or_none(receiver, index),
+                Value::Object(_) => object::operations::get(receiver, index),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "get requires a List or Object receiver",
@@ -2363,8 +2365,8 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         },
         "clear" => match list::operations::require_no_arguments(arguments) {
             Ok(()) => match runtime::value(receiver) {
-                RtValue::List(_) => list::operations::clear(receiver),
-                RtValue::Object(_) => object::operations::clear(receiver),
+                Value::List(_) => list::operations::clear(receiver),
+                Value::Object(_) => object::operations::clear(receiver),
                 _ => runtime::recoverable_error(
                     "TypeError",
                     "clear requires a List or Object receiver",
@@ -2412,22 +2414,22 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
 /// Creates the stable built-in representation shared by `ToString` and `Debug` defaults.
 fn render_default(receiver: ValueRef) -> ValueRef {
     let rendered = match runtime::value(receiver) {
-        RtValue::None => "None".to_owned(),
-        RtValue::Error(_) => "Error".to_owned(),
-        RtValue::Bool(value) => value.to_string(),
-        RtValue::Int(value) => value.to_string(),
-        RtValue::Float(value) => value.to_string(),
-        RtValue::String(value) => String::from(value.as_str()),
-        RtValue::Bytes(value) => format!("Bytes({})", value.as_slice().len()),
-        RtValue::List(_) => "[]".to_owned(),
-        RtValue::Iterator(_) => "Iterator".to_owned(),
-        RtValue::Object(object) => object.enum_data.as_ref().map_or_else(
+        Value::None => "None".to_owned(),
+        Value::Error(_) => "Error".to_owned(),
+        Value::Bool(value) => value.to_string(),
+        Value::Int(value) => value.to_string(),
+        Value::Float(value) => value.to_string(),
+        Value::String(value) => String::from(value.as_str()),
+        Value::Bytes(value) => format!("Bytes({})", value.as_slice().len()),
+        Value::List(_) => "[]".to_owned(),
+        Value::Iterator(_) => "Iterator".to_owned(),
+        Value::Object(object) => object.enum_data.as_ref().map_or_else(
             || "{}".to_owned(),
             |enumeration| format!("{}::{}", enumeration.type_identity, enumeration.variant),
         ),
-        RtValue::Cell(_) => "Cell".to_owned(),
-        RtValue::Closure(_) => "fn main()".to_owned(),
-        RtValue::BoxedFutureValue(_) => "Future".to_owned(),
+        Value::Cell(_) => "Cell".to_owned(),
+        Value::Closure(_) => "fn main()".to_owned(),
+        Value::Future => "Future".to_owned(),
     };
     string_value_result(rendered)
 }
@@ -2435,20 +2437,20 @@ fn render_default(receiver: ValueRef) -> ValueRef {
 /// Applies one unary Float operation after validating the receiver type.
 fn float_unary(value: ValueRef, operation: fn(f64) -> f64, error_message: &str) -> ValueRef {
     match runtime::value(value) {
-        RtValue::Float(value) => runtime::allocate(RtValue::Float(operation(*value))),
+        Value::Float(value) => runtime::allocate(RtValue::Float(operation(value))),
         _ => runtime::recoverable_error("TypeError", error_message, value),
     }
 }
 
 /// Allocates one runtime String result from owned UTF-8 contents.
 fn string_value_result(value: String) -> ValueRef {
-    runtime::allocate(RtValue::String(Box::new(RuntimeString::from_string(value))))
+    runtime::allocate(RtValue::String(RuntimeString::from_string(value)))
 }
 
 /// Copies one runtime String value for use as a key or method name.
 pub(crate) fn string_value(reference: ValueRef) -> Result<String, ValueRef> {
     match runtime::value(reference) {
-        RtValue::String(value) => Ok(value.as_str().into()),
+        Value::String(value) => Ok(value.as_str().into()),
         _ => Err(runtime::recoverable_error(
             "TypeError",
             "Object keys and method names require a String value",

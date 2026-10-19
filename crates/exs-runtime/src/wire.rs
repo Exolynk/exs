@@ -4,19 +4,15 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use exs_abi::{
-    TYPE_BOOL, TYPE_BYTES, TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE,
-    TYPE_OBJECT, TYPE_STRING,
-};
 use exs_value::ValueRef;
 
 use crate::gc;
 use crate::runtime;
-use crate::value::{RtValue, RuntimeEnum, RuntimeList, RuntimeObject};
+use crate::value::{RtValue, RuntimeEnum, RuntimeList, RuntimeObject, Value};
 
 /// Decodes one host boundary value according to an opaque compiler-emitted schema string.
 pub(crate) fn decode(value: ValueRef, schema: ValueRef) -> ValueRef {
-    let RtValue::String(schema) = runtime::value(schema) else {
+    let Value::String(schema) = runtime::value(schema) else {
         return runtime::recoverable_error(
             "WireDecodeError",
             "wire schema must be a String",
@@ -230,15 +226,15 @@ impl<'a> SchemaParser<'a> {
 
 /// Recursively decodes one value according to one parsed contract.
 fn decode_contract(value: ValueRef, contract: &Contract) -> ValueRef {
-    if matches!(runtime::value(value), RtValue::Error(_)) {
+    if matches!(runtime::value(value), Value::Error(_)) {
         return value;
     }
-    if matches!(runtime::value(value), RtValue::List(_))
+    if matches!(runtime::value(value), Value::List(_))
         && let Some(item) = &contract.list
     {
         return decode_list(value, item);
     }
-    if matches!(runtime::value(value), RtValue::Object(_)) {
+    if matches!(runtime::value(value), Value::Object(_)) {
         if let Some(decoded) = decode_enum(value, &contract.enums) {
             return decoded;
         }
@@ -246,7 +242,7 @@ fn decode_contract(value: ValueRef, contract: &Contract) -> ValueRef {
             return decoded;
         }
     }
-    if value_type_mask(runtime::value(value)) & contract.builtin_mask != 0 {
+    if value.has_type(contract.builtin_mask) {
         value
     } else {
         runtime::recoverable_error(
@@ -259,7 +255,7 @@ fn decode_contract(value: ValueRef, contract: &Contract) -> ValueRef {
 
 /// Decodes every list element and returns a fresh ExS List.
 fn decode_list(value: ValueRef, item_contract: &Contract) -> ValueRef {
-    let RtValue::List(source) = runtime::value(value) else {
+    let Value::List(source) = runtime::value(value) else {
         return runtime::recoverable_error("WireDecodeError", "expected a List from host", value);
     };
     let source = source.elements.clone();
@@ -267,7 +263,7 @@ fn decode_list(value: ValueRef, item_contract: &Contract) -> ValueRef {
     let mut elements = Vec::with_capacity(source.len());
     for item in source {
         let decoded = decode_contract(item, item_contract);
-        if matches!(runtime::value(decoded), RtValue::Error(_)) {
+        if matches!(runtime::value(decoded), Value::Error(_)) {
             gc::restore_temporary_roots(checkpoint);
             return decoded;
         }
@@ -282,7 +278,7 @@ fn decode_list(value: ValueRef, item_contract: &Contract) -> ValueRef {
 /// Selects and decodes one host Object as an enum, when it carries a known `$variant` tag.
 fn decode_enum(value: ValueRef, schemas: &[EnumSchema]) -> Option<ValueRef> {
     let variant = object_field(value, "$variant")?;
-    let RtValue::String(variant) = runtime::value(variant) else {
+    let Value::String(variant) = runtime::value(variant) else {
         return Some(runtime::recoverable_error(
             "WireDecodeError",
             "enum `$variant` must be a String",
@@ -296,7 +292,7 @@ fn decode_enum(value: ValueRef, schemas: &[EnumSchema]) -> Option<ValueRef> {
             .find(|candidate| candidate.name == variant.as_str())
             .map(|candidate| (schema, candidate))
     })?;
-    if matches!(runtime::value(value), RtValue::Object(object) if object.type_id == Some(schema.0.type_id) && object.enum_data.is_some())
+    if matches!(runtime::value(value), Value::Object(object) if object.type_id == Some(schema.0.type_id) && object.enum_data.is_some())
     {
         return Some(value);
     }
@@ -310,9 +306,9 @@ fn decode_enum_variant(value: ValueRef, schema: &EnumSchema, variant: &VariantSc
     for (index, field) in variant.fields.iter().enumerate() {
         let raw = object_field(value, &field.name)
             .or_else(|| enum_tuple_field(value, index))
-            .unwrap_or_else(|| runtime::none_value());
+            .unwrap_or(runtime::none_value());
         let decoded = decode_contract(raw, &field.contract);
-        if matches!(runtime::value(decoded), RtValue::Error(_)) {
+        if matches!(runtime::value(decoded), Value::Error(_)) {
             gc::restore_temporary_roots(checkpoint);
             return decoded;
         }
@@ -334,16 +330,16 @@ fn decode_enum_variant(value: ValueRef, schema: &EnumSchema, variant: &VariantSc
 /// Selects and decodes one host Object as the first compatible nominal Object schema.
 fn decode_object(value: ValueRef, schemas: &[ObjectSchema]) -> Option<ValueRef> {
     let schema = schemas.first()?;
-    if matches!(runtime::value(value), RtValue::Object(object) if object.type_id == Some(schema.type_id) && object.enum_data.is_none())
+    if matches!(runtime::value(value), Value::Object(object) if object.type_id == Some(schema.type_id) && object.enum_data.is_none())
     {
         return Some(value);
     }
     let checkpoint = gc::temporary_root_checkpoint();
     let mut entries = Vec::with_capacity(schema.fields.len());
     for field in &schema.fields {
-        let raw = object_field(value, &field.name).unwrap_or_else(|| runtime::none_value());
+        let raw = object_field(value, &field.name).unwrap_or(runtime::none_value());
         let decoded = decode_contract(raw, &field.contract);
-        if matches!(runtime::value(decoded), RtValue::Error(_)) {
+        if matches!(runtime::value(decoded), Value::Error(_)) {
             gc::restore_temporary_roots(checkpoint);
             return Some(decoded);
         }
@@ -362,7 +358,7 @@ fn decode_object(value: ValueRef, schemas: &[ObjectSchema]) -> Option<ValueRef> 
 /// Returns a direct object property without allocating an absent `None` value.
 fn object_field(value: ValueRef, name: &str) -> Option<ValueRef> {
     match runtime::value(value) {
-        RtValue::Object(object) => object
+        Value::Object(object) => object
             .entries
             .iter()
             .find_map(|(key, value)| (key.as_ref() == name).then_some(*value)),
@@ -374,25 +370,7 @@ fn object_field(value: ValueRef, name: &str) -> Option<ValueRef> {
 fn enum_tuple_field(value: ValueRef, index: usize) -> Option<ValueRef> {
     let values = object_field(value, "$values")?;
     match runtime::value(values) {
-        RtValue::List(values) => values.elements.get(index).copied(),
+        Value::List(values) => values.elements.get(index).copied(),
         _ => None,
-    }
-}
-
-/// Returns the ABI category mask for one runtime value.
-fn value_type_mask(value: &RtValue) -> u32 {
-    match value {
-        RtValue::None => TYPE_NONE,
-        RtValue::Error(_) => TYPE_ERROR,
-        RtValue::Bool(_) => TYPE_BOOL,
-        RtValue::Int(_) => TYPE_INT,
-        RtValue::Float(_) => TYPE_FLOAT,
-        RtValue::String(_) => TYPE_STRING,
-        RtValue::Bytes(_) => TYPE_BYTES,
-        RtValue::List(_) => TYPE_LIST,
-        RtValue::Iterator(_) => 0,
-        RtValue::Object(_) => TYPE_OBJECT,
-        RtValue::Closure(_) => TYPE_FN,
-        RtValue::Cell(_) | RtValue::BoxedFutureValue(_) => 0,
     }
 }

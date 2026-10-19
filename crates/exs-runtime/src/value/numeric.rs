@@ -3,7 +3,7 @@
 use exs_value::ValueRef;
 
 use crate::runtime;
-use crate::value::RtValue;
+use crate::value::{RtValue, Value};
 
 /// A numeric value after Bool-to-Int conversion.
 #[derive(Clone, Copy)]
@@ -40,30 +40,27 @@ pub(crate) enum Comparison {
 }
 
 /// Returns whether a payload participates in numeric operations.
-pub(crate) fn is_numeric(value: &RtValue) -> bool {
-    matches!(
-        value,
-        RtValue::Bool(_) | RtValue::Int(_) | RtValue::Float(_)
-    )
+pub(crate) fn is_numeric(value: Value<'_>) -> bool {
+    matches!(value, Value::Bool(_) | Value::Int(_) | Value::Float(_))
 }
 
 /// Converts one runtime numeric payload into the shared numeric dispatch form.
-pub(crate) fn number_of(value: &RtValue) -> Option<Number> {
+pub(crate) fn number_of(value: Value<'_>) -> Option<Number> {
     match value {
-        RtValue::Bool(false) => Some(Number::Int(0)),
-        RtValue::Bool(true) => Some(Number::Int(1)),
-        RtValue::Int(value) => Some(Number::Int(*value)),
-        RtValue::Float(value) => Some(Number::Float(*value)),
-        RtValue::None
-        | RtValue::Error(_)
-        | RtValue::String(_)
-        | RtValue::Bytes(_)
-        | RtValue::List(_)
-        | RtValue::Iterator(_)
-        | RtValue::Object(_)
-        | RtValue::Cell(_)
-        | RtValue::Closure(_)
-        | RtValue::BoxedFutureValue(_) => None,
+        Value::Bool(false) => Some(Number::Int(0)),
+        Value::Bool(true) => Some(Number::Int(1)),
+        Value::Int(value) => Some(Number::Int(value)),
+        Value::Float(value) => Some(Number::Float(value)),
+        Value::None
+        | Value::Error(_)
+        | Value::String(_)
+        | Value::Bytes(_)
+        | Value::List(_)
+        | Value::Iterator(_)
+        | Value::Object(_)
+        | Value::Cell(_)
+        | Value::Closure(_)
+        | Value::Future => None,
     }
 }
 
@@ -142,7 +139,7 @@ fn integer_euclidean(
 ) -> ValueRef {
     let left_value = left;
     let right_value = right;
-    let (RtValue::Int(left), RtValue::Int(right)) = (runtime::value(left), runtime::value(right))
+    let (Value::Int(left), Value::Int(right)) = (runtime::value(left), runtime::value(right))
     else {
         return runtime::recoverable_error(
             "TypeError",
@@ -150,14 +147,14 @@ fn integer_euclidean(
             left_value,
         );
     };
-    if *right == 0 {
+    if right == 0 {
         return runtime::recoverable_error(
             "DivisionByZeroError",
             "Euclidean division requires a non-zero divisor",
             right_value,
         );
     }
-    match operation(*left, *right) {
+    match operation(left, right) {
         Some(value) => runtime::allocate(RtValue::Int(value)),
         None => runtime::recoverable_error(
             "IntOverflowError",
@@ -235,7 +232,7 @@ pub(crate) fn numbers_equal(left: Number, right: Number) -> bool {
 /// Negates one runtime Boolean value.
 pub(crate) fn not(value: ValueRef) -> ValueRef {
     match runtime::value(value) {
-        RtValue::Bool(result) => runtime::bool_value(!result),
+        Value::Bool(result) => runtime::bool_value(!result),
         _ => runtime::recoverable_error("TypeError", "! requires a Bool value", value),
     }
 }
@@ -243,7 +240,7 @@ pub(crate) fn not(value: ValueRef) -> ValueRef {
 /// Validates one source value as a Boolean condition while retaining the ValueRef representation.
 pub(crate) fn condition_value(value: ValueRef) -> ValueRef {
     match runtime::value(value) {
-        RtValue::Bool(_) => value,
+        Value::Bool(_) => value,
         _ => runtime::recoverable_error("TypeError", "condition requires a Bool value", value),
     }
 }
@@ -256,7 +253,7 @@ pub(crate) fn condition(value: ValueRef) -> i32 {
 /// Reads a runtime value as a strict Boolean.
 pub(crate) fn boolean(reference: ValueRef) -> bool {
     match runtime::value(reference) {
-        RtValue::Bool(result) => *result,
+        Value::Bool(result) => result,
         _ => runtime::trap(),
     }
 }

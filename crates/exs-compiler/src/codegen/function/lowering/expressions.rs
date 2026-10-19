@@ -1,6 +1,20 @@
 use super::*;
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
+    /// Pushes one Int literal, as an immediate constant when it fits the `i32` range.
+    fn emit_integer(
+        &mut self,
+        value: i64,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if let Some(immediate) = ValueRef::small_int(value) {
+            immediate::push(&mut self.function, immediate);
+            return Ok(());
+        }
+        self.function.instruction(&Instruction::I64Const(value));
+        self.runtime_call("__exs_rt_int_new", span)
+    }
+
     /// Compiles one source expression into a ValueRef on the Wasm stack.
     pub(in crate::codegen::function) fn compile_expression(
         &mut self,
@@ -15,8 +29,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                         "integer literal is outside the ExS signed 64-bit range",
                     ))
                 })?;
-                self.function.instruction(&Instruction::I64Const(value));
-                self.runtime_call("__exs_rt_int_new", *span)?;
+                self.emit_integer(value, *span)?;
             }
             Expression::Float(value, span) => {
                 self.function
@@ -32,14 +45,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             Expression::FormattedString { parts, span, .. } => {
                 self.compile_formatted_string(parts, *span)?;
             }
-            Expression::Bool(value, span) => {
-                self.function
-                    .instruction(&Instruction::I32Const(i32::from(*value)));
-                self.runtime_call("__exs_rt_bool_new", *span)?;
+            Expression::Bool(value, _) => {
+                immediate::push(&mut self.function, ValueRef::boolean(*value));
             }
-            Expression::None(span) => {
-                self.runtime_call("__exs_rt_none_new", *span)?;
-            }
+            Expression::None(_) => self.emit_none(),
             Expression::IsType {
                 value,
                 type_annotation,
@@ -120,8 +129,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                                 "integer literal is outside the ExS signed 64-bit range",
                             ))
                         })?;
-                    self.function.instruction(&Instruction::I64Const(negative));
-                    self.runtime_call("__exs_rt_int_new", *operand_span)?;
+                    self.emit_integer(negative, *operand_span)?;
                     return Ok(());
                 }
                 self.compile_expression(operand)?;
@@ -149,14 +157,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     let right = self.store_stack_value()?;
                     if let Some(operator_trait) = TraitOperator::from_binary(*operator) {
                         let targets = self.methods.operator(operator_trait).to_vec();
-                        self.emit_operator_dispatch(
-                            operator_trait,
-                            &targets,
-                            0,
-                            left,
-                            right,
-                            *span,
-                        )?;
+                        self.emit_operator_dispatch(operator_trait, &targets, left, right, *span)?;
                     } else {
                         self.function.instruction(&Instruction::LocalGet(left));
                         self.function.instruction(&Instruction::LocalGet(right));

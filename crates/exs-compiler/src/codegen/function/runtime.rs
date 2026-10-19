@@ -1,9 +1,11 @@
 //! Runtime ABI calls, rooted local values, and structured-control bookkeeping.
 
+use exs_value::ValueRef;
 use wasm_encoder::{Instruction, MemArg};
 
 use crate::codegen::diagnostics;
 use crate::codegen::function::FunctionSignature;
+use crate::codegen::immediate;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::FunctionCompiler;
@@ -92,19 +94,47 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.runtime_call_unpositioned("__exs_rt_set_call_site", span)
     }
 
+    /// Pushes the immediate None value.
+    pub(super) fn emit_none(&mut self) {
+        immediate::push(&mut self.function, ValueRef::NONE);
+    }
+
+    /// Replaces the ValueRef on the stack with the i32 result of one nominal Object type test.
+    pub(super) fn emit_object_type_test(
+        &mut self,
+        type_id: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if immediate::object_type_test(&mut self.function, type_id) {
+            return Ok(());
+        }
+        self.function
+            .instruction(&Instruction::I32Const(type_id.cast_signed()));
+        self.runtime_call("__exs_rt_object_is_type", span)
+    }
+
+    /// Returns the function index of one runtime ABI export.
+    pub(super) fn runtime_function(
+        &self,
+        name: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<u32, CompileDiagnostics<'a>> {
+        self.runtime.get(name).copied().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0209",
+                span,
+                format!("runtime template does not export `{name}`"),
+            ))
+        })
+    }
+
     /// Emits one runtime ABI call without updating the active source position.
     pub(super) fn runtime_call_unpositioned(
         &mut self,
         name: &str,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        let index = self.runtime.get(name).copied().ok_or_else(|| {
-            diagnostics(CompileDiagnostic::new(
-                "E0209",
-                span,
-                format!("runtime template does not export `{name}`"),
-            ))
-        })?;
+        let index = self.runtime_function(name, span)?;
         self.function.instruction(&Instruction::Call(index));
         Ok(())
     }
@@ -294,8 +324,8 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         contract: &crate::codegen::types::TypeContract,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        let length = self.allocate_local();
-        let index = self.allocate_local();
+        let length = self.variadic_length_local;
+        let index = self.variadic_index_local;
         self.function.instruction(&Instruction::LocalGet(parameter));
         self.runtime_call("__exs_rt_list_length", span)?;
         self.function.instruction(&Instruction::LocalSet(length));
@@ -348,7 +378,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .instruction(&Instruction::LocalGet(self.root_frame_local));
         self.function.instruction(&Instruction::LocalGet(local));
         self.function
-            .instruction(&Instruction::I32Store(memory_arg));
+            .instruction(&Instruction::I64Store(memory_arg));
         Ok(())
     }
 
@@ -357,9 +387,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let memory_arg = self.root_slot_memory_arg(local)?;
         self.function
             .instruction(&Instruction::LocalGet(self.root_frame_local));
-        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::I64Const(0));
         self.function
-            .instruction(&Instruction::I32Store(memory_arg));
+            .instruction(&Instruction::I64Store(memory_arg));
         Ok(())
     }
 

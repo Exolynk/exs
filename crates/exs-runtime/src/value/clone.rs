@@ -10,7 +10,7 @@ use crate::gc;
 use crate::runtime;
 use crate::value::{
     RtValue, RuntimeCellValue, RuntimeClosure, RuntimeEnum, RuntimeError, RuntimeList,
-    RuntimeObject,
+    RuntimeObject, Value,
 };
 
 /// Deeply clones one source-visible value graph.
@@ -54,17 +54,17 @@ impl CloneContext {
     /// Clones one value and all mutable values reachable from it.
     fn clone_value(&mut self, source: ValueRef) -> Result<ValueRef, ()> {
         match runtime::value(source) {
-            RtValue::None
-            | RtValue::Bool(_)
-            | RtValue::Int(_)
-            | RtValue::Float(_)
-            | RtValue::String(_)
-            | RtValue::Bytes(_) => Ok(source),
-            RtValue::Iterator(_) => Err(()),
-            RtValue::List(list) => self.clone_list(source, list.elements.clone()),
-            RtValue::Object(object) => self.clone_object(source, object),
-            RtValue::Cell(cell) => self.clone_cell(source, cell.value),
-            RtValue::Closure(closure) => self.clone_closure(
+            Value::None
+            | Value::Bool(_)
+            | Value::Int(_)
+            | Value::Float(_)
+            | Value::String(_)
+            | Value::Bytes(_) => Ok(source),
+            Value::Iterator(_) => Err(()),
+            Value::List(list) => self.clone_list(source, list.elements.clone()),
+            Value::Object(object) => self.clone_object(source, object),
+            Value::Cell(cell) => self.clone_cell(source, cell.value),
+            Value::Closure(closure) => self.clone_closure(
                 source,
                 closure.function_id,
                 closure.slot_count,
@@ -72,9 +72,9 @@ impl CloneContext {
                 closure.variadic,
                 closure.captures.clone(),
             ),
-            RtValue::Error(error) => self.clone_error(source, error),
+            Value::Error(error) => self.clone_error(source, error),
             // This reserved boxed shape is the runtime placeholder for future host-owned values.
-            RtValue::BoxedFutureValue(_) => Err(()),
+            Value::Future => Err(()),
         }
     }
 
@@ -99,7 +99,7 @@ impl CloneContext {
         let clone = runtime::allocate(RtValue::List(Box::new(RuntimeList::new())));
         self.register_shell(source, clone);
         let elements = self.clone_values(elements)?;
-        let RtValue::List(list) = runtime::value_mut(clone) else {
+        let Some(RtValue::List(list)) = runtime::value_mut(clone) else {
             runtime::trap();
         };
         list.elements = elements;
@@ -139,7 +139,7 @@ impl CloneContext {
             }),
             None => None,
         };
-        let RtValue::Object(object) = runtime::value_mut(clone) else {
+        let Some(RtValue::Object(object)) = runtime::value_mut(clone) else {
             runtime::trap();
         };
         object.entries = entries;
@@ -155,7 +155,7 @@ impl CloneContext {
         let clone = runtime::allocate(RtValue::Cell(Box::new(RuntimeCellValue::new(value))));
         self.register_shell(source, clone);
         let value = self.clone_value(value)?;
-        let RtValue::Cell(cell) = runtime::value_mut(clone) else {
+        let Some(RtValue::Cell(cell)) = runtime::value_mut(clone) else {
             runtime::trap();
         };
         cell.value = value;
@@ -184,7 +184,7 @@ impl CloneContext {
         ))));
         self.register_shell(source, clone);
         let captures = self.clone_values(captures)?;
-        let RtValue::Closure(closure) = runtime::value_mut(clone) else {
+        let Some(RtValue::Closure(closure)) = runtime::value_mut(clone) else {
             runtime::trap();
         };
         closure.captures = captures;
@@ -218,7 +218,7 @@ impl CloneContext {
             Some(cause) => Some(self.clone_value(cause)?),
             None => None,
         };
-        let RtValue::Error(error) = runtime::value_mut(clone) else {
+        let Some(RtValue::Error(error)) = runtime::value_mut(clone) else {
             runtime::trap();
         };
         error.data = data;

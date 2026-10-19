@@ -130,7 +130,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 if let Some(value) = value {
                     self.compile_expression(value)?;
                 } else {
-                    self.runtime_call("__exs_rt_none_new", *span)?;
+                    self.emit_none();
                 }
                 self.validate_return_type(*span)?;
                 self.return_stack_value()?;
@@ -262,8 +262,8 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .instruction(&Instruction::I32Const(range_type_id));
         self.runtime_call("__exs_rt_iter_native_next", span)?;
         self.function.instruction(&Instruction::LocalTee(next));
-        self.function.instruction(&Instruction::I32Const(-1));
-        self.function.instruction(&Instruction::I32Eq);
+        self.function.instruction(&Instruction::I64Const(-1));
+        self.function.instruction(&Instruction::I64Eq);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.enter_control()?;
@@ -274,7 +274,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function.instruction(&Instruction::End);
         self.exit_control()?;
         self.function.instruction(&Instruction::LocalGet(next));
-        self.function.instruction(&Instruction::I32Eqz);
+        self.function.instruction(&Instruction::I64Eqz);
         self.branch_if_to(break_depth, span)?;
 
         self.function

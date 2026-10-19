@@ -28,7 +28,7 @@ pub(crate) mod operations {
     use exs_value::ValueRef;
 
     use crate::runtime;
-    use crate::value::{RtValue, RuntimeList, operations::values_equal};
+    use crate::value::{RtValue, RuntimeList, Value, operations::values_equal};
 
     /// Allocates an empty mutable runtime List.
     pub(crate) fn new_value() -> ValueRef {
@@ -38,7 +38,7 @@ pub(crate) mod operations {
     /// Appends one value and returns the new List length.
     pub(crate) fn append(receiver: ValueRef, item: ValueRef) -> ValueRef {
         let length = match runtime::value_mut(receiver) {
-            RtValue::List(list) => {
+            Some(RtValue::List(list)) => {
                 list.elements.push(item);
                 list.elements.len()
             }
@@ -61,7 +61,7 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         match runtime::value(receiver) {
-            RtValue::List(list) => match list.elements.get(index) {
+            Value::List(list) => match list.elements.get(index) {
                 Some(value) => *value,
                 None => runtime::recoverable_error(
                     "IndexError",
@@ -84,11 +84,11 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         match runtime::value(receiver) {
-            RtValue::List(list) => list
+            Value::List(list) => list
                 .elements
                 .get(index)
                 .copied()
-                .unwrap_or_else(|| runtime::none_value()),
+                .unwrap_or(runtime::none_value()),
             _ => runtime::recoverable_error("TypeError", "get requires a List receiver", receiver),
         }
     }
@@ -114,10 +114,10 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         let elements = match runtime::value(receiver) {
-            RtValue::List(list) if start <= end && end <= list.elements.len() => {
+            Value::List(list) if start <= end && end <= list.elements.len() => {
                 list.elements[start..end].to_vec()
             }
-            RtValue::List(_) => {
+            Value::List(_) => {
                 return runtime::recoverable_error(
                     "IndexError",
                     "List slice range is outside the List bounds",
@@ -138,7 +138,7 @@ pub(crate) mod operations {
     /// Appends a shallow copy of another List and returns the new receiver length.
     pub(crate) fn extend(receiver: ValueRef, other: ValueRef) -> ValueRef {
         let additions = match runtime::value(other) {
-            RtValue::List(list) => list.elements.clone(),
+            Value::List(list) => list.elements.clone(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -148,7 +148,7 @@ pub(crate) mod operations {
             }
         };
         let length = match runtime::value_mut(receiver) {
-            RtValue::List(list) => {
+            Some(RtValue::List(list)) => {
                 list.elements.extend(additions);
                 list.elements.len()
             }
@@ -166,7 +166,7 @@ pub(crate) mod operations {
     /// Reverses one List in place and returns None.
     pub(crate) fn reverse(receiver: ValueRef) -> ValueRef {
         match runtime::value_mut(receiver) {
-            RtValue::List(list) => list.elements.reverse(),
+            Some(RtValue::List(list)) => list.elements.reverse(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -181,7 +181,7 @@ pub(crate) mod operations {
     /// Returns a new shallow List in reverse element order.
     pub(crate) fn reversed(receiver: ValueRef) -> ValueRef {
         let mut elements = match runtime::value(receiver) {
-            RtValue::List(list) => list.elements.clone(),
+            Value::List(list) => list.elements.clone(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -197,7 +197,7 @@ pub(crate) mod operations {
     /// Returns whether a List contains one value under ExS equality semantics.
     pub(crate) fn contains(receiver: ValueRef, item: ValueRef) -> ValueRef {
         let contains = match runtime::value(receiver) {
-            RtValue::List(list) => list.elements.iter().any(|value| values_equal(*value, item)),
+            Value::List(list) => list.elements.iter().any(|value| values_equal(*value, item)),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -222,7 +222,7 @@ pub(crate) mod operations {
     /// Joins String List entries with a String separator.
     pub(crate) fn join(receiver: ValueRef, separator: ValueRef) -> ValueRef {
         let separator = match runtime::value(separator) {
-            RtValue::String(value) => String::from(value.as_str()),
+            Value::String(value) => String::from(value.as_str()),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -232,7 +232,7 @@ pub(crate) mod operations {
             }
         };
         let elements = match runtime::value(receiver) {
-            RtValue::List(list) => list.elements.clone(),
+            Value::List(list) => list.elements.clone(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -243,7 +243,7 @@ pub(crate) mod operations {
         };
         let mut result = String::new();
         for (index, value) in elements.iter().enumerate() {
-            let RtValue::String(value) = runtime::value(*value) else {
+            let Value::String(value) = runtime::value(*value) else {
                 return runtime::recoverable_error(
                     "TypeError",
                     "join requires every List item to be a String",
@@ -255,8 +255,8 @@ pub(crate) mod operations {
             }
             result.push_str(value.as_str());
         }
-        runtime::allocate(RtValue::String(Box::new(
-            crate::value::RuntimeString::from_string(result),
+        runtime::allocate(RtValue::String(crate::value::RuntimeString::from_string(
+            result,
         )))
     }
 
@@ -268,7 +268,7 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         match runtime::value_mut(receiver) {
-            RtValue::List(list) => match list.elements.get_mut(index) {
+            Some(RtValue::List(list)) => match list.elements.get_mut(index) {
                 Some(value) => {
                     *value = replacement;
                     replacement
@@ -290,10 +290,10 @@ pub(crate) mod operations {
     /// Creates a shallow List by appending a value or another List's elements.
     pub(crate) fn add(left: ValueRef, right: ValueRef) -> ValueRef {
         let elements = match runtime::value(left) {
-            RtValue::List(list) => {
+            Value::List(list) => {
                 let mut elements = list.elements.clone();
                 match runtime::value(right) {
-                    RtValue::List(right) => elements.extend_from_slice(&right.elements),
+                    Value::List(right) => elements.extend_from_slice(&right.elements),
                     _ => elements.push(right),
                 }
                 elements
@@ -312,7 +312,7 @@ pub(crate) mod operations {
     /// Removes and returns the final List value, or None for an empty List.
     pub(crate) fn pop(receiver: ValueRef) -> ValueRef {
         let value = match runtime::value_mut(receiver) {
-            RtValue::List(list) => list.elements.pop(),
+            Some(RtValue::List(list)) => list.elements.pop(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -335,10 +335,10 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         match runtime::value_mut(receiver) {
-            RtValue::List(list) if index <= list.elements.len() => {
+            Some(RtValue::List(list)) if index <= list.elements.len() => {
                 list.elements.insert(index, value);
             }
-            RtValue::List(_) => {
+            Some(RtValue::List(_)) => {
                 return runtime::recoverable_error(
                     "IndexError",
                     "List insertion index is outside the List bounds",
@@ -364,8 +364,8 @@ pub(crate) mod operations {
             Err(error) => return error,
         };
         match runtime::value_mut(receiver) {
-            RtValue::List(list) if index < list.elements.len() => list.elements.remove(index),
-            RtValue::List(_) => runtime::recoverable_error(
+            Some(RtValue::List(list)) if index < list.elements.len() => list.elements.remove(index),
+            Some(RtValue::List(_)) => runtime::recoverable_error(
                 "IndexError",
                 "List index is outside the List bounds",
                 index_reference,
@@ -379,7 +379,7 @@ pub(crate) mod operations {
     /// Clears one List and returns None.
     pub(crate) fn clear(receiver: ValueRef) -> ValueRef {
         match runtime::value_mut(receiver) {
-            RtValue::List(list) => list.elements.clear(),
+            Some(RtValue::List(list)) => list.elements.clear(),
             _ => {
                 return runtime::recoverable_error(
                     "TypeError",
@@ -394,13 +394,13 @@ pub(crate) mod operations {
     /// Returns an optional List endpoint without exposing an index error for emptiness.
     fn optional_end(receiver: ValueRef, final_item: bool, name: &str) -> ValueRef {
         match runtime::value(receiver) {
-            RtValue::List(list) => {
+            Value::List(list) => {
                 let value = if final_item {
                     list.elements.last()
                 } else {
                     list.elements.first()
                 };
-                value.copied().unwrap_or_else(|| runtime::none_value())
+                value.copied().unwrap_or(runtime::none_value())
             }
             _ => runtime::recoverable_error(
                 "TypeError",
@@ -413,11 +413,11 @@ pub(crate) mod operations {
     /// Returns an optional matching List index using ExS equality semantics.
     fn matching_index(receiver: ValueRef, item: ValueRef, reverse: bool, name: &str) -> ValueRef {
         let index = match runtime::value(receiver) {
-            RtValue::List(list) if reverse => list
+            Value::List(list) if reverse => list
                 .elements
                 .iter()
                 .rposition(|value| values_equal(*value, item)),
-            RtValue::List(list) => list
+            Value::List(list) => list
                 .elements
                 .iter()
                 .position(|value| values_equal(*value, item)),
@@ -438,7 +438,7 @@ pub(crate) mod operations {
     /// Reads one non-negative runtime integer as a List index.
     fn list_index(reference: ValueRef) -> Result<usize, ValueRef> {
         match runtime::value(reference) {
-            RtValue::Int(index) if *index >= 0 => match usize::try_from(*index) {
+            Value::Int(index) if index >= 0 => match usize::try_from(index) {
                 Ok(index) => Ok(index),
                 Err(_) => Err(runtime::recoverable_error(
                     "IndexError",
@@ -465,7 +465,7 @@ pub(crate) mod operations {
     /// Reads the sole value in one runtime-provided argument List.
     pub(crate) fn single_argument(arguments: ValueRef) -> Result<ValueRef, ValueRef> {
         match runtime::value(arguments) {
-            RtValue::List(list) if list.elements.len() == 1 => Ok(list.elements[0]),
+            Value::List(list) if list.elements.len() == 1 => Ok(list.elements[0]),
             _ => Err(runtime::recoverable_error(
                 "ArityError",
                 "method expects exactly one argument",
@@ -477,7 +477,7 @@ pub(crate) mod operations {
     /// Reads the two values in one runtime-provided argument List.
     pub(crate) fn two_arguments(arguments: ValueRef) -> Result<(ValueRef, ValueRef), ValueRef> {
         match runtime::value(arguments) {
-            RtValue::List(list) if list.elements.len() == 2 => {
+            Value::List(list) if list.elements.len() == 2 => {
                 Ok((list.elements[0], list.elements[1]))
             }
             _ => Err(runtime::recoverable_error(
@@ -491,7 +491,7 @@ pub(crate) mod operations {
     /// Verifies that one runtime-provided argument List is empty.
     pub(crate) fn require_no_arguments(arguments: ValueRef) -> Result<(), ValueRef> {
         match runtime::value(arguments) {
-            RtValue::List(list) if list.elements.is_empty() => Ok(()),
+            Value::List(list) if list.elements.is_empty() => Ok(()),
             _ => Err(runtime::recoverable_error(
                 "ArityError",
                 "method expects no arguments",

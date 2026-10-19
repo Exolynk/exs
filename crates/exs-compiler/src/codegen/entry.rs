@@ -36,7 +36,8 @@ pub(super) fn compile_start<'a>(
             "too many main root slots",
         ))
     })?;
-    let local_count = parameter_count.checked_add(6).ok_or_else(|| {
+    // Scalar i32 locals follow the two i32 parameters; ValueRef i64 locals come last.
+    let value_local_count = parameter_count.checked_add(3).ok_or_else(|| {
         diagnostics(CompileDiagnostic::new(
             "E0212",
             module_span(module),
@@ -44,9 +45,10 @@ pub(super) fn compile_start<'a>(
         ))
     })?;
     let root_frame_local = 2_u32;
-    let arguments_local = 3_u32;
-    let argument_count_local = 4_u32;
-    let first_parameter_local = 5_u32;
+    let argument_count_local = 3_u32;
+    let variadic_index_local = 4_u32;
+    let arguments_local = 5_u32;
+    let first_parameter_local = 6_u32;
     let result_local = first_parameter_local
         .checked_add(parameter_count)
         .ok_or_else(|| {
@@ -57,8 +59,7 @@ pub(super) fn compile_start<'a>(
             ))
         })?;
     let variadic_list_local = result_local + 1;
-    let variadic_index_local = result_local + 2;
-    let mut function = Function::new([(local_count, ValType::I32)]);
+    let mut function = Function::new([(3, ValType::I32), (value_local_count, super::VALUE_TYPE)]);
 
     function.instruction(&Instruction::LocalGet(0));
     function.instruction(&Instruction::LocalGet(1));
@@ -181,7 +182,7 @@ pub(super) fn compile_start<'a>(
 fn set_root_slot(function: &mut Function, frame_local: u32, slot: u32, value_local: u32) {
     function.instruction(&Instruction::LocalGet(frame_local));
     function.instruction(&Instruction::LocalGet(value_local));
-    function.instruction(&Instruction::I32Store(super::root_slot_memory_arg(slot)));
+    function.instruction(&Instruction::I64Store(super::root_slot_memory_arg(slot)));
 }
 
 /// Emits one linked runtime call required by the generated entry wrapper.

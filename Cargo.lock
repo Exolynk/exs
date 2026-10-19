@@ -892,6 +892,9 @@ dependencies = [
 [[package]]
 name = "exs-value"
 version = "0.1.0"
+dependencies = [
+ "exs-abi",
+]
 
 [[package]]
 name = "fastrand"

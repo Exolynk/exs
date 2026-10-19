@@ -179,11 +179,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             return self.compile_runtime_method_call(receiver, arguments, method, span);
         };
         self.function.instruction(&Instruction::LocalGet(receiver));
+        self.emit_object_type_test(target.type_id, span)?;
         self.function
-            .instruction(&Instruction::I32Const(target.type_id.cast_signed()));
-        self.runtime_call("__exs_rt_object_is_type", span)?;
-        self.function
-            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+            .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
         self.enter_control()?;
         if target.signature.accepts_arity(arguments.len() + 1) {
             self.function.instruction(&Instruction::LocalGet(receiver));
@@ -240,8 +238,38 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.return_if_fatal_error(span)
     }
 
-    /// Emits nominal trait dispatch before preserving one operator's runtime built-in fallback.
+    /// Emits one binary operator, inline for two immediate Ints and dispatched otherwise.
     pub(in crate::codegen::function) fn emit_operator_dispatch(
+        &mut self,
+        operator: TraitOperator,
+        targets: &[super::method::InstanceMethod],
+        left: u32,
+        right: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let Some(operation) = immediate::IntOperation::from_trait(operator) else {
+            return self.emit_operator_chain(operator, targets, 0, left, right, span);
+        };
+        let int_new = self.runtime_function("__exs_rt_int_new", span)?;
+        immediate::both_small_ints_test(&mut self.function, left, right);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
+        self.enter_control()?;
+        operation.emit(
+            &mut self.function,
+            left,
+            right,
+            self.immediate_scratch_local,
+            int_new,
+        );
+        self.function.instruction(&Instruction::Else);
+        self.emit_operator_chain(operator, targets, 0, left, right, span)?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()
+    }
+
+    /// Emits nominal trait dispatch before preserving one operator's runtime built-in fallback.
+    fn emit_operator_chain(
         &mut self,
         operator: TraitOperator,
         targets: &[super::method::InstanceMethod],
@@ -263,11 +291,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             return self.emit_operator_result(operator, span);
         };
         self.function.instruction(&Instruction::LocalGet(left));
+        self.emit_object_type_test(target.type_id, span)?;
         self.function
-            .instruction(&Instruction::I32Const(target.type_id.cast_signed()));
-        self.runtime_call("__exs_rt_object_is_type", span)?;
-        self.function
-            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+            .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
         self.enter_control()?;
         self.function.instruction(&Instruction::LocalGet(left));
         self.function.instruction(&Instruction::LocalGet(right));
@@ -277,7 +303,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.return_if_fatal_error(span)?;
         self.emit_operator_result(operator, span)?;
         self.function.instruction(&Instruction::Else);
-        self.emit_operator_dispatch(operator, targets, index + 1, left, right, span)?;
+        self.emit_operator_chain(operator, targets, index + 1, left, right, span)?;
         self.function.instruction(&Instruction::End);
         self.exit_control()
     }

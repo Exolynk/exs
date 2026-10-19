@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use wasm_encoder::{Function, Instruction, ValType};
 
 use crate::ast::FunctionDeclaration;
+use crate::codegen::VALUE_TYPE;
 use crate::codegen::diagnostics;
 use crate::codegen::literals::LiteralPool;
 use crate::codegen::source_map::SourceMap;
@@ -23,6 +24,10 @@ pub(super) use method::{InstanceMethod, MethodRegistry};
 pub(super) use signature::{
     FunctionSignature, LiftedFunction, add_program_types, build_signatures, validate,
 };
+
+/// Number of Wasm i32 scalar locals declared after the ValueRef locals, starting with the root
+/// frame base address.
+const SCALAR_LOCAL_COUNT: u32 = 5;
 
 /// Immutable module-wide dependencies used while lowering one direct function.
 pub(super) struct FunctionCompilerContext<'a, 'module> {
@@ -67,8 +72,16 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     next_local: u32,
     /// Reused local that holds values while validating return contracts.
     return_value_local: u32,
+    /// Reused unrooted ValueRef local for inline conditions and Int arithmetic results.
+    immediate_scratch_local: u32,
     /// Reused Wasm i32 local that combines built-in and nominal type-match results.
     type_match_local: u32,
+    /// Reused Wasm i32 local holding the runtime literal buffer address while it is filled.
+    literal_pointer_local: u32,
+    /// Wasm i32 local holding the packed variadic List length during parameter validation.
+    variadic_length_local: u32,
+    /// Wasm i32 local holding the current variadic List index during parameter validation.
+    variadic_index_local: u32,
     root_frame_local: u32,
     control_depth: u32,
     function_id: u32,
@@ -129,14 +142,22 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             source_map: context.source_map,
             types: context.types,
             methods: context.methods,
-            function: Function::new([(local_count + 1, ValType::I32)]),
+            // ValueRef locals are the rooted i64 slots; the i32 scalars follow the root frame.
+            function: Function::new([
+                (local_count, VALUE_TYPE),
+                (SCALAR_LOCAL_COUNT, ValType::I32),
+            ]),
             scopes: vec![parameters],
             loops: Vec::new(),
             // Reserve one reusable local for return contracts so multiple return paths do not
             // consume additional statically declared Wasm locals.
             next_local: parameter_count + 2,
             return_value_local: parameter_count,
-            type_match_local: parameter_count + 1,
+            immediate_scratch_local: parameter_count + 1,
+            type_match_local: root_frame_local + 1,
+            literal_pointer_local: root_frame_local + 2,
+            variadic_length_local: root_frame_local + 3,
+            variadic_index_local: root_frame_local + 4,
             root_frame_local,
             control_depth: 0,
             function_id: context
@@ -162,7 +183,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     /// Compiles this function body, including the implicit None return path.
     pub(super) fn compile(&mut self) -> Result<Function, CompileDiagnostics<'a>> {
         self.compile_block(&self.declaration.body, false)?;
-        self.runtime_call("__exs_rt_none_new", self.declaration.span)?;
+        self.emit_none();
         self.validate_return_type(self.declaration.span)?;
         self.return_stack_value()?;
         self.function.instruction(&Instruction::End);

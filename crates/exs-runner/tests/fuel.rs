@@ -14,19 +14,19 @@ use exs_runner::{CompilerStrategy, ExecutionCancellation, ExecutionReport, Serve
 use support::{block_on, compile_source};
 
 /// Fuel ceiling for an empty function, which measures pure ABI and runtime overhead.
-const EMPTY_MAIN_FUEL: u64 = 69_411;
+const EMPTY_MAIN_FUEL: u64 = 69_363;
 /// Fuel ceiling for a show function that only returns `true`.
-const SHOW_TRUE_FUEL: u64 = 69_435;
+const SHOW_TRUE_FUEL: u64 = 69_381;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 78_561;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 77_467;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 180_211;
+const CONCAT_10_OBJECTS_FUEL: u64 = 168_497;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 1_135_390;
+const CONCAT_100_OBJECTS_FUEL: u64 = 1_049_488;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
-const INT_LOOP_1000_FUEL: u64 = 2_194_711;
+const INT_LOOP_1000_FUEL: u64 = 307_280;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
-const ASYNC_INT_LOOP_100_FUEL: u64 = 893_275;
+const ASYNC_INT_LOOP_100_FUEL: u64 = 719_122;
 
 /// Script concatenating the `name` field of every supplied object.
 const CONCAT_SOURCE: &str = r#"

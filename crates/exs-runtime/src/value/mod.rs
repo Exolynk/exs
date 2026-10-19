@@ -13,6 +13,8 @@ mod string;
 
 pub(crate) mod numeric;
 pub(crate) mod operations;
+pub(crate) mod reference;
+mod view;
 
 pub(crate) use bytes::RuntimeBytes;
 pub(crate) use cell::RuntimeCellValue;
@@ -22,30 +24,29 @@ pub(crate) use iterator::RuntimeIterator;
 pub(crate) use list::RuntimeList;
 pub(crate) use object::{RuntimeEnum, RuntimeObject};
 pub(crate) use string::RuntimeString;
+pub(crate) use view::Value;
 
 use alloc::boxed::Box;
 use core::mem::{align_of, size_of};
 
 /// The allocated payload of one ExS value.
 ///
-/// Primitive values remain inline. Complex runtime values must use boxed payloads so adding them
-/// cannot increase the size of every allocated primitive value.
+/// None, Bool and Ints inside the `i32` range are immediate `ValueRef`s and never stored here;
+/// `allocate` returns the immediate instead of storing such an Int. Complex runtime values must
+/// use boxed payloads so adding them cannot increase the size of every allocated primitive value;
+/// String and Bytes are stored inline because their payload already is one owning pointer.
 #[repr(u8)]
 pub(crate) enum RtValue {
-    /// The absence variant shared by Options and empty operations.
-    None,
     /// A structured language Error.
     Error(Box<RuntimeError>),
-    /// A boolean value.
-    Bool(bool),
-    /// A signed ExS integer.
+    /// A signed ExS integer outside the immediate `i32` range.
     Int(i64),
     /// An IEEE 754 binary64 floating-point number.
     Float(f64),
-    /// An immutable UTF-8 string.
-    String(Box<RuntimeString>),
-    /// An immutable raw-octet sequence.
-    Bytes(Box<RuntimeBytes>),
+    /// An immutable UTF-8 string, stored inline as its single owned allocation.
+    String(RuntimeString),
+    /// An immutable raw-octet sequence, stored inline as its single owned allocation.
+    Bytes(RuntimeBytes),
     /// A mutable ordered sequence.
     List(Box<RuntimeList>),
     /// A compiler-created lazy cursor over one immutable String or Bytes value.

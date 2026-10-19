@@ -671,7 +671,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         section: wasmparser::GlobalSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
         reencode::utils::parse_global_section(self, globals, section)?;
-        // Append one zero-initialized mutable i32 per string literal; generated code stores the
+        // Append one zero-initialized mutable i64 per string literal; generated code stores the
         // literal's runtime String there on first use and reuses it afterwards.
         let global_index_base = self
             .template_global_import_count
@@ -680,11 +680,11 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         for _ in 0..self.literals.len() {
             globals.global(
                 GlobalType {
-                    val_type: ValType::I32,
+                    val_type: super::VALUE_TYPE,
                     mutable: true,
                     shared: false,
                 },
-                &ConstExpr::i32_const(0),
+                &ConstExpr::i64_const(0),
             );
         }
         self.literals.global_index_base = Some(global_index_base);

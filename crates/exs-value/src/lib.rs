@@ -1,34 +1,17 @@
 #![no_std]
 
 //! Shared `ExS` values and their type metadata.
+//!
+//! [`ValueRef`] is the 64-bit tagged reference passed between compiler-generated code and the
+//! runtime. Its bit layout, including the immediate encoding of None, Bool and small Ints, is
+//! defined here once so the compiler and the runtime cannot disagree about it.
 
-use core::num::NonZeroU32;
+mod immediate;
+pub mod layout;
+mod reference;
 
-/// An opaque reference to one runtime-allocated `ExS` value.
-///
-/// The contained index addresses one slot in the runtime-owned value table. Only `exs-runtime`
-/// may construct or dereference it; compilers and runners pass it through their internal Wasm
-/// ABI unchanged.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct ValueRef(NonZeroU32);
+#[cfg(test)]
+mod tests;
 
-impl ValueRef {
-    /// Constructs a reference from a runtime-owned nonzero value-table index.
-    ///
-    /// # Safety
-    ///
-    /// `index` must identify a live `RtValue` slot owned by the current ExS runtime.
-    #[must_use]
-    pub const unsafe fn from_runtime_index(index: NonZeroU32) -> Self {
-        Self(index)
-    }
-
-    /// Returns the runtime-owned value-table index.
-    ///
-    /// This is intended only for runtime dereferencing and must not cross the host boundary.
-    #[must_use]
-    pub const fn runtime_index(self) -> u32 {
-        self.0.get()
-    }
-}
+pub use immediate::Immediate;
+pub use reference::ValueRef;

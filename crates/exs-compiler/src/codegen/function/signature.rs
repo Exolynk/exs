@@ -390,8 +390,8 @@ pub(in crate::codegen) fn add_program_types(
             } else {
                 let index = types.len();
                 types.ty().function(
-                    std::iter::repeat_n(ValType::I32, function.parameters.len()),
-                    [ValType::I32],
+                    std::iter::repeat_n(crate::codegen::VALUE_TYPE, function.parameters.len()),
+                    [crate::codegen::VALUE_TYPE],
                 );
                 index
             }

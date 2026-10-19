@@ -1,15 +1,16 @@
 //! Call-boundary and utility Wasm emission for continuation frames.
 
-use exs_abi::{STATUS_COMPLETE, STATUS_PENDING, STATUS_READY};
+use exs_abi::{STATUS_COMPLETE, STATUS_PENDING, STATUS_READY, TYPE_ERROR};
+use exs_value::ValueRef;
 use wasm_encoder::{BlockType, Instruction, ValType};
 
 use crate::ast::{BinaryOperator, Expression};
-use crate::codegen::diagnostics;
 use crate::codegen::function::InstanceMethod;
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types;
 use crate::codegen::types::TypeContract;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
+use crate::codegen::{diagnostics, immediate};
 
 use super::entry::runtime_index;
 use super::graph::{ComparisonFallback, expression_span};
@@ -87,6 +88,17 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         comparison: Option<ComparisonFallback>,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        // Comparisons store their final Bool where the bypassed OrderingTest state would.
+        let fast_path_target = match immediate::IntOperation::from_trait(operator) {
+            Some(operation) if operation.is_comparison() => {
+                comparison.map(|comparison| (operation, comparison.destination, comparison.next))
+            }
+            Some(operation) => Some((operation, destination, next)),
+            None => None,
+        };
+        if let Some((operation, result, after)) = fast_path_target {
+            self.int_fast_path(operation, left, right, result, after, span)?;
+        }
         self.operator_call_target(
             operator,
             next,
@@ -96,8 +108,25 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             0,
             destination,
             comparison,
+            fast_path_target.is_some(),
             span,
         )
+    }
+
+    /// Pushes one operand, from its local when the Int fast path already loaded it.
+    fn load_operand(
+        &mut self,
+        slot: u32,
+        local: u32,
+        loaded: bool,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        if loaded {
+            self.function.instruction(&Instruction::LocalGet(local));
+            Ok(())
+        } else {
+            self.get_slot(slot, span)
+        }
     }
 
     /// Emits one branch of the statically known standard operator target chain.
@@ -112,11 +141,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         index: usize,
         destination: u32,
         comparison: Option<ComparisonFallback>,
+        loaded: bool,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        // When `loaded`, the operand locals still hold both slots: only branches that return
+        // run between the Int fast path and each use below.
         let Some(target) = targets.get(index) else {
-            self.get_slot(left, span)?;
-            self.get_slot(right, span)?;
+            self.load_operand(left, self.value_local, loaded, span)?;
+            self.load_operand(right, self.operand_local, loaded, span)?;
             // Built-in comparisons produce the final Bool directly and skip the OrderingTest
             // state, matching that state's error completion.
             if let Some(comparison) = comparison {
@@ -131,10 +163,8 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.set_slot(destination, span)?;
             return self.ready(next, span);
         };
-        self.get_slot(left, span)?;
-        self.function
-            .instruction(&Instruction::I32Const(target.type_id.cast_signed()));
-        self.call_runtime("__exs_rt_object_is_type", span)?;
+        self.load_operand(left, self.value_local, loaded, span)?;
+        self.emit_object_type_test(target.type_id, span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         if let Some(layout) = self
@@ -164,6 +194,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             index + 1,
             destination,
             comparison,
+            loaded,
             span,
         )?;
         self.function.instruction(&Instruction::End);
@@ -235,9 +266,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             );
         };
         self.get_slot(receiver, span)?;
-        self.function
-            .instruction(&Instruction::I32Const(target.type_id.cast_signed()));
-        self.call_runtime("__exs_rt_object_is_type", span)?;
+        self.emit_object_type_test(target.type_id, span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         if !target.signature.accepts_arity(arguments.len() + 1) {
@@ -384,9 +413,11 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.function.instruction(&Instruction::Drop);
         }
         self.string(method, method_span)?;
-        self.function.instruction(&Instruction::LocalSet(2));
+        self.function
+            .instruction(&Instruction::LocalSet(self.value_local));
         self.get_slot(receiver, span)?;
-        self.function.instruction(&Instruction::LocalGet(2));
+        self.function
+            .instruction(&Instruction::LocalGet(self.value_local));
         self.get_slot(destination, span)?;
         self.call_runtime("__exs_rt_call_method", span)?;
         self.set_slot(destination, span)?;
@@ -500,9 +531,9 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .instruction(&Instruction::LocalGet(self.scratch_local));
         self.call_runtime("__exs_rt_async_frame_complete", span)?;
         self.function
-            .instruction(&Instruction::LocalSet(self.scratch_local));
+            .instruction(&Instruction::LocalSet(self.completion_local));
         self.function
-            .instruction(&Instruction::LocalGet(self.scratch_local));
+            .instruction(&Instruction::LocalGet(self.completion_local));
         self.function.instruction(&Instruction::I32Const(1));
         self.function.instruction(&Instruction::I32Eq);
         self.function
@@ -511,7 +542,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .instruction(&Instruction::I32Const(STATUS_COMPLETE));
         self.function.instruction(&Instruction::Else);
         self.function
-            .instruction(&Instruction::LocalGet(self.scratch_local));
+            .instruction(&Instruction::LocalGet(self.completion_local));
         self.function.instruction(&Instruction::I32Const(2));
         self.function.instruction(&Instruction::I32Eq);
         self.function
@@ -534,7 +565,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.get_slot(value, span)?;
-        self.call_runtime("__exs_rt_is_error", span)?;
+        immediate::type_mask_test(&mut self.function, TYPE_ERROR);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.complete(value, span)?;
@@ -569,12 +600,25 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         when_false: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        // Every Bool is an immediate, so only non-Bool values take the runtime error path.
         self.get_slot(value, span)?;
+        self.function
+            .instruction(&Instruction::LocalTee(self.value_local));
+        immediate::is_bool_test(&mut self.function);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.function
+            .instruction(&Instruction::LocalGet(self.value_local));
+        self.function.instruction(&Instruction::I32WrapI64);
+        self.function.instruction(&Instruction::Else);
+        self.function
+            .instruction(&Instruction::LocalGet(self.value_local));
         self.call_runtime("__exs_rt_condition_value", span)?;
         self.set_slot(checked, span)?;
         self.complete_if_error(checked, span)?;
         self.get_slot(checked, span)?;
         self.call_runtime("__exs_rt_condition", span)?;
+        self.function.instruction(&Instruction::End);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.ready(when_true, span)?;
@@ -640,16 +684,12 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.get_slot(slot, span)?;
-        self.function
-            .instruction(&Instruction::I32Const(contract.builtin_mask.cast_signed()));
-        self.call_runtime("__exs_rt_type_matches", span)?;
+        immediate::type_mask_test(&mut self.function, contract.builtin_mask);
         self.function.instruction(&Instruction::LocalSet(2));
         for type_id in &contract.nominal_type_ids {
             self.function.instruction(&Instruction::LocalGet(2));
             self.get_slot(slot, span)?;
-            self.function
-                .instruction(&Instruction::I32Const(type_id.cast_signed()));
-            self.call_runtime("__exs_rt_object_is_type", span)?;
+            self.emit_object_type_test(*type_id, span)?;
             self.function.instruction(&Instruction::I32Or);
             self.function.instruction(&Instruction::LocalSet(2));
         }
@@ -672,17 +712,13 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.function
             .instruction(&Instruction::LocalGet(self.scratch_local));
-        self.function
-            .instruction(&Instruction::I32Const(contract.builtin_mask.cast_signed()));
-        self.call_runtime("__exs_rt_type_matches", span)?;
+        immediate::type_mask_test(&mut self.function, contract.builtin_mask);
         self.function.instruction(&Instruction::LocalSet(2));
         for type_id in &contract.nominal_type_ids {
             self.function.instruction(&Instruction::LocalGet(2));
             self.function
                 .instruction(&Instruction::LocalGet(self.scratch_local));
-            self.function
-                .instruction(&Instruction::I32Const(type_id.cast_signed()));
-            self.call_runtime("__exs_rt_object_is_type", span)?;
+            self.emit_object_type_test(*type_id, span)?;
             self.function.instruction(&Instruction::I32Or);
             self.function.instruction(&Instruction::LocalSet(2));
         }
@@ -712,8 +748,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                         "integer literal is outside the ExS signed 64-bit range",
                     ))
                 })?;
-                self.function.instruction(&Instruction::I64Const(value));
-                self.call_runtime("__exs_rt_int_new", *span)
+                self.integer(value, *span)
             }
             Expression::Float(value, span) => {
                 self.function
@@ -722,12 +757,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             }
             Expression::String(value, span) => self.string(value, *span),
             Expression::Bytes(value, span) => self.bytes(value, *span),
-            Expression::Bool(value, span) => {
-                self.function
-                    .instruction(&Instruction::I32Const(i32::from(*value)));
-                self.call_runtime("__exs_rt_bool_new", *span)
+            Expression::Bool(value, _) => {
+                immediate::push(&mut self.function, ValueRef::boolean(*value));
+                Ok(())
             }
-            Expression::None(span) => self.call_runtime("__exs_rt_none_new", *span),
+            Expression::None(_) => {
+                immediate::push(&mut self.function, ValueRef::NONE);
+                Ok(())
+            }
             _ => Err(diagnostics(CompileDiagnostic::new(
                 "E0999",
                 expression_span(expression),
@@ -736,14 +773,88 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         }
     }
 
-    /// Emits one i64 ExS integer construction.
+    /// Emits one i64 ExS integer, as an immediate constant when it fits the `i32` range.
     pub(super) fn integer(
         &mut self,
         value: i64,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        if let Some(immediate) = ValueRef::small_int(value) {
+            immediate::push(&mut self.function, immediate);
+            return Ok(());
+        }
         self.function.instruction(&Instruction::I64Const(value));
         self.call_runtime("__exs_rt_int_new", span)
+    }
+
+    /// Replaces the ValueRef on the stack with the i32 result of one nominal Object type test.
+    pub(super) fn emit_object_type_test(
+        &mut self,
+        type_id: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        if immediate::object_type_test(&mut self.function, type_id) {
+            return Ok(());
+        }
+        self.function
+            .instruction(&Instruction::I32Const(type_id.cast_signed()));
+        self.call_runtime("__exs_rt_object_is_type", span)
+    }
+
+    /// Converts the Bool ValueRef on the stack to a Wasm condition, trapping for non-Bools.
+    pub(super) fn bool_condition(
+        &mut self,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.function
+            .instruction(&Instruction::LocalTee(self.value_local));
+        immediate::is_bool_test(&mut self.function);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.function
+            .instruction(&Instruction::LocalGet(self.value_local));
+        self.function.instruction(&Instruction::I32WrapI64);
+        self.function.instruction(&Instruction::Else);
+        self.function
+            .instruction(&Instruction::LocalGet(self.value_local));
+        self.call_runtime("__exs_rt_condition", span)?;
+        self.function.instruction(&Instruction::End);
+        Ok(())
+    }
+
+    /// Stores an inline Int result and readies `next` when both slots hold immediate Ints.
+    ///
+    /// Falls through without side effects otherwise, so the caller emits its general path next.
+    pub(super) fn int_fast_path(
+        &mut self,
+        operation: immediate::IntOperation,
+        left: u32,
+        right: u32,
+        destination: u32,
+        next: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let int_new = self.runtime_index("__exs_rt_int_new", span)?;
+        self.get_slot(left, span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.value_local));
+        self.get_slot(right, span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.operand_local));
+        immediate::both_small_ints_test(&mut self.function, self.value_local, self.operand_local);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        operation.emit(
+            &mut self.function,
+            self.value_local,
+            self.operand_local,
+            self.int_result_local,
+            int_new,
+        );
+        self.set_slot(destination, span)?;
+        self.ready(next, span)?;
+        self.function.instruction(&Instruction::End);
+        Ok(())
     }
 
     /// Emits one compiler-owned passive-data string construction.
@@ -773,7 +884,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         // the runtime pins as a permanent GC root.
         self.function
             .instruction(&Instruction::GlobalGet(global_index));
-        self.function.instruction(&Instruction::I32Eqz);
+        self.function.instruction(&Instruction::I64Eqz);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.function.instruction(&Instruction::I32Const(length));

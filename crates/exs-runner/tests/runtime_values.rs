@@ -15,6 +15,8 @@ mod control_flow;
 mod formatting;
 #[path = "runtime_values/garbage_collection.rs"]
 mod garbage_collection;
+#[path = "runtime_values/immediates.rs"]
+mod immediates;
 #[path = "runtime_values/iteration.rs"]
 mod iteration;
 #[path = "runtime_values/primitives.rs"]

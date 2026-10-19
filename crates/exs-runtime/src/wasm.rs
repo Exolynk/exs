@@ -4,15 +4,12 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use core::panic::PanicInfo;
 
-use exs_abi::{
-    TYPE_ANY, TYPE_BOOL, TYPE_BYTES, TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST,
-    TYPE_NONE, TYPE_OBJECT, TYPE_STRING,
-};
+use exs_abi::{TYPE_ANY, TYPE_ERROR};
 use exs_value::ValueRef;
 
 use crate::gc;
 use crate::runtime;
-use crate::value::{self, RtValue, RuntimeList};
+use crate::value::{self, RtValue, RuntimeList, Value};
 
 /// Allocates and returns the singular None value.
 #[unsafe(no_mangle)]
@@ -41,7 +38,7 @@ pub extern "C" fn __exs_rt_execution_cancel() {
 /// Returns whether one runtime value is a language Error as a Wasm condition.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> i32 {
-    i32::from(matches!(runtime::value(value), RtValue::Error(_)))
+    i32::from(value.has_type(TYPE_ERROR))
 }
 
 /// Returns whether one runtime value is a fatal language Error.
@@ -83,7 +80,7 @@ pub extern "C" fn __exs_rt_type_matches(value: ValueRef, allowed_types: i32) -> 
     if allowed_types & !TYPE_ANY != 0 {
         runtime::trap();
     }
-    i32::from(value_type_mask(runtime::value(value)) & allowed_types != 0)
+    i32::from(value.has_type(allowed_types))
 }
 
 /// Decodes a host boundary value into compiler-owned nominal values using one emitted schema.
@@ -160,7 +157,7 @@ pub extern "C" fn __exs_rt_error_new(
     data: ValueRef,
 ) -> ValueRef {
     let kind = match runtime::value(kind) {
-        RtValue::String(value) => String::from(value.as_str()),
+        Value::String(value) => String::from(value.as_str()),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -170,7 +167,7 @@ pub extern "C" fn __exs_rt_error_new(
         }
     };
     let message = match runtime::value(message) {
-        RtValue::String(value) => String::from(value.as_str()),
+        Value::String(value) => String::from(value.as_str()),
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -186,7 +183,7 @@ pub extern "C" fn __exs_rt_error_new(
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_assert(condition: ValueRef, description: ValueRef) -> ValueRef {
     let description = match runtime::value(description) {
-        RtValue::String(description) => String::from(description.as_str()),
+        Value::String(description) => String::from(description.as_str()),
         _ => {
             return runtime::fatal_error(
                 "TypeError",
@@ -196,8 +193,8 @@ pub extern "C" fn __exs_rt_assert(condition: ValueRef, description: ValueRef) ->
         }
     };
     match runtime::value(condition) {
-        RtValue::Bool(true) => runtime::none_value(),
-        RtValue::Bool(false) => runtime::fatal_error("AssertionFailed", &description, condition),
+        Value::Bool(true) => runtime::none_value(),
+        Value::Bool(false) => runtime::fatal_error("AssertionFailed", &description, condition),
         _ => runtime::fatal_error(
             "TypeError",
             "std::assert condition requires a Bool value",
@@ -215,7 +212,7 @@ pub extern "C" fn __exs_rt_assert_eq(
     description: ValueRef,
 ) -> ValueRef {
     let description = match runtime::value(description) {
-        RtValue::String(description) => String::from(description.as_str()),
+        Value::String(description) => String::from(description.as_str()),
         _ => {
             return runtime::fatal_error(
                 "TypeError",
@@ -225,8 +222,8 @@ pub extern "C" fn __exs_rt_assert_eq(
         }
     };
     match runtime::value(condition) {
-        RtValue::Bool(true) => return runtime::none_value(),
-        RtValue::Bool(false) => {}
+        Value::Bool(true) => return runtime::none_value(),
+        Value::Bool(false) => {}
         _ => {
             return runtime::fatal_error(
                 "TypeError",
@@ -246,31 +243,12 @@ pub extern "C" fn __exs_rt_assert_eq(
     error
 }
 
-/// Returns the compiler-visible type-mask bit for one runtime value.
-fn value_type_mask(value: &RtValue) -> u32 {
-    match value {
-        RtValue::None => TYPE_NONE,
-        RtValue::Error(_) => TYPE_ERROR,
-        RtValue::Bool(_) => TYPE_BOOL,
-        RtValue::Int(_) => TYPE_INT,
-        RtValue::Float(_) => TYPE_FLOAT,
-        RtValue::String(_) => TYPE_STRING,
-        RtValue::Bytes(_) => TYPE_BYTES,
-        RtValue::List(_) => TYPE_LIST,
-        RtValue::Iterator(_) => 0,
-        RtValue::Object(_) => TYPE_OBJECT,
-        RtValue::Closure(_) => TYPE_FN,
-        RtValue::Cell(_) => 0,
-        RtValue::BoxedFutureValue(_) => 0,
-    }
-}
-
 /// Converts None into an Error while preserving direct values and Error values.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_propagate(value: ValueRef) -> ValueRef {
     match runtime::value(value) {
-        RtValue::Error(_) => value,
-        RtValue::None => {
+        Value::Error(_) => value,
+        Value::None => {
             runtime::recoverable_error("MissingValue", "cannot propagate a missing value", value)
         }
         _ => value,
@@ -674,7 +652,7 @@ pub extern "C" fn __exs_rt_cell_new(value: ValueRef) -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_cell_get(cell: ValueRef) -> ValueRef {
     match runtime::value(cell) {
-        RtValue::Cell(cell) => cell.value,
+        Value::Cell(cell) => cell.value,
         _ => runtime::trap(),
     }
 }
@@ -683,7 +661,7 @@ pub extern "C" fn __exs_rt_cell_get(cell: ValueRef) -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_cell_set(cell: ValueRef, value: ValueRef) -> ValueRef {
     match runtime::value_mut(cell) {
-        RtValue::Cell(cell) => {
+        Some(RtValue::Cell(cell)) => {
             cell.value = value;
             value
         }
@@ -714,13 +692,13 @@ pub extern "C" fn __exs_rt_closure_new(
         1 => true,
         _ => runtime::trap(),
     };
-    let RtValue::List(captures) = runtime::value(captures) else {
+    let Value::List(captures) = runtime::value(captures) else {
         runtime::trap();
     };
     let captures = captures.elements.clone();
     if captures
         .iter()
-        .any(|capture| !matches!(runtime::value(*capture), RtValue::Cell(_)))
+        .any(|capture| !matches!(runtime::value(*capture), Value::Cell(_)))
     {
         runtime::trap();
     }
@@ -736,7 +714,7 @@ pub extern "C" fn __exs_rt_closure_new(
 /// Returns the generated function identity carried by one callable closure.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_closure_function(closure: ValueRef) -> i32 {
-    let RtValue::Closure(closure) = runtime::value(closure) else {
+    let Value::Closure(closure) = runtime::value(closure) else {
         runtime::trap();
     };
     match i32::try_from(closure.function_id) {
@@ -748,7 +726,7 @@ pub extern "C" fn __exs_rt_closure_function(closure: ValueRef) -> i32 {
 /// Returns the number of captured Cells carried by one callable closure.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_closure_capture_count(closure: ValueRef) -> i32 {
-    let RtValue::Closure(closure) = runtime::value(closure) else {
+    let Value::Closure(closure) = runtime::value(closure) else {
         runtime::trap();
     };
     match i32::try_from(closure.captures.len()) {
@@ -760,7 +738,7 @@ pub extern "C" fn __exs_rt_closure_capture_count(closure: ValueRef) -> i32 {
 /// Returns the durable frame capacity required to invoke one callable closure.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_closure_slot_count(closure: ValueRef) -> i32 {
-    let RtValue::Closure(closure) = runtime::value(closure) else {
+    let Value::Closure(closure) = runtime::value(closure) else {
         runtime::trap();
     };
     match i32::try_from(closure.slot_count) {
@@ -772,7 +750,7 @@ pub extern "C" fn __exs_rt_closure_slot_count(closure: ValueRef) -> i32 {
 /// Returns the source argument count required by one callable closure.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_closure_arity(closure: ValueRef) -> i32 {
-    let RtValue::Closure(closure) = runtime::value(closure) else {
+    let Value::Closure(closure) = runtime::value(closure) else {
         runtime::trap();
     };
     match i32::try_from(closure.arity) {
@@ -784,7 +762,7 @@ pub extern "C" fn __exs_rt_closure_arity(closure: ValueRef) -> i32 {
 /// Returns whether one callable closure accepts a variadic source argument tail.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_closure_is_variadic(closure: ValueRef) -> i32 {
-    let RtValue::Closure(closure) = runtime::value(closure) else {
+    let Value::Closure(closure) = runtime::value(closure) else {
         runtime::trap();
     };
     i32::from(closure.variadic)
@@ -807,7 +785,7 @@ pub extern "C" fn __exs_rt_closure_capture(closure: ValueRef, index: i32) -> Val
     let Ok(index) = usize::try_from(index) else {
         runtime::trap();
     };
-    let RtValue::Closure(closure) = runtime::value(closure) else {
+    let Value::Closure(closure) = runtime::value(closure) else {
         runtime::trap();
     };
     match closure.captures.get(index) {
@@ -854,9 +832,9 @@ pub extern "C" fn __exs_rt_iter_snapshot(iterable: ValueRef) -> ValueRef {
     value::operations::iter_snapshot(iterable)
 }
 
-/// Advances one for-loop snapshot natively, returning an item ref, 0 when done, or -1.
+/// Advances one for-loop snapshot natively, returning a raw item ref, 0 when done, or -1.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i32 {
+pub extern "C" fn __exs_rt_iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i64 {
     value::operations::iter_native_next(snapshot, range_type_id)
 }
 

@@ -6,9 +6,9 @@ use exs_abi::{STATUS_COMPLETE, STATUS_PENDING, STATUS_READY};
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use super::FrameLayout;
-use crate::codegen::diagnostics;
 use crate::codegen::function::FunctionSignature;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan, module_span};
+use crate::codegen::{VALUE_TYPE, diagnostics};
 
 /// Generates the root entry wrapper for a resumable `main` function.
 pub(crate) fn compile_start<'a>(
@@ -18,14 +18,15 @@ pub(crate) fn compile_start<'a>(
     dispatcher: u32,
     runtime: &HashMap<String, u32>,
 ) -> Result<Function, CompileDiagnostics<'a>> {
-    let mut function = Function::new([(7, ValType::I32)]);
+    // Scalar i32 locals follow the two i32 parameters; ValueRef i64 locals come last.
+    let mut function = Function::new([(4, ValType::I32), (3, VALUE_TYPE)]);
     let frame = 2_u32;
-    let arguments = 3_u32;
-    let count = 4_u32;
-    let result = 5_u32;
-    let status = 6_u32;
-    let variadic_list = 7_u32;
-    let variadic_index = 8_u32;
+    let count = 3_u32;
+    let status = 4_u32;
+    let variadic_index = 5_u32;
+    let arguments = 6_u32;
+    let result = 7_u32;
+    let variadic_list = 8_u32;
     let parameter_count = i32::try_from(main.arity).map_err(|_| {
         diagnostics(CompileDiagnostic::new(
             "E0212",
@@ -208,7 +209,8 @@ pub(crate) fn compile_resume<'a>(
     dispatcher: u32,
     runtime: &HashMap<String, u32>,
 ) -> Result<Function, CompileDiagnostics<'a>> {
-    let mut function = Function::new([(3, ValType::I32)]);
+    // Local 3 is unused; the status is an i32 and the completed result a ValueRef.
+    let mut function = Function::new([(2, ValType::I32), (1, VALUE_TYPE)]);
     let status = 4_u32;
     let result = 5_u32;
     function.instruction(&Instruction::LocalGet(0));

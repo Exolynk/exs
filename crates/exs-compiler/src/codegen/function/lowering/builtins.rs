@@ -139,7 +139,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             ))
         })?;
         let targets = self.methods.operator(operator).to_vec();
-        self.emit_operator_dispatch(operator, &targets, 0, locals[0], locals[1], span)?;
+        self.emit_operator_dispatch(operator, &targets, locals[0], locals[1], span)?;
         let comparison = self.store_stack_value()?;
         self.function
             .instruction(&Instruction::LocalGet(comparison));

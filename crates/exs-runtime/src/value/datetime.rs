@@ -7,12 +7,12 @@ use exs_value::ValueRef;
 
 use crate::gc;
 use crate::runtime;
-use crate::value::{RtValue, RuntimeObject};
+use crate::value::{RtValue, RuntimeObject, Value};
 
 /// Parses ExS's strict RFC 3339 DateTime spelling into its raw prelude fields.
 pub(crate) fn parse_rfc3339(value: ValueRef) -> ValueRef {
     let receiver = value;
-    let RtValue::String(text) = runtime::value(value) else {
+    let Value::String(text) = runtime::value(value) else {
         return runtime::recoverable_error(
             "TypeError",
             "DateTime::parse_rfc3339 requires a String value",

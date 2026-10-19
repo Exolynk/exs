@@ -28,13 +28,13 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         // the runtime pins as a permanent GC root.
         self.function
             .instruction(&Instruction::GlobalGet(global_index));
-        self.function.instruction(&Instruction::I32Eqz);
+        self.function.instruction(&Instruction::I64Eqz);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.enter_control()?;
         self.function.instruction(&Instruction::I32Const(length));
         self.runtime_call("__exs_rt_literal_buffer_alloc", span)?;
-        let buffer_pointer = self.allocate_local();
+        let buffer_pointer = self.literal_pointer_local;
         self.function
             .instruction(&Instruction::LocalTee(buffer_pointer));
         self.function.instruction(&Instruction::I32Const(0));
@@ -80,7 +80,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         })?;
         self.function.instruction(&Instruction::I32Const(length));
         self.runtime_call("__exs_rt_literal_buffer_alloc", span)?;
-        let buffer_pointer = self.allocate_local();
+        let buffer_pointer = self.literal_pointer_local;
         self.function
             .instruction(&Instruction::LocalTee(buffer_pointer));
         self.function.instruction(&Instruction::I32Const(0));
@@ -269,7 +269,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             if properties.iter().any(|property| property.key == field.name) {
                 continue;
             }
-            self.runtime_call("__exs_rt_none_new", span)?;
+            self.emit_none();
             let value = self.store_stack_value()?;
             self.validate_local_type(value, &field.contract, span)?;
             self.compile_string(&field.name, span)?;

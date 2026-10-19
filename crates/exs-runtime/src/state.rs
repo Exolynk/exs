@@ -46,11 +46,11 @@ pub(crate) struct RootFrame {
 
 /// Shadow stack of compiler-generated roots that generated code writes directly in memory.
 ///
-/// Each slot holds a raw `ValueRef` index, or 0 when empty. Chunks are never reallocated while
+/// Each slot holds a raw 64-bit `ValueRef`, or 0 when empty. Chunks are never reallocated while
 /// they hold active frames, so the base address of every active frame stays valid.
 pub(crate) struct RootStack {
     /// Fixed-size slot chunks, kept after use so later frames can reuse them.
-    pub(crate) chunks: Vec<Box<[u32]>>,
+    pub(crate) chunks: Vec<Box<[u64]>>,
     /// Active frames in call order.
     pub(crate) frames: Vec<RootFrame>,
 }
@@ -126,39 +126,8 @@ pub(crate) struct RuntimeState {
     pub(crate) literal_buffer: Vec<u8>,
     /// CBOR bytes holding the completed root result.
     pub(crate) result_buffer: Vec<u8>,
-    /// Shared immutable `None`, `false` and `true` values, allocated on first use.
-    pub(crate) shared_values: SharedValues,
     /// String literal values cached in compiler globals, kept alive as permanent GC roots.
     pub(crate) pinned_literals: Vec<ValueRef>,
-}
-
-/// Immutable values shared by every use site instead of allocating one heap slot per result.
-#[derive(Clone, Copy)]
-pub(crate) struct SharedValues {
-    /// The shared `None` value.
-    pub(crate) none: Option<ValueRef>,
-    /// The shared `false` value.
-    pub(crate) false_value: Option<ValueRef>,
-    /// The shared `true` value.
-    pub(crate) true_value: Option<ValueRef>,
-}
-
-impl SharedValues {
-    /// Creates an empty set whose values are allocated lazily.
-    const fn new() -> Self {
-        Self {
-            none: None,
-            false_value: None,
-            true_value: None,
-        }
-    }
-
-    /// Returns every shared value allocated so far.
-    pub(crate) fn iter(self) -> impl Iterator<Item = ValueRef> {
-        [self.none, self.false_value, self.true_value]
-            .into_iter()
-            .flatten()
-    }
 }
 
 impl RuntimeState {
@@ -183,7 +152,6 @@ impl RuntimeState {
             input_buffer: Vec::new(),
             literal_buffer: Vec::new(),
             result_buffer: Vec::new(),
-            shared_values: SharedValues::new(),
             pinned_literals: Vec::new(),
         }
     }

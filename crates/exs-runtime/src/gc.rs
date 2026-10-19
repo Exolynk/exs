@@ -1,12 +1,11 @@
 //! Stop-the-world mark-and-sweep collection and compiler root-frame management.
 
 use alloc::vec::Vec;
-use core::num::NonZeroU32;
-
 use exs_value::ValueRef;
 
 use crate::state::{RootFrame, runtime};
 use crate::value::RtValue;
+use crate::value::reference;
 
 /// Minimum value-table size before automatic collection becomes worthwhile.
 pub(crate) const INITIAL_COLLECTION_THRESHOLD: usize = 256;
@@ -16,7 +15,7 @@ const ROOT_CHUNK_SLOTS: usize = 4096;
 
 /// Creates one zeroed compiler-generated root frame and returns its first slot's address.
 ///
-/// Generated code roots a value with a plain `i32.store` of its raw index at `base + slot * 4`
+/// Generated code roots a value with a plain `i64.store` of its raw form at `base + slot * 8`
 /// and clears it by storing 0, so the slot count must cover every slot the compiler emits.
 pub(crate) fn push_root_frame(slot_count: i32) -> i32 {
     let Ok(len) = usize::try_from(slot_count) else {
@@ -126,14 +125,16 @@ fn collect_roots() -> Vec<ValueRef> {
         roots.extend(execution.roots());
     }
     roots.extend(state.temporary_roots.iter().copied());
-    roots.extend(state.shared_values.iter());
     roots.extend(state.pinned_literals.iter().copied());
     roots
 }
 
 /// Marks one reachable slot and queues its owned child references.
 fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
-    let index = value_index(reference);
+    // Immediates own no heap slot and reference no children.
+    let Some(index) = reference::heap_index(reference) else {
+        return;
+    };
     let state = unsafe { runtime() };
     let Some(slot) = state.values.get_mut(index).and_then(Option::as_mut) else {
         crate::runtime::trap();
@@ -159,9 +160,7 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
         }
         RtValue::Cell(cell) => worklist.push(cell.value),
         RtValue::Closure(closure) => worklist.extend(closure.captures.iter().copied()),
-        RtValue::None
-        | RtValue::Bool(_)
-        | RtValue::Int(_)
+        RtValue::Int(_)
         | RtValue::Float(_)
         | RtValue::String(_)
         | RtValue::Bytes(_)
@@ -188,12 +187,7 @@ fn sweep() -> usize {
 }
 
 /// Converts one raw shadow-stack slot to its rooted ValueRef, or `None` for an empty slot.
-fn raw_root(slot: u32) -> Option<ValueRef> {
-    // SAFETY: generated code only stores ValueRef indices produced by this runtime, or 0.
-    NonZeroU32::new(slot).map(|index| unsafe { ValueRef::from_runtime_index(index) })
-}
-
-/// Converts one one-based ValueRef index to its zero-based table position.
-fn value_index(reference: ValueRef) -> usize {
-    reference.runtime_index() as usize - 1
+fn raw_root(slot: u64) -> Option<ValueRef> {
+    // SAFETY: generated code only stores ValueRefs produced by this runtime, or 0.
+    unsafe { ValueRef::from_raw(slot) }
 }
