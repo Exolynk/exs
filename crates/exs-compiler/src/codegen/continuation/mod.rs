@@ -14,6 +14,7 @@ use wasm_encoder::{Function, Instruction, ValType};
 use crate::ast::FunctionDeclaration;
 use crate::codegen::diagnostics;
 use crate::codegen::function::{FunctionSignature, LiftedFunction, MethodRegistry};
+use crate::codegen::literals::LiteralPool;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::TypeRegistry;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics};
@@ -86,7 +87,7 @@ pub(super) fn compile_function<'source>(
     key: &str,
     signatures: &HashMap<String, FunctionSignature>,
     runtime: &HashMap<String, u32>,
-    literals: &HashMap<String, u32>,
+    literals: &LiteralPool,
     source_map: &SourceMap<'source>,
     frame_layouts: &HashMap<String, FrameLayout>,
     lifted: &[LiftedFunction<'source>],

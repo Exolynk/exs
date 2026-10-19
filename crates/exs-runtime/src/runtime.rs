@@ -335,6 +335,15 @@ pub(crate) fn string_new(pointer_value: i32, length: i32) -> ValueRef {
     allocate(RtValue::String(Box::new(value)))
 }
 
+/// Pins one String literal value cached in a compiler global and returns it unchanged.
+pub(crate) fn literal_string_pin(value: ValueRef) -> ValueRef {
+    if !matches!(self::value(value), RtValue::String(_)) {
+        trap();
+    }
+    unsafe { runtime() }.pinned_literals.push(value);
+    value
+}
+
 /// Creates immutable runtime Bytes from the compiler-populated literal buffer.
 pub(crate) fn bytes_new(pointer_value: i32, length: i32) -> ValueRef {
     let Ok(length) = usize::try_from(length) else {

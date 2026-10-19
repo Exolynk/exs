@@ -7,13 +7,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         value: &str,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        let data_index = self.literals.get(value).copied().ok_or_else(|| {
+        let segment = self.literals.segment(value).ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0211",
                 span,
                 "missing compiler string literal data segment",
             ))
         })?;
+        let data_index = segment.data_index;
         let length = i32::try_from(value.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
                 "E0211",
@@ -21,6 +22,16 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 "string literal is too large for Wasm linear memory",
             ))
         })?;
+        let global_index = segment.global_index;
+        // Literal Strings are immutable, so each literal caches its runtime String in its own
+        // global. Only the first evaluation copies the data segment into a new String, which
+        // the runtime pins as a permanent GC root.
+        self.function
+            .instruction(&Instruction::GlobalGet(global_index));
+        self.function.instruction(&Instruction::I32Eqz);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.enter_control()?;
         self.function.instruction(&Instruction::I32Const(length));
         self.runtime_call("__exs_rt_literal_buffer_alloc", span)?;
         let buffer_pointer = self.allocate_local();
@@ -33,7 +44,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function
             .instruction(&Instruction::LocalGet(buffer_pointer));
         self.function.instruction(&Instruction::I32Const(length));
-        self.runtime_call("__exs_rt_string_new", span)
+        self.runtime_call("__exs_rt_string_new", span)?;
+        self.runtime_call("__exs_rt_literal_string_pin", span)?;
+        self.function
+            .instruction(&Instruction::GlobalSet(global_index));
+        self.function.instruction(&Instruction::End);
+        self.function
+            .instruction(&Instruction::GlobalGet(global_index));
+        self.exit_control()
     }
 
     /// Compiles one static source Bytes literal through the compiler-owned literal pool.
@@ -42,13 +60,17 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         value: &str,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        let data_index = self.literals.get(value).copied().ok_or_else(|| {
-            diagnostics(CompileDiagnostic::new(
-                "E0211",
-                span,
-                "missing compiler Bytes literal data segment",
-            ))
-        })?;
+        let data_index = self
+            .literals
+            .segment(value)
+            .ok_or_else(|| {
+                diagnostics(CompileDiagnostic::new(
+                    "E0211",
+                    span,
+                    "missing compiler Bytes literal data segment",
+                ))
+            })?
+            .data_index;
         let length = i32::try_from(value.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
                 "E0211",

@@ -8,9 +8,9 @@ use exs_abi::{
 };
 use exs_runtime::WASM_TEMPLATE;
 use wasm_encoder::{
-    CodeSection, CustomSection, DataCountSection, DataSection, ExportKind, ExportSection, Function,
-    FunctionSection, GlobalSection, Instruction, Module as WasmModule, SectionId, TypeSection,
-    ValType,
+    CodeSection, ConstExpr, CustomSection, DataCountSection, DataSection, ExportKind,
+    ExportSection, Function, FunctionSection, GlobalSection, GlobalType, Instruction,
+    Module as WasmModule, SectionId, TypeSection, ValType,
     reencode::{self, Reencode},
 };
 use wasmparser::{ExternalKind, Parser as WasmParser, TypeRef};
@@ -356,6 +356,8 @@ struct TemplateLinker<'source, 'module> {
     template_has_data_count: bool,
     template_has_data_section: bool,
     template_function_import_count: u32,
+    /// Number of globals imported by the runtime template.
+    template_global_import_count: u32,
     suspendable_functions: HashSet<String>,
     frame_layouts: HashMap<String, continuation::FrameLayout>,
 }
@@ -422,6 +424,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             template_has_data_count: template_data.has_data_count,
             template_has_data_section: template_data.has_data_section,
             template_function_import_count: 0,
+            template_global_import_count: 0,
             suspendable_functions,
             frame_layouts: HashMap::new(),
         })
@@ -505,6 +508,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         section: wasmparser::ImportSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
         let mut function_import_count = 0_u32;
+        let mut global_import_count = 0_u32;
         for imports in section.clone() {
             let imports = imports.map_err(|error| {
                 reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
@@ -526,9 +530,15 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                         .checked_add(1)
                         .ok_or_else(|| self.state_error("too many imported runtime functions"))?;
                 }
+                if matches!(import.ty, TypeRef::Global(_)) {
+                    global_import_count = global_import_count
+                        .checked_add(1)
+                        .ok_or_else(|| self.state_error("too many imported runtime globals"))?;
+                }
             }
         }
         self.template_function_import_count = function_import_count;
+        self.template_global_import_count = global_import_count;
         reencode::utils::parse_import_section(self, imports, section)
     }
 
@@ -660,7 +670,25 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         globals: &mut GlobalSection,
         section: wasmparser::GlobalSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
-        reencode::utils::parse_global_section(self, globals, section)
+        reencode::utils::parse_global_section(self, globals, section)?;
+        // Append one zero-initialized mutable i32 per string literal; generated code stores the
+        // literal's runtime String there on first use and reuses it afterwards.
+        let global_index_base = self
+            .template_global_import_count
+            .checked_add(globals.len())
+            .ok_or_else(|| self.state_error("too many runtime globals"))?;
+        for _ in 0..self.literals.len() {
+            globals.global(
+                GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &ConstExpr::i32_const(0),
+            );
+        }
+        self.literals.global_index_base = Some(global_index_base);
+        Ok(())
     }
 
     fn parse_export_section(
@@ -722,7 +750,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     &function.name.name,
                     signatures,
                     &self.runtime_functions,
-                    &self.literals.indices,
+                    &self.literals,
                     &self.source_map,
                     &self.frame_layouts,
                     &self.lifted,
@@ -737,7 +765,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     FunctionCompilerContext {
                         signatures,
                         runtime: &self.runtime_functions,
-                        literals: &self.literals.indices,
+                        literals: &self.literals,
                         source_map: &self.source_map,
                         types: &self.type_registry,
                         methods,
@@ -761,7 +789,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                         &key,
                         signatures,
                         &self.runtime_functions,
-                        &self.literals.indices,
+                        &self.literals,
                         &self.source_map,
                         &self.frame_layouts,
                         &self.lifted,
@@ -776,7 +804,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                         FunctionCompilerContext {
                             signatures,
                             runtime: &self.runtime_functions,
-                            literals: &self.literals.indices,
+                            literals: &self.literals,
                             source_map: &self.source_map,
                             types: &self.type_registry,
                             methods,
@@ -798,7 +826,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 &closure.key,
                 signatures,
                 &self.runtime_functions,
-                &self.literals.indices,
+                &self.literals,
                 &self.source_map,
                 &self.frame_layouts,
                 &self.lifted,

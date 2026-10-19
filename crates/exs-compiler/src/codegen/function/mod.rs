@@ -13,6 +13,7 @@ use wasm_encoder::{Function, Instruction, ValType};
 
 use crate::ast::FunctionDeclaration;
 use crate::codegen::diagnostics;
+use crate::codegen::literals::LiteralPool;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
@@ -30,7 +31,7 @@ pub(super) struct FunctionCompilerContext<'a, 'module> {
     /// Runtime-template export indexes.
     pub(super) runtime: &'module HashMap<String, u32>,
     /// Compiler literal data indexes.
-    pub(super) literals: &'module HashMap<String, u32>,
+    pub(super) literals: &'module LiteralPool,
     /// Generated source-position metadata.
     pub(super) source_map: &'module SourceMap<'a>,
     /// Module nominal type declarations.
@@ -56,7 +57,7 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     signature_key: String,
     signatures: &'module HashMap<String, FunctionSignature>,
     runtime: &'module HashMap<String, u32>,
-    literals: &'module HashMap<String, u32>,
+    literals: &'module LiteralPool,
     source_map: &'module SourceMap<'a>,
     types: &'module TypeRegistry,
     methods: &'module MethodRegistry,

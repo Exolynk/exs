@@ -7,6 +7,7 @@ use wasm_encoder::{BlockType, Function, Instruction, ValType};
 
 use crate::ast::UnaryOperator;
 use crate::codegen::diagnostics;
+use crate::codegen::literals::LiteralPool;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::TypeContract;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -19,7 +20,7 @@ pub(super) struct StepCompiler<'source, 'context> {
     /// Runtime ABI export indexes.
     pub(super) runtime: &'context HashMap<String, u32>,
     /// Passive data indexes for compiler string literals.
-    pub(super) literals: &'context HashMap<String, u32>,
+    pub(super) literals: &'context LiteralPool,
     /// Compiler-assigned source positions.
     pub(super) source_map: &'context SourceMap<'source>,
     /// Durable child-frame layouts for nominal suspendable method targets.

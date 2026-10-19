@@ -11,11 +11,22 @@ use crate::codegen::types::TypeRegistry;
 use crate::codegen::{diagnostics, module_span, standard};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
+/// The passive data segment and cache global of one compiler string literal.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct LiteralSegment {
+    /// Final Wasm passive data segment index.
+    pub(super) data_index: u32,
+    /// Mutable i32 global caching the literal's runtime String, or zero before first use.
+    pub(super) global_index: u32,
+}
+
 /// Compiler-owned passive data segments for unique UTF-8 string literals.
 pub(super) struct LiteralPool {
     pub(super) bytes: Vec<Vec<u8>>,
     pub(super) indices: HashMap<String, u32>,
     pub(super) data_index_base: u32,
+    /// First cache global index, assigned once the template's globals are known.
+    pub(super) global_index_base: Option<u32>,
 }
 
 impl LiteralPool {
@@ -28,6 +39,7 @@ impl LiteralPool {
             bytes: Vec::new(),
             indices: HashMap::new(),
             data_index_base: 0,
+            global_index_base: None,
         };
         for declaration in &module.types {
             for field in &declaration.fields {
@@ -81,6 +93,21 @@ impl LiteralPool {
             *index += data_index_base;
         }
         self
+    }
+
+    /// Returns the data segment and cache global of one collected literal.
+    pub(super) fn segment(&self, literal: &str) -> Option<LiteralSegment> {
+        let data_index = *self.indices.get(literal)?;
+        let literal_id = data_index.checked_sub(self.data_index_base)?;
+        Some(LiteralSegment {
+            data_index,
+            global_index: self.global_index_base?.checked_add(literal_id)?,
+        })
+    }
+
+    /// Returns the number of collected literals, which is also the number of cache globals.
+    pub(super) fn len(&self) -> usize {
+        self.bytes.len()
     }
 
     /// Adds one literal if it was not already collected.

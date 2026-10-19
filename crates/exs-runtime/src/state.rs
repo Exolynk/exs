@@ -100,6 +100,8 @@ pub(crate) struct RuntimeState {
     pub(crate) result_buffer: Vec<u8>,
     /// Shared immutable `None`, `false` and `true` values, allocated on first use.
     pub(crate) shared_values: SharedValues,
+    /// String literal values cached in compiler globals, kept alive as permanent GC roots.
+    pub(crate) pinned_literals: Vec<ValueRef>,
 }
 
 /// Immutable values shared by every use site instead of allocating one heap slot per result.
@@ -154,6 +156,7 @@ impl RuntimeState {
             literal_buffer: Vec::new(),
             result_buffer: Vec::new(),
             shared_values: SharedValues::new(),
+            pinned_literals: Vec::new(),
         }
     }
 }

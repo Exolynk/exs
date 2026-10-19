@@ -488,6 +488,12 @@ pub extern "C" fn __exs_rt_string_new(pointer: i32, length: i32) -> ValueRef {
     runtime::string_new(pointer, length)
 }
 
+/// Pins one String literal value cached in a compiler global and returns it unchanged.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_literal_string_pin(value: ValueRef) -> ValueRef {
+    runtime::literal_string_pin(value)
+}
+
 /// Creates immutable runtime Bytes from the compiler-populated literal buffer.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_bytes_new(pointer: i32, length: i32) -> ValueRef {
