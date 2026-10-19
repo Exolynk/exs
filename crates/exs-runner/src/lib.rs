@@ -49,6 +49,8 @@ mod limits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod report;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod timer;
 #[cfg(feature = "serde")]
 mod typed_registry;
@@ -73,6 +75,8 @@ pub use self::host_function::{
 pub use self::limits::{LimitKind, ProtectionLevel};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::registry::{HostFunctionRegistry, RegistryError};
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub use self::report::ExecutionReport;
 pub use exs_abi::{Bytes, ErrorSeverity, ExsError, ExsValue, SourcePositionId};
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -128,6 +132,23 @@ impl ServerRunner {
         inputs: &[ExsValue],
         cancellation: &ExecutionCancellation,
     ) -> Result<ExsValue, RunnerError> {
+        self.execute_with_report(wasm, function, inputs, cancellation)
+            .await
+            .map(|report| report.value)
+    }
+
+    /// Executes one named public function like [`Self::execute`] and reports consumed fuel.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::execute`].
+    pub async fn execute_with_report(
+        &self,
+        wasm: &[u8],
+        function: &str,
+        inputs: &[ExsValue],
+        cancellation: &ExecutionCancellation,
+    ) -> Result<ExecutionReport, RunnerError> {
         if cancellation.is_cancelled() {
             return Err(RunnerError::Cancelled);
         }
@@ -190,7 +211,13 @@ impl ServerRunner {
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
-                    return Ok(result);
+                    let remaining_fuel = store
+                        .get_fuel()
+                        .map_err(|error| RunnerError::Wasm(error.to_string()))?;
+                    return Ok(ExecutionReport {
+                        value: result,
+                        fuel_consumed: self.limits.max_fuel.saturating_sub(remaining_fuel),
+                    });
                 }
                 STATUS_PENDING => {
                     pending.extend(store.data_mut().take_pending_all().into_iter().map(
