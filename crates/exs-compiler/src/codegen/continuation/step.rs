@@ -313,10 +313,18 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 right,
                 targets,
                 destination,
+                comparison,
                 span,
-            } => {
-                self.operator_call(*operator, next, *left, *right, targets, *destination, *span)?
-            }
+            } => self.operator_call(
+                *operator,
+                next,
+                *left,
+                *right,
+                targets,
+                *destination,
+                *comparison,
+                *span,
+            )?,
             Operation::OrderingTest {
                 value,
                 test,

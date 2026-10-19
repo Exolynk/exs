@@ -16,6 +16,17 @@ pub(super) struct ContinuationGraph<'source, 'function> {
     pub(super) operations: Vec<Operation<'source, 'function>>,
 }
 
+/// Built-in comparison fallback that produces the final Bool without an `Ordering` value.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ComparisonFallback {
+    /// Comparison test code selected by the source operator.
+    pub(super) test: i32,
+    /// Frame slot receiving the resulting Bool or Error.
+    pub(super) destination: u32,
+    /// State following the bypassed `OrderingTest` state.
+    pub(super) next: u32,
+}
+
 /// One non-suspending operation or host-call boundary in a continuation graph.
 pub(super) enum Operation<'source, 'function> {
     /// Constructs a scalar literal in a destination slot.
@@ -127,6 +138,8 @@ pub(super) enum Operation<'source, 'function> {
         right: u32,
         targets: Vec<InstanceMethod>,
         destination: u32,
+        /// Built-in comparison shortcut that bypasses the following `OrderingTest` state.
+        comparison: Option<ComparisonFallback>,
         span: SourceSpan<'source>,
     },
     /// Converts one `Compare` result into a source comparison Bool.

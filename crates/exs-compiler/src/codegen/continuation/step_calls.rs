@@ -12,7 +12,7 @@ use crate::codegen::types::TypeContract;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::entry::runtime_index;
-use super::graph::expression_span;
+use super::graph::{ComparisonFallback, expression_span};
 use super::step::StepCompiler;
 
 impl<'source, 'context> StepCompiler<'source, 'context> {
@@ -84,9 +84,20 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         right: u32,
         targets: &[InstanceMethod],
         destination: u32,
+        comparison: Option<ComparisonFallback>,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.operator_call_target(operator, next, left, right, targets, 0, destination, span)
+        self.operator_call_target(
+            operator,
+            next,
+            left,
+            right,
+            targets,
+            0,
+            destination,
+            comparison,
+            span,
+        )
     }
 
     /// Emits one branch of the statically known standard operator target chain.
@@ -100,11 +111,22 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         targets: &[InstanceMethod],
         index: usize,
         destination: u32,
+        comparison: Option<ComparisonFallback>,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         let Some(target) = targets.get(index) else {
             self.get_slot(left, span)?;
             self.get_slot(right, span)?;
+            // Built-in comparisons produce the final Bool directly and skip the OrderingTest
+            // state, matching that state's error completion.
+            if let Some(comparison) = comparison {
+                self.function
+                    .instruction(&Instruction::I32Const(comparison.test));
+                self.call_runtime("__exs_rt_compare_test", span)?;
+                self.set_slot(comparison.destination, span)?;
+                self.complete_if_error(comparison.destination, span)?;
+                return self.ready(comparison.next, span);
+            }
             self.call_runtime(operator.runtime_export(), span)?;
             self.set_slot(destination, span)?;
             return self.ready(next, span);
@@ -141,6 +163,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             targets,
             index + 1,
             destination,
+            comparison,
             span,
         )?;
         self.function.instruction(&Instruction::End);

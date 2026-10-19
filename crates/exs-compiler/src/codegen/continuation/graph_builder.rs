@@ -7,7 +7,10 @@ use crate::codegen::diagnostics;
 use crate::codegen::function::FunctionSignature;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
-use super::graph::{BindingSlot, GraphBuilder, LoopBuilderContext, Operation, operation_span};
+use super::graph::{
+    BindingSlot, ComparisonFallback, GraphBuilder, LoopBuilderContext, Operation, operation_span,
+};
+use crate::codegen::trait_registry::TraitOperator;
 
 impl<'source, 'function> GraphBuilder<'source, 'function> {
     /// Replaces a variadic source argument tail with one compiler-owned List slot.
@@ -432,6 +435,44 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             self.lower_statement(statement)?;
         }
         let _scope = self.scopes.pop();
+        Ok(())
+    }
+
+    /// Appends one comparison operator dispatch followed by its `OrderingTest` state.
+    ///
+    /// Trait implementations write an `Ordering` to `ordering` for the `OrderingTest` state,
+    /// while the built-in fallback writes the final Bool to `destination` and skips it.
+    #[allow(clippy::too_many_arguments)] // Both operand slots and both result slots are required.
+    pub(super) fn push_comparison(
+        &mut self,
+        operator: TraitOperator,
+        test: i32,
+        left: u32,
+        right: u32,
+        ordering: u32,
+        destination: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let next = self.state_id(self.operations.len() + 2, span)?;
+        self.push(Operation::Operator {
+            operator,
+            left,
+            right,
+            targets: self.methods.operator(operator).to_vec(),
+            destination: ordering,
+            comparison: Some(ComparisonFallback {
+                test,
+                destination,
+                next,
+            }),
+            span,
+        })?;
+        self.push(Operation::OrderingTest {
+            value: ordering,
+            test,
+            destination,
+            span,
+        })?;
         Ok(())
     }
 

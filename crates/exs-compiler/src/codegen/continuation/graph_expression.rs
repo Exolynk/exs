@@ -273,22 +273,26 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let destination = self.temporary(*span)?;
                 if let Some(operator_trait) = TraitOperator::from_binary(*operator) {
                     let result = self.temporary(*span)?;
-                    self.operations.push(Operation::Operator {
-                        operator: operator_trait,
-                        left,
-                        right,
-                        targets: self.methods.operator(operator_trait).to_vec(),
-                        destination: result,
-                        span: *span,
-                    });
                     if let Some(test) = operator_trait.comparison_test() {
-                        self.operations.push(Operation::OrderingTest {
-                            value: result,
+                        self.push_comparison(
+                            operator_trait,
                             test,
+                            left,
+                            right,
+                            result,
                             destination,
+                            *span,
+                        )?;
+                    } else {
+                        self.operations.push(Operation::Operator {
+                            operator: operator_trait,
+                            left,
+                            right,
+                            targets: self.methods.operator(operator_trait).to_vec(),
+                            destination: result,
+                            comparison: None,
                             span: *span,
                         });
-                    } else {
                         self.operations.push(Operation::Copy {
                             source: result,
                             destination,
@@ -857,20 +861,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         })?;
         let comparison = self.temporary(span)?;
         let result = self.temporary(span)?;
-        self.operations.push(Operation::Operator {
-            operator,
-            left: first,
-            right: second,
-            targets: self.methods.operator(operator).to_vec(),
-            destination: result,
-            span,
-        });
-        self.operations.push(Operation::OrderingTest {
-            value: result,
-            test: 0,
-            destination: comparison,
-            span,
-        });
+        let test = operator.comparison_test().unwrap_or(0);
+        self.push_comparison(operator, test, first, second, result, comparison, span)?;
         let description = if let Some(description) = arguments.get(2) {
             self.lower_expression(description)?
         } else {

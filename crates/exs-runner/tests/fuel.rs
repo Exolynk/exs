@@ -25,6 +25,8 @@ const CONCAT_10_OBJECTS_FUEL: u64 = 261_596;
 const CONCAT_100_OBJECTS_FUEL: u64 = 2_508_381;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
 const INT_LOOP_1000_FUEL: u64 = 4_576_006;
+/// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
+const ASYNC_INT_LOOP_100_FUEL: u64 = 4_897_890;
 
 /// Script concatenating the `name` field of every supplied object.
 const CONCAT_SOURCE: &str = r#"
@@ -45,6 +47,19 @@ const INT_LOOP_SOURCE: &str = r#"
         while index < limit {
             total = total + index * 3 + 1;
             index = index + 1;
+        }
+        ret total;
+    }
+"#;
+
+/// Script whose `for` loop selects resumable lowering, exercising async comparisons.
+const ASYNC_INT_LOOP_SOURCE: &str = r#"
+    fn main(limit: Int) -> Int {
+        let total = 0;
+        for index in 0..limit {
+            if index < limit {
+                total = total + index * 3 + 1;
+            }
         }
         ret total;
     }
@@ -165,5 +180,17 @@ fn fuel_int_loop_1000() {
         &report,
         &ExsValue::Int(1_499_500),
         INT_LOOP_1000_FUEL,
+    );
+}
+
+/// Measures 100 iterations of a resumable `for` loop with a comparison and arithmetic.
+#[test]
+fn fuel_async_int_loop_100() {
+    let report = execute_report(ASYNC_INT_LOOP_SOURCE, &[ExsValue::Int(100)]);
+    assert_fuel(
+        "async_int_loop_100",
+        &report,
+        &ExsValue::Int(14_950),
+        ASYNC_INT_LOOP_100_FUEL,
     );
 }
