@@ -253,6 +253,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let Some(target) = targets.get(index) else {
             self.function.instruction(&Instruction::LocalGet(left));
             self.function.instruction(&Instruction::LocalGet(right));
+            // Built-in comparisons skip the intermediate Ordering value; both operands are
+            // already rooted locals, so the runtime call needs no extra spilling.
+            if let Some(test) = operator.comparison_test() {
+                self.function.instruction(&Instruction::I32Const(test));
+                return self.runtime_call("__exs_rt_compare_test", span);
+            }
             self.runtime_value_call(operator.runtime_export(), 2, span)?;
             return self.emit_operator_result(operator, span);
         };

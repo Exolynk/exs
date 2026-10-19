@@ -122,8 +122,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         let outcome = self.store_stack_value()?;
         self.function.instruction(&Instruction::LocalGet(outcome));
-        self.runtime_value_call("__exs_rt_is_error", 1, span)?;
-        self.runtime_value_call("__exs_rt_condition", 1, span)?;
+        self.runtime_call("__exs_rt_is_error", span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.enter_control()?;

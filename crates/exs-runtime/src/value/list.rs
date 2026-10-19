@@ -88,7 +88,7 @@ pub(crate) mod operations {
                 .elements
                 .get(index)
                 .copied()
-                .unwrap_or_else(|| runtime::allocate(RtValue::None)),
+                .unwrap_or_else(|| runtime::none_value()),
             _ => runtime::recoverable_error("TypeError", "get requires a List receiver", receiver),
         }
     }
@@ -175,7 +175,7 @@ pub(crate) mod operations {
                 );
             }
         }
-        runtime::allocate(RtValue::None)
+        runtime::none_value()
     }
 
     /// Returns a new shallow List in reverse element order.
@@ -206,7 +206,7 @@ pub(crate) mod operations {
                 );
             }
         };
-        runtime::allocate(RtValue::Bool(contains))
+        runtime::bool_value(contains)
     }
 
     /// Returns the first index of a matching List value, or None when it is absent.
@@ -323,7 +323,7 @@ pub(crate) mod operations {
         };
         match value {
             Some(value) => value,
-            None => runtime::allocate(RtValue::None),
+            None => runtime::none_value(),
         }
     }
 
@@ -353,7 +353,7 @@ pub(crate) mod operations {
                 );
             }
         };
-        runtime::allocate(RtValue::None)
+        runtime::none_value()
     }
 
     /// Removes and returns one List value at a zero-based index.
@@ -388,7 +388,7 @@ pub(crate) mod operations {
                 );
             }
         };
-        runtime::allocate(RtValue::None)
+        runtime::none_value()
     }
 
     /// Returns an optional List endpoint without exposing an index error for emptiness.
@@ -400,9 +400,7 @@ pub(crate) mod operations {
                 } else {
                     list.elements.first()
                 };
-                value
-                    .copied()
-                    .unwrap_or_else(|| runtime::allocate(RtValue::None))
+                value.copied().unwrap_or_else(|| runtime::none_value())
             }
             _ => runtime::recoverable_error(
                 "TypeError",
@@ -433,7 +431,7 @@ pub(crate) mod operations {
         };
         match index {
             Some(index) => length_value(index),
-            None => runtime::allocate(RtValue::None),
+            None => runtime::none_value(),
         }
     }
 

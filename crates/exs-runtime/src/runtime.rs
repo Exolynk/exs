@@ -110,6 +110,37 @@ pub(crate) fn allocate(value: RtValue) -> ValueRef {
     unsafe { ValueRef::from_runtime_index(next_index) }
 }
 
+/// Returns the shared immutable `None` value, allocating it on first use.
+pub(crate) fn none_value() -> ValueRef {
+    if let Some(value) = unsafe { runtime() }.shared_values.none {
+        return value;
+    }
+    let value = allocate(RtValue::None);
+    unsafe { runtime() }.shared_values.none = Some(value);
+    value
+}
+
+/// Returns the shared immutable Bool value, allocating it on first use.
+pub(crate) fn bool_value(flag: bool) -> ValueRef {
+    let shared = unsafe { runtime() }.shared_values;
+    let cached = if flag {
+        shared.true_value
+    } else {
+        shared.false_value
+    };
+    if let Some(value) = cached {
+        return value;
+    }
+    let value = allocate(RtValue::Bool(flag));
+    let shared = &mut unsafe { runtime() }.shared_values;
+    if flag {
+        shared.true_value = Some(value);
+    } else {
+        shared.false_value = Some(value);
+    }
+    value
+}
+
 /// Allocates one tagged enum Object after validating its runtime constructor arguments.
 pub(crate) fn enum_new(
     type_id: u32,
@@ -357,7 +388,7 @@ pub(crate) fn input_argument(arguments: ValueRef, index: i32) -> ValueRef {
         .elements
         .get(index)
         .copied()
-        .unwrap_or_else(|| allocate(RtValue::None))
+        .unwrap_or_else(|| none_value())
 }
 
 /// Creates the fatal Error returned when the entry receives too many arguments.
@@ -913,11 +944,7 @@ fn ready_host_error(kind: &str, message: &str, data: ValueRef) -> i32 {
 
 /// Stores one recoverable boundary-serialization Error as the ready result of a host call.
 fn ready_host_serialization_error(error: BoundarySerializationError) -> i32 {
-    ready_host_error(
-        "SerializationError",
-        error.message(),
-        allocate(RtValue::None),
-    )
+    ready_host_error("SerializationError", error.message(), none_value())
 }
 
 /// Returns the active root scheduler or traps outside resumable root execution.

@@ -103,7 +103,7 @@ pub(crate) mod operations {
         };
         match result {
             Some(value) => value,
-            None => runtime::allocate(RtValue::None),
+            None => runtime::none_value(),
         }
     }
 
@@ -173,7 +173,7 @@ pub(crate) mod operations {
                 );
             }
         };
-        runtime::allocate(RtValue::Bool(contains))
+        runtime::bool_value(contains)
     }
 
     /// Removes one Object property and returns its previous value or Null.
@@ -198,7 +198,7 @@ pub(crate) mod operations {
         };
         match removed {
             Some(value) => value,
-            None => runtime::allocate(RtValue::None),
+            None => runtime::none_value(),
         }
     }
 
@@ -260,7 +260,7 @@ pub(crate) mod operations {
                 );
             }
         }
-        runtime::allocate(RtValue::None)
+        runtime::none_value()
     }
 
     /// Returns key-value pair Lists in Object insertion order.

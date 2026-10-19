@@ -14,15 +14,17 @@ use exs_runner::{CompilerStrategy, ExecutionCancellation, ExecutionReport, Serve
 use support::{block_on, compile_source};
 
 /// Fuel ceiling for an empty function, which measures pure ABI and runtime overhead.
-const EMPTY_MAIN_FUEL: u64 = 69_830;
+const EMPTY_MAIN_FUEL: u64 = 69_838;
 /// Fuel ceiling for a show function that only returns `true`.
-const SHOW_TRUE_FUEL: u64 = 69_845;
+const SHOW_TRUE_FUEL: u64 = 69_862;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 84_397;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 80_630;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 263_753;
+const CONCAT_10_OBJECTS_FUEL: u64 = 261_596;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 2_661_752;
+const CONCAT_100_OBJECTS_FUEL: u64 = 2_508_381;
+/// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
+const INT_LOOP_1000_FUEL: u64 = 4_576_006;
 
 /// Script concatenating the `name` field of every supplied object.
 const CONCAT_SOURCE: &str = r#"
@@ -32,6 +34,19 @@ const CONCAT_SOURCE: &str = r#"
             output = output + item.name + ";";
         }
         ret output;
+    }
+"#;
+
+/// Script summing integer arithmetic in a counted `while` loop.
+const INT_LOOP_SOURCE: &str = r#"
+    fn main(limit: Int) -> Int {
+        let total = 0;
+        let index = 0;
+        while index < limit {
+            total = total + index * 3 + 1;
+            index = index + 1;
+        }
+        ret total;
     }
 "#;
 
@@ -138,5 +153,17 @@ fn fuel_concat_100_objects() {
         &report,
         &expected_concat(100),
         CONCAT_100_OBJECTS_FUEL,
+    );
+}
+
+/// Measures 1000 iterations of a loop with a comparison, additions and a multiplication.
+#[test]
+fn fuel_int_loop_1000() {
+    let report = execute_report(INT_LOOP_SOURCE, &[ExsValue::Int(1000)]);
+    assert_fuel(
+        "int_loop_1000",
+        &report,
+        &ExsValue::Int(1_499_500),
+        INT_LOOP_1000_FUEL,
     );
 }

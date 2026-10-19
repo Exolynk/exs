@@ -67,34 +67,105 @@ fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
 
 /// Tests two runtime values for equality.
 pub(crate) fn equal(left: ValueRef, right: ValueRef) -> ValueRef {
-    runtime::allocate(RtValue::Bool(values_equal(left, right)))
+    runtime::bool_value(values_equal(left, right))
 }
 
-/// Compares two runtime values and returns the compiler-owned Ordering enum.
-pub(crate) fn compare(left: ValueRef, right: ValueRef) -> ValueRef {
-    let ordering = match (runtime::value(left), runtime::value(right)) {
+/// One built-in comparison outcome before it becomes a source-visible `std::Ordering` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComparisonOrdering {
+    /// The left value orders before the right value.
+    Less,
+    /// Both values are equal.
+    Equal,
+    /// The left value orders after the right value.
+    Greater,
+    /// The values have no defined order.
+    Unordered,
+}
+
+impl ComparisonOrdering {
+    /// Returns the matching `std::Ordering` variant name.
+    const fn variant(self) -> &'static str {
+        match self {
+            Self::Less => "Less",
+            Self::Equal => "Equal",
+            Self::Greater => "Greater",
+            Self::Unordered => "Unordered",
+        }
+    }
+
+    /// Parses one `std::Ordering` variant name.
+    fn from_variant(variant: &str) -> Option<Self> {
+        match variant {
+            "Less" => Some(Self::Less),
+            "Equal" => Some(Self::Equal),
+            "Greater" => Some(Self::Greater),
+            "Unordered" => Some(Self::Unordered),
+            _ => None,
+        }
+    }
+
+    /// Applies one compiler comparison test code, or returns the TypeError message.
+    fn test(self, test: i32) -> Result<bool, &'static str> {
+        match (self, test) {
+            (Self::Equal, 0)
+            | (Self::Unordered | Self::Less | Self::Greater, 1)
+            | (Self::Less, 2 | 3)
+            | (Self::Equal, 3 | 5)
+            | (Self::Greater, 4 | 5) => Ok(true),
+            (Self::Unordered | Self::Less | Self::Greater, 0)
+            | (Self::Equal, 1 | 2 | 4)
+            | (Self::Less, 4 | 5)
+            | (Self::Greater, 2 | 3) => Ok(false),
+            (Self::Unordered, 2..=5) => Err("ordering comparison requires comparable values"),
+            _ => Err("invalid Ordering value or comparison operator"),
+        }
+    }
+}
+
+/// Orders two built-in runtime values.
+fn builtin_ordering(left: ValueRef, right: ValueRef) -> ComparisonOrdering {
+    match (runtime::value(left), runtime::value(right)) {
         (left, right) if numeric::is_numeric(left) && numeric::is_numeric(right) => {
             match (numeric::number_of(left), numeric::number_of(right)) {
                 (Some(left), Some(right)) => match numeric::numbers_comparison(left, right) {
-                    numeric::Comparison::Less => "Less",
-                    numeric::Comparison::Equal => "Equal",
-                    numeric::Comparison::Greater => "Greater",
-                    numeric::Comparison::Unordered => "Unordered",
+                    numeric::Comparison::Less => ComparisonOrdering::Less,
+                    numeric::Comparison::Equal => ComparisonOrdering::Equal,
+                    numeric::Comparison::Greater => ComparisonOrdering::Greater,
+                    numeric::Comparison::Unordered => ComparisonOrdering::Unordered,
                 },
-                _ => "Unordered",
+                _ => ComparisonOrdering::Unordered,
             }
         }
         (RtValue::String(left), RtValue::String(right)) => {
             match left.as_str().cmp(right.as_str()) {
-                core::cmp::Ordering::Less => "Less",
-                core::cmp::Ordering::Equal => "Equal",
-                core::cmp::Ordering::Greater => "Greater",
+                core::cmp::Ordering::Less => ComparisonOrdering::Less,
+                core::cmp::Ordering::Equal => ComparisonOrdering::Equal,
+                core::cmp::Ordering::Greater => ComparisonOrdering::Greater,
             }
         }
-        _ if values_equal(left, right) => "Equal",
-        _ => "Unordered",
-    };
-    ordering_value(ordering)
+        _ if values_equal(left, right) => ComparisonOrdering::Equal,
+        _ => ComparisonOrdering::Unordered,
+    }
+}
+
+/// Compares two runtime values and returns the compiler-owned Ordering enum.
+pub(crate) fn compare(left: ValueRef, right: ValueRef) -> ValueRef {
+    ordering_value(builtin_ordering(left, right).variant())
+}
+
+/// Compares two built-in runtime values and applies one comparison test without an Ordering.
+///
+/// Produces the same Bool or TypeError as `compare` followed by `ordering_test`.
+pub(crate) fn compare_test(left: ValueRef, right: ValueRef, test: i32) -> ValueRef {
+    let ordering = builtin_ordering(left, right);
+    match ordering.test(test) {
+        Ok(result) => runtime::bool_value(result),
+        Err(message) => {
+            let data = ordering_value(ordering.variant());
+            runtime::recoverable_error("TypeError", message, data)
+        }
+    }
 }
 
 /// Interprets one compiler-owned Ordering value for a source comparison operator.
@@ -106,7 +177,10 @@ pub(crate) fn ordering_test(ordering: ValueRef, test: i32) -> ValueRef {
                     data.type_identity.as_ref() == STANDARD_ORDERING_TYPE_IDENTITY
                 }) =>
         {
-            object.enum_data.as_ref().map(|data| data.variant.as_ref())
+            object
+                .enum_data
+                .as_ref()
+                .map(|data| ComparisonOrdering::from_variant(data.variant.as_ref()))
         }
         _ => None,
     };
@@ -117,33 +191,14 @@ pub(crate) fn ordering_test(ordering: ValueRef, test: i32) -> ValueRef {
             ordering,
         );
     };
-    let result = match (variant, test) {
-        ("Equal", 0) => true,
-        ("Unordered", 1) => true,
-        ("Less" | "Greater", 1) => true,
-        ("Less", 2 | 3) => true,
-        ("Equal", 3 | 5) => true,
-        ("Greater", 4 | 5) => true,
-        ("Unordered", 0) => false,
-        ("Unordered", 2..=5) => {
-            return runtime::recoverable_error(
-                "TypeError",
-                "ordering comparison requires comparable values",
-                ordering,
-            );
-        }
-        ("Less" | "Greater", 0) | ("Equal", 1 | 2 | 4) | ("Less", 4 | 5) | ("Greater", 2 | 3) => {
-            false
-        }
-        _ => {
-            return runtime::recoverable_error(
-                "TypeError",
-                "invalid Ordering value or comparison operator",
-                ordering,
-            );
-        }
+    let result = match variant {
+        Some(variant) => variant.test(test),
+        None => Err("invalid Ordering value or comparison operator"),
     };
-    runtime::allocate(RtValue::Bool(result))
+    match result {
+        Ok(result) => runtime::bool_value(result),
+        Err(message) => runtime::recoverable_error("TypeError", message, ordering),
+    }
 }
 
 /// Returns whether two runtime values satisfy ExS equality semantics without allocating a Bool.
@@ -181,7 +236,7 @@ fn ordering_value(variant: &str) -> ValueRef {
 /// Tests two runtime values for inequality.
 pub(crate) fn not_equal(left: ValueRef, right: ValueRef) -> ValueRef {
     let equal = equal(left, right);
-    runtime::allocate(RtValue::Bool(!numeric::boolean(equal)))
+    runtime::bool_value(!numeric::boolean(equal))
 }
 
 /// Appends a value through the receiver's runtime collection dispatch.
@@ -491,9 +546,9 @@ fn bytes_contains(receiver: ValueRef, needle: ValueRef) -> ValueRef {
             );
         }
     };
-    runtime::allocate(RtValue::Bool(
+    runtime::bool_value(
         needle.is_empty() || value.windows(needle.len()).any(|window| window == needle),
-    ))
+    )
 }
 
 /// Applies one binary Bytes predicate after validating both operands.
@@ -523,7 +578,7 @@ fn bytes_relation(
             );
         }
     };
-    runtime::allocate(RtValue::Bool(predicate(value, other)))
+    runtime::bool_value(predicate(value, other))
 }
 
 /// Repeats one Bytes value a non-negative number of times.
@@ -940,7 +995,7 @@ fn string_relation(
             );
         }
     };
-    runtime::allocate(RtValue::Bool(predicate(value, other)))
+    runtime::bool_value(predicate(value, other))
 }
 
 /// Trims Unicode whitespace from both ends of one String.
@@ -1366,7 +1421,7 @@ pub(crate) fn is_empty(value: ValueRef) -> ValueRef {
             );
         }
     };
-    runtime::allocate(RtValue::Bool(empty))
+    runtime::bool_value(empty)
 }
 
 /// Returns the absolute value of one Int when it fits in the ExS signed 64-bit range.
@@ -1429,7 +1484,7 @@ fn integer_signum(receiver: ValueRef) -> ValueRef {
 /// Returns whether one Int is evenly divisible by two.
 fn integer_is_even(receiver: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Int(value) => runtime::allocate(RtValue::Bool(value % 2 == 0)),
+        RtValue::Int(value) => runtime::bool_value(value % 2 == 0),
         _ => runtime::recoverable_error("TypeError", "is_even requires an Int receiver", receiver),
     }
 }
@@ -1437,7 +1492,7 @@ fn integer_is_even(receiver: ValueRef) -> ValueRef {
 /// Returns whether one Int is not evenly divisible by two.
 fn integer_is_odd(receiver: ValueRef) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Int(value) => runtime::allocate(RtValue::Bool(value % 2 != 0)),
+        RtValue::Int(value) => runtime::bool_value(value % 2 != 0),
         _ => runtime::recoverable_error("TypeError", "is_odd requires an Int receiver", receiver),
     }
 }
@@ -1740,7 +1795,7 @@ fn float_pair(
 /// Tests one Float predicate after validating the receiver.
 fn float_predicate(receiver: ValueRef, predicate: fn(f64) -> bool, name: &str) -> ValueRef {
     match runtime::value(receiver) {
-        RtValue::Float(value) => runtime::allocate(RtValue::Bool(predicate(*value))),
+        RtValue::Float(value) => runtime::bool_value(predicate(*value)),
         _ => runtime::recoverable_error(
             "TypeError",
             &format!("{name} requires a Float receiver"),
@@ -1799,7 +1854,7 @@ pub(crate) fn error_cause(value: ValueRef) -> ValueRef {
             );
         }
     };
-    cause.unwrap_or_else(|| runtime::allocate(RtValue::None))
+    cause.unwrap_or_else(|| runtime::none_value())
 }
 
 /// Dispatches a statically named runtime member method.

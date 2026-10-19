@@ -122,6 +122,7 @@ fn collect_roots() -> Vec<ValueRef> {
         roots.extend(execution.roots());
     }
     roots.extend(state.temporary_roots.iter().copied());
+    roots.extend(state.shared_values.iter());
     roots
 }
 

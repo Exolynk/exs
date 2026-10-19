@@ -512,7 +512,6 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.get_slot(value, span)?;
         self.call_runtime("__exs_rt_is_error", span)?;
-        self.call_runtime("__exs_rt_condition", span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.complete(value, span)?;

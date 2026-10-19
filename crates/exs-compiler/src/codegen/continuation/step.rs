@@ -509,7 +509,6 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.set_slot(*destination, *span)?;
                 self.get_slot(*destination, *span)?;
                 self.call_runtime("__exs_rt_is_error", *span)?;
-                self.call_runtime("__exs_rt_condition", *span)?;
                 self.function
                     .instruction(&Instruction::If(BlockType::Empty));
                 self.complete(*destination, *span)?;
@@ -590,7 +589,6 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             } => {
                 self.get_slot(*handle, *span)?;
                 self.call_runtime("__exs_rt_is_error", *span)?;
-                self.call_runtime("__exs_rt_condition", *span)?;
                 self.function
                     .instruction(&Instruction::If(BlockType::Empty));
                 self.get_slot(*handle, *span)?;
@@ -1364,7 +1362,6 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.get_slot(value, span)?;
         self.call_runtime("__exs_rt_is_error", span)?;
-        self.call_runtime("__exs_rt_condition", span)?;
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.get_slot(value, span)?;

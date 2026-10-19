@@ -98,6 +98,37 @@ pub(crate) struct RuntimeState {
     pub(crate) literal_buffer: Vec<u8>,
     /// CBOR bytes holding the completed root result.
     pub(crate) result_buffer: Vec<u8>,
+    /// Shared immutable `None`, `false` and `true` values, allocated on first use.
+    pub(crate) shared_values: SharedValues,
+}
+
+/// Immutable values shared by every use site instead of allocating one heap slot per result.
+#[derive(Clone, Copy)]
+pub(crate) struct SharedValues {
+    /// The shared `None` value.
+    pub(crate) none: Option<ValueRef>,
+    /// The shared `false` value.
+    pub(crate) false_value: Option<ValueRef>,
+    /// The shared `true` value.
+    pub(crate) true_value: Option<ValueRef>,
+}
+
+impl SharedValues {
+    /// Creates an empty set whose values are allocated lazily.
+    const fn new() -> Self {
+        Self {
+            none: None,
+            false_value: None,
+            true_value: None,
+        }
+    }
+
+    /// Returns every shared value allocated so far.
+    pub(crate) fn iter(self) -> impl Iterator<Item = ValueRef> {
+        [self.none, self.false_value, self.true_value]
+            .into_iter()
+            .flatten()
+    }
 }
 
 impl RuntimeState {
@@ -122,6 +153,7 @@ impl RuntimeState {
             input_buffer: Vec::new(),
             literal_buffer: Vec::new(),
             result_buffer: Vec::new(),
+            shared_values: SharedValues::new(),
         }
     }
 }

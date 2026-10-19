@@ -310,7 +310,7 @@ fn decode_enum_variant(value: ValueRef, schema: &EnumSchema, variant: &VariantSc
     for (index, field) in variant.fields.iter().enumerate() {
         let raw = object_field(value, &field.name)
             .or_else(|| enum_tuple_field(value, index))
-            .unwrap_or_else(|| runtime::allocate(RtValue::None));
+            .unwrap_or_else(|| runtime::none_value());
         let decoded = decode_contract(raw, &field.contract);
         if matches!(runtime::value(decoded), RtValue::Error(_)) {
             gc::restore_temporary_roots(checkpoint);
@@ -341,8 +341,7 @@ fn decode_object(value: ValueRef, schemas: &[ObjectSchema]) -> Option<ValueRef> 
     let checkpoint = gc::temporary_root_checkpoint();
     let mut entries = Vec::with_capacity(schema.fields.len());
     for field in &schema.fields {
-        let raw =
-            object_field(value, &field.name).unwrap_or_else(|| runtime::allocate(RtValue::None));
+        let raw = object_field(value, &field.name).unwrap_or_else(|| runtime::none_value());
         let decoded = decode_contract(raw, &field.contract);
         if matches!(runtime::value(decoded), RtValue::Error(_)) {
             gc::restore_temporary_roots(checkpoint);

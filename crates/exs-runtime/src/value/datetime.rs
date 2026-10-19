@@ -31,7 +31,7 @@ pub(crate) fn parse_rfc3339(value: ValueRef) -> ValueRef {
         runtime::allocate(RtValue::Int(unix_seconds)),
         runtime::allocate(RtValue::Int(i64::from(nanoseconds))),
         runtime::allocate(RtValue::Int(i64::from(offset))),
-        runtime::allocate(RtValue::None),
+        runtime::none_value(),
     ];
     for value in values {
         gc::push_temporary_root(value);

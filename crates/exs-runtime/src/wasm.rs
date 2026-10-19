@@ -17,7 +17,7 @@ use crate::value::{self, RtValue, RuntimeList};
 /// Allocates and returns the singular None value.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_none_new() -> ValueRef {
-    runtime::allocate(RtValue::None)
+    runtime::none_value()
 }
 
 /// Starts one fresh root execution scheduler context.
@@ -38,13 +38,10 @@ pub extern "C" fn __exs_rt_execution_cancel() {
     runtime::execution_cancel();
 }
 
-/// Returns whether one runtime value is a language Error.
+/// Returns whether one runtime value is a language Error as a Wasm condition.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> ValueRef {
-    runtime::allocate(RtValue::Bool(matches!(
-        runtime::value(value),
-        RtValue::Error(_)
-    )))
+pub extern "C" fn __exs_rt_is_error(value: ValueRef) -> i32 {
+    i32::from(matches!(runtime::value(value), RtValue::Error(_)))
 }
 
 /// Returns whether one runtime value is a fatal language Error.
@@ -117,11 +114,7 @@ pub extern "C" fn __exs_rt_enum_matches(
     type_identity: ValueRef,
     variant: ValueRef,
 ) -> ValueRef {
-    runtime::allocate(RtValue::Bool(runtime::enum_matches(
-        value,
-        type_identity,
-        variant,
-    )))
+    runtime::bool_value(runtime::enum_matches(value, type_identity, variant))
 }
 
 /// Returns one enum payload field by zero-based declaration index.
@@ -203,7 +196,7 @@ pub extern "C" fn __exs_rt_assert(condition: ValueRef, description: ValueRef) ->
         }
     };
     match runtime::value(condition) {
-        RtValue::Bool(true) => runtime::allocate(RtValue::None),
+        RtValue::Bool(true) => runtime::none_value(),
         RtValue::Bool(false) => runtime::fatal_error("AssertionFailed", &description, condition),
         _ => runtime::fatal_error(
             "TypeError",
@@ -232,7 +225,7 @@ pub extern "C" fn __exs_rt_assert_eq(
         }
     };
     match runtime::value(condition) {
-        RtValue::Bool(true) => return runtime::allocate(RtValue::None),
+        RtValue::Bool(true) => return runtime::none_value(),
         RtValue::Bool(false) => {}
         _ => {
             return runtime::fatal_error(
@@ -333,8 +326,8 @@ pub extern "C" fn __exs_rt_frame_pop() {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_bool_new(value: i32) -> ValueRef {
     match value {
-        0 => runtime::allocate(RtValue::Bool(false)),
-        1 => runtime::allocate(RtValue::Bool(true)),
+        0 => runtime::bool_value(false),
+        1 => runtime::bool_value(true),
         _ => runtime::trap(),
     }
 }
@@ -397,6 +390,12 @@ pub extern "C" fn __exs_rt_ne(left: ValueRef, right: ValueRef) -> ValueRef {
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_compare(left: ValueRef, right: ValueRef) -> ValueRef {
     value::operations::compare(left, right)
+}
+
+/// Compares two built-in runtime values and applies one comparison test without an Ordering.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_compare_test(left: ValueRef, right: ValueRef, test: i32) -> ValueRef {
+    value::operations::compare_test(left, right, test)
 }
 
 /// Interprets one Ordering value for a compiler-selected source comparison operator.
@@ -800,7 +799,7 @@ pub extern "C" fn __exs_rt_closure_is_variadic(closure: ValueRef) -> i32 {
 /// Creates the recoverable Error returned when a dynamic closure receives the wrong arity.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_closure_arity_error() -> ValueRef {
-    let data = runtime::allocate(RtValue::None);
+    let data = runtime::none_value();
     runtime::recoverable_error(
         "ArityError",
         "closure received an incorrect number of arguments",

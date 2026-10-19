@@ -207,7 +207,7 @@ pub(crate) fn compare(left: ValueRef, right: ValueRef, ordering: Ordering) -> Va
             Ordering::GreaterOrEqual => as_float(left) >= as_float(right),
         },
     };
-    runtime::allocate(RtValue::Bool(result))
+    runtime::bool_value(result)
 }
 
 /// Compares two already-normalized numeric values.
@@ -235,7 +235,7 @@ pub(crate) fn numbers_equal(left: Number, right: Number) -> bool {
 /// Negates one runtime Boolean value.
 pub(crate) fn not(value: ValueRef) -> ValueRef {
     match runtime::value(value) {
-        RtValue::Bool(result) => runtime::allocate(RtValue::Bool(!result)),
+        RtValue::Bool(result) => runtime::bool_value(!result),
         _ => runtime::recoverable_error("TypeError", "! requires a Bool value", value),
     }
 }

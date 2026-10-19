@@ -27,7 +27,7 @@ pub(crate) fn deep_clone(source: ValueRef) -> ValueRef {
         Err(()) => {
             // Do not expose the source graph as Error data: it contains the unsupported value
             // and therefore might not be representable across the CBOR host boundary.
-            let data = runtime::allocate(RtValue::None);
+            let data = runtime::none_value();
             runtime::recoverable_error(
                 "CloneError",
                 "clone does not support a reachable host-owned runtime resource",
