@@ -2,6 +2,20 @@
 
 use exs_abi::{TYPE_ANY, TYPE_BOOL, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_STRING};
 
+use crate::ast::Expression;
+
+/// Returns whether a for-loop iterable builds a fresh unit-step Range no source code can reach.
+///
+/// Covers `start..end`, `start..=end` and the `Range::until` / `Range::through` calls they
+/// desugar to. Such a Range can be iterated without writing its fields back.
+pub(crate) fn is_unshared_range(expression: &Expression<'_>) -> bool {
+    matches!(
+        expression,
+        Expression::StaticMethodCall { type_name, method, .. }
+            if type_name.name == "Range" && matches!(method.name.as_str(), "until" | "through")
+    )
+}
+
 /// Canonical source name for the protocol invoked by the `+` operator.
 pub(crate) const ADD_TRAIT: &str = "Add";
 

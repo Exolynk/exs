@@ -775,10 +775,17 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             Operation::IterSnapshot {
                 iterable,
                 destination,
+                unshared_range,
                 span,
             } => {
                 self.get_slot(*iterable, *span)?;
-                self.call_runtime("__exs_rt_iter_snapshot", *span)?;
+                if let Some(range_type_id) = unshared_range {
+                    self.function
+                        .instruction(&Instruction::I32Const(*range_type_id));
+                    self.call_runtime("__exs_rt_iter_range_snapshot", *span)?;
+                } else {
+                    self.call_runtime("__exs_rt_iter_snapshot", *span)?;
+                }
                 self.set_slot(*destination, *span)?;
                 self.complete_if_error(*destination, *span)?;
                 self.ready(next, *span)?;

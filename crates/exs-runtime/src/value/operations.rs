@@ -1312,6 +1312,7 @@ fn builtin_iterator_item(receiver: ValueRef) -> Option<Option<ValueRef>> {
             }
         }
         Value::Iterator(iterator) => match iterator {
+            RuntimeIterator::Range { .. } => native_range_next(receiver),
             RuntimeIterator::String { source, next_byte } => {
                 let source = *source;
                 let next_byte = *next_byte;
@@ -1417,6 +1418,116 @@ struct RangeState {
     inclusive: bool,
     /// Whether the Range is exhausted.
     done: bool,
+    /// Entry indexes of the `current` and `done` fields, which `range_next` rewrites.
+    slots: RangeSlots,
+}
+
+/// Entry indexes of the mutable prelude Range fields inside one Object.
+#[derive(Clone, Copy)]
+struct RangeSlots {
+    /// Index of the `current` entry.
+    current: usize,
+    /// Index of the `done` entry.
+    done: usize,
+}
+
+/// Outcome of advancing one Range cursor by a single step.
+enum RangeAdvance {
+    /// The cursor has passed its bound and must be marked done.
+    Exhausted,
+    /// The current item is the bound itself and is the last item.
+    Last,
+    /// The current item is yielded and the cursor moves to the given value.
+    Next(i64),
+    /// Moving the cursor would overflow, which the prelude reports as an error.
+    Overflow,
+}
+
+/// Entry index of the prelude Range `current` field in declaration order.
+const RANGE_CURRENT: usize = 0;
+/// Entry index of the prelude Range `end` field.
+const RANGE_END: usize = 1;
+/// Entry index of the prelude Range `step` field.
+const RANGE_STEP: usize = 2;
+/// Entry index of the prelude Range `inclusive` field.
+const RANGE_INCLUSIVE: usize = 3;
+/// Entry index of the prelude Range `done` field.
+const RANGE_DONE: usize = 4;
+
+/// Mirrors one step of the prelude `Range::next` on plain Int fields that are not yet done.
+const fn range_advance(current: i64, end: i64, step: i64, inclusive: bool) -> RangeAdvance {
+    let exhausted = match (step > 0, inclusive) {
+        (true, true) => current > end,
+        (true, false) => current >= end,
+        (false, true) => current < end,
+        (false, false) => current <= end,
+    };
+    if exhausted {
+        RangeAdvance::Exhausted
+    } else if current == end {
+        RangeAdvance::Last
+    } else {
+        match current.checked_add(step) {
+            Some(next) => RangeAdvance::Next(next),
+            None => RangeAdvance::Overflow,
+        }
+    }
+}
+
+/// Creates the native for-loop iterator of a Range temporary that no source code can observe.
+///
+/// The compiler only uses this for `start..end` and `start..=end` iterables, whose Range
+/// object is unreachable after the snapshot, so its fields need no write-back. Anything that
+/// is not a well-formed unit-step Range takes the generic `iter_snapshot` path instead.
+pub(crate) fn iter_range_snapshot(iterable: ValueRef, range_type_id: i32) -> ValueRef {
+    let state = u32::try_from(range_type_id)
+        .ok()
+        .and_then(|range_type_id| range_state(iterable, range_type_id));
+    match state {
+        // A unit step toward the bound can never overflow, so no prelude error is lost.
+        Some(state) if state.step.unsigned_abs() == 1 => {
+            runtime::allocate(RtValue::Iterator(Box::new(RuntimeIterator::Range {
+                current: state.current,
+                end: state.end,
+                step: state.step,
+                inclusive: state.inclusive,
+                done: state.done,
+            })))
+        }
+        _ => iter_snapshot(iterable),
+    }
+}
+
+/// Advances one native Range iterator, returning the yielded Int or `None` once exhausted.
+fn native_range_next(receiver: ValueRef) -> Option<ValueRef> {
+    let Some(RtValue::Iterator(iterator)) = runtime::value_mut(receiver) else {
+        crate::runtime::trap();
+    };
+    let RuntimeIterator::Range {
+        current,
+        end,
+        step,
+        inclusive,
+        done,
+    } = iterator.as_mut()
+    else {
+        crate::runtime::trap();
+    };
+    if *done {
+        return None;
+    }
+    let item = *current;
+    match range_advance(item, *end, *step, *inclusive) {
+        RangeAdvance::Exhausted => {
+            *done = true;
+            return None;
+        }
+        RangeAdvance::Last => *done = true,
+        RangeAdvance::Next(next) => *current = next,
+        // `iter_range_snapshot` only creates unit-step iterators, which never overflow.
+        RangeAdvance::Overflow => crate::runtime::trap(),
+    }
+    Some(runtime::allocate(RtValue::Int(item)))
 }
 
 /// Mirrors the prelude `Range::next` natively, including its field mutations.
@@ -1428,28 +1539,28 @@ fn range_next(receiver: ValueRef, range_type_id: u32) -> Option<Option<ValueRef>
     if state.done {
         return Some(None);
     }
-    let exhausted = match (state.step > 0, state.inclusive) {
-        (true, true) => state.current > state.end,
-        (true, false) => state.current >= state.end,
-        (false, true) => state.current < state.end,
-        (false, false) => state.current <= state.end,
-    };
-    if exhausted {
-        set_object_field(receiver, "done", runtime::bool_value(true));
-        return Some(None);
-    }
-    if state.current == state.end {
-        set_object_field(receiver, "done", runtime::bool_value(true));
-    } else {
-        let next = state.current.checked_add(state.step)?;
-        // The old current value stays reachable through the Range until it is replaced.
-        let next = runtime::allocate(RtValue::Int(next));
-        set_object_field(receiver, "current", next);
+    match range_advance(state.current, state.end, state.step, state.inclusive) {
+        RangeAdvance::Exhausted => {
+            set_object_entry(receiver, state.slots.done, runtime::bool_value(true));
+            return Some(None);
+        }
+        RangeAdvance::Last => {
+            set_object_entry(receiver, state.slots.done, runtime::bool_value(true));
+        }
+        RangeAdvance::Next(next) => {
+            // The old current value stays reachable through the Range until it is replaced.
+            let next = runtime::allocate(RtValue::Int(next));
+            set_object_entry(receiver, state.slots.current, next);
+        }
+        RangeAdvance::Overflow => return None,
     }
     Some(Some(state.current_ref))
 }
 
 /// Reads the fields of one prelude Range object, or `None` when it is not well formed.
+///
+/// Objects built by the prelude keep the declaration order, which is checked first with
+/// fixed-width key comparisons; reordered or extended objects fall back to a key scan.
 fn range_state(receiver: ValueRef, range_type_id: u32) -> Option<RangeState> {
     let Value::Object(object) = runtime::value(receiver) else {
         return None;
@@ -1457,40 +1568,67 @@ fn range_state(receiver: ValueRef, range_type_id: u32) -> Option<RangeState> {
     if object.type_id != Some(range_type_id) || object.enum_data.is_some() {
         return None;
     }
-    let field = |name: &str| {
-        object
-            .entries
-            .iter()
-            .find_map(|(key, value)| (key.as_ref() == name).then_some(*value))
+    let entries = object.entries.as_slice();
+    let slots = match entries {
+        [(current, _), (end, _), (step, _), (inclusive, _), (done, _)]
+            if key_is(current, b"current")
+                && key_is(end, b"end")
+                && key_is(step, b"step")
+                && key_is(inclusive, b"inclusive")
+                && key_is(done, b"done") =>
+        {
+            [
+                RANGE_CURRENT,
+                RANGE_END,
+                RANGE_STEP,
+                RANGE_INCLUSIVE,
+                RANGE_DONE,
+            ]
+        }
+        _ => {
+            let position = |name: &str| entries.iter().position(|(key, _)| key.as_ref() == name);
+            [
+                position("current")?,
+                position("end")?,
+                position("step")?,
+                position("inclusive")?,
+                position("done")?,
+            ]
+        }
     };
-    let int = |name: &str| match runtime::value(field(name)?) {
+    let field = |index: usize| entries.get(index).map(|(_, value)| *value);
+    let int = |index: usize| match runtime::value(field(index)?) {
         Value::Int(value) => Some(value),
         _ => None,
     };
-    let boolean = |name: &str| match runtime::value(field(name)?) {
+    let boolean = |index: usize| match runtime::value(field(index)?) {
         Value::Bool(value) => Some(value),
         _ => None,
     };
+    let [current, end, step, inclusive, done] = slots;
+    let current_ref = field(current)?;
     Some(RangeState {
-        current_ref: field("current")?,
-        current: int("current")?,
-        end: int("end")?,
-        step: int("step")?,
-        inclusive: boolean("inclusive")?,
-        done: boolean("done")?,
+        current_ref,
+        current: int(current)?,
+        end: int(end)?,
+        step: int(step)?,
+        inclusive: boolean(inclusive)?,
+        done: boolean(done)?,
+        slots: RangeSlots { current, done },
     })
 }
 
-/// Replaces one existing Object field value in place.
-fn set_object_field(receiver: ValueRef, name: &str, value: ValueRef) {
+/// Compares one Object key with a short constant name without a `memcmp` call.
+fn key_is<const N: usize>(key: &str, expected: &[u8; N]) -> bool {
+    <&[u8; N]>::try_from(key.as_bytes()).is_ok_and(|key| key == expected)
+}
+
+/// Replaces the value of one existing Object entry in place.
+fn set_object_entry(receiver: ValueRef, index: usize, value: ValueRef) {
     let Some(RtValue::Object(object)) = runtime::value_mut(receiver) else {
         crate::runtime::trap();
     };
-    match object
-        .entries
-        .iter_mut()
-        .find(|(key, _)| key.as_ref() == name)
-    {
+    match object.entries.get_mut(index) {
         Some((_, slot)) => *slot = value,
         None => crate::runtime::trap(),
     }

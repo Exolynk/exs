@@ -151,7 +151,7 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
             }
         }
         RtValue::List(list) => worklist.extend(list.elements.iter().copied()),
-        RtValue::Iterator(iterator) => worklist.push(iterator.source()),
+        RtValue::Iterator(iterator) => worklist.extend(iterator.source()),
         RtValue::Object(object) => {
             worklist.extend(object.entries.iter().map(|(_, value)| *value));
             if let Some(enum_data) = &object.enum_data {

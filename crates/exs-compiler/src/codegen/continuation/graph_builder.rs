@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::ast::{AssignmentTarget, Expression, Statement};
 use crate::codegen::diagnostics;
 use crate::codegen::function::FunctionSignature;
+use crate::codegen::standard::is_unshared_range;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::graph::{
@@ -276,19 +277,21 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         body: &'function crate::ast::Block<'source>,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        let range_type_id = self
+            .types
+            .get("Range")
+            .map_or(-1, |range| range.id.cast_signed());
+        let unshared_range = is_unshared_range(iterable).then_some(range_type_id);
         let iterable = self.lower_expression(iterable)?;
         let snapshot = self.temporary(span)?;
         self.operations.push(Operation::IterSnapshot {
             iterable,
             destination: snapshot,
+            unshared_range,
             span,
         });
         let condition_start = self.operations.len();
         let item = self.temporary(binding.span)?;
-        let range_type_id = self
-            .types
-            .get("Range")
-            .map_or(-1, |range| range.id.cast_signed());
         let native = self.push(Operation::NativeIterNext {
             snapshot,
             item,

@@ -832,6 +832,12 @@ pub extern "C" fn __exs_rt_iter_snapshot(iterable: ValueRef) -> ValueRef {
     value::operations::iter_snapshot(iterable)
 }
 
+/// Creates the for-loop snapshot of an unshared Range temporary, iterated without field access.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_iter_range_snapshot(iterable: ValueRef, range_type_id: i32) -> ValueRef {
+    value::operations::iter_range_snapshot(iterable, range_type_id)
+}
+
 /// Advances one for-loop snapshot natively, returning a raw item ref, 0 when done, or -1.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i64 {

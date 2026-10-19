@@ -26,13 +26,15 @@ const CONCAT_100_OBJECTS_FUEL: u64 = 750_173;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
 const INT_LOOP_1000_FUEL: u64 = 307_228;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
-const ASYNC_INT_LOOP_100_FUEL: u64 = 256_399;
+const ASYNC_INT_LOOP_100_FUEL: u64 = 133_353;
 /// Fuel ceiling for 1000 iterations of an empty resumable `while` loop.
 const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 251_073;
 /// Fuel ceiling for 1000 iterations of a resumable integer arithmetic `while` loop.
 const ASYNC_INT_WHILE_1000_FUEL: u64 = 414_092;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
-const FOR_RANGE_1000_FUEL: u64 = 1_623_366;
+const FOR_RANGE_1000_FUEL: u64 = 399_620;
+/// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
+const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 864_192;
 /// Fuel ceiling for 100 calls of a small resumable function.
 const ASYNC_CALL_LOOP_100_FUEL: u64 = 231_606;
 
@@ -69,6 +71,16 @@ const FOR_RANGE_SOURCE: &str = r#"
         for index in 0..limit {
         }
         ret count;
+    }
+"#;
+
+/// Script iterating an empty-bodied `for` loop over a Range bound to a variable.
+const FOR_RANGE_VARIABLE_SOURCE: &str = r#"
+    fn main(limit: Int) -> Int {
+        let range = 0..limit;
+        for index in range {
+        }
+        ret range.current;
     }
 "#;
 
@@ -291,6 +303,18 @@ fn fuel_for_range_1000() {
         &report,
         &ExsValue::Int(0),
         FOR_RANGE_1000_FUEL,
+    );
+}
+
+/// Measures 1000 iterations of an empty `for` loop over a Range that stays visible to the script.
+#[test]
+fn fuel_for_range_variable_1000() {
+    let report = execute_report(FOR_RANGE_VARIABLE_SOURCE, &[ExsValue::Int(1000)]);
+    assert_fuel(
+        "for_range_variable_1000",
+        &report,
+        &ExsValue::Int(1000),
+        FOR_RANGE_VARIABLE_1000_FUEL,
     );
 }
 

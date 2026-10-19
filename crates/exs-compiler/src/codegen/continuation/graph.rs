@@ -419,6 +419,8 @@ pub(super) enum Operation<'source, 'function> {
     IterSnapshot {
         iterable: u32,
         destination: u32,
+        /// Prelude Range type id when the iterable is an unshared Range temporary.
+        unshared_range: Option<i32>,
         span: SourceSpan<'source>,
     },
     /// Advances built-in iterators and prelude Ranges natively before `Iterator::next` dispatch.

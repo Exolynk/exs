@@ -93,6 +93,134 @@ fn iterates_range_expressions() {
     );
 }
 
+/// Iterates literal Range edge cases through the native Range iterator.
+#[test]
+fn iterates_literal_range_edge_cases() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn collect_closure() -> List {
+                let values = [];
+                for value in -2..=-4 {
+                    values.push(value);
+                }
+                ret values;
+            }
+
+            fn main(input) -> List {
+                let empty = [];
+                for value in 5..5 {
+                    empty.push(value);
+                }
+                let single = [];
+                for value in 0..=0 {
+                    single.push(value);
+                }
+                let descending = [];
+                for value in 3..1 {
+                    descending.push(value);
+                }
+                let bottom = [];
+                for value in -9223372036854775807..=-9223372036854775808 {
+                    bottom.push(value);
+                }
+                let broken = [];
+                for value in 0..10 {
+                    if value == 2 {
+                        break;
+                    }
+                    broken.push(value);
+                }
+                ret [empty, single, descending, bottom, broken, collect_closure()];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![]),
+            ExsValue::List(vec![ExsValue::Int(0)]),
+            ExsValue::List(vec![ExsValue::Int(3), ExsValue::Int(2)]),
+            ExsValue::List(vec![
+                ExsValue::Int(-9_223_372_036_854_775_807),
+                ExsValue::Int(i64::MIN),
+            ]),
+            ExsValue::List(vec![ExsValue::Int(0), ExsValue::Int(1)]),
+            ExsValue::List(vec![
+                ExsValue::Int(-2),
+                ExsValue::Int(-3),
+                ExsValue::Int(-4)
+            ]),
+        ]),
+    );
+}
+
+/// Observes Range field mutations made during a loop, including reordered Range objects.
+#[test]
+fn observes_range_mutations_inside_for_loops() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) -> List {
+                let range = 0..3;
+                let values = [];
+                for value in range {
+                    values.push(value);
+                    if value == 1 {
+                        range.end = 5;
+                    }
+                }
+                let reordered = Range { done: false, inclusive: true, step: 2, end: 4, current: 0 };
+                let stepped = [];
+                for value in reordered {
+                    stepped.push(value);
+                }
+                ret [values, range.current, range.done, stepped, reordered.done];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![
+                ExsValue::Int(0),
+                ExsValue::Int(1),
+                ExsValue::Int(2),
+                ExsValue::Int(3),
+                ExsValue::Int(4),
+            ]),
+            ExsValue::Int(5),
+            ExsValue::Bool(true),
+            ExsValue::List(vec![ExsValue::Int(0), ExsValue::Int(2), ExsValue::Int(4)]),
+            ExsValue::Bool(true),
+        ]),
+    );
+}
+
+/// Reports the same Error for an invalid literal Range bound inside and outside a for loop.
+#[test]
+fn reports_invalid_literal_range_bounds_inside_for_loops() {
+    let looped = execute_source(
+        r#"
+        fn main(input) -> Int | Error {
+            let total = 0;
+            for value in 0..input {
+                total = total + 1;
+            }
+            ret total;
+        }
+    "#,
+        ExsValue::String("3".to_owned()),
+    );
+    let direct = execute_source(
+        "fn main(input) -> Range | Error { ret 0..input; }",
+        ExsValue::String("3".to_owned()),
+    );
+    let (ExsValue::Error(looped), ExsValue::Error(direct)) = (looped, direct) else {
+        panic!("invalid Range bound did not return an Error");
+    };
+    assert_eq!(looped.kind, direct.kind);
+    assert_eq!(looped.message, direct.message);
+}
+
 /// Iterates explicit stepped Ranges and applies eager helpers to every iterable kind.
 #[test]
 fn iterates_stepped_ranges_and_eager_iterable_helpers() {

@@ -6,6 +6,7 @@ use wasm_encoder::{BlockType, Instruction};
 
 use crate::ast::{AssignmentTarget, Block, Expression, Statement};
 use crate::codegen::diagnostics;
+use crate::codegen::standard::is_unshared_range;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::analysis::condition_span;
@@ -230,18 +231,25 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         body: &Block<'a>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        self.compile_expression(iterable)?;
-        let iterable = self.store_stack_value()?;
-        self.function.instruction(&Instruction::LocalGet(iterable));
-        self.runtime_call("__exs_rt_iter_snapshot", span)?;
-        self.return_if_error(span)?;
-        let snapshot = self.store_stack_value()?;
-        self.clear_root_slot(iterable)?;
-
+        let unshared_range = is_unshared_range(iterable);
         let range_type_id = self
             .types
             .get("Range")
             .map_or(-1, |range| range.id.cast_signed());
+        self.compile_expression(iterable)?;
+        let iterable = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(iterable));
+        if unshared_range {
+            self.function
+                .instruction(&Instruction::I32Const(range_type_id));
+            self.runtime_call("__exs_rt_iter_range_snapshot", span)?;
+        } else {
+            self.runtime_call("__exs_rt_iter_snapshot", span)?;
+        }
+        self.return_if_error(span)?;
+        let snapshot = self.store_stack_value()?;
+        self.clear_root_slot(iterable)?;
+
         let next = self.allocate_local();
         let item = self.allocate_local();
         let mut iteration_scope = HashMap::new();
