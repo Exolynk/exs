@@ -111,7 +111,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             let value = self.store_stack_value()?;
             self.function.instruction(&Instruction::LocalGet(result));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_value_call("__exs_rt_add", 2, span)?;
+            self.runtime_call("__exs_rt_add", span)?;
             self.store_stack_value_in(result)?;
             self.clear_root_slot(value)?;
         }
@@ -160,7 +160,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.function
                 .instruction(&Instruction::LocalGet(list_local));
             self.function.instruction(&Instruction::LocalGet(element));
-            self.runtime_value_call("__exs_rt_append", 2, span)?;
+            self.runtime_call("__exs_rt_append", span)?;
             self.function.instruction(&Instruction::Drop);
             self.clear_root_slot(element)?;
         }
@@ -186,7 +186,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 .instruction(&Instruction::LocalGet(object_local));
             self.function.instruction(&Instruction::LocalGet(key));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_value_call("__exs_rt_index_set", 3, property.span)?;
+            self.runtime_call("__exs_rt_index_set", property.span)?;
             self.function.instruction(&Instruction::Drop);
             self.clear_root_slot(key)?;
             self.clear_root_slot(value)?;
@@ -260,7 +260,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.function.instruction(&Instruction::LocalGet(object));
             self.function.instruction(&Instruction::LocalGet(key));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_value_call("__exs_rt_index_set", 3, property.span)?;
+            self.runtime_call("__exs_rt_index_set", property.span)?;
             self.function.instruction(&Instruction::Drop);
             self.clear_root_slot(key)?;
             self.clear_root_slot(value)?;
@@ -277,7 +277,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.function.instruction(&Instruction::LocalGet(object));
             self.function.instruction(&Instruction::LocalGet(key));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_value_call("__exs_rt_index_set", 3, span)?;
+            self.runtime_call("__exs_rt_index_set", span)?;
             self.function.instruction(&Instruction::Drop);
             self.clear_root_slot(key)?;
             self.clear_root_slot(value)?;

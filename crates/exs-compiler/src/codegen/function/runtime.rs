@@ -1,12 +1,13 @@
 //! Runtime ABI calls, rooted local values, and structured-control bookkeeping.
 
-use wasm_encoder::Instruction;
+use wasm_encoder::{Instruction, MemArg};
 
 use crate::codegen::diagnostics;
 use crate::codegen::function::FunctionSignature;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::FunctionCompiler;
+use crate::codegen::root_slot_memory_arg;
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
     /// Emits fixed call arguments followed by one packed List for a variadic tail.
@@ -340,35 +341,41 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.set_root_slot(local)
     }
 
-    /// Registers one compiler local in the active root frame.
+    /// Registers one compiler local in the active root frame with an inline shadow-stack store.
     pub(super) fn set_root_slot(&mut self, local: u32) -> Result<(), CompileDiagnostics<'a>> {
-        let slot = i32::try_from(local).map_err(|_| {
-            diagnostics(CompileDiagnostic::new(
-                "E0212",
-                self.declaration.span,
-                "root slot exceeds the Wasm i32 ABI",
-            ))
-        })?;
+        let memory_arg = self.root_slot_memory_arg(local)?;
         self.function
             .instruction(&Instruction::LocalGet(self.root_frame_local));
-        self.function.instruction(&Instruction::I32Const(slot));
         self.function.instruction(&Instruction::LocalGet(local));
-        self.runtime_call("__exs_rt_root_set", self.declaration.span)
+        self.function
+            .instruction(&Instruction::I32Store(memory_arg));
+        Ok(())
     }
 
-    /// Removes one compiler local from the active root frame.
+    /// Removes one compiler local from the active root frame by zeroing its shadow-stack slot.
     pub(super) fn clear_root_slot(&mut self, local: u32) -> Result<(), CompileDiagnostics<'a>> {
-        let slot = i32::try_from(local).map_err(|_| {
-            diagnostics(CompileDiagnostic::new(
-                "E0212",
-                self.declaration.span,
-                "root slot exceeds the Wasm i32 ABI",
-            ))
-        })?;
+        let memory_arg = self.root_slot_memory_arg(local)?;
         self.function
             .instruction(&Instruction::LocalGet(self.root_frame_local));
-        self.function.instruction(&Instruction::I32Const(slot));
-        self.runtime_call("__exs_rt_root_clear", self.declaration.span)
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function
+            .instruction(&Instruction::I32Store(memory_arg));
+        Ok(())
+    }
+
+    /// Returns the shadow-stack address operand of one compiler local's root slot.
+    ///
+    /// The frame local holds the slot base address, so every slot must lie inside the frame
+    /// allocated by `__exs_rt_root_push`; slot indexes are therefore validated at compile time.
+    fn root_slot_memory_arg(&self, local: u32) -> Result<MemArg, CompileDiagnostics<'a>> {
+        if local >= self.root_frame_local {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0212",
+                self.declaration.span,
+                "root slot exceeds the function root frame",
+            )));
+        }
+        Ok(root_slot_memory_arg(local))
     }
 
     /// Returns the ValueRef on the stack after safely removing this function's root frame.

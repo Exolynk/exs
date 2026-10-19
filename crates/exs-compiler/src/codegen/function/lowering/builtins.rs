@@ -16,7 +16,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.validate_local_type(value, contract, span)?;
             self.function.instruction(&Instruction::LocalGet(fields));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_value_call("__exs_rt_append", 2, span)?;
+            self.runtime_call("__exs_rt_append", span)?;
             self.function.instruction(&Instruction::Drop);
             self.clear_root_slot(value)?;
         }
@@ -61,7 +61,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         for local in &argument_locals {
             self.function.instruction(&Instruction::LocalGet(*local));
         }
-        self.runtime_value_call("__exs_rt_error_new", 3, span)?;
+        self.runtime_call("__exs_rt_error_new", span)?;
         for local in argument_locals {
             self.clear_root_slot(local)?;
         }
@@ -95,7 +95,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function.instruction(&Instruction::LocalGet(condition));
         self.function
             .instruction(&Instruction::LocalGet(description));
-        self.runtime_value_call("__exs_rt_assert", 2, span)?;
+        self.runtime_call("__exs_rt_assert", span)?;
         self.return_if_fatal_error(span)?;
         self.clear_root_slot(condition)?;
         self.clear_root_slot(description)
@@ -146,7 +146,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         for local in &locals {
             self.function.instruction(&Instruction::LocalGet(*local));
         }
-        self.runtime_value_call("__exs_rt_assert_eq", 4, span)?;
+        self.runtime_call("__exs_rt_assert_eq", span)?;
         self.return_if_fatal_error(span)?;
         self.clear_root_slot(comparison)?;
         for local in locals {

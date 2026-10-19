@@ -68,14 +68,7 @@ pub(super) fn compile_start<'a>(
     function.instruction(&Instruction::I32Const(root_slot_count.cast_signed()));
     call_runtime(&mut function, runtime, "__exs_rt_root_push", module)?;
     function.instruction(&Instruction::LocalSet(root_frame_local));
-    set_root_slot(
-        &mut function,
-        runtime,
-        module,
-        root_frame_local,
-        0,
-        arguments_local,
-    )?;
+    set_root_slot(&mut function, root_frame_local, 0, arguments_local);
 
     function.instruction(&Instruction::LocalGet(arguments_local));
     call_runtime(
@@ -95,12 +88,10 @@ pub(super) fn compile_start<'a>(
         function.instruction(&Instruction::LocalSet(result_local));
         set_root_slot(
             &mut function,
-            runtime,
-            module,
             root_frame_local,
             root_slot_count - 1,
             result_local,
-        )?;
+        );
         function.instruction(&Instruction::LocalGet(result_local));
         call_runtime(&mut function, runtime, "__exs_rt_set_result", module)?;
         function.instruction(&Instruction::LocalGet(root_frame_local));
@@ -116,14 +107,7 @@ pub(super) fn compile_start<'a>(
         function.instruction(&Instruction::I32Const(index.cast_signed()));
         call_runtime(&mut function, runtime, "__exs_rt_input_argument", module)?;
         function.instruction(&Instruction::LocalSet(parameter_local));
-        set_root_slot(
-            &mut function,
-            runtime,
-            module,
-            root_frame_local,
-            index + 1,
-            parameter_local,
-        )?;
+        set_root_slot(&mut function, root_frame_local, index + 1, parameter_local);
     }
     if main.variadic {
         function.instruction(&Instruction::Call(
@@ -138,12 +122,10 @@ pub(super) fn compile_start<'a>(
         function.instruction(&Instruction::LocalSet(variadic_list_local));
         set_root_slot(
             &mut function,
-            runtime,
-            module,
             root_frame_local,
             fixed_parameter_count + 1,
             variadic_list_local,
-        )?;
+        );
         function.instruction(&Instruction::I32Const(fixed_parameter_count.cast_signed()));
         function.instruction(&Instruction::LocalSet(variadic_index_local));
         function.instruction(&Instruction::Block(BlockType::Empty));
@@ -170,12 +152,10 @@ pub(super) fn compile_start<'a>(
         function.instruction(&Instruction::LocalSet(parameter_local));
         set_root_slot(
             &mut function,
-            runtime,
-            module,
             root_frame_local,
             fixed_parameter_count + 1,
             parameter_local,
-        )?;
+        );
     }
     for index in 0..parameter_count {
         function.instruction(&Instruction::LocalGet(first_parameter_local + index));
@@ -184,12 +164,10 @@ pub(super) fn compile_start<'a>(
     function.instruction(&Instruction::LocalSet(result_local));
     set_root_slot(
         &mut function,
-        runtime,
-        module,
         root_frame_local,
         root_slot_count - 1,
         result_local,
-    )?;
+    );
     function.instruction(&Instruction::LocalGet(result_local));
     call_runtime(&mut function, runtime, "__exs_rt_set_result", module)?;
     function.instruction(&Instruction::LocalGet(root_frame_local));
@@ -199,19 +177,11 @@ pub(super) fn compile_start<'a>(
     Ok(function)
 }
 
-/// Roots one ValueRef local in the generated entry wrapper.
-fn set_root_slot<'a>(
-    function: &mut Function,
-    runtime: &HashMap<String, u32>,
-    module: &Module<'a>,
-    frame_local: u32,
-    slot: u32,
-    value_local: u32,
-) -> Result<(), CompileDiagnostics<'a>> {
+/// Roots one ValueRef local in the generated entry wrapper with an inline shadow-stack store.
+fn set_root_slot(function: &mut Function, frame_local: u32, slot: u32, value_local: u32) {
     function.instruction(&Instruction::LocalGet(frame_local));
-    function.instruction(&Instruction::I32Const(slot.cast_signed()));
     function.instruction(&Instruction::LocalGet(value_local));
-    call_runtime(function, runtime, "__exs_rt_root_set", module)
+    function.instruction(&Instruction::I32Store(super::root_slot_memory_arg(slot)));
 }
 
 /// Emits one linked runtime call required by the generated entry wrapper.

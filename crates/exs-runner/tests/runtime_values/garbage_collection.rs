@@ -56,3 +56,27 @@ fn traces_cycles_during_allocation_triggered_collection() {
         ExsValue::Bool(true),
     );
 }
+
+/// Keeps every frame's locals rooted while deep recursion spans several shadow root stack chunks.
+#[test]
+fn preserves_roots_across_root_stack_chunks_during_collection() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn build(depth) {
+                let kept = [depth, { depth: depth }];
+                if depth == 0 {
+                    ret kept[0];
+                }
+                let below = build(depth - 1);
+                ret below + kept[1].depth;
+            }
+            fn main(input) {
+                ret [build(input), build(input)];
+            }
+        "#,
+            ExsValue::Int(100),
+        ),
+        ExsValue::List(vec![ExsValue::Int(5_050), ExsValue::Int(5_050)]),
+    );
+}

@@ -64,3 +64,12 @@ pub(super) fn module_span<'a>(module: &Module<'a>) -> SourceSpan<'a> {
 pub(super) fn diagnostics(diagnostic: CompileDiagnostic<'_>) -> CompileDiagnostics<'_> {
     CompileDiagnostics::from(diagnostic)
 }
+
+/// Returns the `i32.store` operand addressing one root slot relative to its frame base address.
+pub(super) fn root_slot_memory_arg(slot: u32) -> wasm_encoder::MemArg {
+    wasm_encoder::MemArg {
+        offset: u64::from(slot) * 4,
+        align: 2,
+        memory_index: 0,
+    }
+}

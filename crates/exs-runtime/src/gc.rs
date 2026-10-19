@@ -1,6 +1,7 @@
 //! Stop-the-world mark-and-sweep collection and compiler root-frame management.
 
 use alloc::vec::Vec;
+use core::num::NonZeroU32;
 
 use exs_value::ValueRef;
 
@@ -10,66 +11,68 @@ use crate::value::RtValue;
 /// Minimum value-table size before automatic collection becomes worthwhile.
 pub(crate) const INITIAL_COLLECTION_THRESHOLD: usize = 256;
 
-/// Creates one compiler-generated root frame and returns its stack position token.
+/// Minimum slot count of one shadow root stack chunk.
+const ROOT_CHUNK_SLOTS: usize = 4096;
+
+/// Creates one zeroed compiler-generated root frame and returns its first slot's address.
+///
+/// Generated code roots a value with a plain `i32.store` of its raw index at `base + slot * 4`
+/// and clears it by storing 0, so the slot count must cover every slot the compiler emits.
 pub(crate) fn push_root_frame(slot_count: i32) -> i32 {
-    let Ok(slot_count) = usize::try_from(slot_count) else {
+    let Ok(len) = usize::try_from(slot_count) else {
         crate::runtime::trap();
     };
-    let state = unsafe { runtime() };
-    let Ok(frame) = i32::try_from(state.root_frames.len()) else {
+    let stack = &mut unsafe { runtime() }.root_stack;
+    let (mut chunk, mut start) = stack
+        .frames
+        .last()
+        .map_or((0, 0), |frame| (frame.chunk, frame.start + frame.len));
+    if stack
+        .chunks
+        .get(chunk)
+        .is_some_and(|slots| start + len > slots.len())
+    {
+        chunk += 1;
+        start = 0;
+    }
+    // Chunks after the active top frame hold no live frames, so an undersized one may be replaced.
+    if stack
+        .chunks
+        .get(chunk)
+        .is_none_or(|slots| len > slots.len())
+    {
+        let mut slots = Vec::new();
+        slots.resize(len.max(ROOT_CHUNK_SLOTS), 0);
+        let slots = slots.into_boxed_slice();
+        if chunk < stack.chunks.len() {
+            stack.chunks[chunk] = slots;
+        } else {
+            stack.chunks.push(slots);
+        }
+    }
+    let Some(slots) = stack.chunks[chunk].get_mut(start..start + len) else {
         crate::runtime::trap();
     };
-    let mut slots = Vec::new();
-    slots.resize(slot_count, None);
-    state.root_frames.push(RootFrame { slots });
-    frame
+    slots.fill(0);
+    let Ok(base) = i32::try_from(slots.as_mut_ptr() as usize) else {
+        crate::runtime::trap();
+    };
+    stack.frames.push(RootFrame {
+        chunk,
+        start,
+        len,
+        base,
+    });
+    base
 }
 
-/// Stores one compiler-local value reference in the current root frame.
-pub(crate) fn set_root_frame_slot(frame: i32, slot: i32, value: ValueRef) {
-    let frame = frame_index(frame);
-    let slot = slot_index(slot);
-    let state = unsafe { runtime() };
-    let Some(current_frame) = state.root_frames.len().checked_sub(1) else {
-        crate::runtime::trap();
-    };
-    if frame != current_frame {
+/// Removes the current compiler-generated root frame identified by its base address.
+pub(crate) fn pop_root_frame(base: i32) {
+    let stack = &mut unsafe { runtime() }.root_stack;
+    if stack.frames.last().is_none_or(|frame| frame.base != base) {
         crate::runtime::trap();
     }
-    let Some(slot) = state.root_frames[frame].slots.get_mut(slot) else {
-        crate::runtime::trap();
-    };
-    *slot = Some(value);
-}
-
-/// Clears one compiler-local root after its value is no longer live.
-pub(crate) fn clear_root_frame_slot(frame: i32, slot: i32) {
-    let frame = frame_index(frame);
-    let slot = slot_index(slot);
-    let state = unsafe { runtime() };
-    let Some(current_frame) = state.root_frames.len().checked_sub(1) else {
-        crate::runtime::trap();
-    };
-    if frame != current_frame {
-        crate::runtime::trap();
-    }
-    let Some(slot) = state.root_frames[frame].slots.get_mut(slot) else {
-        crate::runtime::trap();
-    };
-    *slot = None;
-}
-
-/// Removes the current compiler-generated root frame.
-pub(crate) fn pop_root_frame(frame: i32) {
-    let frame = frame_index(frame);
-    let state = unsafe { runtime() };
-    let Some(current_frame) = state.root_frames.len().checked_sub(1) else {
-        crate::runtime::trap();
-    };
-    if frame != current_frame {
-        crate::runtime::trap();
-    }
-    let _removed = state.root_frames.pop();
+    let _removed = stack.frames.pop();
 }
 
 /// Returns a checkpoint for temporary native runtime roots.
@@ -111,8 +114,9 @@ fn collect_roots() -> Vec<ValueRef> {
         slot.marked = false;
     }
     let mut roots = Vec::new();
-    for frame in &state.root_frames {
-        roots.extend(frame.slots.iter().flatten().copied());
+    for frame in &state.root_stack.frames {
+        let slots = &state.root_stack.chunks[frame.chunk][frame.start..frame.start + frame.len];
+        roots.extend(slots.iter().copied().filter_map(raw_root));
     }
     for frame in state.async_frames.iter().flatten() {
         roots.extend(frame.slots.iter().flatten().copied());
@@ -183,20 +187,10 @@ fn sweep() -> usize {
     live_values
 }
 
-/// Converts one Wasm root-frame token to a Rust index.
-fn frame_index(frame: i32) -> usize {
-    match usize::try_from(frame) {
-        Ok(frame) => frame,
-        Err(_) => crate::runtime::trap(),
-    }
-}
-
-/// Converts one Wasm root-frame slot token to a Rust index.
-fn slot_index(slot: i32) -> usize {
-    match usize::try_from(slot) {
-        Ok(slot) => slot,
-        Err(_) => crate::runtime::trap(),
-    }
+/// Converts one raw shadow-stack slot to its rooted ValueRef, or `None` for an empty slot.
+fn raw_root(slot: u32) -> Option<ValueRef> {
+    // SAFETY: generated code only stores ValueRef indices produced by this runtime, or 0.
+    NonZeroU32::new(slot).map(|index| unsafe { ValueRef::from_runtime_index(index) })
 }
 
 /// Converts one one-based ValueRef index to its zero-based table position.

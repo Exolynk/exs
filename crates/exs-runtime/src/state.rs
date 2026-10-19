@@ -1,5 +1,6 @@
 //! Runtime-owned mutable state for one Wasm instance.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 
@@ -31,10 +32,37 @@ impl HeapSlot {
     }
 }
 
-/// Compiler-generated roots for one active ExS function invocation.
+/// Location of one active ExS function invocation's slots in the shadow root stack.
 pub(crate) struct RootFrame {
-    /// One optional ValueRef for every compiler-declared value local and parameter.
-    pub(crate) slots: Vec<Option<ValueRef>>,
+    /// Index of the chunk holding this frame's slots.
+    pub(crate) chunk: usize,
+    /// First slot of this frame within its chunk.
+    pub(crate) start: usize,
+    /// Number of compiler-declared value locals and parameters in this frame.
+    pub(crate) len: usize,
+    /// Linear-memory address of the first slot, handed to generated code as the frame token.
+    pub(crate) base: i32,
+}
+
+/// Shadow stack of compiler-generated roots that generated code writes directly in memory.
+///
+/// Each slot holds a raw `ValueRef` index, or 0 when empty. Chunks are never reallocated while
+/// they hold active frames, so the base address of every active frame stays valid.
+pub(crate) struct RootStack {
+    /// Fixed-size slot chunks, kept after use so later frames can reuse them.
+    pub(crate) chunks: Vec<Box<[u32]>>,
+    /// Active frames in call order.
+    pub(crate) frames: Vec<RootFrame>,
+}
+
+impl RootStack {
+    /// Creates an empty root stack without allocating chunks.
+    const fn new() -> Self {
+        Self {
+            chunks: Vec::new(),
+            frames: Vec::new(),
+        }
+    }
 }
 
 /// The caller location that receives one completed resumable-function result.
@@ -68,8 +96,8 @@ pub(crate) struct RuntimeState {
     pub(crate) free_slots: Vec<u32>,
     /// Value-table size that triggers the next automatic garbage collection.
     pub(crate) next_gc_at: usize,
-    /// Active compiler-generated function root frames in call order.
-    pub(crate) root_frames: Vec<RootFrame>,
+    /// Compiler-generated function roots written directly by generated code.
+    pub(crate) root_stack: RootStack,
     /// Durable frames for the currently active resumable root execution.
     pub(crate) async_frames: Vec<Option<AsyncFrame>>,
     /// Reusable zero-based async-frame indexes.
@@ -140,7 +168,7 @@ impl RuntimeState {
             values: Vec::new(),
             free_slots: Vec::new(),
             next_gc_at: crate::gc::INITIAL_COLLECTION_THRESHOLD,
-            root_frames: Vec::new(),
+            root_stack: RootStack::new(),
             async_frames: Vec::new(),
             free_async_frames: Vec::new(),
             execution: None,

@@ -160,7 +160,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     } else {
                         self.function.instruction(&Instruction::LocalGet(left));
                         self.function.instruction(&Instruction::LocalGet(right));
-                        self.runtime_value_call(runtime_operation(*operator), 2, *span)?;
+                        self.runtime_call(runtime_operation(*operator), *span)?;
                     }
                     self.clear_root_slot(left)?;
                     self.clear_root_slot(right)?;
@@ -278,7 +278,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 let index = self.store_stack_value()?;
                 self.function.instruction(&Instruction::LocalGet(receiver));
                 self.function.instruction(&Instruction::LocalGet(index));
-                self.runtime_value_call("__exs_rt_index_get", 2, *span)?;
+                self.runtime_call("__exs_rt_index_get", *span)?;
                 self.clear_root_slot(receiver)?;
                 self.clear_root_slot(index)?;
             }
@@ -293,7 +293,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 let property = self.store_stack_value()?;
                 self.function.instruction(&Instruction::LocalGet(receiver));
                 self.function.instruction(&Instruction::LocalGet(property));
-                self.runtime_value_call("__exs_rt_index_get", 2, *span)?;
+                self.runtime_call("__exs_rt_index_get", *span)?;
                 self.clear_root_slot(receiver)?;
                 self.clear_root_slot(property)?;
             }

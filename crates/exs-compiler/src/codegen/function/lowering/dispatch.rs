@@ -202,7 +202,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             }
         } else {
             self.function.instruction(&Instruction::LocalGet(receiver));
-            self.runtime_value_call("__exs_rt_method_arity_error", 1, span)?;
+            self.runtime_call("__exs_rt_method_arity_error", span)?;
         }
         self.function.instruction(&Instruction::Else);
         self.emit_instance_method_dispatch(targets, index + 1, receiver, arguments, method, span)?;
@@ -228,7 +228,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         })?;
         if !signature.accepts_arity(arguments.len() + 1) {
             self.function.instruction(&Instruction::LocalGet(receiver));
-            return self.runtime_value_call("__exs_rt_method_arity_error", 1, span);
+            return self.runtime_call("__exs_rt_method_arity_error", span);
         }
         self.function.instruction(&Instruction::LocalGet(receiver));
         for argument in arguments {
@@ -259,7 +259,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 self.function.instruction(&Instruction::I32Const(test));
                 return self.runtime_call("__exs_rt_compare_test", span);
             }
-            self.runtime_value_call(operator.runtime_export(), 2, span)?;
+            self.runtime_call(operator.runtime_export(), span)?;
             return self.emit_operator_result(operator, span);
         };
         self.function.instruction(&Instruction::LocalGet(left));
@@ -292,8 +292,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             return Ok(());
         };
         self.return_if_error(span)?;
+        // Only the Ordering is a ValueRef; the comparison test code is a plain i32 operand.
+        let ordering = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(ordering));
         self.function.instruction(&Instruction::I32Const(test));
-        self.runtime_value_call("__exs_rt_ordering_test", 2, span)
+        self.runtime_call("__exs_rt_ordering_test", span)?;
+        self.clear_root_slot(ordering)
     }
 
     /// Calls the generic runtime method dispatcher using already evaluated argument locals.
@@ -309,14 +313,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             for argument in arguments {
                 self.function.instruction(&Instruction::LocalGet(*argument));
             }
-            return self.runtime_value_call(export, arguments.len() as u32 + 1, span);
+            return self.runtime_call(export, span);
         }
         self.runtime_call("__exs_rt_list_new", span)?;
         let list = self.store_stack_value()?;
         for argument in arguments {
             self.function.instruction(&Instruction::LocalGet(list));
             self.function.instruction(&Instruction::LocalGet(*argument));
-            self.runtime_value_call("__exs_rt_append", 2, span)?;
+            self.runtime_call("__exs_rt_append", span)?;
             self.function.instruction(&Instruction::Drop);
         }
         self.compile_string(&method.name, method.span)?;
@@ -324,7 +328,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function.instruction(&Instruction::LocalGet(receiver));
         self.function.instruction(&Instruction::LocalGet(method));
         self.function.instruction(&Instruction::LocalGet(list));
-        self.runtime_value_call("__exs_rt_call_method", 3, span)?;
+        self.runtime_call("__exs_rt_call_method", span)?;
         self.clear_root_slot(method)?;
         self.clear_root_slot(list)
     }

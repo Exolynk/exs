@@ -99,7 +99,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.function.instruction(&Instruction::LocalGet(receiver));
                     self.function.instruction(&Instruction::LocalGet(index));
                     self.function.instruction(&Instruction::LocalGet(value));
-                    self.runtime_value_call("__exs_rt_index_set", 3, *span)?;
+                    self.runtime_call("__exs_rt_index_set", *span)?;
                     self.function.instruction(&Instruction::Drop);
                     self.clear_root_slot(receiver)?;
                     self.clear_root_slot(index)?;
@@ -119,7 +119,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.function.instruction(&Instruction::LocalGet(receiver));
                     self.function.instruction(&Instruction::LocalGet(property));
                     self.function.instruction(&Instruction::LocalGet(value));
-                    self.runtime_value_call("__exs_rt_index_set", 3, *span)?;
+                    self.runtime_call("__exs_rt_index_set", *span)?;
                     self.function.instruction(&Instruction::Drop);
                     self.clear_root_slot(receiver)?;
                     self.clear_root_slot(property)?;
@@ -233,7 +233,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.compile_expression(iterable)?;
         let iterable = self.store_stack_value()?;
         self.function.instruction(&Instruction::LocalGet(iterable));
-        self.runtime_value_call("__exs_rt_iter_snapshot", 1, span)?;
+        self.runtime_call("__exs_rt_iter_snapshot", span)?;
         self.return_if_error(span)?;
         let snapshot = self.store_stack_value()?;
         self.clear_root_slot(iterable)?;
