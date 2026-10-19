@@ -419,6 +419,23 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         span: SourceSpan<'source>,
     },
+    /// Advances built-in iterators and prelude Ranges natively before `Iterator::next` dispatch.
+    ///
+    /// Falls through to the following `Iterator::next` dispatch state for other receivers.
+    NativeIterNext {
+        /// Frame slot holding the for-loop snapshot.
+        snapshot: u32,
+        /// Frame slot receiving the yielded item.
+        item: u32,
+        /// Nominal type id of the prelude Range, or -1 when it is absent.
+        range_type_id: i32,
+        /// State entering the loop body.
+        when_item: u32,
+        /// State after the loop.
+        when_done: u32,
+        /// Source location of the for loop.
+        span: SourceSpan<'source>,
+    },
     /// Branches on one IteratorStep after storing its Item payload for the loop body.
     IteratorBranch {
         step: u32,
@@ -673,6 +690,7 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::Binary { span, .. }
         | Operation::Operator { span, .. }
         | Operation::OrderingTest { span, .. }
+        | Operation::NativeIterNext { span, .. }
         | Operation::List { span, .. }
         | Operation::Object { span, .. }
         | Operation::Error { span, .. }

@@ -773,6 +773,39 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.complete_if_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
+            Operation::NativeIterNext {
+                snapshot,
+                item,
+                range_type_id,
+                when_item,
+                when_done,
+                span,
+            } => {
+                // The literal buffer local is free here because this state emits no literals.
+                self.get_slot(*snapshot, *span)?;
+                self.function
+                    .instruction(&Instruction::I32Const(*range_type_id));
+                self.call_runtime("__exs_rt_iter_native_next", *span)?;
+                self.function
+                    .instruction(&Instruction::LocalTee(self.literal_buffer_local));
+                self.function.instruction(&Instruction::I32Const(-1));
+                self.function.instruction(&Instruction::I32Eq);
+                self.function
+                    .instruction(&Instruction::If(BlockType::Empty));
+                self.ready(next, *span)?;
+                self.function.instruction(&Instruction::End);
+                self.function
+                    .instruction(&Instruction::LocalGet(self.literal_buffer_local));
+                self.function.instruction(&Instruction::I32Eqz);
+                self.function
+                    .instruction(&Instruction::If(BlockType::Empty));
+                self.ready(*when_done, *span)?;
+                self.function.instruction(&Instruction::End);
+                self.function
+                    .instruction(&Instruction::LocalGet(self.literal_buffer_local));
+                self.set_slot(*item, *span)?;
+                self.ready(*when_item, *span)?;
+            }
             Operation::IteratorBranch {
                 step,
                 item,

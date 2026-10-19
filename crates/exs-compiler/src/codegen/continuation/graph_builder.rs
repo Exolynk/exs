@@ -284,6 +284,19 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             span,
         });
         let condition_start = self.operations.len();
+        let item = self.temporary(binding.span)?;
+        let range_type_id = self
+            .types
+            .get("Range")
+            .map_or(-1, |range| range.id.cast_signed());
+        let native = self.push(Operation::NativeIterNext {
+            snapshot,
+            item,
+            range_type_id,
+            when_item: 0,
+            when_done: 0,
+            span,
+        })?;
         let step = self.temporary(span)?;
         self.operations.push(Operation::InstanceCall {
             receiver: snapshot,
@@ -298,7 +311,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             destination: step,
             span,
         });
-        let item = self.temporary(binding.span)?;
         let checked = self.temporary(span)?;
         let type_identity_slot = self.temporary(span)?;
         let done_variant_slot = self.temporary(span)?;
@@ -375,6 +387,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         });
         let exit = self.operations.len();
         self.set_iterator_targets(branch, body_start, exit, span)?;
+        self.set_native_iter_targets(native, body_start, exit, span)?;
         let context = self.loops.pop().ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0999",
@@ -553,6 +566,33 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         };
         *target_true = when_true;
         *target_false = when_false;
+        Ok(())
+    }
+
+    /// Patches the item and done targets of one native iteration state.
+    pub(super) fn set_native_iter_targets(
+        &mut self,
+        state: usize,
+        when_item: usize,
+        when_done: usize,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let when_item = self.state_id(when_item, span)?;
+        let when_done = self.state_id(when_done, span)?;
+        let Some(Operation::NativeIterNext {
+            when_item: target_item,
+            when_done: target_done,
+            ..
+        }) = self.operations.get_mut(state)
+        else {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0999",
+                span,
+                "missing continuation native iteration state",
+            )));
+        };
+        *target_item = when_item;
+        *target_done = when_done;
         Ok(())
     }
 

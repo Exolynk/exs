@@ -1285,6 +1285,21 @@ pub(crate) fn iter_snapshot(iterable: ValueRef) -> ValueRef {
 
 /// Advances one compiler-created iterator and returns a prelude IteratorStep value.
 fn iterator_next(receiver: ValueRef) -> ValueRef {
+    match builtin_iterator_item(receiver) {
+        Some(item) => iterator_step(item),
+        None => runtime::recoverable_error(
+            "NotIterable",
+            "next requires an Iterator receiver",
+            receiver,
+        ),
+    }
+}
+
+/// Advances one runtime List snapshot or String/Bytes iterator without an IteratorStep.
+///
+/// Returns `None` for receivers that are not compiler-created built-in iterators, and
+/// `Some(None)` once the iterator is exhausted.
+fn builtin_iterator_item(receiver: ValueRef) -> Option<Option<ValueRef>> {
     let item = match runtime::value(receiver) {
         RtValue::List(list) => {
             if list.elements.is_empty() {
@@ -1348,15 +1363,135 @@ fn iterator_next(receiver: ValueRef) -> ValueRef {
                 })
             }
         },
-        _ => {
-            return runtime::recoverable_error(
-                "NotIterable",
-                "next requires an Iterator receiver",
-                receiver,
-            );
-        }
+        _ => return None,
     };
-    iterator_step(item)
+    Some(item)
+}
+
+/// `iter_native_next` result for receivers that need `Iterator::next` dispatch.
+const NATIVE_ITER_FALLBACK: i32 = -1;
+/// `iter_native_next` result for an exhausted iterator.
+const NATIVE_ITER_DONE: i32 = 0;
+
+/// Advances one for-loop snapshot natively when it is a built-in iterator or prelude Range.
+///
+/// Returns the raw item ValueRef, `NATIVE_ITER_DONE`, or `NATIVE_ITER_FALLBACK` when the
+/// caller must dispatch `Iterator::next` instead. A fallback never mutates the receiver.
+pub(crate) fn iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i32 {
+    let item = match builtin_iterator_item(snapshot) {
+        Some(item) => Some(item),
+        None => match u32::try_from(range_type_id) {
+            Ok(range_type_id) => range_next(snapshot, range_type_id),
+            Err(_) => None,
+        },
+    };
+    match item {
+        Some(Some(item)) => item.runtime_index().cast_signed(),
+        Some(None) => NATIVE_ITER_DONE,
+        None => NATIVE_ITER_FALLBACK,
+    }
+}
+
+/// Returns a recoverable error for a for-loop snapshot the synchronous lowering cannot advance.
+pub(crate) fn iter_unsupported(snapshot: ValueRef) -> ValueRef {
+    runtime::recoverable_error(
+        "NotIterable",
+        "for requires an iterable or Iterator receiver",
+        snapshot,
+    )
+}
+
+/// Current field values of one prelude Range object.
+struct RangeState {
+    /// Reference to the next candidate item, reused as the yielded Int.
+    current_ref: ValueRef,
+    /// Next candidate item.
+    current: i64,
+    /// Range bound.
+    end: i64,
+    /// Signed distance between items.
+    step: i64,
+    /// Whether `end` itself is yielded.
+    inclusive: bool,
+    /// Whether the Range is exhausted.
+    done: bool,
+}
+
+/// Mirrors the prelude `Range::next` natively, including its field mutations.
+///
+/// Returns `None` without mutating when the object is not a well-formed Range or the next
+/// step would overflow, so the prelude implementation reports the error instead.
+fn range_next(receiver: ValueRef, range_type_id: u32) -> Option<Option<ValueRef>> {
+    let state = range_state(receiver, range_type_id)?;
+    if state.done {
+        return Some(None);
+    }
+    let exhausted = match (state.step > 0, state.inclusive) {
+        (true, true) => state.current > state.end,
+        (true, false) => state.current >= state.end,
+        (false, true) => state.current < state.end,
+        (false, false) => state.current <= state.end,
+    };
+    if exhausted {
+        set_object_field(receiver, "done", runtime::bool_value(true));
+        return Some(None);
+    }
+    if state.current == state.end {
+        set_object_field(receiver, "done", runtime::bool_value(true));
+    } else {
+        let next = state.current.checked_add(state.step)?;
+        // The old current value stays reachable through the Range until it is replaced.
+        let next = runtime::allocate(RtValue::Int(next));
+        set_object_field(receiver, "current", next);
+    }
+    Some(Some(state.current_ref))
+}
+
+/// Reads the fields of one prelude Range object, or `None` when it is not well formed.
+fn range_state(receiver: ValueRef, range_type_id: u32) -> Option<RangeState> {
+    let RtValue::Object(object) = runtime::value(receiver) else {
+        return None;
+    };
+    if object.type_id != Some(range_type_id) || object.enum_data.is_some() {
+        return None;
+    }
+    let field = |name: &str| {
+        object
+            .entries
+            .iter()
+            .find_map(|(key, value)| (key.as_ref() == name).then_some(*value))
+    };
+    let int = |name: &str| match runtime::value(field(name)?) {
+        RtValue::Int(value) => Some(*value),
+        _ => None,
+    };
+    let boolean = |name: &str| match runtime::value(field(name)?) {
+        RtValue::Bool(value) => Some(*value),
+        _ => None,
+    };
+    Some(RangeState {
+        current_ref: field("current")?,
+        current: int("current")?,
+        end: int("end")?,
+        step: int("step")?,
+        inclusive: boolean("inclusive")?,
+        done: boolean("done")?,
+    })
+}
+
+/// Replaces one existing Object field value in place.
+fn set_object_field(receiver: ValueRef, name: &str, value: ValueRef) {
+    let RtValue::Object(object) = runtime::value_mut(receiver) else {
+        crate::runtime::trap();
+    };
+    match object
+        .entries
+        .iter_mut()
+        .find(|(key, _)| key.as_ref() == name)
+    {
+        Some((_, slot)) => *slot = value,
+        None => crate::runtime::trap(),
+    }
 }
 
 /// Wraps one optional iterator item in the compiler-owned IteratorStep enum.

@@ -122,6 +122,73 @@ fn iterates_stepped_ranges_and_eager_iterable_helpers() {
     );
 }
 
+/// Advances a Range object in place across loops, matching the prelude `Range::next`.
+#[test]
+fn resumes_and_exhausts_range_objects_across_for_loops() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) -> List | Error {
+                let range = Range::step_through(0, 9, 3)?;
+                let values = [];
+                for value in range {
+                    values.push(value);
+                    if value == 3 {
+                        break;
+                    }
+                }
+                for value in range {
+                    values.push(value);
+                }
+                for value in range {
+                    values.push(-1);
+                }
+                let top = [];
+                for value in 9223372036854775806..=9223372036854775807 {
+                    top.push(value);
+                }
+                ret [values, range.done, range.current, top];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![
+                ExsValue::Int(0),
+                ExsValue::Int(3),
+                ExsValue::Int(6),
+                ExsValue::Int(9),
+            ]),
+            ExsValue::Bool(true),
+            ExsValue::Int(9),
+            ExsValue::List(vec![
+                ExsValue::Int(9_223_372_036_854_775_806),
+                ExsValue::Int(9_223_372_036_854_775_807),
+            ]),
+        ]),
+    );
+}
+
+/// Reports the prelude overflow Error when a Range step would leave the Int domain.
+#[test]
+fn reports_range_step_overflow_inside_for_loops() {
+    let ExsValue::Error(error) = execute_source(
+        r#"
+        fn main(input) -> Int | Error {
+            let total = 0;
+            for value in Range::step(9223372036854775805, 9223372036854775807, 3)? {
+                total = total + 1;
+            }
+            ret total;
+        }
+    "#,
+        ExsValue::None,
+    ) else {
+        panic!("overflowing Range step did not return an Error");
+    };
+    assert!(!error.kind.is_empty());
+}
+
 /// Rejects explicit Range steps that cannot produce a valid progression.
 #[test]
 fn rejects_invalid_explicit_range_steps() {

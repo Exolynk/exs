@@ -218,7 +218,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.exit_control()
     }
 
-    /// Lowers a for loop through a runtime iterable snapshot and indexed Wasm loop.
+    /// Lowers a for loop through a runtime iterable snapshot advanced natively per iteration.
+    ///
+    /// Synchronous lowering cannot dispatch a possibly suspending `Iterator::next`, so receivers
+    /// the runtime cannot advance natively produce a NotIterable error.
     pub(super) fn compile_for(
         &mut self,
         binding: &crate::ast::Identifier<'a>,
@@ -235,9 +238,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let snapshot = self.store_stack_value()?;
         self.clear_root_slot(iterable)?;
 
-        self.function.instruction(&Instruction::I64Const(0));
-        self.runtime_call("__exs_rt_int_new", span)?;
-        let index = self.store_stack_value()?;
+        let range_type_id = self
+            .types
+            .get("Range")
+            .map_or(-1, |range| range.id.cast_signed());
+        let next = self.allocate_local();
         let item = self.allocate_local();
         let mut iteration_scope = HashMap::new();
         iteration_scope.insert(binding.name.clone(), item);
@@ -253,16 +258,22 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let loop_depth = self.control_depth;
 
         self.function.instruction(&Instruction::LocalGet(snapshot));
-        self.runtime_value_call("__exs_rt_length", 1, span)?;
-        let length = self.store_stack_value()?;
-        self.function.instruction(&Instruction::LocalGet(index));
-        self.function.instruction(&Instruction::LocalGet(length));
-        self.runtime_value_call("__exs_rt_lt", 2, span)?;
-        let condition = self.allocate_local();
-        self.function.instruction(&Instruction::LocalSet(condition));
-        self.clear_root_slot(length)?;
-        self.function.instruction(&Instruction::LocalGet(condition));
-        self.compile_condition(span)?;
+        self.function
+            .instruction(&Instruction::I32Const(range_type_id));
+        self.runtime_call("__exs_rt_iter_native_next", span)?;
+        self.function.instruction(&Instruction::LocalTee(next));
+        self.function.instruction(&Instruction::I32Const(-1));
+        self.function.instruction(&Instruction::I32Eq);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.enter_control()?;
+        self.function.instruction(&Instruction::LocalGet(snapshot));
+        self.runtime_call("__exs_rt_iter_unsupported", span)?;
+        self.return_if_error(span)?;
+        self.function.instruction(&Instruction::Drop);
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        self.function.instruction(&Instruction::LocalGet(next));
         self.function.instruction(&Instruction::I32Eqz);
         self.branch_if_to(break_depth, span)?;
 
@@ -276,9 +287,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             cleanup_scope_start: self.scopes.len(),
         });
 
-        self.function.instruction(&Instruction::LocalGet(snapshot));
-        self.function.instruction(&Instruction::LocalGet(index));
-        self.runtime_value_call("__exs_rt_index_get", 2, span)?;
+        self.function.instruction(&Instruction::LocalGet(next));
         self.store_stack_value_in(item)?;
         if let Some(annotation) = type_annotation {
             let contract = self.types.resolve(Some(annotation), binding.span)?;
@@ -294,11 +303,6 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
 
         self.function.instruction(&Instruction::End);
         self.exit_control()?;
-        self.function.instruction(&Instruction::LocalGet(index));
-        self.function.instruction(&Instruction::I64Const(1));
-        self.runtime_call("__exs_rt_int_new", span)?;
-        self.runtime_value_call("__exs_rt_add", 2, span)?;
-        self.store_stack_value_in(index)?;
         self.branch_to(loop_depth, span)?;
 
         self.function.instruction(&Instruction::End);
@@ -315,8 +319,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         for local in iteration_scope.into_values() {
             self.clear_root_slot(local)?;
         }
-        self.clear_root_slot(snapshot)?;
-        self.clear_root_slot(index)
+        self.clear_root_slot(snapshot)
     }
 
     /// Emits break or continue after releasing roots local to the current loop body.

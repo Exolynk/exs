@@ -20,13 +20,13 @@ const SHOW_TRUE_FUEL: u64 = 69_862;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
 const SHOW_COMPARE_RECORD_FUEL: u64 = 81_042;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 234_016;
+const CONCAT_10_OBJECTS_FUEL: u64 = 180_211;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 1_776_419;
+const CONCAT_100_OBJECTS_FUEL: u64 = 1_135_390;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
 const INT_LOOP_1000_FUEL: u64 = 4_576_370;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
-const ASYNC_INT_LOOP_100_FUEL: u64 = 3_195_268;
+const ASYNC_INT_LOOP_100_FUEL: u64 = 897_536;
 
 /// Script concatenating the `name` field of every supplied object.
 const CONCAT_SOURCE: &str = r#"

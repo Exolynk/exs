@@ -866,6 +866,18 @@ pub extern "C" fn __exs_rt_iter_snapshot(iterable: ValueRef) -> ValueRef {
     value::operations::iter_snapshot(iterable)
 }
 
+/// Advances one for-loop snapshot natively, returning an item ref, 0 when done, or -1.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i32 {
+    value::operations::iter_native_next(snapshot, range_type_id)
+}
+
+/// Returns a NotIterable error for a snapshot the synchronous for lowering cannot advance.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_iter_unsupported(snapshot: ValueRef) -> ValueRef {
+    value::operations::iter_unsupported(snapshot)
+}
+
 /// Returns the visible scalar or entry count of one runtime value.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_length(value: ValueRef) -> ValueRef {
