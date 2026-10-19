@@ -23,10 +23,10 @@ pub extern "C" fn __exs_rt_execution_start() {
     runtime::execution_start();
 }
 
-/// Consumes one generated scheduler checkpoint for the current task.
+/// Consumes one generated scheduler checkpoint and returns 1 when the current task continues.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_scheduler_checkpoint() {
-    runtime::scheduler_checkpoint();
+pub extern "C" fn __exs_rt_scheduler_checkpoint() -> i32 {
+    runtime::scheduler_checkpoint()
 }
 
 /// Cancels every live task in the active root scheduler context.
@@ -1051,22 +1051,16 @@ pub extern "C" fn __exs_rt_async_frame_get_slot(frame: i32, slot: i32) -> ValueR
     runtime::async_frame_get_slot(frame, slot)
 }
 
-/// Stores the next continuation-graph state for one persistent frame.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_async_frame_set_state(frame: i32, state: i32) {
-    runtime::async_frame_set_state(frame, state);
-}
-
-/// Returns the next continuation-graph state for one persistent frame.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_rt_async_frame_state(frame: i32) -> i32 {
-    runtime::async_frame_state(frame)
-}
-
 /// Returns the generated function identifier stored in one persistent frame.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_async_frame_function(frame: i32) -> i32 {
     runtime::async_frame_function(frame)
+}
+
+/// Returns the linear-memory address of one async frame's header and slot block.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_frame_block(frame: i32) -> i32 {
+    runtime::async_frame_block(frame)
 }
 
 /// Returns the active persistent frame, or zero when no resumable call is active.

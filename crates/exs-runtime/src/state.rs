@@ -76,16 +76,46 @@ pub(crate) struct FrameContinuation {
 
 /// Persistent state for one compiler-generated resumable function invocation.
 pub(crate) struct AsyncFrame {
-    /// Compiler-assigned generated function identifier.
-    pub(crate) function_id: u32,
-    /// Compiler-assigned continuation-graph state identifier.
-    pub(crate) state: u32,
-    /// Values that must survive a pending host call.
-    pub(crate) slots: Vec<Option<ValueRef>>,
+    /// Linear-memory block that generated code reads and writes directly.
+    ///
+    /// Word 0 holds the continuation state in its low and the function identifier in its high
+    /// 32 bits (see `exs_abi::ASYNC_FRAME_*_OFFSET`). Every later word is one raw `ValueRef`
+    /// slot, or 0 while empty. The boxed slice never moves while the frame is alive.
+    pub(crate) block: Box<[u64]>,
     /// Caller continuation, absent for the root resumable invocation.
     pub(crate) caller: Option<FrameContinuation>,
     /// Whether this frame owns one entry in the shared language error-trace stack.
     pub(crate) traced: bool,
+}
+
+impl AsyncFrame {
+    /// Creates a frame at state 0 with `slot_count` empty slots.
+    pub(crate) fn new(function_id: u32, slot_count: usize, traced: bool) -> Self {
+        let mut block = Vec::new();
+        block.resize(slot_count + 1, 0);
+        let mut frame = Self {
+            block: block.into_boxed_slice(),
+            caller: None,
+            traced,
+        };
+        frame.block[0] = u64::from(function_id) << 32;
+        frame
+    }
+
+    /// Returns the compiler-assigned generated function identifier.
+    pub(crate) fn function_id(&self) -> u32 {
+        (self.block[0] >> 32) as u32
+    }
+
+    /// Returns the raw `ValueRef` slots following the header word.
+    pub(crate) fn slots(&self) -> &[u64] {
+        &self.block[1..]
+    }
+
+    /// Returns the mutable raw `ValueRef` slots following the header word.
+    pub(crate) fn slots_mut(&mut self) -> &mut [u64] {
+        &mut self.block[1..]
+    }
 }
 
 /// Mutable state isolated to one instantiated Phase-1 runtime.

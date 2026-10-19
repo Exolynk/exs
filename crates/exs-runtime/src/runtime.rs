@@ -456,8 +456,10 @@ pub(crate) fn execution_start() {
 }
 
 /// Consumes one compiler-emitted scheduler checkpoint for the active task.
-pub(crate) fn scheduler_checkpoint() {
-    execution(unsafe { runtime() }).checkpoint_current();
+///
+/// Returns 1 when the same task keeps running and 0 when another task was selected.
+pub(crate) fn scheduler_checkpoint() -> i32 {
+    i32::from(execution(unsafe { runtime() }).checkpoint_current())
 }
 
 /// Cancels every live scheduler task in the active root execution.
@@ -489,15 +491,7 @@ pub(crate) fn async_frame_new(function_id: i32, slot_count: i32) -> i32 {
     let Ok(slot_count) = usize::try_from(slot_count) else {
         trap();
     };
-    let mut slots = Vec::new();
-    slots.resize(slot_count, None);
-    let frame = AsyncFrame {
-        function_id,
-        state: 0,
-        slots,
-        caller: None,
-        traced: true,
-    };
+    let frame = AsyncFrame::new(function_id, slot_count, true);
     let state = unsafe { runtime() };
     let index = if let Some(index) = state.free_async_frames.pop() {
         let index = index as usize;
@@ -540,16 +534,8 @@ pub(crate) fn async_frame_new_parallel(
     let Ok(slot_count) = usize::try_from(slot_count) else {
         trap();
     };
-    let mut slots = Vec::new();
-    slots.resize(slot_count, None);
     let state = unsafe { runtime() };
-    let frame = AsyncFrame {
-        function_id,
-        state: 0,
-        slots,
-        caller: None,
-        traced: false,
-    };
+    let frame = AsyncFrame::new(function_id, slot_count, false);
     let index_frame = if let Some(index) = state.free_async_frames.pop() {
         let index = index as usize;
         let Some(slot) = state.async_frames.get_mut(index) else {
@@ -675,10 +661,10 @@ pub(crate) fn async_frame_set_slot(frame: i32, slot: i32, value: ValueRef) {
     let Some(frame) = state.async_frames.get_mut(frame).and_then(Option::as_mut) else {
         trap();
     };
-    let Some(destination) = frame.slots.get_mut(slot) else {
+    let Some(destination) = frame.slots_mut().get_mut(slot) else {
         trap();
     };
-    *destination = Some(value);
+    *destination = value.raw();
 }
 
 /// Loads one initialized persistent frame slot.
@@ -689,38 +675,10 @@ pub(crate) fn async_frame_get_slot(frame: i32, slot: i32) -> ValueRef {
         .async_frames
         .get(frame)
         .and_then(Option::as_ref)
-        .and_then(|frame| frame.slots.get(slot))
-        .and_then(|value| *value)
+        .and_then(|frame| frame.slots().get(slot).copied())
+        // SAFETY: frame slots only hold ValueRefs produced by this runtime, or 0.
+        .and_then(|raw| unsafe { ValueRef::from_raw(raw) })
         .unwrap_or_else(|| trap())
-}
-
-/// Stores the continuation-graph state that runs when the frame is next dispatched.
-pub(crate) fn async_frame_set_state(frame: i32, next_state: i32) {
-    let frame = async_frame_index(frame);
-    let Ok(next_state) = u32::try_from(next_state) else {
-        trap();
-    };
-    let Some(frame) = unsafe { runtime() }
-        .async_frames
-        .get_mut(frame)
-        .and_then(Option::as_mut)
-    else {
-        trap();
-    };
-    frame.state = next_state;
-}
-
-/// Returns the continuation-graph state stored by one persistent frame.
-pub(crate) fn async_frame_state(frame: i32) -> i32 {
-    let frame = async_frame_index(frame);
-    let Some(frame) = unsafe { runtime() }
-        .async_frames
-        .get(frame)
-        .and_then(Option::as_ref)
-    else {
-        trap();
-    };
-    i32::try_from(frame.state).unwrap_or_else(|_| trap())
 }
 
 /// Returns the compiler-generated function identifier for one persistent frame.
@@ -733,7 +691,20 @@ pub(crate) fn async_frame_function(frame: i32) -> i32 {
     else {
         trap();
     };
-    i32::try_from(frame.function_id).unwrap_or_else(|_| trap())
+    i32::try_from(frame.function_id()).unwrap_or_else(|_| trap())
+}
+
+/// Returns the linear-memory address of one persistent frame's header and slot block.
+pub(crate) fn async_frame_block(frame: i32) -> i32 {
+    let frame = async_frame_index(frame);
+    let Some(frame) = unsafe { runtime() }
+        .async_frames
+        .get(frame)
+        .and_then(Option::as_ref)
+    else {
+        trap();
+    };
+    pointer(frame.block.as_ptr().cast())
 }
 
 /// Returns the current frame identifier, or zero when no resumable execution is active.
@@ -816,10 +787,10 @@ pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
         else {
             trap();
         };
-        let Some(destination) = caller.slots.get_mut(continuation.slot as usize) else {
+        let Some(destination) = caller.slots_mut().get_mut(continuation.slot as usize) else {
             trap();
         };
-        *destination = Some(value);
+        *destination = value.raw();
         execution(state).set_current_frame(caller_index as u32 + 1);
         0
     } else {

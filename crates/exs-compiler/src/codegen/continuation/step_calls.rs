@@ -1,11 +1,15 @@
 //! Call-boundary and utility Wasm emission for continuation frames.
 
-use exs_abi::{STATUS_COMPLETE, STATUS_PENDING, STATUS_READY, TYPE_ERROR};
+use exs_abi::{
+    ASYNC_FRAME_SLOTS_OFFSET, ASYNC_FRAME_STATE_OFFSET, STATUS_COMPLETE, STATUS_PENDING,
+    STATUS_READY, TYPE_ERROR,
+};
 use exs_value::ValueRef;
-use wasm_encoder::{BlockType, Instruction, ValType};
+use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 use crate::ast::{BinaryOperator, Expression};
 use crate::codegen::function::InstanceMethod;
+use crate::codegen::source_map::requires_source_position;
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types;
 use crate::codegen::types::TypeContract;
@@ -428,19 +432,36 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     pub(super) fn set_slot(
         &mut self,
         slot: u32,
-        span: SourceSpan<'source>,
+        _span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.function
             .instruction(&Instruction::LocalSet(self.scratch_local));
-        self.function.instruction(&Instruction::LocalGet(0));
         self.function
-            .instruction(&Instruction::I32Const(slot.cast_signed()));
+            .instruction(&Instruction::LocalGet(self.block_local));
         self.function
             .instruction(&Instruction::LocalGet(self.scratch_local));
-        self.function.instruction(&Instruction::Call(
-            self.runtime_index("__exs_rt_async_frame_set_slot", span)?,
-        ));
+        let memory = self.slot_memory(slot);
+        self.function.instruction(&Instruction::I64Store(memory));
         Ok(())
+    }
+
+    /// Returns the memory operand of one slot of this frame and records that it is used.
+    pub(super) fn slot_memory(&mut self, slot: u32) -> MemArg {
+        self.used_slots = self.used_slots.max(slot.saturating_add(1));
+        slot_memory(slot)
+    }
+
+    /// Stores the state that runs when the driver next dispatches this frame.
+    pub(super) fn store_state(&mut self, state: u32) {
+        self.function
+            .instruction(&Instruction::LocalGet(self.block_local));
+        self.function
+            .instruction(&Instruction::I32Const(state.cast_signed()));
+        self.function.instruction(&Instruction::I32Store(MemArg {
+            offset: u64::from(ASYNC_FRAME_STATE_OFFSET),
+            align: 2,
+            memory_index: 0,
+        }));
     }
 
     /// Emits the source call-site position consumed by a child frame-stack push.
@@ -467,27 +488,68 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     pub(super) fn get_slot(
         &mut self,
         slot: u32,
-        span: SourceSpan<'source>,
+        _span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.function.instruction(&Instruction::LocalGet(0));
+        let memory = self.slot_memory(slot);
         self.function
-            .instruction(&Instruction::I32Const(slot.cast_signed()));
-        self.call_runtime("__exs_rt_async_frame_get_slot", span)
+            .instruction(&Instruction::LocalGet(self.block_local));
+        self.function.instruction(&Instruction::I64Load(memory));
+        Ok(())
     }
 
-    /// Advances to the next state and returns runnable status.
+    /// Transfers control to another state of this frame without returning to the driver.
+    ///
+    /// A later state is reached by branching to the end of its dispatch block; an earlier
+    /// state re-enters the dispatch loop through the state local.
     pub(super) fn ready(
         &mut self,
         next: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.function
-            .instruction(&Instruction::I32Const(next.cast_signed()));
-        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        let depth = self.function.depth();
+        let label = if next > self.current_state {
+            self.loop_depth
+                .checked_add(self.state_count)
+                .and_then(|end| end.checked_sub(next))
+                .and_then(|target| depth.checked_sub(target))
+        } else {
+            self.function
+                .instruction(&Instruction::I32Const(next.cast_signed()));
+            self.function
+                .instruction(&Instruction::LocalSet(self.state_local));
+            depth.checked_sub(self.loop_depth)
+        };
+        let label = label.ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                span,
+                "invalid continuation state transition",
+            ))
+        })?;
+        self.function.instruction(&Instruction::Br(label));
+        Ok(())
+    }
+
+    /// Persists the state to run when the driver next dispatches this frame and yields to it.
+    pub(super) fn yield_ready(&mut self, next: u32) {
+        self.store_state(next);
         self.function
             .instruction(&Instruction::I32Const(STATUS_READY));
         self.function.instruction(&Instruction::Return);
+    }
+
+    /// Consumes one scheduler checkpoint and yields to the driver when the task was rotated.
+    pub(super) fn checkpoint(
+        &mut self,
+        next: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        self.call_runtime("__exs_rt_scheduler_checkpoint", span)?;
+        self.function.instruction(&Instruction::I32Eqz);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.yield_ready(next);
+        self.function.instruction(&Instruction::End);
         Ok(())
     }
 
@@ -497,10 +559,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         resume: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.function
-            .instruction(&Instruction::I32Const(resume.cast_signed()));
-        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        self.store_state(resume);
         self.call_runtime("__exs_rt_scheduler_status", span)?;
         self.function.instruction(&Instruction::Return);
         Ok(())
@@ -565,7 +624,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.get_slot(value, span)?;
-        immediate::type_mask_test(&mut self.function, TYPE_ERROR);
+        immediate::type_mask_test(self.function.raw(), TYPE_ERROR);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.complete(value, span)?;
@@ -604,7 +663,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.get_slot(value, span)?;
         self.function
             .instruction(&Instruction::LocalTee(self.value_local));
-        immediate::is_bool_test(&mut self.function);
+        immediate::is_bool_test(self.function.raw());
         self.function
             .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
         self.function
@@ -684,7 +743,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.get_slot(slot, span)?;
-        immediate::type_mask_test(&mut self.function, contract.builtin_mask);
+        immediate::type_mask_test(self.function.raw(), contract.builtin_mask);
         self.function.instruction(&Instruction::LocalSet(2));
         for type_id in &contract.nominal_type_ids {
             self.function.instruction(&Instruction::LocalGet(2));
@@ -712,7 +771,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.function
             .instruction(&Instruction::LocalGet(self.scratch_local));
-        immediate::type_mask_test(&mut self.function, contract.builtin_mask);
+        immediate::type_mask_test(self.function.raw(), contract.builtin_mask);
         self.function.instruction(&Instruction::LocalSet(2));
         for type_id in &contract.nominal_type_ids {
             self.function.instruction(&Instruction::LocalGet(2));
@@ -758,11 +817,11 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             Expression::String(value, span) => self.string(value, *span),
             Expression::Bytes(value, span) => self.bytes(value, *span),
             Expression::Bool(value, _) => {
-                immediate::push(&mut self.function, ValueRef::boolean(*value));
+                immediate::push(self.function.raw(), ValueRef::boolean(*value));
                 Ok(())
             }
             Expression::None(_) => {
-                immediate::push(&mut self.function, ValueRef::NONE);
+                immediate::push(self.function.raw(), ValueRef::NONE);
                 Ok(())
             }
             _ => Err(diagnostics(CompileDiagnostic::new(
@@ -780,7 +839,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         if let Some(immediate) = ValueRef::small_int(value) {
-            immediate::push(&mut self.function, immediate);
+            immediate::push(self.function.raw(), immediate);
             return Ok(());
         }
         self.function.instruction(&Instruction::I64Const(value));
@@ -793,7 +852,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         type_id: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        if immediate::object_type_test(&mut self.function, type_id) {
+        if immediate::object_type_test(self.function.raw(), type_id) {
             return Ok(());
         }
         self.function
@@ -808,7 +867,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.function
             .instruction(&Instruction::LocalTee(self.value_local));
-        immediate::is_bool_test(&mut self.function);
+        immediate::is_bool_test(self.function.raw());
         self.function
             .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
         self.function
@@ -841,11 +900,11 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.get_slot(right, span)?;
         self.function
             .instruction(&Instruction::LocalSet(self.operand_local));
-        immediate::both_small_ints_test(&mut self.function, self.value_local, self.operand_local);
+        immediate::both_small_ints_test(self.function.raw(), self.value_local, self.operand_local);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         operation.emit(
-            &mut self.function,
+            self.function.raw(),
             self.value_local,
             self.operand_local,
             self.int_result_local,
@@ -946,13 +1005,13 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.call_runtime("__exs_rt_bytes_new", span)
     }
 
-    /// Emits a named runtime ABI call after setting its source position.
+    /// Emits a named runtime ABI call, after setting its source position when it may need one.
     pub(super) fn call_runtime(
         &mut self,
         name: &str,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        if name != "__exs_rt_set_source_position" {
+        if requires_source_position(name) {
             let position = self.source_map.id(span).ok_or_else(|| {
                 diagnostics(CompileDiagnostic::new(
                     "E0214",
@@ -960,14 +1019,11 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                     "missing source-map position for generated runtime call",
                 ))
             })?;
-            self.function
-                .instruction(&Instruction::I32Const(position.cast_signed()));
-            self.function.instruction(&Instruction::Call(
-                self.runtime_index("__exs_rt_set_source_position", span)?,
-            ));
+            let set_source_position = self.runtime_index("__exs_rt_set_source_position", span)?;
+            self.function.source_position(position, set_source_position);
         }
-        self.function
-            .instruction(&Instruction::Call(self.runtime_index(name, span)?));
+        let function = self.runtime_index(name, span)?;
+        self.function.runtime_call(function);
         Ok(())
     }
 
@@ -978,6 +1034,15 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<u32, CompileDiagnostics<'source>> {
         runtime_index(self.runtime, name, span)
+    }
+}
+
+/// Returns the memory operand addressing one slot relative to a frame block address.
+pub(super) fn slot_memory(slot: u32) -> MemArg {
+    MemArg {
+        offset: u64::from(ASYNC_FRAME_SLOTS_OFFSET) + u64::from(slot) * 8,
+        align: 3,
+        memory_index: 0,
     }
 }
 

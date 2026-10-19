@@ -6,6 +6,7 @@ use wasm_encoder::{Instruction, MemArg};
 use crate::codegen::diagnostics;
 use crate::codegen::function::FunctionSignature;
 use crate::codegen::immediate;
+use crate::codegen::source_map::requires_source_position;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::FunctionCompiler;
@@ -54,7 +55,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         name: &str,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if name != "__exs_rt_set_source_position" {
+        if requires_source_position(name) {
             self.set_runtime_source_position(span)?;
         }
         self.runtime_call_unpositioned(name, span)

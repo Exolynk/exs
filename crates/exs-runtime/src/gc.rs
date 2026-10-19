@@ -118,7 +118,7 @@ fn collect_roots() -> Vec<ValueRef> {
         roots.extend(slots.iter().copied().filter_map(raw_root));
     }
     for frame in state.async_frames.iter().flatten() {
-        roots.extend(frame.slots.iter().flatten().copied());
+        roots.extend(frame.slots().iter().copied().filter_map(raw_root));
     }
     roots.extend(state.completed_async_result);
     if let Some(execution) = &state.execution {

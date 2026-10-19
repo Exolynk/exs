@@ -193,6 +193,7 @@ pub(crate) fn compile_start<'a>(
         "__exs_rt_scheduler_checkpoint",
         module_span(module),
     )?;
+    function.instruction(&Instruction::Drop);
     emit_dispatch(
         &mut function,
         dispatcher,
@@ -236,6 +237,7 @@ pub(crate) fn compile_resume<'a>(
         "__exs_rt_scheduler_checkpoint",
         module_span(module),
     )?;
+    function.instruction(&Instruction::Drop);
     emit_dispatch(
         &mut function,
         dispatcher,
@@ -292,26 +294,51 @@ pub(crate) fn compile_dispatch<'a>(
         })
         .collect::<Vec<_>>();
     targets.sort_unstable_by_key(|(function_id, _)| *function_id);
-    emit_dispatch_target(&mut function, &targets, 0);
+    emit_dispatch_table(&mut function, &targets, module_span(module))?;
     function.instruction(&Instruction::End);
     Ok(function)
 }
 
-/// Emits nested Wasm conditionals selecting a generated suspendable step function.
-fn emit_dispatch_target(function: &mut Function, targets: &[(u32, u32)], index: usize) {
-    let Some((function_id, step)) = targets.get(index) else {
-        function.instruction(&Instruction::Unreachable);
-        return;
-    };
+/// Emits one `br_table` over function identifiers that calls the matching step function.
+///
+/// Every target owns one block; identifiers without a resumable function select the outermost
+/// block, which traps.
+fn emit_dispatch_table<'a>(
+    function: &mut Function,
+    targets: &[(u32, u32)],
+    span: SourceSpan<'a>,
+) -> Result<(), CompileDiagnostics<'a>> {
+    let target_count = u32::try_from(targets.len()).map_err(|_| {
+        diagnostics(CompileDiagnostic::new(
+            "E0212",
+            span,
+            "too many resumable functions",
+        ))
+    })?;
+    let table_length = targets
+        .last()
+        .map_or(0, |(function_id, _)| function_id.saturating_add(1));
+    let mut labels = vec![target_count; table_length as usize];
+    for (label, (function_id, _)) in (0..target_count).zip(targets) {
+        if let Some(entry) = labels.get_mut(*function_id as usize) {
+            *entry = label;
+        }
+    }
+    function.instruction(&Instruction::Block(BlockType::Empty));
+    for _ in targets {
+        function.instruction(&Instruction::Block(BlockType::Empty));
+    }
     function.instruction(&Instruction::LocalGet(1));
-    function.instruction(&Instruction::I32Const(function_id.cast_signed()));
-    function.instruction(&Instruction::I32Eq);
-    function.instruction(&Instruction::If(BlockType::Result(ValType::I32)));
-    function.instruction(&Instruction::LocalGet(0));
-    function.instruction(&Instruction::Call(*step));
-    function.instruction(&Instruction::Else);
-    emit_dispatch_target(function, targets, index + 1);
+    function.instruction(&Instruction::BrTable(labels.into(), target_count));
+    for (_, step) in targets {
+        function.instruction(&Instruction::End);
+        function.instruction(&Instruction::LocalGet(0));
+        function.instruction(&Instruction::Call(*step));
+        function.instruction(&Instruction::Return);
+    }
     function.instruction(&Instruction::End);
+    function.instruction(&Instruction::Unreachable);
+    Ok(())
 }
 
 /// A sequence of operations executed through durable frame slots.

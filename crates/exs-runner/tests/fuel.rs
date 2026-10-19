@@ -14,19 +14,82 @@ use exs_runner::{CompilerStrategy, ExecutionCancellation, ExecutionReport, Serve
 use support::{block_on, compile_source};
 
 /// Fuel ceiling for an empty function, which measures pure ABI and runtime overhead.
-const EMPTY_MAIN_FUEL: u64 = 69_363;
+const EMPTY_MAIN_FUEL: u64 = 69_311;
 /// Fuel ceiling for a show function that only returns `true`.
-const SHOW_TRUE_FUEL: u64 = 69_381;
+const SHOW_TRUE_FUEL: u64 = 69_329;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 77_467;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 77_298;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 168_497;
+const CONCAT_10_OBJECTS_FUEL: u64 = 136_846;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 1_049_488;
+const CONCAT_100_OBJECTS_FUEL: u64 = 750_173;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
-const INT_LOOP_1000_FUEL: u64 = 307_280;
+const INT_LOOP_1000_FUEL: u64 = 307_228;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
-const ASYNC_INT_LOOP_100_FUEL: u64 = 719_122;
+const ASYNC_INT_LOOP_100_FUEL: u64 = 256_399;
+/// Fuel ceiling for 1000 iterations of an empty resumable `while` loop.
+const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 251_073;
+/// Fuel ceiling for 1000 iterations of a resumable integer arithmetic `while` loop.
+const ASYNC_INT_WHILE_1000_FUEL: u64 = 414_092;
+/// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
+const FOR_RANGE_1000_FUEL: u64 = 1_623_366;
+/// Fuel ceiling for 100 calls of a small resumable function.
+const ASYNC_CALL_LOOP_100_FUEL: u64 = 231_606;
+
+/// Script whose leading host call selects resumable lowering for an otherwise empty `while` loop.
+const ASYNC_EMPTY_WHILE_SOURCE: &str = r#"
+    fn main(limit: Int) -> Int {
+        Host::elapsed();
+        let index = 0;
+        while index < limit {
+            index = index + 1;
+        }
+        ret index;
+    }
+"#;
+
+/// Script whose leading host call selects resumable lowering for the integer arithmetic loop.
+const ASYNC_INT_WHILE_SOURCE: &str = r#"
+    fn main(limit: Int) -> Int {
+        Host::elapsed();
+        let total = 0;
+        let index = 0;
+        while index < limit {
+            total = total + index * 3 + 1;
+            index = index + 1;
+        }
+        ret total;
+    }
+"#;
+
+/// Script iterating an empty-bodied `for` loop over a Range.
+const FOR_RANGE_SOURCE: &str = r#"
+    fn main(limit: Int) -> Int {
+        let count = 0;
+        for index in 0..limit {
+        }
+        ret count;
+    }
+"#;
+
+/// Script calling a small function, resumable because of its `match`, in a loop.
+const ASYNC_CALL_LOOP_SOURCE: &str = r#"
+    fn bump(value: Int) -> Int {
+        ret match value {
+            _ => value + 1,
+        };
+    }
+
+    fn main(limit: Int) -> Int {
+        let total = 0;
+        let index = 0;
+        while index < limit {
+            total = bump(total);
+            index = index + 1;
+        }
+        ret total;
+    }
+"#;
 
 /// Script concatenating the `name` field of every supplied object.
 const CONCAT_SOURCE: &str = r#"
@@ -192,5 +255,53 @@ fn fuel_async_int_loop_100() {
         &report,
         &ExsValue::Int(14_950),
         ASYNC_INT_LOOP_100_FUEL,
+    );
+}
+
+/// Measures 1000 iterations of an empty `while` loop in a resumable function.
+#[test]
+fn fuel_async_empty_while_1000() {
+    let report = execute_report(ASYNC_EMPTY_WHILE_SOURCE, &[ExsValue::Int(1000)]);
+    assert_fuel(
+        "async_empty_while_1000",
+        &report,
+        &ExsValue::Int(1000),
+        ASYNC_EMPTY_WHILE_1000_FUEL,
+    );
+}
+
+/// Measures 1000 iterations of an integer arithmetic `while` loop in a resumable function.
+#[test]
+fn fuel_async_int_while_1000() {
+    let report = execute_report(ASYNC_INT_WHILE_SOURCE, &[ExsValue::Int(1000)]);
+    assert_fuel(
+        "async_int_while_1000",
+        &report,
+        &ExsValue::Int(1_499_500),
+        ASYNC_INT_WHILE_1000_FUEL,
+    );
+}
+
+/// Measures 1000 iterations of an empty `for` loop over a Range.
+#[test]
+fn fuel_for_range_1000() {
+    let report = execute_report(FOR_RANGE_SOURCE, &[ExsValue::Int(1000)]);
+    assert_fuel(
+        "for_range_1000",
+        &report,
+        &ExsValue::Int(0),
+        FOR_RANGE_1000_FUEL,
+    );
+}
+
+/// Measures 100 calls of a small resumable function from a loop.
+#[test]
+fn fuel_async_call_loop_100() {
+    let report = execute_report(ASYNC_CALL_LOOP_SOURCE, &[ExsValue::Int(100)]);
+    assert_fuel(
+        "async_call_loop_100",
+        &report,
+        &ExsValue::Int(100),
+        ASYNC_CALL_LOOP_100_FUEL,
     );
 }

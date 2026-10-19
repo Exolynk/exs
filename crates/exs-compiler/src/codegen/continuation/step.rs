@@ -2,9 +2,12 @@
 
 use std::collections::HashMap;
 
-use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY, STATUS_READY, TYPE_ERROR, TYPE_OBJECT};
+use exs_abi::{
+    ASYNC_FRAME_STATE_OFFSET, HOST_CALL_PENDING, HOST_CALL_READY, STATUS_READY, TYPE_ERROR,
+    TYPE_OBJECT,
+};
 use exs_value::ValueRef;
-use wasm_encoder::{BlockType, Function, Instruction, ValType};
+use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 use crate::ast::UnaryOperator;
 use crate::codegen::literals::LiteralPool;
@@ -14,8 +17,9 @@ use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::codegen::{diagnostics, immediate};
 
 use super::FrameLayout;
+use super::body::StepBody;
 use super::graph::{HostTimeField, Operation, operation_span};
-use super::step_calls::binary_operation;
+use super::step_calls::{binary_operation, slot_memory};
 
 pub(super) struct StepCompiler<'source, 'context> {
     /// Runtime ABI export indexes.
@@ -29,7 +33,7 @@ pub(super) struct StepCompiler<'source, 'context> {
     /// The declared return contract checked before a resumable frame completes.
     pub(super) return_contract: &'context TypeContract,
     /// Wasm function body under construction.
-    pub(super) function: Function,
+    pub(super) function: StepBody,
     /// Reused Wasm i64 local holding one temporary ValueRef result.
     pub(super) scratch_local: u32,
     /// Second reused Wasm i64 local for ValueRefs held while the scratch local is busy.
@@ -46,90 +50,80 @@ pub(super) struct StepCompiler<'source, 'context> {
     pub(super) variadic_length_local: u32,
     /// Reused Wasm local holding one variadic List index during boundary validation.
     pub(super) variadic_index_local: u32,
-    /// Cached continuation state used by the generated balanced operation dispatcher.
+    /// Wasm i32 local holding this frame's linear-memory header and slot block address.
+    pub(super) block_local: u32,
+    /// Wasm i32 local holding a newly created child frame's block address.
+    pub(super) child_block_local: u32,
+    /// Number of durable slots addressed by the emitted body.
+    pub(super) used_slots: u32,
+    /// Wasm local holding the state selected by the next dispatch-loop iteration.
     pub(super) state_local: u32,
+    /// Control depth directly inside the state dispatch loop.
+    pub(super) loop_depth: u32,
+    /// Number of continuation states in this function.
+    pub(super) state_count: u32,
+    /// The state whose operation body is currently being emitted.
+    pub(super) current_state: u32,
 }
 
 impl<'source, 'context> StepCompiler<'source, 'context> {
-    /// Emits a balanced continuation-state dispatcher for all graph operations.
+    /// Emits the state dispatch loop holding every graph operation.
+    ///
+    /// The body is `loop { block_{n-1} .. block_0 { br_table } state_0 end state_1 .. }`, so a
+    /// transition to a later state branches straight to its block end and an earlier state
+    /// re-enters the loop. The step function only returns to the driver at suspension points.
     pub(super) fn emit_dispatch(
         &mut self,
         operations: &[Operation<'source, '_>],
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.call_runtime("__exs_rt_async_frame_state", span)?;
-        self.function
-            .instruction(&Instruction::LocalSet(self.state_local));
-        self.emit_dispatch_range(operations, 0)
-    }
-
-    /// Emits one balanced range of continuation-state dispatch comparisons.
-    fn emit_dispatch_range(
-        &mut self,
-        operations: &[Operation<'source, '_>],
-        start: usize,
-    ) -> Result<(), CompileDiagnostics<'source>> {
-        let Some((operation, remaining)) = operations.split_first() else {
-            self.function.instruction(&Instruction::Unreachable);
-            return Ok(());
-        };
-        let state = u32::try_from(start).map_err(|_| {
+        let state_count = u32::try_from(operations.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
                 "E0212",
-                operation_span(operation),
+                span,
                 "too many continuation states for one function",
             ))
         })?;
-        if remaining.is_empty() {
-            self.function
-                .instruction(&Instruction::LocalGet(self.state_local));
-            self.function
-                .instruction(&Instruction::I32Const(state.cast_signed()));
-            self.function.instruction(&Instruction::I32Eq);
-            self.function
-                .instruction(&Instruction::If(BlockType::Empty));
-            self.emit_state(state, operation)?;
-            self.function.instruction(&Instruction::End);
+        if state_count == 0 {
             self.function.instruction(&Instruction::Unreachable);
             return Ok(());
         }
-        let middle = operations.len() / 2;
-        let pivot = start.checked_add(middle).ok_or_else(|| {
-            diagnostics(CompileDiagnostic::new(
-                "E0212",
-                operation_span(operation),
-                "too many continuation states for one function",
-            ))
-        })?;
-        let pivot = u32::try_from(pivot).map_err(|_| {
-            diagnostics(CompileDiagnostic::new(
-                "E0212",
-                operation_span(operation),
-                "too many continuation states for one function",
-            ))
-        })?;
+        self.state_count = state_count;
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.call_runtime("__exs_rt_async_frame_block", span)?;
+        self.function
+            .instruction(&Instruction::LocalTee(self.block_local));
+        self.function.instruction(&Instruction::I32Load(MemArg {
+            offset: u64::from(ASYNC_FRAME_STATE_OFFSET),
+            align: 2,
+            memory_index: 0,
+        }));
+        self.function
+            .instruction(&Instruction::LocalSet(self.state_local));
+        self.function
+            .instruction(&Instruction::Loop(BlockType::Empty));
+        self.loop_depth = self.function.depth();
+        for _ in 0..state_count {
+            self.function
+                .instruction(&Instruction::Block(BlockType::Empty));
+        }
+        // The innermost block catches invalid states; label `index + 1` selects state `index`.
+        self.function
+            .instruction(&Instruction::Block(BlockType::Empty));
         self.function
             .instruction(&Instruction::LocalGet(self.state_local));
+        let targets = (1..=state_count).collect::<Vec<_>>();
         self.function
-            .instruction(&Instruction::I32Const(pivot.cast_signed()));
-        self.function.instruction(&Instruction::I32LtU);
-        self.function
-            .instruction(&Instruction::If(BlockType::Empty));
-        self.emit_dispatch_range(&operations[..middle], start)?;
-        self.function.instruction(&Instruction::Else);
-        self.emit_dispatch_range(&operations[middle..], start + middle)?;
+            .instruction(&Instruction::BrTable(targets.into(), 0));
         self.function.instruction(&Instruction::End);
-        Ok(())
-    }
-
-    /// Emits one operation body after the dispatcher selected its exact state.
-    fn emit_state(
-        &mut self,
-        state: u32,
-        operation: &Operation<'source, '_>,
-    ) -> Result<(), CompileDiagnostics<'source>> {
-        self.emit_operation(state, operation)?;
+        self.function.instruction(&Instruction::Unreachable);
+        for (state, operation) in (0..state_count).zip(operations) {
+            self.function.instruction(&Instruction::End);
+            self.current_state = state;
+            self.emit_operation(state, operation)?;
+            self.function.instruction(&Instruction::Unreachable);
+        }
+        self.function.instruction(&Instruction::End);
         Ok(())
     }
 
@@ -188,7 +182,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.ready(next, *span)?;
             }
             Operation::None { destination, span } => {
-                immediate::push(&mut self.function, ValueRef::NONE);
+                immediate::push(self.function.raw(), ValueRef::NONE);
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
@@ -197,7 +191,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 destination,
                 span,
             } => {
-                immediate::push(&mut self.function, ValueRef::boolean(*value));
+                immediate::push(self.function.raw(), ValueRef::boolean(*value));
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
@@ -520,7 +514,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             } => {
                 self.validate_slot_matches(*value, contract, *span)?;
                 self.function.instruction(&Instruction::LocalGet(2));
-                immediate::bool_from_condition(&mut self.function);
+                immediate::bool_from_condition(self.function.raw());
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
@@ -533,7 +527,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.call_runtime("__exs_rt_propagate", *span)?;
                 self.set_slot(*destination, *span)?;
                 self.get_slot(*destination, *span)?;
-                immediate::type_mask_test(&mut self.function, TYPE_ERROR);
+                immediate::type_mask_test(self.function.raw(), TYPE_ERROR);
                 self.function
                     .instruction(&Instruction::If(BlockType::Empty));
                 self.complete(*destination, *span)?;
@@ -613,7 +607,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 span,
             } => {
                 self.get_slot(*handle, *span)?;
-                immediate::type_mask_test(&mut self.function, TYPE_ERROR);
+                immediate::type_mask_test(self.function.raw(), TYPE_ERROR);
                 self.function
                     .instruction(&Instruction::If(BlockType::Empty));
                 self.get_slot(*handle, *span)?;
@@ -774,7 +768,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 span,
             } => {
                 if *checkpoint {
-                    self.call_runtime("__exs_rt_scheduler_checkpoint", *span)?;
+                    self.checkpoint(*target, *span)?;
                 }
                 self.ready(*target, *span)?;
             }
@@ -956,10 +950,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 "too many child continuation frame slots",
             ))
         })?;
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.function
-            .instruction(&Instruction::I32Const(next.cast_signed()));
-        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        self.store_state(next);
         self.set_call_site(span)?;
         self.function
             .instruction(&Instruction::I32Const(layout.function_id.cast_signed()));
@@ -970,18 +961,25 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function
             .instruction(&Instruction::I32Const(layout.function_id.cast_signed()));
         self.call_runtime("__exs_rt_frame_push", span)?;
+        if !arguments.is_empty() {
+            self.function.instruction(&Instruction::LocalGet(2));
+            self.call_runtime("__exs_rt_async_frame_block", span)?;
+            self.function
+                .instruction(&Instruction::LocalSet(self.child_block_local));
+        }
         for (slot, argument) in arguments.iter().enumerate() {
-            let slot = i32::try_from(slot).map_err(|_| {
+            let slot = u32::try_from(slot).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(
                     "E0212",
                     span,
                     "too many child function arguments",
                 ))
             })?;
-            self.function.instruction(&Instruction::LocalGet(2));
-            self.function.instruction(&Instruction::I32Const(slot));
+            self.function
+                .instruction(&Instruction::LocalGet(self.child_block_local));
             self.get_slot(*argument, span)?;
-            self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
+            self.function
+                .instruction(&Instruction::I64Store(slot_memory(slot)));
         }
         self.function.instruction(&Instruction::LocalGet(2));
         self.function.instruction(&Instruction::LocalGet(0));
@@ -989,6 +987,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .instruction(&Instruction::I32Const(destination.cast_signed()));
         self.call_runtime("__exs_rt_async_frame_set_caller", span)?;
         self.call_runtime("__exs_rt_scheduler_checkpoint", span)?;
+        self.function.instruction(&Instruction::Drop);
         self.function
             .instruction(&Instruction::I32Const(STATUS_READY));
         self.function.instruction(&Instruction::Return);
@@ -1003,10 +1002,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         destination: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.function
-            .instruction(&Instruction::I32Const(next.cast_signed()));
-        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        self.store_state(next);
         self.set_call_site(span)?;
 
         self.get_slot(closure, span)?;
@@ -1144,6 +1140,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .instruction(&Instruction::I32Const(destination.cast_signed()));
         self.call_runtime("__exs_rt_async_frame_set_caller", span)?;
         self.call_runtime("__exs_rt_scheduler_checkpoint", span)?;
+        self.function.instruction(&Instruction::Drop);
         self.function
             .instruction(&Instruction::I32Const(STATUS_READY));
         self.function.instruction(&Instruction::Return);
@@ -1238,10 +1235,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.call_runtime("__exs_rt_async_frame_set_slot", span)?;
             self.function.instruction(&Instruction::End);
         }
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.function
-            .instruction(&Instruction::I32Const(next.cast_signed()));
-        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        self.store_state(next);
         self.get_slot(destination, span)?;
         self.call_runtime("__exs_rt_parallel_wait", span)?;
         self.function.instruction(&Instruction::Drop);
@@ -1407,10 +1401,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.function.instruction(&Instruction::Br(0));
         self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::End);
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.function
-            .instruction(&Instruction::I32Const(next.cast_signed()));
-        self.call_runtime("__exs_rt_async_frame_set_state", span)?;
+        self.store_state(next);
         self.get_slot(destination, span)?;
         self.call_runtime("__exs_rt_parallel_wait", span)?;
         self.function.instruction(&Instruction::Return);
@@ -1434,7 +1425,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.get_slot(value, span)?;
-        immediate::type_mask_test(&mut self.function, TYPE_ERROR);
+        immediate::type_mask_test(self.function.raw(), TYPE_ERROR);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.get_slot(value, span)?;
@@ -1442,7 +1433,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         self.ready(next, span)?;
         self.function.instruction(&Instruction::Else);
         self.get_slot(value, span)?;
-        immediate::type_mask_test(&mut self.function, TYPE_OBJECT);
+        immediate::type_mask_test(self.function.raw(), TYPE_OBJECT);
         self.function.instruction(&Instruction::I32Eqz);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));

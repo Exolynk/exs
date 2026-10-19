@@ -14,6 +14,8 @@ use super::FrameLayout;
 pub(super) struct ContinuationGraph<'source, 'function> {
     /// One continuation operation per generated state.
     pub(super) operations: Vec<Operation<'source, 'function>>,
+    /// Number of durable frame slots allocated by the graph builder.
+    pub(super) slot_count: u32,
 }
 
 /// Built-in comparison fallback that produces the final Bool without an `Ordering` value.
@@ -668,6 +670,7 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
         });
         Ok(Self {
             operations: builder.operations,
+            slot_count: builder.next_slot,
         })
     }
 }

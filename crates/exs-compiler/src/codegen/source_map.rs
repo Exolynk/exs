@@ -13,6 +13,72 @@ pub(super) const SOURCE_MAP_SECTION: &str = "exs.source.map";
 /// Custom-section name containing optional source text.
 pub(super) const SOURCES_SECTION: &str = "exs.sources";
 
+/// Returns whether generated code must set the runtime source position before calling `export`.
+///
+/// The runtime only reads the position when it creates a language Error or starts a host call.
+/// Every export listed here provably does neither, so skipping the position keeps every error
+/// origin unchanged. Unlisted exports are always positioned.
+pub(super) fn requires_source_position(export: &str) -> bool {
+    !matches!(
+        export,
+        "__exs_rt_set_source_position"
+            | "__exs_rt_set_call_site"
+            | "__exs_rt_async_frame_block"
+            | "__exs_rt_async_frame_complete"
+            | "__exs_rt_async_frame_current"
+            | "__exs_rt_async_frame_function"
+            | "__exs_rt_async_frame_get_slot"
+            | "__exs_rt_async_frame_new"
+            | "__exs_rt_async_frame_new_parallel"
+            | "__exs_rt_async_frame_pop_trace"
+            | "__exs_rt_async_frame_set_caller"
+            | "__exs_rt_async_frame_set_current"
+            | "__exs_rt_async_frame_set_slot"
+            | "__exs_rt_async_frame_take_completed"
+            | "__exs_rt_bytes_new"
+            | "__exs_rt_cell_get"
+            | "__exs_rt_cell_new"
+            | "__exs_rt_cell_set"
+            | "__exs_rt_closure_arity"
+            | "__exs_rt_closure_capture"
+            | "__exs_rt_closure_capture_count"
+            | "__exs_rt_closure_function"
+            | "__exs_rt_closure_is_variadic"
+            | "__exs_rt_closure_new"
+            | "__exs_rt_closure_slot_count"
+            | "__exs_rt_condition"
+            | "__exs_rt_enum_is_type"
+            | "__exs_rt_enum_matches"
+            | "__exs_rt_float_new"
+            | "__exs_rt_frame_pop"
+            | "__exs_rt_frame_push"
+            | "__exs_rt_host_call_take_ready"
+            | "__exs_rt_int_new"
+            | "__exs_rt_is_closure"
+            | "__exs_rt_is_fatal_error"
+            | "__exs_rt_is_list"
+            | "__exs_rt_iter_native_next"
+            | "__exs_rt_list_get"
+            | "__exs_rt_list_length"
+            | "__exs_rt_list_new"
+            | "__exs_rt_literal_buffer_alloc"
+            | "__exs_rt_literal_string_pin"
+            | "__exs_rt_object_is_type"
+            | "__exs_rt_object_new"
+            | "__exs_rt_object_typed_new"
+            | "__exs_rt_parallel_list_count"
+            | "__exs_rt_parallel_list_get"
+            | "__exs_rt_parallel_new"
+            | "__exs_rt_parallel_take_results"
+            | "__exs_rt_parallel_wait"
+            | "__exs_rt_root_pop"
+            | "__exs_rt_root_push"
+            | "__exs_rt_scheduler_checkpoint"
+            | "__exs_rt_scheduler_status"
+            | "__exs_rt_string_new"
+    )
+}
+
 /// One compiler-assigned source position table for a single source unit.
 pub(super) struct SourceMap<'a> {
     source_ids: Vec<&'a str>,

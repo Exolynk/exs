@@ -128,7 +128,10 @@ impl ExecutionContext {
     }
 
     /// Consumes one scheduler checkpoint and rotates the running task when its quantum expires.
-    pub(crate) fn checkpoint_current(&mut self) {
+    ///
+    /// Returns whether the same task still runs afterwards, so generated code may continue it
+    /// without returning to the dispatcher.
+    pub(crate) fn checkpoint_current(&mut self) -> bool {
         let Some(task_id) = self.current else {
             crate::runtime::trap();
         };
@@ -138,13 +141,14 @@ impl ExecutionContext {
         };
         if remaining != 0 {
             task.quantum_remaining = remaining;
-            return;
+            return true;
         }
         task.quantum_remaining = TASK_QUANTUM;
         self.transition(task_id, TaskState::Runnable);
         self.enqueue(task_id);
         self.current = None;
         self.run_next();
+        self.current == Some(task_id)
     }
 
     /// Records a host call started by the currently running task.

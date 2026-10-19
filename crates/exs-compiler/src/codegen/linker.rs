@@ -449,6 +449,66 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             .ok_or_else(|| self.state_error("too many Wasm data segments"))
     }
 
+    /// Replaces every resumable frame layout's slot count with its graph's exact slot count.
+    ///
+    /// Graphs only read layout function identifiers, so building them before the counts are
+    /// known is safe. A graph that fails to build keeps a zero count; compiling its body reports
+    /// the same diagnostics.
+    fn assign_frame_slot_counts(
+        &mut self,
+        signatures: &HashMap<String, FunctionSignature>,
+    ) -> Result<(), reencode::Error<CompileDiagnostics<'source>>> {
+        let methods = self
+            .methods
+            .as_ref()
+            .ok_or_else(|| self.state_error("missing implementation methods"))?;
+        let declarations = self
+            .module
+            .functions
+            .iter()
+            .map(|function| (function.name.name.clone(), function))
+            .chain(
+                self.module
+                    .implementations
+                    .iter()
+                    .flat_map(|implementation| {
+                        implementation.methods.iter().map(|method| {
+                            (
+                                format!("{}::{}", implementation.type_name.name, method.name.name),
+                                method,
+                            )
+                        })
+                    }),
+            )
+            .chain(
+                self.lifted
+                    .iter()
+                    .map(|closure| (closure.key.clone(), &closure.declaration)),
+            );
+        let mut counts = Vec::new();
+        for (key, declaration) in declarations {
+            if !self.frame_layouts.contains_key(&key) {
+                continue;
+            }
+            let count = continuation::frame_slot_count(
+                declaration,
+                &key,
+                signatures,
+                &self.frame_layouts,
+                &self.lifted,
+                methods,
+                &self.type_registry,
+            );
+            counts.push((key, count.unwrap_or(0)));
+        }
+        for (key, count) in counts {
+            if let Some(layout) = self.frame_layouts.get_mut(&key) {
+                layout.slot_count = count;
+            }
+        }
+        Ok(())
+    }
+
     /// Returns the number of direct and implementation methods linked into this module.
     fn program_function_count(&self) -> Result<u32, reencode::Error<CompileDiagnostics<'source>>> {
         let count = self.module.functions.len().checked_add(
@@ -576,8 +636,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 function.name.name.clone(),
                 continuation::FrameLayout {
                     function_id: signature.function_id,
-                    slot_count: continuation::frame_slot_capacity(function, 0)
-                        .map_err(reencode::Error::UserError)?,
+                    slot_count: 0,
                 },
             );
         }
@@ -594,8 +653,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     key,
                     continuation::FrameLayout {
                         function_id: signature.function_id,
-                        slot_count: continuation::frame_slot_capacity(method, 0)
-                            .map_err(reencode::Error::UserError)?,
+                        slot_count: 0,
                     },
                 );
             }
@@ -608,14 +666,11 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 closure.key.clone(),
                 continuation::FrameLayout {
                     function_id: signature.function_id,
-                    slot_count: continuation::frame_slot_capacity(
-                        &closure.declaration,
-                        closure.captures.len(),
-                    )
-                    .map_err(reencode::Error::UserError)?,
+                    slot_count: 0,
                 },
             );
         }
+        self.assign_frame_slot_counts(&signatures)?;
         for type_index in &self.program_types {
             functions.function(*type_index);
         }

@@ -205,6 +205,12 @@ pub const STATUS_READY: i32 = 0;
 pub const STATUS_PENDING: i32 = 1;
 /// A root execution was cancelled before its pending host call completed.
 pub const STATUS_CANCELLED: i32 = 3;
+/// Byte offset of the `u32` continuation state in an async frame's linear-memory block.
+pub const ASYNC_FRAME_STATE_OFFSET: u32 = 0;
+/// Byte offset of the `u32` generated function identifier in an async frame's block.
+pub const ASYNC_FRAME_FUNCTION_OFFSET: u32 = 4;
+/// Byte offset of the first raw 64-bit `ValueRef` slot in an async frame's block.
+pub const ASYNC_FRAME_SLOTS_OFFSET: u32 = 8;
 /// A host call completed synchronously and has a response available to the runtime.
 pub const HOST_CALL_READY: i32 = 0;
 /// A host call is pending and will be resumed by the runner.
