@@ -31,6 +31,8 @@ mod browser;
 mod cancellation;
 mod cbor;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod compiler;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod deadline;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_abi;
@@ -68,6 +70,8 @@ pub use self::cbor::{
     encode_result_with_limits,
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub use self::compiler::CompilerStrategy;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::host_function::{
     AsyncHostFunction, HostCall, HostFuture, HostStream, HostStreamFunction, HostStreamFuture,
     HostStreamItem, SyncHostFunction,
@@ -86,6 +90,8 @@ pub struct ServerRunner {
     registry: HostFunctionRegistry,
     /// Resource policy applied to every native root execution.
     limits: ExecutionLimits,
+    /// Code generator used to compile every executed module.
+    compiler: CompilerStrategy,
 }
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -111,7 +117,15 @@ impl ServerRunner {
         Self {
             registry: HostFunctionRegistry::new(),
             limits,
+            compiler: CompilerStrategy::default(),
         }
+    }
+
+    /// Returns this runner configured to compile modules with one code generator.
+    #[must_use]
+    pub fn with_compiler_strategy(mut self, compiler: CompilerStrategy) -> Self {
+        self.compiler = compiler;
+        self
     }
 
     /// Returns mutable access to the runner-owned dynamic host-function registry.
@@ -156,7 +170,7 @@ impl ServerRunner {
             return Err(RunnerError::LimitExceeded(LimitKind::Module));
         }
         let execution_started_at = std::time::Instant::now();
-        let engine = limited_engine(&self.limits)?;
+        let engine = limited_engine(&self.limits, self.compiler)?;
         let module =
             Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
         check_task_metering_imports(&module)?;
@@ -304,8 +318,12 @@ impl Default for ServerRunner {
 
 /// Creates a native Wasmtime engine instrumented for one explicit runner policy.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn limited_engine(limits: &ExecutionLimits) -> Result<Engine, RunnerError> {
+fn limited_engine(
+    limits: &ExecutionLimits,
+    compiler: CompilerStrategy,
+) -> Result<Engine, RunnerError> {
     let mut configuration = Config::new();
+    configuration.strategy(compiler.wasmtime_strategy());
     configuration.consume_fuel(true);
     configuration.epoch_interruption(true);
     configuration.max_wasm_stack(limits.max_wasm_stack_bytes);

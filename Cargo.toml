@@ -28,7 +28,7 @@ module_name_repetitions = "allow"
 [workspace.dependencies]
 wasm-encoder = { version = "0.245.1", features = ["wasmparser"] }
 wasmparser = "0.245.1"
-wasmtime = "47.0.3"
+wasmtime = { version = "47.0.3", features = ["winch"] }
 dlmalloc = { version = "0.2", features = ["global"] }
 minicbor = { version = "0.26", default-features = false, features = ["alloc"] }
 jiff = { version = "0.2.35", default-features = false }

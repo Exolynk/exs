@@ -2,23 +2,27 @@
 //!
 //! Each test asserts an upper fuel ceiling. When an optimisation lowers the consumed fuel, lower
 //! the matching ceiling by hand so later regressions are caught.
+//!
+//! Fuel accounting differs slightly per code generator, so these tests pin Winch. Instantiation
+//! fuel also differs per platform: Linux maps data segments copy-on-write without fuel, while
+//! other platforms charge their initialization, so the ceilings are measured on macOS.
 
 mod support;
 
 use exs_abi::ExsValue;
-use exs_runner::{ExecutionCancellation, ExecutionReport, ServerRunner};
+use exs_runner::{CompilerStrategy, ExecutionCancellation, ExecutionReport, ServerRunner};
 use support::{block_on, compile_source};
 
 /// Fuel ceiling for an empty function, which measures pure ABI and runtime overhead.
-const EMPTY_MAIN_FUEL: u64 = 69_863;
+const EMPTY_MAIN_FUEL: u64 = 69_830;
 /// Fuel ceiling for a show function that only returns `true`.
-const SHOW_TRUE_FUEL: u64 = 69_918;
+const SHOW_TRUE_FUEL: u64 = 69_845;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 85_337;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 84_397;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 273_067;
+const CONCAT_10_OBJECTS_FUEL: u64 = 263_753;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 2_843_878;
+const CONCAT_100_OBJECTS_FUEL: u64 = 2_661_752;
 
 /// Script concatenating the `name` field of every supplied object.
 const CONCAT_SOURCE: &str = r#"
@@ -31,10 +35,10 @@ const CONCAT_SOURCE: &str = r#"
     }
 "#;
 
-/// Compiles and executes `main` with the default runner and returns its execution report.
+/// Compiles and executes `main` with a Winch runner and returns its execution report.
 fn execute_report(source: &str, inputs: &[ExsValue]) -> ExecutionReport {
     let compiled = compile_source(source);
-    let runner = ServerRunner::default();
+    let runner = ServerRunner::default().with_compiler_strategy(CompilerStrategy::Winch);
     let cancellation = ExecutionCancellation::new();
     match block_on(runner.execute_with_report(&compiled.wasm, "main", inputs, &cancellation)) {
         Ok(report) => report,
