@@ -19,6 +19,7 @@ use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 use super::entry::EntryLayout;
 use super::function::{Context, FunctionCompiler, FunctionInfo, error};
 use super::reachability::{reachable_functions, string_literals};
+use super::type_table::TypeTable;
 use crate::ast::{FunctionVisibility, Module};
 use crate::codegen::prune::{PruneHints, prune_unreachable};
 use crate::codegen::trait_registry::TraitRegistry;
@@ -138,7 +139,7 @@ pub(in crate::codegen) fn compile<'a>(
     let vm = facts.heap_base.next_multiple_of(8);
     let functions = reachable_functions(module);
     let statics = StaticStrings::build(
-        &string_literals(&functions),
+        &string_literals(&functions, TypeTable::field_names(&types)),
         vm + core::mem::size_of::<VmState>() as u32,
     )
     .ok_or_else(|| {
@@ -148,7 +149,9 @@ pub(in crate::codegen) fn compile<'a>(
             "too many string literals for linear memory".to_owned(),
         )
     })?;
-    let heap_start = statics.end();
+    let type_table = TypeTable::build(&types, &statics.references, statics.end())
+        .ok_or_else(|| error("E0210", span, "too many types for linear memory".to_owned()))?;
+    let heap_start = type_table.end();
     let base = facts.imported_functions + facts.defined_functions;
     let mut program = Program {
         types: Vec::new(),
@@ -203,6 +206,7 @@ pub(in crate::codegen) fn compile<'a>(
         core: &facts.exports,
         vm,
         heap_start,
+        types: (type_table.base, type_table.count),
     };
     let int_type = program.type_index(vec![VALUE_TYPE], vec![VALUE_TYPE]);
     program.function_types.push(int_type);
@@ -254,7 +258,10 @@ pub(in crate::codegen) fn compile<'a>(
     }
     let mut linker = Linker {
         program,
-        statics: (statics.base, statics.bytes),
+        segments: vec![
+            (statics.base, statics.bytes),
+            (type_table.base, type_table.bytes),
+        ],
     };
     let mut wasm = WasmModule::new();
     reencode::utils::parse_core_module(&mut linker, &mut wasm, Parser::new(0), template).map_err(
@@ -324,8 +331,8 @@ impl StaticStrings {
 struct Linker {
     /// The compiled program.
     program: Program,
-    /// Address and bytes of the static String objects.
-    statics: (u32, Vec<u8>),
+    /// Address and bytes of every static data segment: the String objects and the type table.
+    segments: Vec<(u32, Vec<u8>)>,
 }
 
 impl Reencode for Linker {
@@ -375,13 +382,14 @@ impl Reencode for Linker {
         section: wasmparser::DataSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
         reencode::utils::parse_data_section(self, data, section)?;
-        let (base, bytes) = &self.statics;
-        if !bytes.is_empty() {
-            data.active(
-                0,
-                &ConstExpr::i32_const(base.cast_signed()),
-                bytes.iter().copied(),
-            );
+        for (base, bytes) in &self.segments {
+            if !bytes.is_empty() {
+                data.active(
+                    0,
+                    &ConstExpr::i32_const(base.cast_signed()),
+                    bytes.iter().copied(),
+                );
+            }
         }
         Ok(())
     }

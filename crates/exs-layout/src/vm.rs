@@ -82,6 +82,25 @@ pub struct BoundaryState {
     pub reserved: u32,
 }
 
+/// Compiler-provided static metadata about the program's types.
+#[repr(C)]
+pub struct ProgramState {
+    /// Address of an array of [`TypeEntry`]s indexed by nominal type id, 0 when there is none.
+    pub types: u32,
+    /// Number of entries in `types`.
+    pub type_count: u32,
+}
+
+/// Static metadata of one nominal type.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypeEntry {
+    /// Number of declared fields, 0 for enums.
+    pub field_count: u32,
+    /// Address of `field_count` raw `ValueRef`s of static field-name Strings.
+    pub field_names: u32,
+}
+
 /// The block of execution state at a linker-assigned address.
 #[repr(C)]
 pub struct VmState {
@@ -93,6 +112,8 @@ pub struct VmState {
     pub root_stack: RootStack,
     /// Runner input and result buffers.
     pub boundary: BoundaryState,
+    /// Static program metadata.
+    pub program: ProgramState,
 }
 
 const _: () = assert!(core::mem::size_of::<VmState>().is_multiple_of(8));

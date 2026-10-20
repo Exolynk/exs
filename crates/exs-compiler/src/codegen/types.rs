@@ -583,6 +583,11 @@ impl TypeRegistry {
             .get(standard::canonical_enum_name(name).unwrap_or(name))
     }
 
+    /// Returns every nominal type declaration in no particular order.
+    pub(super) fn nominal_types(&self) -> impl Iterator<Item = &NominalType> {
+        self.types.values()
+    }
+
     /// Resolves one canonical enum constructor name.
     pub(super) fn enum_variant(&self, name: &str) -> Option<&EnumVariant> {
         self.enum_variants.get(name).or_else(|| {

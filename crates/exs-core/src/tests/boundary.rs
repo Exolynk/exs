@@ -68,10 +68,10 @@ fn decodes_scalar_arguments() {
     for index in values.len() as u32..10 {
         assert_eq!(memory.load_u64(SLOTS + index * 8), ValueRef::NONE.raw());
     }
-    let lists = ExsValue::List(std::vec![ExsValue::List(std::vec![])])
+    let maps = ExsValue::List(std::vec![ExsValue::Object(std::vec![])])
         .to_cbor()
         .expect("encodable");
-    let mut memory = memory_with_input(&lists);
+    let mut memory = memory_with_input(&maps);
     assert_eq!(
         decode_inputs(&mut memory, VM, SLOTS, 1),
         Err(CborError::Unsupported)

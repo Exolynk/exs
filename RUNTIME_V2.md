@@ -1,6 +1,7 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Phases 0, 0.5, 1, 2a and 2b are done; see sections 12 to 12c.
+Status: **approved design**. Phases 0, 0.5, 1, 2a, 2b and 2c-1 are done; see sections 12 to
+12d.
 
 ## 1. Goal
 
@@ -351,6 +352,44 @@ is part of the next steps.
 
 String building still copies byte by byte through the core library; writing whole words and
 rendering into the destination directly are possible follow-ups.
+
+## 12d. Phase 2c-1 results
+
+- **Lists** are a List object over one Buffer whose slot count is the capacity. Literals are
+  one `__exs_core_list_new` call over consecutive root slots. `list[i]` and `list[i] = v` run
+  inline when the receiver is a List and the index an immediate Int inside the bounds (one
+  unsigned comparison also rejects negative indices); every other case goes through
+  `__exs_core_index_get`/`_set`. `List + value` builds a new List like v1 (a List operand is
+  appended element by element) through the `+` path of `__exs_core_concat`. `for x in list`
+  iterates over a copy taken at loop start, matching v1's snapshot.
+- **Typed Objects** keep their declared fields in slots in declaration order and carry
+  `type_id + 1` in the reference's extra bits. A literal evaluates its properties in source
+  order, checks each field contract and stores None for fields without a property.
+  `obj.field` and `obj.field = v` test the receiver's tag against every type declaring the
+  field and access that type's slot inline; other receivers and undeclared fields go through
+  `__exs_core_property_get`/`_set` (a missing field reads as None). Nominal type contracts are
+  inline tag tests.
+- **Type table:** the linker places a static table of field-name Strings per type id after the
+  String literals; `VmState::program` points to it, so the core can name fields.
+- **Temporary roots:** core functions that allocate twice root intermediate objects on the
+  root stack and pop them before returning.
+- **CBOR** decodes nested arrays into Lists and encodes Lists and typed Objects (maps of their
+  declared fields in declaration order), rejecting nesting deeper than 128 and therefore
+  cycles.
+- Still trapping instead of returning Errors until 2d: out-of-bounds and non-Int indices,
+  undeclared or repeated properties in literals, contract violations, `for` over non-Lists,
+  and writes of undeclared keys.
+
+| 1000 iterations | v1 fuel | v2 fuel | change |
+|---|---:|---:|---:|
+| property read and write | 731,746 | 295,451 | −60 % |
+| typed Object and List literal per row | 1,952,885 | 927,798 | −52 % |
+| List index read and write | 692,015 | 428,600 | −38 % |
+| `for` over a 100-element List | 449,855 | 371,225 | −17 % |
+
+**Difference from v1:** v1 stores a typed Object's fields in literal order followed by the
+missing fields, so its CBOR map uses that order; v2 always uses declaration order. Both agree
+whenever a literal names its fields in declaration order.
 
 ## 13. Risks and open questions
 

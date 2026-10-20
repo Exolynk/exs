@@ -27,6 +27,8 @@ pub(super) struct EntryLayout<'m> {
     pub(super) vm: u32,
     /// First address available to the heap.
     pub(super) heap_start: u32,
+    /// Address and entry count of the static type table.
+    pub(super) types: (u32, u32),
 }
 
 impl EntryLayout<'_> {
@@ -103,6 +105,16 @@ impl EntryLayout<'_> {
         function.instruction(&Instruction::I32Const(self.heap_start.cast_signed()));
         function.instruction(&Instruction::I32Const(ROOT_STACK_PAGES.cast_signed()));
         function.instruction(&Instruction::Call(self.core("__exs_core_init", span)?));
+        // The type table is static, so writing it on every input keeps it set after init.
+        let (types, count) = self.types;
+        for (offset, value) in [
+            (offset_of!(VmState, program.types), types),
+            (offset_of!(VmState, program.type_count), count),
+        ] {
+            function.instruction(&Instruction::I32Const(0));
+            function.instruction(&Instruction::I32Const(value.cast_signed()));
+            function.instruction(&Instruction::I32Store(vm_field(self.vm, offset as u32)));
+        }
         function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
         function.instruction(&Instruction::LocalGet(0));
         function.instruction(&Instruction::Call(

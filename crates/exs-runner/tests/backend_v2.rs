@@ -179,3 +179,73 @@ fn reports_string_fuel() {
         println!("v2 fuel {name}: v1 {v1} v2 {v2}");
     }
 }
+
+/// Builds, indexes, adds and iterates Lists like v1.
+#[test]
+fn matches_v1_for_lists() {
+    let programs = [
+        "fn main() { ret []; }",
+        "fn main() { ret [1, 2.5, \"drei\", [true, None], []]; }",
+        "fn main() { let items = [1, 2, 3]; items[1] = items[0] + items[2]; ret items; }",
+        "fn main() { let items = [1, 2]; ret items + [3, 4] + 5 + [[6]]; }",
+        "fn main() { let items = [1, 2]; let more = items + 3; more[0] = 9; ret [items, more]; }",
+        "fn main() { let total = 0; for item in [1, 2, 3, 4] { if item == 2 { continue; } if item == 4 { break; } total = total + item; } ret total; }",
+        "fn main() { let items = [1, 2, 3]; let seen = []; for item in items { items[0] = 7; seen = seen + item; } ret [items, seen]; }",
+        "fn main() { let outer = [[1, 2], [3]]; let total = 0; for inner in outer { for item in inner { total = total + item; } } ret total; }",
+        "fn main() { let items = [\"a\", \"b\"]; ret [items[0] + items[1] == \"ab\", items == items, items == [\"a\", \"b\"]]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+    let nested = ExsValue::List(vec![
+        ExsValue::Int(1),
+        ExsValue::List(vec![ExsValue::String("zwei".into()), ExsValue::None]),
+        ExsValue::List(vec![]),
+    ]);
+    compare(
+        "fn main(items) { items[1][0] = items[1][0] + \"!\"; ret items + [items[0]]; }",
+        &[nested],
+    );
+}
+
+/// Constructs typed Objects, reads and writes their fields and encodes them like v1.
+#[test]
+fn matches_v1_for_typed_objects() {
+    let programs = [
+        "type Point { x: Int, y: Int } fn main() { ret Point { x: 1, y: 2 }; }",
+        "type Point { x: Int, y: Int } fn main() { let point = Point { x: 1, y: 2 }; point.y = point.x + point.y * 10; ret [point.x, point.y]; }",
+        "type User { name: String, nickname: String | None, } fn main() { let user = User { name: \"Ada\" }; ret [user, user.nickname]; }",
+        "type Point { x: Int, y: Int } type Size { y: Int, z: Int } fn main() { let items = [Point { x: 1, y: 2 }, Size { y: 3, z: 4 }]; let total = 0; for item in items { total = total + item.y; } ret total; }",
+        "type Point { x: Int, y: Int } type Line { from: Point, to: Point } fn main() { let line = Line { from: Point { x: 0, y: 0 }, to: Point { x: 3, y: 4 } }; line.to.x = line.to.x + 1; ret line; }",
+        "type Point { x: Int, y: Int } fn shift(point: Point) -> Point { point.x = point.x + 1; ret point; } fn main() { ret shift(shift(Point { x: 1, y: 2 })); }",
+        "type Point { x: Int, y: Int } fn main() { let point = Point { x: 1, y: 2 }; ret [point[\"x\"], point == point, point == Point { x: 1, y: 2 }]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
+/// Keeps Lists and typed Objects alive across collections triggered by many allocations.
+#[test]
+fn matches_v1_for_collections_while_collecting() {
+    let source = "type Cell { value: Int, next: Cell | None } fn main(limit: Int) -> Int { let head = None; let items = []; let index = 0; let countdown = 0; while index < limit { head = Cell { value: index, next: head }; if countdown == 0 { items = items + [head]; countdown = 100; } countdown = countdown - 1; index = index + 1; } let total = 0; for item in items { total = total + item.value; } let cursor = head; while cursor != None { total = total + cursor.value; cursor = cursor.next; } ret total; }";
+    compare(source, &[ExsValue::Int(30_000)]);
+}
+
+/// Prints the fuel of both backends for List and typed Object workloads.
+#[test]
+fn reports_collection_fuel() {
+    let property = "type Point { x: Int, y: Int } fn main(limit: Int) -> Int { let point = Point { x: 1, y: 2 }; let total = 0; let index = 0; while index < limit { total = total + point.x + point.y; point.x = index; index = index + 1; } ret total; }";
+    let literals = "type Point { x: Int, y: Int } fn main(limit: Int) -> Int { let total = 0; let index = 0; while index < limit { let point = Point { x: index, y: 1 }; let items = [point, index]; total = total + items[0].y; index = index + 1; } ret total; }";
+    let index = "fn main(limit: Int) -> Int { let items = [1, 2, 3, 4, 5, 6, 7, 8]; let total = 0; let index = 0; let slot = 0; while index < limit { total = total + items[slot]; items[slot] = index; slot = slot + 1; if slot == 8 { slot = 0; } index = index + 1; } ret total; }";
+    let iterate = "fn main(limit: Int) -> Int { let items = []; let index = 0; while index < 100 { items = items + index; index = index + 1; } let total = 0; let round = 0; while round < limit / 100 { for item in items { total = total + item; } round = round + 1; } ret total; }";
+    for (name, source) in [
+        ("property_access", property),
+        ("object_literals", literals),
+        ("list_index", index),
+        ("list_iteration", iterate),
+    ] {
+        let (v1, v2) = compare(source, &[ExsValue::Int(1000)]);
+        println!("v2 fuel {name}: v1 {v1} v2 {v2}");
+    }
+}

@@ -32,11 +32,9 @@ pub fn init_execution(
     let stack = take_system_pages(memory, vm, root_stack_pages)?;
     let start = stack + PAGE_HEADER_SIZE;
     memory.store_u32(vm + vm_offset!(root_stack.range.start), start);
-    memory.store_u32(vm + vm_offset!(root_stack.range.end), start);
-    memory.store_u32(
-        vm + vm_offset!(root_stack.limit),
-        stack + pages_bytes(root_stack_pages)?,
-    );
+    let state = crate::vm::Vm(vm);
+    state.set_root_stack_end(memory, start);
+    state.set_root_stack_limit(memory, stack + pages_bytes(root_stack_pages)?);
     memory.store_u32(
         vm + vm_offset!(roots.ranges),
         vm + vm_offset!(root_stack.range),

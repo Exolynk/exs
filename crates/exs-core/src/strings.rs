@@ -11,6 +11,7 @@ use exs_value::layout::{KIND_SHIFT, type_kind};
 use exs_value::{Immediate, ValueRef};
 
 use crate::allocator::allocate;
+use crate::lists::{list_add, list_object};
 use crate::memory::Memory;
 use crate::numbers::{Arithmetic, Number, NumericError, arithmetic, number, reference};
 
@@ -231,7 +232,8 @@ fn part_size(memory: &impl Memory, part: Part) -> (u32, u32) {
 /// Evaluates `slots[0] + slots[1] + ... + slots[count - 1]` with the language's `+`.
 ///
 /// While the accumulated value is a String, every following renderable operand is appended and
-/// the whole run is allocated once. Other operands fall back to one `+` at a time. The slots
+/// the whole run is allocated once. A List accumulator builds a new List per operand; other
+/// operands fall back to one numeric `+` at a time. The slots
 /// must be rooted; `slots[0]` is overwritten with intermediate results.
 ///
 /// # Errors
@@ -267,6 +269,10 @@ pub fn concat(
             let joined = join(memory, vm, slots, end, len, chars)?;
             index = end;
             joined
+        } else if list_object(accumulated).is_some() {
+            let right = memory.load_u64(slots + index * 8);
+            index += 1;
+            list_add(memory, vm, accumulated, right).ok_or(StringError::OutOfMemory)?
         } else {
             let right = memory.load_u64(slots + index * 8);
             index += 1;

@@ -49,6 +49,35 @@ impl Vm {
     vm_field!(collections, set_collections, heap.collections);
     vm_field!(root_ranges, set_root_ranges, roots.ranges);
     vm_field!(root_range_count, set_root_range_count, roots.range_count);
+    vm_field!(root_stack_end, set_root_stack_end, root_stack.range.end);
+    vm_field!(root_stack_limit, set_root_stack_limit, root_stack.limit);
+    vm_field!(program_types, set_program_types, program.types);
+    vm_field!(
+        program_type_count,
+        set_program_type_count,
+        program.type_count
+    );
+
+    /// Pushes one raw reference onto the root stack and returns its slot address, or `None`
+    /// when the stack is full.
+    ///
+    /// Core functions root intermediate objects this way while they allocate more; they must
+    /// restore the stack with [`Vm::pop_roots`] before returning.
+    pub(crate) fn push_root(self, memory: &mut impl Memory, raw: u64) -> Option<u32> {
+        let slot = self.root_stack_end(memory);
+        let end = slot.checked_add(8)?;
+        if end > self.root_stack_limit(memory) {
+            return None;
+        }
+        memory.store_u64(slot, raw);
+        self.set_root_stack_end(memory, end);
+        Some(slot)
+    }
+
+    /// Pops every root pushed since the one at `slot`, inclusive.
+    pub(crate) fn pop_roots(self, memory: &mut impl Memory, slot: u32) {
+        self.set_root_stack_end(memory, slot);
+    }
 
     /// Returns the address of the free-list head of one size class.
     fn free_head_address(self, class: usize) -> u32 {
@@ -78,6 +107,15 @@ pub fn set_root_ranges(memory: &mut impl Memory, vm: u32, ranges: u32, count: u3
 /// Replaces the heap option bits of the VM state block at `vm`.
 pub fn set_heap_flags(memory: &mut impl Memory, vm: u32, flags: u32) {
     Vm(vm).set_flags(memory, flags);
+}
+
+/// Points the VM state block at `vm` to the program's type table of `count` entries.
+///
+/// Generated code writes these fields directly; this is the same update for Rust callers.
+pub fn set_program_types(memory: &mut impl Memory, vm: u32, types: u32, count: u32) {
+    let vm = Vm(vm);
+    vm.set_program_types(memory, types);
+    vm.set_program_type_count(memory, count);
 }
 
 /// Returns the number of collections the VM state block at `vm` has completed.

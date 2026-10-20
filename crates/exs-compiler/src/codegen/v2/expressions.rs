@@ -93,6 +93,22 @@ impl<'a> FunctionCompiler<'a, '_> {
                 arguments,
                 span,
             } => self.compile_call(&callee.name, arguments, *span)?,
+            Expression::List { elements, span } => self.compile_list(elements, *span)?,
+            Expression::TypedObject {
+                type_name,
+                properties,
+                span,
+            } => self.compile_typed_object(type_name, properties, *span)?,
+            Expression::Index {
+                receiver,
+                index,
+                span,
+            } => self.compile_index_get(receiver, index, *span)?,
+            Expression::Property {
+                receiver,
+                property,
+                span,
+            } => self.compile_property_get(receiver, &property.name, *span)?,
             other => {
                 return Err(unsupported(expression_span(other), "these expressions"));
             }
@@ -384,16 +400,26 @@ impl FloatOperation {
 }
 
 impl<'a> FunctionCompiler<'a, '_> {
+    /// Returns the raw `ValueRef` of the static String of one literal.
+    pub(super) fn static_string_value(
+        &self,
+        text: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<u64, CompileDiagnostics<'a>> {
+        self.context
+            .strings
+            .get(text)
+            .copied()
+            .ok_or_else(|| error("E0999", span, "missing v2 static String literal".to_owned()))
+    }
+
     /// Pushes the static String of one literal.
     fn push_string(
         &mut self,
         text: &str,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        let raw =
-            self.context.strings.get(text).copied().ok_or_else(|| {
-                error("E0999", span, "missing v2 static String literal".to_owned())
-            })?;
+        let raw = self.static_string_value(text, span)?;
         self.instruction(Instruction::I64Const(raw.cast_signed()));
         Ok(())
     }

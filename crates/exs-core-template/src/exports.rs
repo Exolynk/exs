@@ -253,3 +253,81 @@ pub extern "C" fn __exs_core_concat(vm: i32, slots: i32, count: i32) -> i64 {
         Err(_) => trap(),
     }
 }
+
+/// Creates a List of the `count` values in the root slots at `slots`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_list_new(vm: i32, slots: i32, count: i32) -> i64 {
+    match exs_core::list_new(&mut memory(), address(vm), address(slots), address(count)) {
+        Some(list) => list.cast_signed(),
+        None => trap(),
+    }
+}
+
+/// Returns a shallow copy of one rooted List, trapping for other values.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_list_copy(vm: i32, list: i64) -> i64 {
+    match exs_core::list_copy(&mut memory(), address(vm), list.cast_unsigned()) {
+        Some(list) => list.cast_signed(),
+        None => trap(),
+    }
+}
+
+/// Evaluates `receiver[index]`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_index_get(vm: i32, receiver: i64, index: i64) -> i64 {
+    match exs_core::index_get(
+        &memory(),
+        address(vm),
+        receiver.cast_unsigned(),
+        index.cast_unsigned(),
+    ) {
+        Ok(value) => value.cast_signed(),
+        Err(_) => trap(),
+    }
+}
+
+/// Evaluates `receiver[index] = value`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_index_set(vm: i32, receiver: i64, index: i64, value: i64) {
+    if exs_core::index_set(
+        &mut memory(),
+        address(vm),
+        receiver.cast_unsigned(),
+        index.cast_unsigned(),
+        value.cast_unsigned(),
+    )
+    .is_err()
+    {
+        trap();
+    }
+}
+
+/// Reads the property named by the String `name`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_property_get(vm: i32, receiver: i64, name: i64) -> i64 {
+    match exs_core::property_get(
+        &memory(),
+        address(vm),
+        receiver.cast_unsigned(),
+        name.cast_unsigned(),
+    ) {
+        Ok(value) => value.cast_signed(),
+        Err(_) => trap(),
+    }
+}
+
+/// Writes the property named by the String `name`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_property_set(vm: i32, receiver: i64, name: i64, value: i64) {
+    if exs_core::property_set(
+        &mut memory(),
+        address(vm),
+        receiver.cast_unsigned(),
+        name.cast_unsigned(),
+        value.cast_unsigned(),
+    )
+    .is_err()
+    {
+        trap();
+    }
+}

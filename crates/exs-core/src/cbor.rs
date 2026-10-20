@@ -1,15 +1,22 @@
 //! CBOR encoding of runner inputs and results.
 //!
 //! The runner passes the entry arguments as one CBOR array and expects one CBOR value back.
-//! This version handles None, Bool, Int, Float and String; other values are reported as
-//! unsupported.
+//! This version handles None, Bool, Int, Float, String and List values both ways and encodes
+//! typed Objects as maps of their declared fields; other values are reported as unsupported.
 
 use exs_value::{Immediate, ValueRef};
 
 use crate::execution::{input, reserve_result};
+use crate::lists::{allocate_list, item_address, len, list_object, list_reference, push_unchecked};
 use crate::memory::Memory;
 use crate::numbers::{Number, float_value, int_value, number, reference};
 use crate::strings::{DATA, byte_len, copy_string, string_object};
+use crate::typed::{slot_address, slot_count, type_entry, type_id, typed_object};
+use crate::vm::Vm;
+
+/// Deepest nesting of Lists and Objects the codec converts; deeper values, including cyclic
+/// ones, are rejected.
+const MAX_DEPTH: u32 = 128;
 
 /// Why an input or result could not be converted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,6 +37,8 @@ const MAJOR_NEGATIVE: u8 = 1;
 const MAJOR_TEXT: u8 = 3;
 /// CBOR major type of arrays.
 const MAJOR_ARRAY: u8 = 4;
+/// CBOR major type of maps.
+const MAJOR_MAP: u8 = 5;
 /// CBOR major type of simple values and floats.
 const MAJOR_SIMPLE: u8 = 7;
 /// Encoded CBOR `false`.
@@ -86,9 +95,17 @@ impl Reader {
         i64::try_from(self.argument(memory, info)?).map_err(|_| CborError::Malformed)
     }
 
-    /// Decodes one scalar item without allocating.
-    fn scalar(&mut self, memory: &impl Memory) -> Result<Scalar, CborError> {
-        let initial = self.byte(memory)?;
+    /// Reads one length argument that must fit the remaining input, as every counted item
+    /// takes at least one byte.
+    fn count(&mut self, memory: &impl Memory, info: u8) -> Result<u32, CborError> {
+        u32::try_from(self.argument(memory, info)?)
+            .ok()
+            .filter(|count| *count <= self.end - self.position)
+            .ok_or(CborError::Malformed)
+    }
+
+    /// Decodes one scalar item with initial byte `initial` without allocating.
+    fn scalar(&mut self, memory: &impl Memory, initial: u8) -> Result<Scalar, CborError> {
         let (major, info) = (initial >> 5, initial & 0x1f);
         Ok(match (major, info) {
             (MAJOR_UNSIGNED, _) => Scalar::Number(Number::Int(self.int_argument(memory, info)?)),
@@ -96,13 +113,9 @@ impl Reader {
                 Scalar::Number(Number::Int(-1 - self.int_argument(memory, info)?))
             }
             (MAJOR_TEXT, _) => {
-                let len = u32::try_from(self.argument(memory, info)?)
-                    .map_err(|_| CborError::Malformed)?;
+                let len = self.count(memory, info)?;
                 let start = self.position;
-                let end = start.checked_add(len).ok_or(CborError::Malformed)?;
-                if end > self.end {
-                    return Err(CborError::Malformed);
-                }
+                let end = start + len;
                 let chars = utf8_chars(memory, start, len).ok_or(CborError::Malformed)?;
                 self.position = end;
                 Scalar::Text { start, len, chars }
@@ -166,21 +179,9 @@ pub fn decode_inputs(
     if initial >> 5 != MAJOR_ARRAY {
         return Err(CborError::Malformed);
     }
-    let count = u32::try_from(reader.argument(memory, initial & 0x1f)?)
-        .map_err(|_| CborError::Malformed)?;
+    let count = reader.count(memory, initial & 0x1f)?;
     for index in 0..count {
-        let raw = match reader.scalar(memory)? {
-            Scalar::Immediate(value) => value.raw(),
-            Scalar::Number(Number::Int(value)) => {
-                int_value(memory, vm, value).ok_or(CborError::OutOfMemory)?
-            }
-            Scalar::Number(Number::Float(value)) => {
-                float_value(memory, vm, value).ok_or(CborError::OutOfMemory)?
-            }
-            Scalar::Text { start, len, chars } => {
-                copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?
-            }
-        };
+        let raw = decode_value(memory, vm, &mut reader, 1)?;
         if index < capacity {
             memory.store_u64(slots + index * 8, raw);
         }
@@ -189,6 +190,64 @@ pub fn decode_inputs(
         memory.store_u64(slots + index * 8, ValueRef::NONE.raw());
     }
     Ok(count)
+}
+
+/// Decodes one item at nesting depth `depth` into a value.
+///
+/// Every value decoded so far must be rooted, because decoding allocates.
+fn decode_value(
+    memory: &mut impl Memory,
+    vm: u32,
+    reader: &mut Reader,
+    depth: u32,
+) -> Result<u64, CborError> {
+    let initial = reader.byte(memory)?;
+    if initial >> 5 == MAJOR_ARRAY {
+        return decode_list(memory, vm, reader, initial & 0x1f, depth);
+    }
+    Ok(match reader.scalar(memory, initial)? {
+        Scalar::Immediate(value) => value.raw(),
+        Scalar::Number(Number::Int(value)) => {
+            int_value(memory, vm, value).ok_or(CborError::OutOfMemory)?
+        }
+        Scalar::Number(Number::Float(value)) => {
+            float_value(memory, vm, value).ok_or(CborError::OutOfMemory)?
+        }
+        Scalar::Text { start, len, chars } => {
+            copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?
+        }
+    })
+}
+
+/// Decodes the elements of one array with additional information `info` into a new List.
+fn decode_list(
+    memory: &mut impl Memory,
+    vm: u32,
+    reader: &mut Reader,
+    info: u8,
+    depth: u32,
+) -> Result<u64, CborError> {
+    if depth >= MAX_DEPTH {
+        return Err(CborError::Unsupported);
+    }
+    let count = reader.count(memory, info)?;
+    let list = allocate_list(memory, vm, count).ok_or(CborError::OutOfMemory)?;
+    let raw = list_reference(list).ok_or(CborError::OutOfMemory)?;
+    let root = Vm(vm)
+        .push_root(memory, raw)
+        .ok_or(CborError::OutOfMemory)?;
+    let mut decoded = Ok(raw);
+    for _ in 0..count {
+        match decode_value(memory, vm, reader, depth + 1) {
+            Ok(item) => push_unchecked(memory, list, item),
+            Err(error) => {
+                decoded = Err(error);
+                break;
+            }
+        }
+    }
+    Vm(vm).pop_roots(memory, root);
+    decoded
 }
 
 /// Converts one IEEE 754 binary16 value to binary64.
@@ -244,53 +303,155 @@ fn utf8_chars(memory: &impl Memory, start: u32, len: u32) -> Option<u32> {
     Some(chars)
 }
 
-/// Encodes one scalar result into the VM's result buffer.
+/// Encodes one result value into the VM's result buffer.
 ///
 /// # Errors
 ///
 /// Returns why the value could not be encoded.
 pub fn encode_result(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), CborError> {
-    if let Some(object) = string_object(raw) {
-        return encode_string(memory, vm, object);
-    }
-    let mut bytes = [0_u8; 9];
-    let length = match reference(raw).and_then(ValueRef::immediate) {
-        Some(Immediate::None) => {
-            bytes[0] = NULL;
-            1
-        }
-        Some(Immediate::Bool(flag)) => {
-            bytes[0] = if flag { TRUE } else { FALSE };
-            1
-        }
-        _ => match number(memory, raw).ok_or(CborError::Unsupported)? {
-            Number::Int(value) => encode_int(&mut bytes, value),
-            Number::Float(value) => {
-                bytes[0] = FLOAT64;
-                bytes[1..].copy_from_slice(&value.to_bits().to_be_bytes());
-                9
-            }
-        },
+    let mut measure = Sink {
+        start: None,
+        len: 0,
     };
-    let address = reserve_result(memory, vm, length).ok_or(CborError::OutOfMemory)?;
-    for (offset, byte) in (0..length).zip(bytes) {
-        memory.store_u8(address + offset, byte);
-    }
-    Ok(())
+    measure.value(memory, vm, raw, 0)?;
+    let address = reserve_result(memory, vm, measure.len).ok_or(CborError::OutOfMemory)?;
+    let mut write = Sink {
+        start: Some(address),
+        len: 0,
+    };
+    write.value(memory, vm, raw, 0)
 }
 
-/// Encodes the String at `object` as a CBOR text string result.
-fn encode_string(memory: &mut impl Memory, vm: u32, object: u32) -> Result<(), CborError> {
-    let len = byte_len(memory, object);
-    let mut head = [0_u8; 9];
-    let head_len = encode_head(&mut head, MAJOR_TEXT, u64::from(len));
-    let total = head_len.checked_add(len).ok_or(CborError::OutOfMemory)?;
-    let address = reserve_result(memory, vm, total).ok_or(CborError::OutOfMemory)?;
-    for (offset, byte) in (0..head_len).zip(head) {
-        memory.store_u8(address + offset, byte);
+/// Destination of an encoding pass: it only measures, or it writes into reserved bytes.
+struct Sink {
+    /// Address of the first output byte, or `None` while measuring.
+    start: Option<u32>,
+    /// Bytes produced so far.
+    len: u32,
+}
+
+impl Sink {
+    /// Appends `bytes`.
+    fn bytes(&mut self, memory: &mut impl Memory, bytes: &[u8]) -> Result<(), CborError> {
+        if let Some(start) = self.start {
+            for (offset, byte) in (self.len..).zip(bytes) {
+                memory.store_u8(start + offset, *byte);
+            }
+        }
+        self.advance(bytes.len() as u32)
     }
-    memory.copy(address + head_len, object + DATA, len);
-    Ok(())
+
+    /// Accounts for `count` more output bytes.
+    fn advance(&mut self, count: u32) -> Result<(), CborError> {
+        self.len = self.len.checked_add(count).ok_or(CborError::OutOfMemory)?;
+        Ok(())
+    }
+
+    /// Appends the shortest head of `major` with `argument`.
+    fn head(
+        &mut self,
+        memory: &mut impl Memory,
+        major: u8,
+        argument: u64,
+    ) -> Result<(), CborError> {
+        let mut bytes = [0_u8; 9];
+        let length = encode_head(&mut bytes, major, argument) as usize;
+        self.bytes(memory, &bytes[..length])
+    }
+
+    /// Appends the encoding of one value at nesting depth `depth`.
+    fn value(
+        &mut self,
+        memory: &mut impl Memory,
+        vm: u32,
+        raw: u64,
+        depth: u32,
+    ) -> Result<(), CborError> {
+        if let Some(object) = string_object(raw) {
+            return self.string(memory, object);
+        }
+        if let Some(list) = list_object(raw) {
+            return self.list(memory, vm, list, depth);
+        }
+        if let Some(object) = typed_object(memory, raw) {
+            return self.typed_object(memory, vm, object, depth);
+        }
+        let mut bytes = [0_u8; 9];
+        let length = match reference(raw).and_then(ValueRef::immediate) {
+            Some(Immediate::None) => {
+                bytes[0] = NULL;
+                1
+            }
+            Some(Immediate::Bool(flag)) => {
+                bytes[0] = if flag { TRUE } else { FALSE };
+                1
+            }
+            _ => match number(memory, raw).ok_or(CborError::Unsupported)? {
+                Number::Int(value) => encode_int(&mut bytes, value),
+                Number::Float(value) => {
+                    bytes[0] = FLOAT64;
+                    bytes[1..].copy_from_slice(&value.to_bits().to_be_bytes());
+                    9
+                }
+            },
+        };
+        self.bytes(memory, &bytes[..length as usize])
+    }
+
+    /// Appends the String at `object` as a text string.
+    fn string(&mut self, memory: &mut impl Memory, object: u32) -> Result<(), CborError> {
+        let len = byte_len(memory, object);
+        self.head(memory, MAJOR_TEXT, u64::from(len))?;
+        if let Some(start) = self.start {
+            memory.copy(start + self.len, object + DATA, len);
+        }
+        self.advance(len)
+    }
+
+    /// Appends the List at `list` as an array.
+    fn list(
+        &mut self,
+        memory: &mut impl Memory,
+        vm: u32,
+        list: u32,
+        depth: u32,
+    ) -> Result<(), CborError> {
+        if depth >= MAX_DEPTH {
+            return Err(CborError::Unsupported);
+        }
+        let count = len(memory, list);
+        self.head(memory, MAJOR_ARRAY, u64::from(count))?;
+        for index in 0..count {
+            let item = memory.load_u64(item_address(memory, list, index));
+            self.value(memory, vm, item, depth + 1)?;
+        }
+        Ok(())
+    }
+
+    /// Appends the typed Object at `object` as a map of its declared fields in order.
+    fn typed_object(
+        &mut self,
+        memory: &mut impl Memory,
+        vm: u32,
+        object: u32,
+        depth: u32,
+    ) -> Result<(), CborError> {
+        if depth >= MAX_DEPTH {
+            return Err(CborError::Unsupported);
+        }
+        let entry = type_entry(memory, vm, type_id(memory, object))
+            .filter(|entry| entry.field_count <= slot_count(memory, object))
+            .ok_or(CborError::Unsupported)?;
+        self.head(memory, MAJOR_MAP, u64::from(entry.field_count))?;
+        for index in 0..entry.field_count {
+            let name = memory.load_u64(entry.field_names + index * 8);
+            let name = string_object(name).ok_or(CborError::Unsupported)?;
+            self.string(memory, name)?;
+            let value = memory.load_u64(slot_address(object, index));
+            self.value(memory, vm, value, depth + 1)?;
+        }
+        Ok(())
+    }
 }
 
 /// Writes the shortest CBOR encoding of one Int and returns its length.

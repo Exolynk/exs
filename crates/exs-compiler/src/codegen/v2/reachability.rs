@@ -43,10 +43,14 @@ pub(super) fn reachable_functions<'m, 'a>(
         .collect()
 }
 
-/// Returns every distinct String literal and formatted-string text of `functions`.
+/// Returns every distinct String literal, formatted-string text and property name of
+/// `functions`, followed by `extra`.
 ///
 /// Formatted strings start from the empty String, so it is always included.
-pub(super) fn string_literals(functions: &[&FunctionDeclaration<'_>]) -> Vec<String> {
+pub(super) fn string_literals<'t>(
+    functions: &[&FunctionDeclaration<'_>],
+    extra: impl IntoIterator<Item = &'t str>,
+) -> Vec<String> {
     let mut literals = vec![String::new()];
     let mut add = |text: &str| {
         if !literals.iter().any(|literal| literal == text) {
@@ -54,6 +58,11 @@ pub(super) fn string_literals(functions: &[&FunctionDeclaration<'_>]) -> Vec<Str
         }
     };
     for function in functions {
+        visit_block_targets(&function.body, &mut |target| {
+            if let AssignmentTarget::Property { property, .. } = target {
+                add(&property.name);
+            }
+        });
         visit_block(&function.body, &mut |expression| match expression {
             Expression::String(text, _) => add(text),
             Expression::FormattedString { parts, .. } => {
@@ -63,10 +72,56 @@ pub(super) fn string_literals(functions: &[&FunctionDeclaration<'_>]) -> Vec<Str
                     }
                 }
             }
+            Expression::Property { property, .. } => add(&property.name),
             _ => {}
         });
     }
+    for text in extra {
+        add(text);
+    }
     literals
+}
+
+/// Calls `visit` for every assignment target inside `block`.
+fn visit_block_targets<'e, 'a>(
+    block: &'e Block<'a>,
+    visit: &mut dyn FnMut(&'e AssignmentTarget<'a>),
+) {
+    for statement in &block.statements {
+        visit_statement_targets(statement, visit);
+    }
+}
+
+/// Calls `visit` for every assignment target inside `statement`, including nested blocks.
+///
+/// Closure bodies are not visited, because the v2 backend does not compile closures yet.
+fn visit_statement_targets<'e, 'a>(
+    statement: &'e Statement<'a>,
+    visit: &mut dyn FnMut(&'e AssignmentTarget<'a>),
+) {
+    match statement {
+        Statement::Assign { target, .. } => visit(target),
+        Statement::Block { block, .. }
+        | Statement::While { body: block, .. }
+        | Statement::For { body: block, .. } => visit_block_targets(block, visit),
+        Statement::If {
+            then_block,
+            else_branch,
+            ..
+        } => {
+            visit_block_targets(then_block, visit);
+            match else_branch {
+                Some(ElseBranch::Block(block)) => visit_block_targets(block, visit),
+                Some(ElseBranch::If(statement)) => visit_statement_targets(statement, visit),
+                None => {}
+            }
+        }
+        Statement::Let { .. }
+        | Statement::Return { .. }
+        | Statement::Expression { .. }
+        | Statement::Break { .. }
+        | Statement::Continue { .. } => {}
+    }
 }
 
 /// Calls `visit` for every expression inside `block`, outer expressions first.

@@ -4,5 +4,6 @@ mod allocator;
 mod boundary;
 mod collector;
 mod heap;
+mod lists;
 mod numbers;
 mod strings;

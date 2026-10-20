@@ -25,7 +25,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Compiles one statement.
-    fn compile_statement(
+    pub(super) fn compile_statement(
         &mut self,
         statement: &Statement<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
@@ -60,9 +60,22 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.compile_expression(value)?;
                 self.store(local);
             }
-            Statement::Assign { span, .. } => {
-                return Err(unsupported(*span, "index and property assignments"));
-            }
+            Statement::Assign {
+                target:
+                    AssignmentTarget::Index {
+                        receiver, index, ..
+                    },
+                value,
+                span,
+            } => self.compile_index_set(receiver, index, value, *span)?,
+            Statement::Assign {
+                target:
+                    AssignmentTarget::Property {
+                        receiver, property, ..
+                    },
+                value,
+                span,
+            } => self.compile_property_set(receiver, &property.name, value, *span)?,
             Statement::Return { value, span } => {
                 match value {
                     Some(value) => self.compile_expression(value)?,
@@ -118,7 +131,11 @@ impl<'a> FunctionCompiler<'a, '_> {
                 if type_annotation.is_some() {
                     return Err(unsupported(*span, "typed for-loop bindings"));
                 }
-                self.compile_range_for(&binding.name, iterable, body, *span)?;
+                if is_unshared_range(iterable) {
+                    self.compile_range_for(&binding.name, iterable, body, *span)?;
+                } else {
+                    self.compile_list_for(&binding.name, iterable, body, *span)?;
+                }
             }
             Statement::Break { span } | Statement::Continue { span } => {
                 let Some((break_depth, continue_depth)) = self.loops.last().copied() else {

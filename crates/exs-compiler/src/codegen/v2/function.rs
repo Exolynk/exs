@@ -208,26 +208,32 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
     }
 
     /// Traps unless the `ValueRef` in `local` satisfies `contract`.
+    ///
+    /// Nominal Object types are tested through the type id in the reference's extra bits.
     pub(super) fn check_contract(
         &mut self,
         local: u32,
         contract: &TypeContract,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if !contract.nominal_type_ids.is_empty()
-            || !contract.enum_type_ids.is_empty()
-            || contract.list_item.is_some()
-        {
-            return Err(unsupported(
-                span,
-                "nominal, enum and List element type contracts",
-            ));
+        if !contract.enum_type_ids.is_empty() || contract.list_item.is_some() {
+            return Err(unsupported(span, "enum and List element type contracts"));
         }
         if contract.builtin_mask == exs_abi::TYPE_ANY {
             return Ok(());
         }
         self.instruction(Instruction::LocalGet(local));
         immediate::type_mask_test(&mut self.function, contract.builtin_mask);
+        for type_id in &contract.nominal_type_ids {
+            self.instruction(Instruction::LocalGet(local));
+            if !immediate::object_type_test(&mut self.function, *type_id) {
+                return Err(unsupported(
+                    span,
+                    "contracts of more than 65534 nominal types",
+                ));
+            }
+            self.instruction(Instruction::I32Or);
+        }
         self.instruction(Instruction::I32Eqz);
         self.instruction(Instruction::If(BlockType::Empty));
         self.instruction(Instruction::Unreachable);
