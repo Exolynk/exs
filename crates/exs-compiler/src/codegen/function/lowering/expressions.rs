@@ -104,13 +104,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 properties,
                 span,
             } => self.compile_typed_object(type_name, properties, *span)?,
-            Expression::Match { span, .. } => {
-                return Err(diagnostics(CompileDiagnostic::new(
-                    "E0999",
-                    *span,
-                    "match expressions require continuation lowering",
-                )));
-            }
+            Expression::Match { value, arms, span } => self.compile_match(value, arms, *span)?,
             Expression::Unary {
                 operator,
                 operand,

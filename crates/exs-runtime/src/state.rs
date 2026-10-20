@@ -249,6 +249,15 @@ pub struct RuntimeRegisters {
     pub trace_top: u32,
     /// End address of the error-trace buffer, or 0 before the first entry.
     pub trace_limit: u32,
+    /// Identifier of the running task's active async frame, or 0 when not cached.
+    ///
+    /// The scheduler clears it whenever the running task or its frame changes; the runtime
+    /// fills all three active-frame registers once it knows the new frame.
+    pub active_frame: u32,
+    /// Generated function id of the cached active async frame.
+    pub active_function: u32,
+    /// Block address of the cached active async frame.
+    pub active_block: u32,
 }
 
 /// Interior-mutable holder of the runtime registers.
@@ -268,6 +277,9 @@ pub static __EXS_RT_REGISTERS: RegistersCell = RegistersCell(UnsafeCell::new(Run
     root_floor: 0,
     trace_top: 0,
     trace_limit: 0,
+    active_frame: 0,
+    active_function: 0,
+    active_block: 0,
 }));
 
 // Generated code addresses the registers with the shared ABI offsets.
@@ -298,6 +310,18 @@ const _: () = assert!(
 const _: () = assert!(
     core::mem::offset_of!(RuntimeRegisters, trace_limit)
         == exs_abi::REGISTERS_TRACE_LIMIT_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, active_frame)
+        == exs_abi::REGISTERS_ACTIVE_FRAME_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, active_function)
+        == exs_abi::REGISTERS_ACTIVE_FUNCTION_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, active_block)
+        == exs_abi::REGISTERS_ACTIVE_BLOCK_OFFSET as usize
 );
 
 /// Returns the runtime registers shared with generated code.

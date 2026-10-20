@@ -590,11 +590,9 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         self.function.instruction(&Instruction::LocalGet(0));
-        self.call_runtime("__exs_rt_async_frame_pop_trace", span)?;
-        self.function.instruction(&Instruction::LocalGet(0));
         self.function
             .instruction(&Instruction::LocalGet(self.scratch_local));
-        self.call_runtime("__exs_rt_async_frame_complete", span)?;
+        self.call_runtime("__exs_rt_async_return", span)?;
         self.function
             .instruction(&Instruction::LocalSet(self.completion_local));
         self.function

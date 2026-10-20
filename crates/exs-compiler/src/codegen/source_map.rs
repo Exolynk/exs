@@ -23,6 +23,9 @@ pub(super) fn requires_source_position(export: &str) -> bool {
         export,
         "__exs_rt_set_source_position"
             | "__exs_rt_set_call_site"
+            | "__exs_rt_async_call"
+            | "__exs_rt_async_dispatch_target"
+            | "__exs_rt_async_return"
             | "__exs_rt_async_frame_block"
             | "__exs_rt_async_frame_complete"
             | "__exs_rt_async_frame_current"

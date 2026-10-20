@@ -114,6 +114,104 @@ fn matches_compiler_and_host_enums() {
     );
 }
 
+/// Lowers `match` identically in direct functions and in resumable continuations.
+#[test]
+fn matches_identically_in_direct_and_resumable_functions() {
+    let source = r#"
+        enum Shape { Circle(radius: Int), Square(side: Int), Empty }
+        enum Pair { Both(left: Int, right: Int) }
+        fn area(shape) -> Int {
+            ret match shape {
+                Shape::Circle(radius) => radius * 3,
+                Shape::Square(side) => side * side,
+                Shape::Empty => 0,
+            };
+        }
+        fn early(shape) -> Int {
+            let unused = match shape {
+                Shape::Square(side) => {
+                    if side > 10 { ret -1; }
+                },
+                _ => 5,
+            };
+            ret 7;
+        }
+        fn loop_control(limit: Int) -> List {
+            let seen = [];
+            let index = 0;
+            while index < limit {
+                index = index + 1;
+                let unused = match Shape::Square(index) {
+                    Shape::Square(side) => {
+                        if side == 2 { continue; }
+                        if side == 5 { break; }
+                        seen.push(side);
+                    },
+                    _ => 0,
+                };
+            }
+            ret seen;
+        }
+        fn nested(pair: Pair, shape) -> Int {
+            ret 100 + match pair {
+                Pair::Both(left, right) => left * 10 + right + match shape {
+                    Shape::Empty => 1,
+                    _ => 2,
+                },
+            };
+        }
+        fn main(input) -> List {
+            ret [
+                area(Shape::Circle(2)),
+                area(Shape::Square(4)),
+                area(Shape::Empty),
+                early(Shape::Square(11)),
+                early(Shape::Square(3)),
+                early(Shape::Empty),
+                loop_control(10),
+                nested(Pair::Both(3, 4), Shape::Empty),
+                nested(Pair::Both(1, 2), Shape::Circle(1)),
+            ];
+        }
+    "#;
+    let ints = |values: &[i64]| ExsValue::List(values.iter().copied().map(ExsValue::Int).collect());
+    let expected = ExsValue::List(vec![
+        ExsValue::Int(6),
+        ExsValue::Int(16),
+        ExsValue::Int(0),
+        ExsValue::Int(-1),
+        ExsValue::Int(7),
+        ExsValue::Int(7),
+        ints(&[1, 3, 4]),
+        ExsValue::Int(135),
+        ExsValue::Int(114),
+    ]);
+    // Any closure makes every function resumable, which selects the continuation lowering.
+    let resumable = format!(
+        "{source} fn force_resumable() {{ let callback = () => {{ ret 1; }}; ret callback; }}"
+    );
+    assert_eq!(execute_source(source, ExsValue::None), expected);
+    assert_eq!(execute_source(&resumable, ExsValue::None), expected);
+    let mismatch = r#"
+        enum Shape { Circle(radius: Int), Empty }
+        fn main(input) {
+            ret match input {
+                Shape::Circle(radius) => radius,
+                Shape::Empty => 0,
+            };
+        }
+    "#;
+    let resumable = format!(
+        "{mismatch} fn force_resumable() {{ let callback = () => {{ ret 1; }}; ret callback; }}"
+    );
+    for source in [mismatch, resumable.as_str()] {
+        let ExsValue::Error(error) = execute_source(source, ExsValue::Int(3)) else {
+            panic!("matching an Int against enum arms did not return an Error");
+        };
+        assert_eq!(error.kind, "MatchError");
+    }
+}
+
 /// Keeps generic indexing behavior for property access on non-Object receivers.
 #[test]
 fn keeps_indexing_behavior_for_non_object_receivers() {

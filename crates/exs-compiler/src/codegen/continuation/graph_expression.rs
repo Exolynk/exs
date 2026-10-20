@@ -7,6 +7,7 @@ use crate::ast::{
     UnaryOperator,
 };
 use crate::codegen::diagnostics;
+use crate::codegen::match_arms::{ArmTest, MatchArms, check_bindings};
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -922,21 +923,10 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         let value = self.lower_expression(value)?;
         let destination = self.temporary(span)?;
         let mut exits = Vec::new();
-        let mut matched = std::collections::HashSet::new();
-        let mut enum_identity = None;
-        let mut enum_type_name = None;
-        let mut fallback = false;
+        let mut validation = MatchArms::new(self.types);
         for arm in arms {
-            if fallback {
-                return Err(diagnostics(CompileDiagnostic::new(
-                    "E0231",
-                    arm.span,
-                    "match arm follows wildcard fallback",
-                )));
-            }
-            match &arm.pattern {
-                MatchPattern::Wildcard(_) => {
-                    fallback = true;
+            match validation.arm(arm)? {
+                ArmTest::Wildcard => {
                     let arm_value = self.lower_match_arm(value, arm, &[])?;
                     self.operations.push(Operation::Copy {
                         source: arm_value,
@@ -949,54 +939,27 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         span: arm.span,
                     })?);
                 }
-                MatchPattern::Variant {
-                    type_name,
+                ArmTest::Variant {
+                    type_identity,
                     variant,
-                    bindings,
-                    span: pattern_span,
                 } => {
-                    let key = format!("{}::{}", type_name.name, variant.name);
-                    let variant_data = self.types.enum_variant(&key).cloned().ok_or_else(|| {
-                        diagnostics(CompileDiagnostic::new(
-                            "E0216",
-                            *pattern_span,
-                            format!("unknown enum variant `{key}`"),
-                        ))
-                    })?;
-                    if bindings.len() != variant_data.fields.len() {
+                    let MatchPattern::Variant {
+                        bindings,
+                        span: pattern_span,
+                        ..
+                    } = &arm.pattern
+                    else {
                         return Err(diagnostics(CompileDiagnostic::new(
-                            "E0208",
-                            *pattern_span,
-                            format!(
-                                "enum pattern `{key}` expects {} bindings",
-                                variant_data.fields.len()
-                            ),
+                            "E0999",
+                            arm.span,
+                            "variant arm without a variant pattern",
                         )));
-                    }
-                    if !matched.insert(key) {
-                        return Err(diagnostics(CompileDiagnostic::new(
-                            "E0231",
-                            *pattern_span,
-                            "duplicate match variant arm",
-                        )));
-                    }
-                    if let Some(identity) = &enum_identity {
-                        if identity != &variant_data.type_identity {
-                            return Err(diagnostics(CompileDiagnostic::new(
-                                "E0231",
-                                *pattern_span,
-                                "match arms must belong to one enum",
-                            )));
-                        }
-                    } else {
-                        enum_identity = Some(variant_data.type_identity.clone());
-                        enum_type_name = Some(type_name.name.clone());
-                    }
+                    };
                     let condition = self.temporary(*pattern_span)?;
                     self.operations.push(Operation::EnumMatches {
                         value,
-                        type_identity: variant_data.type_identity,
-                        variant: variant_data.name,
+                        type_identity,
+                        variant,
                         destination: condition,
                         span: *pattern_span,
                     });
@@ -1025,26 +988,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 }
             }
         }
-        if !fallback {
-            let Some(type_name) = enum_type_name else {
-                return Err(diagnostics(CompileDiagnostic::new(
-                    "E0232",
-                    span,
-                    "match requires at least one enum variant or a wildcard arm",
-                )));
-            };
-            let missing = self
-                .types
-                .enum_variant_names(&type_name)
-                .into_iter()
-                .find(|variant| !matched.contains(&format!("{type_name}::{variant}")));
-            if let Some(variant) = missing {
-                return Err(diagnostics(CompileDiagnostic::new(
-                    "E0232",
-                    span,
-                    format!("non-exhaustive match: missing `{type_name}::{variant}`"),
-                )));
-            }
+        if validation.finish(span)? {
             self.operations.push(Operation::MatchError {
                 value,
                 destination,
@@ -1065,16 +1009,9 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         arm: &'function crate::ast::MatchArm<'source>,
         bindings: &'function [crate::ast::Identifier<'source>],
     ) -> Result<u32, CompileDiagnostics<'source>> {
+        check_bindings(bindings)?;
         self.scopes.push(HashMap::new());
-        let mut declared = std::collections::HashSet::new();
         for (index, binding) in bindings.iter().enumerate() {
-            if !declared.insert(&binding.name) {
-                return Err(diagnostics(CompileDiagnostic::new(
-                    "E0204",
-                    binding.span,
-                    format!("duplicate match binding `{}`", binding.name),
-                )));
-            }
             let slot = self.temporary(binding.span)?;
             self.operations.push(Operation::EnumField {
                 value,

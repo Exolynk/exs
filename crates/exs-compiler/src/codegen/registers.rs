@@ -4,6 +4,7 @@
 //! registers with plain loads and stores relative to address 0 instead of runtime calls.
 
 use exs_abi::{
+    REGISTERS_ACTIVE_BLOCK_OFFSET, REGISTERS_ACTIVE_FRAME_OFFSET, REGISTERS_ACTIVE_FUNCTION_OFFSET,
     REGISTERS_CALL_SITE_OFFSET, REGISTERS_QUANTUM_OFFSET, REGISTERS_ROOT_FLOOR_OFFSET,
     REGISTERS_ROOT_LIMIT_OFFSET, REGISTERS_ROOT_TOP_OFFSET, REGISTERS_TRACE_LIMIT_OFFSET,
     REGISTERS_TRACE_TOP_OFFSET, TRACE_ENTRY_SIZE,
@@ -17,6 +18,21 @@ fn register(address: u32, offset: u32) -> MemArg {
         align: 2,
         memory_index: 0,
     }
+}
+
+/// Returns the load of the cached active async frame identifier, which is 0 when stale.
+pub(super) fn load_active_frame(address: u32) -> Instruction<'static> {
+    Instruction::I32Load(register(address, REGISTERS_ACTIVE_FRAME_OFFSET))
+}
+
+/// Returns the load of the cached active async frame's generated function id.
+pub(super) fn load_active_function(address: u32) -> Instruction<'static> {
+    Instruction::I32Load(register(address, REGISTERS_ACTIVE_FUNCTION_OFFSET))
+}
+
+/// Returns the load of the cached active async frame's block address.
+pub(super) fn load_active_block(address: u32) -> Instruction<'static> {
+    Instruction::I32Load(register(address, REGISTERS_ACTIVE_BLOCK_OFFSET))
 }
 
 /// Stores one call-site source position for the next generated function entry.

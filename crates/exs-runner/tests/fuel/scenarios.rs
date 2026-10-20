@@ -32,6 +32,7 @@ pub const ALL: &[Scenario] = &[
     FOR_RANGE_1000,
     FOR_RANGE_VARIABLE_1000,
     ASYNC_CALL_LOOP_100,
+    RESUMABLE_CALL_LOOP_100,
     FORMAT_LOOP_1000,
     LIST_CHURN_6000,
     SYNC_CALL_LOOP_1000,
@@ -207,7 +208,8 @@ pub const FOR_RANGE_VARIABLE_1000: Scenario = Scenario {
     expected: || ExsValue::Int(1000),
 };
 
-/// Measures 100 calls of a small function that is resumable because of its `match`.
+/// Measures 100 calls of a small function with a `match`, which was resumable before `match`
+/// lowered synchronously.
 pub const ASYNC_CALL_LOOP_100: Scenario = Scenario {
     name: "async_call_loop_100",
     source: r#"
@@ -215,6 +217,32 @@ pub const ASYNC_CALL_LOOP_100: Scenario = Scenario {
             ret match value {
                 _ => value + 1,
             };
+        }
+
+        fn main(limit: Int) -> Int {
+            let total = 0;
+            let index = 0;
+            while index < limit {
+                total = bump(total);
+                index = index + 1;
+            }
+            ret total;
+        }
+    "#,
+    inputs: || vec![ExsValue::Int(100)],
+    expected: || ExsValue::Int(100),
+};
+
+/// Measures 100 calls of a small resumable function; any closure makes every function resumable.
+pub const RESUMABLE_CALL_LOOP_100: Scenario = Scenario {
+    name: "resumable_call_loop_100",
+    source: r#"
+        fn bump(value: Int) -> Int {
+            ret value + 1;
+        }
+
+        fn callback() {
+            ret () => { ret 1; };
         }
 
         fn main(limit: Int) -> Int {

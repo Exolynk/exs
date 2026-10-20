@@ -1105,6 +1105,29 @@ pub extern "C" fn __exs_rt_async_frame_new(function_id: i32, slot_count: i32) ->
     runtime::async_frame_new(function_id, slot_count)
 }
 
+/// Starts one traced resumable child call and returns the block address of its arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_call(
+    function_id: i32,
+    slot_count: i32,
+    caller: i32,
+    destination: i32,
+) -> i32 {
+    runtime::async_call(function_id, slot_count, caller, destination)
+}
+
+/// Removes a completing frame's trace entry and completes it for its caller or root execution.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_return(frame: i32, value: ValueRef) -> i32 {
+    runtime::async_return(frame, value)
+}
+
+/// Returns the packed active frame identifier and function id the dispatcher must run.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_async_dispatch_target() -> i64 {
+    runtime::async_dispatch_target()
+}
+
 /// Allocates one untraced parallel child frame without replacing the active parent task.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_async_frame_new_parallel(

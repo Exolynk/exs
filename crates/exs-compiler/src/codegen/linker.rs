@@ -913,6 +913,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 signatures,
                 &self.frame_layouts,
                 &self.runtime_functions,
+                self.registers_address,
             )
             .map_err(reencode::Error::UserError)?;
             codes.function(&dispatcher);

@@ -30,23 +30,25 @@ const SHOW_TRUE_FUEL: u64 = 68_739;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
 const SHOW_COMPARE_RECORD_FUEL: u64 = 76_209;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 130_430;
+const CONCAT_10_OBJECTS_FUEL: u64 = 130_349;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 603_319;
+const CONCAT_100_OBJECTS_FUEL: u64 = 603_244;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
 const INT_LOOP_1000_FUEL: u64 = 306_636;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
 const ASYNC_INT_LOOP_100_FUEL: u64 = 92_129;
 /// Fuel ceiling for 1000 iterations of an empty resumable `while` loop.
-const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 204_697;
+const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 204_706;
 /// Fuel ceiling for 1000 iterations of a resumable integer arithmetic `while` loop.
-const ASYNC_INT_WHILE_1000_FUEL: u64 = 367_716;
+const ASYNC_INT_WHILE_1000_FUEL: u64 = 367_725;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
 const FOR_RANGE_1000_FUEL: u64 = 109_602;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
 const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 108_369;
+/// Fuel ceiling for 100 calls of a small function with a `match`.
+const ASYNC_CALL_LOOP_100_FUEL: u64 = 101_363;
 /// Fuel ceiling for 100 calls of a small resumable function.
-const ASYNC_CALL_LOOP_100_FUEL: u64 = 196_539;
+const RESUMABLE_CALL_LOOP_100_FUEL: u64 = 165_912;
 /// Fuel ceiling for 1000 iterations building one formatted line with two Ints.
 const FORMAT_LOOP_1000_FUEL: u64 = 2_570_409;
 /// Fuel ceiling for 6000 short-lived Lists, enough allocations to trigger collections.
@@ -54,9 +56,9 @@ const LIST_CHURN_6000_FUEL: u64 = 8_029_192;
 /// Fuel ceiling for 1000 calls of a small typed function.
 const SYNC_CALL_LOOP_1000_FUEL: u64 = 370_630;
 /// Fuel ceiling for parsing and formatting 100 RFC 3339 DateTimes.
-const DATETIME_ROUNDTRIP_100_FUEL: u64 = 9_958_043;
+const DATETIME_ROUNDTRIP_100_FUEL: u64 = 9_957_968;
 /// Fuel ceiling for the Exolynk-style round trip of 20 records.
-const RECORD_ROUNDTRIP_20_FUEL: u64 = 5_721_324;
+const RECORD_ROUNDTRIP_20_FUEL: u64 = 5_627_828;
 
 /// Compiles and executes one scenario with a Winch runner and returns its execution report.
 fn execute_report(scenario: &Scenario) -> ExecutionReport {
@@ -171,6 +173,15 @@ fn fuel_for_range_variable_1000() {
 #[test]
 fn fuel_async_call_loop_100() {
     assert_fuel(&scenarios::ASYNC_CALL_LOOP_100, ASYNC_CALL_LOOP_100_FUEL);
+}
+
+/// Measures the `resumable_call_loop_100` scenario.
+#[test]
+fn fuel_resumable_call_loop_100() {
+    assert_fuel(
+        &scenarios::RESUMABLE_CALL_LOOP_100,
+        RESUMABLE_CALL_LOOP_100_FUEL,
+    );
 }
 
 /// Measures the `format_loop_1000` scenario.

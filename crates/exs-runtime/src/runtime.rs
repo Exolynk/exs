@@ -633,14 +633,28 @@ pub(crate) fn result_length() -> i32 {
 
 /// Allocates one persistent compiler-generated async frame and makes it active.
 pub(crate) fn async_frame_new(function_id: i32, slot_count: i32) -> i32 {
+    let (function_id, slot_count) = frame_shape(function_id, slot_count);
+    let frame = AsyncFrame::new(function_id, slot_count, true);
+    let identifier = activate_new_frame(unsafe { runtime() }, frame);
+    i32::try_from(identifier).unwrap_or_else(|_| trap())
+}
+
+/// Validates a generated frame's function id and slot count.
+fn frame_shape(function_id: i32, slot_count: i32) -> (u32, usize) {
     let Ok(function_id) = u32::try_from(function_id) else {
         trap();
     };
     let Ok(slot_count) = usize::try_from(slot_count) else {
         trap();
     };
-    let frame = AsyncFrame::new(function_id, slot_count, true);
-    let state = unsafe { runtime() };
+    (function_id, slot_count)
+}
+
+/// Stores a new frame in a free table slot, makes it the running task's active frame and
+/// caches it in the registers; returns its one-based identifier.
+fn activate_new_frame(state: &mut RuntimeState, frame: AsyncFrame) -> u32 {
+    let function_id = frame.function_id();
+    let block = pointer(frame.block.as_ptr().cast()).cast_unsigned();
     let index = if let Some(index) = state.free_async_frames.pop() {
         let index = index as usize;
         let Some(slot) = state.async_frames.get_mut(index) else {
@@ -663,7 +677,84 @@ pub(crate) fn async_frame_new(function_id: i32, slot_count: i32) -> i32 {
         trap();
     };
     execution(state).set_current_frame(identifier);
-    i32::try_from(identifier).unwrap_or_else(|_| trap())
+    cache_frame(identifier, function_id, block);
+    identifier
+}
+
+/// Starts one traced child call of a resumable function and makes its frame active.
+///
+/// Performs a call site's frame allocation, language trace entry, caller continuation and
+/// scheduler checkpoint in one runtime call, and returns the child block address that receives
+/// the arguments.
+pub(crate) fn async_call(function_id: i32, slot_count: i32, caller: i32, destination: i32) -> i32 {
+    let (frame_function, slot_count) = frame_shape(function_id, slot_count);
+    let caller = async_frame_identifier(caller);
+    let Ok(slot) = u32::try_from(destination) else {
+        trap();
+    };
+    let mut frame = AsyncFrame::new(frame_function, slot_count, true);
+    frame.caller = Some(FrameContinuation {
+        frame: caller,
+        slot,
+    });
+    let block = pointer(frame.block.as_ptr().cast());
+    activate_new_frame(unsafe { runtime() }, frame);
+    trace_frame_push(function_id);
+    let _continues = scheduler_checkpoint();
+    block
+}
+
+/// Completes one traced resumable frame, removing its trace entry first.
+///
+/// Returns the `async_frame_complete` outcome.
+pub(crate) fn async_return(frame: i32, value: ValueRef) -> i32 {
+    let index = async_frame_index(frame);
+    let state = unsafe { runtime() };
+    let Some(completed) = state.async_frames.get_mut(index).and_then(Option::take) else {
+        trap();
+    };
+    if completed.traced {
+        trace_frame_pop();
+    }
+    finish_frame(state, index, completed, value)
+}
+
+/// Returns the active frame identifier in the low and its function id in the high 32 bits.
+///
+/// Also refills the active-frame registers, so later dispatches of the same frame skip this
+/// call.
+pub(crate) fn async_dispatch_target() -> i64 {
+    let frame = async_frame_current();
+    let function_id = async_frame_function(frame);
+    cache_active_frame(unsafe { runtime() }, async_frame_index(frame));
+    i64::from(frame.cast_unsigned()) | (i64::from(function_id.cast_unsigned()) << 32)
+}
+
+/// Caches the active frame at `index` in the runtime registers that generated dispatch code
+/// reads.
+fn cache_active_frame(state: &RuntimeState, index: usize) {
+    let Some(frame) = state.async_frames.get(index).and_then(Option::as_ref) else {
+        trap();
+    };
+    let Some(identifier) = u32::try_from(index)
+        .ok()
+        .and_then(|index| index.checked_add(1))
+    else {
+        trap();
+    };
+    cache_frame(
+        identifier,
+        frame.function_id(),
+        pointer(frame.block.as_ptr().cast()).cast_unsigned(),
+    );
+}
+
+/// Stores one active frame's identifier, function id and block address in the registers.
+fn cache_frame(identifier: u32, function_id: u32, block: u32) {
+    let registers = unsafe { crate::state::registers() };
+    registers.active_frame = identifier;
+    registers.active_function = function_id;
+    registers.active_block = block;
 }
 
 /// Allocates one child task frame for a parallel group without changing the active parent task.
@@ -881,7 +972,9 @@ pub(crate) fn async_frame_set_current(frame: i32) {
     else {
         trap();
     };
-    execution(unsafe { runtime() }).set_current_frame(frame);
+    let state = unsafe { runtime() };
+    execution(state).set_current_frame(frame);
+    cache_active_frame(state, frame as usize - 1);
 }
 
 /// Records the parent continuation consumed when a child resumable function completes.
@@ -915,6 +1008,19 @@ pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
     else {
         trap();
     };
+    finish_frame(state, frame_index, completed, value)
+}
+
+/// Frees one frame already taken from slot `frame_index` and delivers its result.
+///
+/// Returns 0 when dispatch continues with the caller or another task, 1 when the root
+/// execution completed and 2 when no task is runnable.
+fn finish_frame(
+    state: &mut RuntimeState,
+    frame_index: usize,
+    completed: AsyncFrame,
+    value: ValueRef,
+) -> i32 {
     let Ok(free_index) = u32::try_from(frame_index) else {
         trap();
     };
@@ -939,17 +1045,18 @@ pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
             trap();
         };
         *destination = value.raw();
-        execution(state).set_current_frame(caller_index as u32 + 1);
+        let function_id = caller.function_id();
+        let block = pointer(caller.block.as_ptr().cast()).cast_unsigned();
+        execution(state).set_current_frame(continuation.frame);
+        cache_frame(continuation.frame, function_id, block);
+        0
+    } else if execution(state).complete_current_task(value) {
+        state.completed_async_result = Some(value);
+        1
+    } else if execution(state).has_current() {
         0
     } else {
-        if execution(state).complete_current_task(value) {
-            state.completed_async_result = Some(value);
-            1
-        } else if execution(state).has_current() {
-            0
-        } else {
-            2
-        }
+        2
     }
 }
 

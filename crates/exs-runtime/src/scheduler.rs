@@ -116,8 +116,11 @@ impl ExecutionContext {
     }
 
     /// Associates the currently running task with one continuation frame.
+    ///
+    /// Clears the cached active frame; the caller refills it once it knows the frame's block.
     pub(crate) fn set_current_frame(&mut self, frame: u32) {
         self.current_task_mut().frame = Some(frame);
+        clear_active_frame();
     }
 
     /// Returns the active continuation frame for the running task.
@@ -149,7 +152,7 @@ impl ExecutionContext {
         self.current_task_mut().quantum_remaining = TASK_QUANTUM;
         self.transition(task_id, TaskState::Runnable);
         self.enqueue(task_id);
-        self.current = None;
+        self.set_current(None);
         self.run_next();
         self.current == Some(task_id)
     }
@@ -172,7 +175,7 @@ impl ExecutionContext {
         }
         self.save_current_quantum();
         self.transition(task_id, TaskState::WaitingHost);
-        self.current = None;
+        self.set_current(None);
         self.run_next_if_available();
     }
 
@@ -251,7 +254,7 @@ impl ExecutionContext {
             crate::runtime::task_release();
         }
         self.runnable.clear();
-        self.current = None;
+        self.set_current(None);
     }
 
     /// Creates one parent-owned group that will collect the supplied number of child results.
@@ -290,7 +293,7 @@ impl ExecutionContext {
         }
         self.save_current_quantum();
         self.transition(parent, TaskState::WaitingChildren);
-        self.current = None;
+        self.set_current(None);
         self.run_next_if_available();
     }
 
@@ -320,7 +323,7 @@ impl ExecutionContext {
         }
         let parallel = self.current_task().parallel;
         self.transition(task_id, TaskState::Completed);
-        self.current = None;
+        self.set_current(None);
         self.remove_task(task_id);
         crate::runtime::task_release();
         let Some((handle, index)) = parallel else {
@@ -407,9 +410,16 @@ impl ExecutionContext {
             crate::runtime::trap();
         };
         self.transition(task_id, TaskState::Running);
-        self.current = Some(task_id);
+        self.set_current(Some(task_id));
         let quantum = self.current_task().quantum_remaining;
         unsafe { crate::state::registers() }.quantum_remaining = quantum;
+    }
+
+    /// Selects the running task and clears the cached active frame, which belonged to the
+    /// previous one.
+    fn set_current(&mut self, task_id: Option<TaskId>) {
+        self.current = task_id;
+        clear_active_frame();
     }
 
     /// Copies the running task's quantum from the runtime registers back into the task.
@@ -518,4 +528,9 @@ impl ExecutionContext {
         }
         task.state = next;
     }
+}
+
+/// Marks the cached active-frame registers stale.
+fn clear_active_frame() {
+    unsafe { crate::state::registers() }.active_frame = 0;
 }

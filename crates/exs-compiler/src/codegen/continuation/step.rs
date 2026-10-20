@@ -14,7 +14,7 @@ use crate::codegen::literals::LiteralPool;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::TypeContract;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
-use crate::codegen::{diagnostics, immediate};
+use crate::codegen::{diagnostics, immediate, registers};
 
 use super::FrameLayout;
 use super::body::StepBody;
@@ -91,8 +91,22 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             return Ok(());
         }
         self.state_count = state_count;
+        // The dispatcher usually runs the cached active frame, whose block address the
+        // registers already hold.
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function
+            .instruction(&registers::load_active_frame(self.registers_address));
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.function.instruction(&Instruction::I32Eq);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function
+            .instruction(&registers::load_active_block(self.registers_address));
+        self.function.instruction(&Instruction::Else);
         self.function.instruction(&Instruction::LocalGet(0));
         self.call_runtime("__exs_rt_async_frame_block", span)?;
+        self.function.instruction(&Instruction::End);
         self.function
             .instruction(&Instruction::LocalTee(self.block_local));
         self.function.instruction(&Instruction::I32Load(MemArg {
@@ -1014,21 +1028,18 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         })?;
         self.store_state(next);
         self.set_call_site(span)?;
+        // One runtime call allocates, traces and links the child frame, then runs the scheduler
+        // checkpoint; only the arguments are stored afterwards.
         self.function
             .instruction(&Instruction::I32Const(layout.function_id.cast_signed()));
         self.function
             .instruction(&Instruction::I32Const(slot_count));
-        self.call_runtime("__exs_rt_async_frame_new", span)?;
-        self.function.instruction(&Instruction::LocalSet(2));
+        self.function.instruction(&Instruction::LocalGet(0));
         self.function
-            .instruction(&Instruction::I32Const(layout.function_id.cast_signed()));
-        self.call_runtime("__exs_rt_frame_push", span)?;
-        if !arguments.is_empty() {
-            self.function.instruction(&Instruction::LocalGet(2));
-            self.call_runtime("__exs_rt_async_frame_block", span)?;
-            self.function
-                .instruction(&Instruction::LocalSet(self.child_block_local));
-        }
+            .instruction(&Instruction::I32Const(destination.cast_signed()));
+        self.call_runtime("__exs_rt_async_call", span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.child_block_local));
         for (slot, argument) in arguments.iter().enumerate() {
             let slot = u32::try_from(slot).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(
@@ -1043,13 +1054,6 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.function
                 .instruction(&Instruction::I64Store(slot_memory(slot)));
         }
-        self.function.instruction(&Instruction::LocalGet(2));
-        self.function.instruction(&Instruction::LocalGet(0));
-        self.function
-            .instruction(&Instruction::I32Const(destination.cast_signed()));
-        self.call_runtime("__exs_rt_async_frame_set_caller", span)?;
-        self.call_runtime("__exs_rt_scheduler_checkpoint", span)?;
-        self.function.instruction(&Instruction::Drop);
         self.function
             .instruction(&Instruction::I32Const(STATUS_READY));
         self.function.instruction(&Instruction::Return);

@@ -6,6 +6,7 @@ mod function;
 mod immediate;
 mod linker;
 mod literals;
+mod match_arms;
 pub(crate) mod range_variables;
 mod registers;
 pub mod source_map;

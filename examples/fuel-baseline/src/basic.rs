@@ -144,8 +144,13 @@ fn call_loop(limit: i64) -> i64 {
     total
 }
 
-/// Calls a small function 100 times, the ExS counterpart being resumable.
+/// Calls a small function 100 times, the ExS counterpart containing a `match`.
 pub(crate) async fn async_call_loop_100(inputs: Vec<ExsValue>) -> ExsValue {
+    ExsValue::Int(call_loop(limit(&inputs)))
+}
+
+/// Calls a small function 100 times, the ExS counterpart being resumable.
+pub(crate) async fn resumable_call_loop_100(inputs: Vec<ExsValue>) -> ExsValue {
     ExsValue::Int(call_loop(limit(&inputs)))
 }
 

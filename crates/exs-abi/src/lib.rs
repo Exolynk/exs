@@ -228,6 +228,12 @@ pub const REGISTERS_ROOT_FLOOR_OFFSET: u32 = 16;
 pub const REGISTERS_TRACE_TOP_OFFSET: u32 = 20;
 /// Byte offset of the error-trace buffer's end address in the register block.
 pub const REGISTERS_TRACE_LIMIT_OFFSET: u32 = 24;
+/// Byte offset of the cached active async frame identifier, or 0 when the cache is stale.
+pub const REGISTERS_ACTIVE_FRAME_OFFSET: u32 = 28;
+/// Byte offset of the cached active async frame's generated function id.
+pub const REGISTERS_ACTIVE_FUNCTION_OFFSET: u32 = 32;
+/// Byte offset of the cached active async frame's block address.
+pub const REGISTERS_ACTIVE_BLOCK_OFFSET: u32 = 36;
 /// Returned by `__exs_rt_range_begin` when a for loop must iterate the Range Object itself.
 pub const RANGE_BEGIN_FALLBACK: i64 = 0x8000_0000;
 /// Inline Range loop state after the last item was yielded.

@@ -20,7 +20,6 @@ impl Suspendability {
                 (!function.host_calls().is_empty()
                     || !function.parallel_calls().is_empty()
                     || !function.callable_calls().is_empty()
-                    || function.has_matches()
                     || function.has_for_loops())
                 .then_some(key.to_owned())
             })

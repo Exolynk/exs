@@ -153,7 +153,6 @@ pub(crate) struct HirFunction<'a> {
     callable_calls: Vec<CallableCall<'a>>,
     host_calls: Vec<HostCall<'a>>,
     parallel_calls: Vec<SourceSpan<'a>>,
-    matches: bool,
     for_loops: bool,
 }
 
@@ -174,7 +173,6 @@ impl<'a> HirFunction<'a> {
             callable_calls: lowerer.callable_calls,
             host_calls: lowerer.host_calls,
             parallel_calls: lowerer.parallel_calls,
-            matches: lowerer.matches,
             for_loops: lowerer.for_loops,
         }
     }
@@ -213,12 +211,6 @@ impl<'a> HirFunction<'a> {
     #[must_use]
     pub(crate) fn parallel_calls(&self) -> &[SourceSpan<'a>] {
         &self.parallel_calls
-    }
-
-    /// Returns whether this function contains a match expression.
-    #[must_use]
-    pub(crate) const fn has_matches(&self) -> bool {
-        self.matches
     }
 
     /// Returns whether this function contains a for loop whose iterator may suspend.
@@ -335,7 +327,6 @@ struct FunctionLowerer<'a, 'state> {
     callable_calls: Vec<CallableCall<'a>>,
     host_calls: Vec<HostCall<'a>>,
     parallel_calls: Vec<SourceSpan<'a>>,
-    matches: bool,
     for_loops: bool,
     /// Spans of `for` statements over Range variables that can count without suspending.
     unobserved_range_loops: Vec<SourceSpan<'a>>,
@@ -363,7 +354,6 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             callable_calls: Vec::new(),
             host_calls: Vec::new(),
             parallel_calls: Vec::new(),
-            matches: false,
             for_loops: false,
             unobserved_range_loops: crate::codegen::range_variables::unobserved_range_loops(
                 function,
@@ -398,7 +388,6 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             callable_calls: Vec::new(),
             host_calls: Vec::new(),
             parallel_calls: Vec::new(),
-            matches: false,
             for_loops: false,
             unobserved_range_loops: Vec::new(),
             instance_targets,
@@ -664,7 +653,6 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 }
             }
             Expression::Match { value, arms, .. } => {
-                self.matches = true;
                 self.lower_expression(value);
                 for arm in arms {
                     self.scopes.push(HashMap::new());

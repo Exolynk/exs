@@ -8,7 +8,7 @@ use wasm_encoder::{BlockType, Function, Instruction, ValType};
 use super::FrameLayout;
 use crate::codegen::function::FunctionSignature;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan, module_span};
-use crate::codegen::{VALUE_TYPE, diagnostics};
+use crate::codegen::{VALUE_TYPE, diagnostics, registers};
 
 /// Generates the root entry wrapper for a resumable `main` function.
 pub(crate) fn compile_start<'a>(
@@ -270,21 +270,33 @@ pub(crate) fn compile_dispatch<'a>(
     signatures: &HashMap<String, FunctionSignature>,
     suspendable: &HashMap<String, FrameLayout>,
     runtime: &HashMap<String, u32>,
+    registers_address: u32,
 ) -> Result<Function, CompileDiagnostics<'a>> {
-    let mut function = Function::new([(2, ValType::I32)]);
-    function.instruction(&Instruction::Call(runtime_index(
-        runtime,
-        "__exs_rt_async_frame_current",
-        module_span(module),
-    )?));
-    function.instruction(&Instruction::LocalSet(0));
-    function.instruction(&Instruction::LocalGet(0));
-    function.instruction(&Instruction::Call(runtime_index(
-        runtime,
-        "__exs_rt_async_frame_function",
-        module_span(module),
-    )?));
+    let mut function = Function::new([(2, ValType::I32), (1, ValType::I64)]);
+    // The registers cache the active frame and its function id; only a stale cache asks the
+    // runtime, which returns the frame in the low and the function id in the high half.
+    function.instruction(&Instruction::I32Const(0));
+    function.instruction(&registers::load_active_frame(registers_address));
+    function.instruction(&Instruction::LocalTee(0));
+    function.instruction(&Instruction::If(BlockType::Empty));
+    function.instruction(&Instruction::I32Const(0));
+    function.instruction(&registers::load_active_function(registers_address));
     function.instruction(&Instruction::LocalSet(1));
+    function.instruction(&Instruction::Else);
+    function.instruction(&Instruction::Call(runtime_index(
+        runtime,
+        "__exs_rt_async_dispatch_target",
+        module_span(module),
+    )?));
+    function.instruction(&Instruction::LocalTee(2));
+    function.instruction(&Instruction::I32WrapI64);
+    function.instruction(&Instruction::LocalSet(0));
+    function.instruction(&Instruction::LocalGet(2));
+    function.instruction(&Instruction::I64Const(32));
+    function.instruction(&Instruction::I64ShrU);
+    function.instruction(&Instruction::I32WrapI64);
+    function.instruction(&Instruction::LocalSet(1));
+    function.instruction(&Instruction::End);
     let mut targets = suspendable
         .iter()
         .filter_map(|(key, layout)| {
