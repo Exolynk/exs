@@ -5,3 +5,4 @@ mod boundary;
 mod collector;
 mod heap;
 mod numbers;
+mod strings;

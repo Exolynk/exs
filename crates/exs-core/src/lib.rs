@@ -21,6 +21,8 @@ mod execution;
 mod memory;
 mod numbers;
 mod pages;
+mod strings;
+mod values;
 mod vm;
 
 #[cfg(test)]
@@ -35,7 +37,9 @@ pub use exs_layout::ObjectKind;
 pub use memory::LinearMemory;
 pub use memory::Memory;
 pub use numbers::{
-    Arithmetic, Number, NumericError, Ordering, arithmetic, compare, divide, equal, float_value,
-    int_value, negate, number,
+    Arithmetic, Number, NumericError, Ordering, arithmetic, divide, float_value, int_value, negate,
+    number,
 };
+pub use strings::{StringError, concat, string_object};
+pub use values::{compare, equal};
 pub use vm::{collection_count, set_heap_flags, set_root_ranges};

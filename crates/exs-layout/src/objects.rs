@@ -6,7 +6,8 @@
 
 use crate::header::ObjectHeader;
 
-/// Immutable UTF-8 text; `header.word` is unused. `len` bytes follow the fixed part.
+/// Immutable UTF-8 text; `header.word` is its character count. `len` bytes follow the fixed
+/// part. Bytes objects share the layout with `header.word` unused.
 #[repr(C)]
 pub struct StringObject {
     /// Common header.

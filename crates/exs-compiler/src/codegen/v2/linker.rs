@@ -2,21 +2,23 @@
 
 use std::collections::HashMap;
 
+use exs_abi::TYPE_STRING;
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, MODULE_METADATA_SECTION,
     RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, START_EXPORT_PREFIX,
 };
-use exs_layout::VmState;
+use exs_layout::{GC_STATIC, ObjectKind, VmState};
+use exs_value::layout::type_kind;
 use wasm_encoder::reencode::{self, Reencode};
 use wasm_encoder::{
-    CodeSection, CustomSection, ExportKind, ExportSection, Function, FunctionSection,
-    Module as WasmModule, TypeSection, ValType,
+    CodeSection, ConstExpr, CustomSection, DataSection, ExportKind, ExportSection, Function,
+    FunctionSection, Module as WasmModule, TypeSection, ValType,
 };
 use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 
 use super::entry::EntryLayout;
 use super::function::{Context, FunctionCompiler, FunctionInfo, error};
-use super::reachability::reachable_functions;
+use super::reachability::{reachable_functions, string_literals};
 use crate::ast::{FunctionVisibility, Module};
 use crate::codegen::prune::{PruneHints, prune_unreachable};
 use crate::codegen::trait_registry::TraitRegistry;
@@ -134,8 +136,19 @@ pub(in crate::codegen) fn compile<'a>(
     let facts = template_facts(template).map_err(|message| error("E1001", span, message))?;
     let types = TypeRegistry::build(module, traits)?;
     let vm = facts.heap_base.next_multiple_of(8);
-    let heap_start = vm + core::mem::size_of::<VmState>() as u32;
     let functions = reachable_functions(module);
+    let statics = StaticStrings::build(
+        &string_literals(&functions),
+        vm + core::mem::size_of::<VmState>() as u32,
+    )
+    .ok_or_else(|| {
+        error(
+            "E0210",
+            span,
+            "too many string literals for linear memory".to_owned(),
+        )
+    })?;
+    let heap_start = statics.end();
     let base = facts.imported_functions + facts.defined_functions;
     let mut program = Program {
         types: Vec::new(),
@@ -168,10 +181,13 @@ pub(in crate::codegen) fn compile<'a>(
         );
     }
     let int_new = base + functions.len() as u32;
+    let float_new = int_new + 1;
     let context = Context {
         core: &facts.exports,
         functions: &infos,
         int_new,
+        float_new,
+        strings: &statics.references,
         vm,
         types: &types,
     };
@@ -190,8 +206,14 @@ pub(in crate::codegen) fn compile<'a>(
     };
     let int_type = program.type_index(vec![VALUE_TYPE], vec![VALUE_TYPE]);
     program.function_types.push(int_type);
-    program.bodies.push(layout.int_new(span)?);
-    let mut next = int_new + 1;
+    program
+        .bodies
+        .push(layout.boxed_number(ObjectKind::BigInt, span)?);
+    program.function_types.push(int_type);
+    program
+        .bodies
+        .push(layout.boxed_number(ObjectKind::Float, span)?);
+    let mut next = float_new + 1;
     let start_type = program.type_index(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
     let mut entries = String::new();
     for function in &functions {
@@ -230,7 +252,10 @@ pub(in crate::codegen) fn compile<'a>(
         program.exports.push((name.to_owned(), next));
         next += 1;
     }
-    let mut linker = Linker { program };
+    let mut linker = Linker {
+        program,
+        statics: (statics.base, statics.bytes),
+    };
     let mut wasm = WasmModule::new();
     reencode::utils::parse_core_module(&mut linker, &mut wasm, Parser::new(0), template).map_err(
         |failure| {
@@ -253,10 +278,54 @@ pub(in crate::codegen) fn compile<'a>(
     prune_unreachable(&wasm.finish(), &hints).map_err(|message| error("E1001", span, message))
 }
 
+/// Static String objects placed between the VM state block and the heap.
+struct StaticStrings {
+    /// Address of the first object.
+    base: u32,
+    /// Encoded objects, 8-byte aligned.
+    bytes: Vec<u8>,
+    /// Raw `ValueRef` of every literal text.
+    references: HashMap<String, u64>,
+}
+
+impl StaticStrings {
+    /// Lays out one static String object per literal starting at `base`.
+    fn build(literals: &[String], base: u32) -> Option<Self> {
+        let base = base.next_multiple_of(8);
+        let mut bytes = Vec::new();
+        let mut references = HashMap::new();
+        for literal in literals {
+            let address = base.checked_add(u32::try_from(bytes.len()).ok()?)?;
+            let len = u32::try_from(literal.len()).ok()?;
+            let chars = u32::try_from(literal.chars().count()).ok()?;
+            bytes.extend([ObjectKind::String as u8, GC_STATIC, 0, 0]);
+            bytes.extend(chars.to_le_bytes());
+            bytes.extend(len.to_le_bytes());
+            bytes.extend(0_u32.to_le_bytes());
+            bytes.extend(literal.as_bytes());
+            bytes.resize(bytes.len().next_multiple_of(8), 0);
+            let reference = exs_value::ValueRef::from_parts(type_kind(TYPE_STRING), 0, address)?;
+            references.insert(literal.clone(), reference.raw());
+        }
+        Some(Self {
+            base,
+            bytes,
+            references,
+        })
+    }
+
+    /// Returns the first address after the static objects.
+    fn end(&self) -> u32 {
+        self.base + self.bytes.len() as u32
+    }
+}
+
 /// Re-encoder that appends the program to the template's sections.
 struct Linker {
     /// The compiled program.
     program: Program,
+    /// Address and bytes of the static String objects.
+    statics: (u32, Vec<u8>),
 }
 
 impl Reencode for Linker {
@@ -296,6 +365,23 @@ impl Reencode for Linker {
         reencode::utils::parse_export_section(self, exports, section)?;
         for (name, index) in &self.program.exports {
             exports.export(name, ExportKind::Func, *index);
+        }
+        Ok(())
+    }
+
+    fn parse_data_section(
+        &mut self,
+        data: &mut DataSection,
+        section: wasmparser::DataSectionReader<'_>,
+    ) -> Result<(), reencode::Error<Self::Error>> {
+        reencode::utils::parse_data_section(self, data, section)?;
+        let (base, bytes) = &self.statics;
+        if !bytes.is_empty() {
+            data.active(
+                0,
+                &ConstExpr::i32_const(base.cast_signed()),
+                bytes.iter().copied(),
+            );
         }
         Ok(())
     }

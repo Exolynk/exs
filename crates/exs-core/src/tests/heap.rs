@@ -15,7 +15,7 @@ pub(super) const VM: u32 = 256;
 /// Address of the single root range descriptor.
 const ROOT_RANGE: u32 = 4096;
 /// Address of the first root slot.
-const ROOT_SLOTS: u32 = 8192;
+pub(super) const ROOT_SLOTS: u32 = 8192;
 /// Number of root slots.
 pub(super) const ROOT_SLOT_COUNT: u32 = 64;
 /// Address of the first heap page.

@@ -244,3 +244,12 @@ pub extern "C" fn __exs_core_float(vm: i32, bits: i64) -> i64 {
         None => trap(),
     }
 }
+
+/// Evaluates `slots[0] + ... + slots[count - 1]` with the language's `+`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_concat(vm: i32, slots: i32, count: i32) -> i64 {
+    match exs_core::concat(&mut memory(), address(vm), address(slots), address(count)) {
+        Ok(value) => value.cast_signed(),
+        Err(_) => trap(),
+    }
+}

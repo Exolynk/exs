@@ -138,3 +138,44 @@ fn reports_scalar_fuel() {
         println!("v2 fuel {name}: v1 {v1} v2 {v2}");
     }
 }
+
+/// Builds, compares and returns Strings exactly like v1.
+#[test]
+fn matches_v1_for_strings() {
+    let programs = [
+        r#"fn main() { ret "hello"; }"#,
+        r#"fn main() { ret ""; }"#,
+        r#"fn main() { ret "äöü " + "€ " + "𝄞"; }"#,
+        r#"fn main() { ret "n=" + 7 + ", big=" + 3000000000 + ", f=" + 0.5 + ", whole=" + 2.0 + ", b=" + true; }"#,
+        r#"fn main() { let name = "ExS"; let count = 3; ret f"Hallo {name}, {count} mal, {count * 1.5}!"; }"#,
+        r#"fn main() { ret 1 + 2 + 0.5; }"#,
+        r#"fn main() { ret "a" == "a" && "a" != "b" && "apple" < "banana" && "b" >= "b"; }"#,
+        r#"fn main() { let text = "x"; let index = 0; while index < 5 { text = text + index; index = index + 1; } ret text; }"#,
+        r#"fn pad(value: Int) -> String { if value < 10 { ret "0" + value; } ret "" + value; } fn main() { ret pad(4) + ":" + pad(12); }"#,
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+    compare(
+        r#"fn main(name: String, suffix) { ret name + suffix + name; }"#,
+        &[ExsValue::String("Grüße".to_owned()), ExsValue::Int(-5)],
+    );
+}
+
+/// Keeps Strings alive across collections while building many temporary ones.
+#[test]
+fn matches_v1_for_strings_while_collecting() {
+    let source = r#"fn main(limit: Int) -> String { let kept = "start"; let index = 0; while index < limit { let temporary = "row " + index + ": " + (index * 2) + ";"; if index == 1000 || index == 20000 { kept = kept + temporary; } index = index + 1; } ret kept; }"#;
+    compare(source, &[ExsValue::Int(30_000)]);
+}
+
+/// Prints the fuel of both backends for String building.
+#[test]
+fn reports_string_fuel() {
+    let format_loop = r#"fn main(limit: Int) -> Int { let length = 0; let index = 0; while index < limit { let line = f"row {index}: {index * 2};"; length = length + 1; index = index + 1; } ret length; }"#;
+    let concat_loop = r#"fn main(limit: Int) -> Int { let count = 0; let index = 0; while index < limit { let line = "row " + index + ": " + (index * 2) + ";"; if line != "" { count = count + 1; } index = index + 1; } ret count; }"#;
+    for (name, source) in [("format_loop", format_loop), ("concat_loop", concat_loop)] {
+        let (v1, v2) = compare(source, &[ExsValue::Int(1000)]);
+        println!("v2 fuel {name}: v1 {v1} v2 {v2}");
+    }
+}

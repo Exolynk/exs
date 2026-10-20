@@ -30,9 +30,11 @@ pub(super) fn reachable_functions<'m, 'a>(
         if !reached.insert(name) {
             continue;
         }
-        let mut callees = Vec::new();
-        block_calls(&function.body, &mut callees);
-        pending.extend(callees);
+        visit_block(&function.body, &mut |expression| {
+            if let Expression::Call { callee, .. } = expression {
+                pending.push(callee.name.as_str());
+            }
+        });
     }
     module
         .functions
@@ -41,21 +43,50 @@ pub(super) fn reachable_functions<'m, 'a>(
         .collect()
 }
 
-/// Appends the callee names of every direct call inside `block`.
-fn block_calls<'e>(block: &'e Block<'_>, callees: &mut Vec<&'e str>) {
+/// Returns every distinct String literal and formatted-string text of `functions`.
+///
+/// Formatted strings start from the empty String, so it is always included.
+pub(super) fn string_literals(functions: &[&FunctionDeclaration<'_>]) -> Vec<String> {
+    let mut literals = vec![String::new()];
+    let mut add = |text: &str| {
+        if !literals.iter().any(|literal| literal == text) {
+            literals.push(text.to_owned());
+        }
+    };
+    for function in functions {
+        visit_block(&function.body, &mut |expression| match expression {
+            Expression::String(text, _) => add(text),
+            Expression::FormattedString { parts, .. } => {
+                for part in parts {
+                    if let FormattedStringPart::Text(text) = part {
+                        add(text);
+                    }
+                }
+            }
+            _ => {}
+        });
+    }
+    literals
+}
+
+/// Calls `visit` for every expression inside `block`, outer expressions first.
+fn visit_block<'e, 'a>(block: &'e Block<'a>, visit: &mut dyn FnMut(&'e Expression<'a>)) {
     for statement in &block.statements {
-        statement_calls(statement, callees);
+        visit_statement(statement, visit);
     }
 }
 
-/// Appends the callee names of every direct call inside `statement`.
-fn statement_calls<'e>(statement: &'e Statement<'_>, callees: &mut Vec<&'e str>) {
+/// Calls `visit` for every expression inside `statement`.
+fn visit_statement<'e, 'a>(
+    statement: &'e Statement<'a>,
+    visit: &mut dyn FnMut(&'e Expression<'a>),
+) {
     match statement {
         Statement::Let { value, .. }
         | Statement::Expression {
             expression: value, ..
         } => {
-            expression_calls(value, callees);
+            visit_expression(value, visit);
         }
         Statement::Assign { target, value, .. } => {
             match target {
@@ -63,61 +94,60 @@ fn statement_calls<'e>(statement: &'e Statement<'_>, callees: &mut Vec<&'e str>)
                 AssignmentTarget::Index {
                     receiver, index, ..
                 } => {
-                    expression_calls(receiver, callees);
-                    expression_calls(index, callees);
+                    visit_expression(receiver, visit);
+                    visit_expression(index, visit);
                 }
-                AssignmentTarget::Property { receiver, .. } => expression_calls(receiver, callees),
+                AssignmentTarget::Property { receiver, .. } => visit_expression(receiver, visit),
             }
-            expression_calls(value, callees);
+            visit_expression(value, visit);
         }
         Statement::Return { value, .. } => {
             if let Some(value) = value {
-                expression_calls(value, callees);
+                visit_expression(value, visit);
             }
         }
-        Statement::Block { block, .. } => block_calls(block, callees),
+        Statement::Block { block, .. } => visit_block(block, visit),
         Statement::If {
             condition,
             then_block,
             else_branch,
             ..
         } => {
-            expression_calls(condition, callees);
-            block_calls(then_block, callees);
+            visit_expression(condition, visit);
+            visit_block(then_block, visit);
             match else_branch {
-                Some(ElseBranch::Block(block)) => block_calls(block, callees),
-                Some(ElseBranch::If(statement)) => statement_calls(statement, callees),
+                Some(ElseBranch::Block(block)) => visit_block(block, visit),
+                Some(ElseBranch::If(statement)) => visit_statement(statement, visit),
                 None => {}
             }
         }
         Statement::While {
             condition, body, ..
         } => {
-            expression_calls(condition, callees);
-            block_calls(body, callees);
+            visit_expression(condition, visit);
+            visit_block(body, visit);
         }
         Statement::For { iterable, body, .. } => {
-            expression_calls(iterable, callees);
-            block_calls(body, callees);
+            visit_expression(iterable, visit);
+            visit_block(body, visit);
         }
         Statement::Break { .. } | Statement::Continue { .. } => {}
     }
 }
 
-/// Appends the callee names of every direct call inside `expression`.
-fn expression_calls<'e>(expression: &'e Expression<'_>, callees: &mut Vec<&'e str>) {
-    let all = |expressions: &'e [Expression<'_>], callees: &mut Vec<&'e str>| {
+/// Calls `visit` for `expression` and every expression inside it.
+fn visit_expression<'e, 'a>(
+    expression: &'e Expression<'a>,
+    visit: &mut dyn FnMut(&'e Expression<'a>),
+) {
+    visit(expression);
+    let all = |expressions: &'e [Expression<'a>], visit: &mut dyn FnMut(&'e Expression<'a>)| {
         for expression in expressions {
-            expression_calls(expression, callees);
+            visit_expression(expression, visit);
         }
     };
     match expression {
-        Expression::Call {
-            callee, arguments, ..
-        } => {
-            callees.push(callee.name.as_str());
-            all(arguments, callees);
-        }
+        Expression::Call { arguments, .. } => all(arguments, visit),
         Expression::Integer(_, _)
         | Expression::Float(_, _)
         | Expression::String(_, _)
@@ -128,58 +158,58 @@ fn expression_calls<'e>(expression: &'e Expression<'_>, callees: &mut Vec<&'e st
         Expression::FormattedString { parts, .. } => {
             for part in parts {
                 if let FormattedStringPart::Expression(expression) = part {
-                    expression_calls(expression, callees);
+                    visit_expression(expression, visit);
                 }
             }
         }
         Expression::IsType { value, .. }
         | Expression::Propagate { value, .. }
-        | Expression::Unary { operand: value, .. } => expression_calls(value, callees),
+        | Expression::Unary { operand: value, .. } => visit_expression(value, visit),
         Expression::Binary { left, right, .. } => {
-            expression_calls(left, callees);
-            expression_calls(right, callees);
+            visit_expression(left, visit);
+            visit_expression(right, visit);
         }
-        Expression::List { elements, .. } => all(elements, callees),
+        Expression::List { elements, .. } => all(elements, visit),
         Expression::Object { properties, .. } | Expression::TypedObject { properties, .. } => {
             for property in properties {
-                expression_calls(&property.value, callees);
+                visit_expression(&property.value, visit);
             }
         }
         Expression::Match { value, arms, .. } => {
-            expression_calls(value, callees);
+            visit_expression(value, visit);
             for arm in arms {
                 match &arm.body {
-                    MatchArmBody::Expression(value) => expression_calls(value, callees),
-                    MatchArmBody::Block(block) => block_calls(block, callees),
+                    MatchArmBody::Expression(value) => visit_expression(value, visit),
+                    MatchArmBody::Block(block) => visit_block(block, visit),
                 }
             }
         }
-        Expression::Closure { body, .. } => block_calls(body, callees),
-        Expression::ParallelStatic { tasks, .. } => all(tasks, callees),
-        Expression::ParallelDynamic { functions, .. } => expression_calls(functions, callees),
+        Expression::Closure { body, .. } => visit_block(body, visit),
+        Expression::ParallelStatic { tasks, .. } => all(tasks, visit),
+        Expression::ParallelDynamic { functions, .. } => visit_expression(functions, visit),
         Expression::HostCall {
             name, arguments, ..
         } => {
-            expression_calls(name, callees);
-            all(arguments, callees);
+            visit_expression(name, visit);
+            all(arguments, visit);
         }
         Expression::HostStream { arguments, .. }
         | Expression::HostTime { arguments, .. }
-        | Expression::StaticMethodCall { arguments, .. } => all(arguments, callees),
+        | Expression::StaticMethodCall { arguments, .. } => all(arguments, visit),
         Expression::MethodCall {
             receiver,
             arguments,
             ..
         } => {
-            expression_calls(receiver, callees);
-            all(arguments, callees);
+            visit_expression(receiver, visit);
+            all(arguments, visit);
         }
         Expression::Index {
             receiver, index, ..
         } => {
-            expression_calls(receiver, callees);
-            expression_calls(index, callees);
+            visit_expression(receiver, visit);
+            visit_expression(index, visit);
         }
-        Expression::Property { receiver, .. } => expression_calls(receiver, callees),
+        Expression::Property { receiver, .. } => visit_expression(receiver, visit),
     }
 }

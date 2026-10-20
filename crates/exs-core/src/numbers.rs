@@ -206,40 +206,18 @@ pub fn negate(memory: &mut impl Memory, vm: u32, value: u64) -> Result<u64, Nume
     number_value(memory, vm, result)
 }
 
-/// Compares two numeric references.
-///
-/// # Errors
-///
-/// Returns [`NumericError::NotNumeric`] for other operands and [`NumericError::Unordered`]
-/// when NaN takes part.
-pub fn compare(
-    memory: &impl Memory,
-    operator: Ordering,
-    left: u64,
-    right: u64,
-) -> Result<bool, NumericError> {
-    let ordering = match operands(memory, left, right)? {
+/// Orders two numbers, `None` when NaN takes part.
+pub(crate) fn order_numbers(left: Number, right: Number) -> Option<core::cmp::Ordering> {
+    match (left, right) {
         (Number::Int(left), Number::Int(right)) => Some(left.cmp(&right)),
         (left, right) => as_float(left).partial_cmp(&as_float(right)),
     }
-    .ok_or(NumericError::Unordered)?;
-    Ok(match operator {
-        Ordering::Less => ordering.is_lt(),
-        Ordering::LessOrEqual => ordering.is_le(),
-        Ordering::Greater => ordering.is_gt(),
-        Ordering::GreaterOrEqual => ordering.is_ge(),
-    })
 }
 
-/// Tests two references for language equality of None and numeric values.
-///
-/// Numbers compare by value with Float promotion; any other pair is equal only when both raw
-/// references are identical.
-#[must_use]
-pub fn equal(memory: &impl Memory, left: u64, right: u64) -> bool {
-    match (number(memory, left), number(memory, right)) {
-        (Some(Number::Int(left)), Some(Number::Int(right))) => left == right,
-        (Some(left), Some(right)) => as_float(left) == as_float(right),
-        _ => left == right,
+/// Tests two numbers for equality with Float promotion.
+pub(crate) fn numbers_equal(left: Number, right: Number) -> bool {
+    match (left, right) {
+        (Number::Int(left), Number::Int(right)) => left == right,
+        (left, right) => as_float(left) == as_float(right),
     }
 }

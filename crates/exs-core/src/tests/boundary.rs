@@ -68,10 +68,10 @@ fn decodes_scalar_arguments() {
     for index in values.len() as u32..10 {
         assert_eq!(memory.load_u64(SLOTS + index * 8), ValueRef::NONE.raw());
     }
-    let strings = ExsValue::List(std::vec![ExsValue::String("x".into())])
+    let lists = ExsValue::List(std::vec![ExsValue::List(std::vec![])])
         .to_cbor()
         .expect("encodable");
-    let mut memory = memory_with_input(&strings);
+    let mut memory = memory_with_input(&lists);
     assert_eq!(
         decode_inputs(&mut memory, VM, SLOTS, 1),
         Err(CborError::Unsupported)
@@ -116,4 +116,30 @@ fn encodes_scalar_results() {
         encode_result(&mut memory, VM, raw).expect("encodable");
         assert_eq!(ExsValue::from_cbor(&result_bytes(&memory)), Ok(expected));
     }
+}
+
+/// Round-trips Unicode text and rejects invalid UTF-8.
+#[test]
+fn round_trips_strings() {
+    for text in ["", "ascii", "äöü €", "𝄞 and 中文"] {
+        let input = ExsValue::List(std::vec![ExsValue::String(text.into())])
+            .to_cbor()
+            .expect("encodable");
+        let mut memory = memory_with_input(&input);
+        assert_eq!(decode_inputs(&mut memory, VM, SLOTS, 1), Ok(1));
+        let raw = memory.load_u64(SLOTS);
+        let object = crate::string_object(raw).expect("decoded a String");
+        assert_eq!(memory.load_u32(object + 4), text.chars().count() as u32);
+        encode_result(&mut memory, VM, raw).expect("encodable");
+        assert_eq!(
+            ExsValue::from_cbor(&result_bytes(&memory)),
+            Ok(ExsValue::String(text.into()))
+        );
+    }
+    // An array of one text string holding an unpaired surrogate (ED A0 80).
+    let mut memory = memory_with_input(&[0x81, 0x63, 0xed, 0xa0, 0x80]);
+    assert_eq!(
+        decode_inputs(&mut memory, VM, SLOTS, 1),
+        Err(CborError::Malformed)
+    );
 }

@@ -1,6 +1,6 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Phases 0, 0.5, 1 and 2a are done; see sections 12 to 12b.
+Status: **approved design**. Phases 0, 0.5, 1, 2a and 2b are done; see sections 12 to 12c.
 
 ## 1. Goal
 
@@ -324,6 +324,33 @@ time after the first execution of a module.
 
 The Float loop still calls the Rust allocator for every Float; the inline allocation fast path
 is part of the next steps.
+
+## 12c. Phase 2b results
+
+- **Static literals:** every String literal is a finished `GC_STATIC` String object in a data
+  segment between the VM state block and the heap; a literal is one `i64.const`.
+- **String layout:** the header word holds the character count, so a future `length()` is one
+  load.
+- **`+` chains and formatted strings:** a chain whose leftmost operand is a String is joined
+  in one `__exs_core_concat` call with exactly one allocation; other chains add pairwise with
+  inline Int and Float paths. Scalars render like v1 (Ints with a dedicated digit writer,
+  Floats with `core::fmt`). Formatted strings with String and scalar parts use the same call.
+- **Equality and ordering** of Strings (text, byte-wise order) and **CBOR** text strings with
+  UTF-8 validation.
+- **Inline allocation:** boxed Ints and Floats take a 16-byte cell straight from the free list;
+  two Floats add, subtract, multiply and divide inline.
+
+| 1000 iterations | v1 fuel | v2 fuel | change |
+|---|---:|---:|---:|
+| `while` Int loop | 176,620 | 147,633 | −16 % |
+| `for` over a Range | 143,658 | 90,638 | −37 % |
+| sync calls | 292,614 | 195,569 | −33 % |
+| Float loop | 579,772 | 318,108 | −45 % |
+| formatted string per row | 2,006,248 | 1,751,916 | −13 % |
+| `+` chain per row | 2,439,203 | 1,788,916 | −27 % |
+
+String building still copies byte by byte through the core library; writing whole words and
+rendering into the destination directly are possible follow-ups.
 
 ## 13. Risks and open questions
 

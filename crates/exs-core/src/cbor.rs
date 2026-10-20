@@ -1,7 +1,7 @@
 //! CBOR encoding of runner inputs and results.
 //!
 //! The runner passes the entry arguments as one CBOR array and expects one CBOR value back.
-//! This first version handles None, Bool, Int and Float; other values are reported as
+//! This version handles None, Bool, Int, Float and String; other values are reported as
 //! unsupported.
 
 use exs_value::{Immediate, ValueRef};
@@ -9,6 +9,7 @@ use exs_value::{Immediate, ValueRef};
 use crate::execution::{input, reserve_result};
 use crate::memory::Memory;
 use crate::numbers::{Number, float_value, int_value, number, reference};
+use crate::strings::{DATA, byte_len, copy_string, string_object};
 
 /// Why an input or result could not be converted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +26,8 @@ pub enum CborError {
 const MAJOR_UNSIGNED: u8 = 0;
 /// CBOR major type of negative integers.
 const MAJOR_NEGATIVE: u8 = 1;
+/// CBOR major type of text strings.
+const MAJOR_TEXT: u8 = 3;
 /// CBOR major type of arrays.
 const MAJOR_ARRAY: u8 = 4;
 /// CBOR major type of simple values and floats.
@@ -92,6 +95,18 @@ impl Reader {
             (MAJOR_NEGATIVE, _) => {
                 Scalar::Number(Number::Int(-1 - self.int_argument(memory, info)?))
             }
+            (MAJOR_TEXT, _) => {
+                let len = u32::try_from(self.argument(memory, info)?)
+                    .map_err(|_| CborError::Malformed)?;
+                let start = self.position;
+                let end = start.checked_add(len).ok_or(CborError::Malformed)?;
+                if end > self.end {
+                    return Err(CborError::Malformed);
+                }
+                let chars = utf8_chars(memory, start, len).ok_or(CborError::Malformed)?;
+                self.position = end;
+                Scalar::Text { start, len, chars }
+            }
             (MAJOR_SIMPLE, 20) => Scalar::Immediate(ValueRef::FALSE),
             (MAJOR_SIMPLE, 21) => Scalar::Immediate(ValueRef::TRUE),
             (MAJOR_SIMPLE, 22) => Scalar::Immediate(ValueRef::NONE),
@@ -117,6 +132,15 @@ enum Scalar {
     Immediate(ValueRef),
     /// A number that may need a heap object.
     Number(Number),
+    /// Validated UTF-8 text of `len` bytes and `chars` characters at `start`.
+    Text {
+        /// Address of the first byte.
+        start: u32,
+        /// Byte length.
+        len: u32,
+        /// Character count.
+        chars: u32,
+    },
 }
 
 /// Decodes the runner's argument array into the root slots at `slots`.
@@ -153,6 +177,9 @@ pub fn decode_inputs(
             Scalar::Number(Number::Float(value)) => {
                 float_value(memory, vm, value).ok_or(CborError::OutOfMemory)?
             }
+            Scalar::Text { start, len, chars } => {
+                copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?
+            }
         };
         if index < capacity {
             memory.store_u64(slots + index * 8, raw);
@@ -182,12 +209,50 @@ fn power_of_two(exponent: i32) -> f64 {
     f64::from_bits(((exponent + 1023) as u64) << 52)
 }
 
+/// Returns the character count of `len` bytes of UTF-8 at `start`, or `None` when invalid.
+fn utf8_chars(memory: &impl Memory, start: u32, len: u32) -> Option<u32> {
+    let byte = |offset: u32| memory.load_u8(start + offset);
+    let continuation = |offset: u32| offset < len && byte(offset) & 0xc0 == 0x80;
+    let (mut offset, mut chars) = (0, 0);
+    while offset < len {
+        let first = byte(offset);
+        let width = match first {
+            0x00..=0x7f => 1,
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf4 => 4,
+            _ => return None,
+        };
+        if (1..width).any(|index| !continuation(offset + index)) {
+            return None;
+        }
+        // Reject overlong encodings, surrogates and code points above U+10FFFF.
+        let second = if width > 1 { byte(offset + 1) } else { 0 };
+        let valid = match (first, width) {
+            (0xe0, 3) => second >= 0xa0,
+            (0xed, 3) => second < 0xa0,
+            (0xf0, 4) => second >= 0x90,
+            (0xf4, 4) => second < 0x90,
+            _ => true,
+        };
+        if !valid {
+            return None;
+        }
+        offset += width;
+        chars += 1;
+    }
+    Some(chars)
+}
+
 /// Encodes one scalar result into the VM's result buffer.
 ///
 /// # Errors
 ///
 /// Returns why the value could not be encoded.
 pub fn encode_result(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), CborError> {
+    if let Some(object) = string_object(raw) {
+        return encode_string(memory, vm, object);
+    }
     let mut bytes = [0_u8; 9];
     let length = match reference(raw).and_then(ValueRef::immediate) {
         Some(Immediate::None) => {
@@ -214,13 +279,31 @@ pub fn encode_result(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), 
     Ok(())
 }
 
+/// Encodes the String at `object` as a CBOR text string result.
+fn encode_string(memory: &mut impl Memory, vm: u32, object: u32) -> Result<(), CborError> {
+    let len = byte_len(memory, object);
+    let mut head = [0_u8; 9];
+    let head_len = encode_head(&mut head, MAJOR_TEXT, u64::from(len));
+    let total = head_len.checked_add(len).ok_or(CborError::OutOfMemory)?;
+    let address = reserve_result(memory, vm, total).ok_or(CborError::OutOfMemory)?;
+    for (offset, byte) in (0..head_len).zip(head) {
+        memory.store_u8(address + offset, byte);
+    }
+    memory.copy(address + head_len, object + DATA, len);
+    Ok(())
+}
+
 /// Writes the shortest CBOR encoding of one Int and returns its length.
 fn encode_int(bytes: &mut [u8; 9], value: i64) -> u32 {
-    let (major, argument) = if value < 0 {
-        (MAJOR_NEGATIVE, (-1 - value).cast_unsigned())
+    if value < 0 {
+        encode_head(bytes, MAJOR_NEGATIVE, (-1 - value).cast_unsigned())
     } else {
-        (MAJOR_UNSIGNED, value.cast_unsigned())
-    };
+        encode_head(bytes, MAJOR_UNSIGNED, value.cast_unsigned())
+    }
+}
+
+/// Writes the shortest CBOR head of `major` with `argument` and returns its length.
+fn encode_head(bytes: &mut [u8; 9], major: u8, argument: u64) -> u32 {
     let (info, width) = match argument {
         0..=23 => (argument as u8, 0),
         24..=0xff => (24, 1),

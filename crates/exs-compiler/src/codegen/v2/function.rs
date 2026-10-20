@@ -34,8 +34,12 @@ pub(super) struct Context<'m> {
     pub(super) core: &'m HashMap<String, u32>,
     /// Every compiled source function by name.
     pub(super) functions: &'m HashMap<String, FunctionInfo>,
-    /// Index of the generated `(i64) -> i64` wrapper that boxes one Int.
+    /// Index of the generated `(i64) -> i64` helper that boxes one Int.
     pub(super) int_new: u32,
+    /// Index of the generated `(i64) -> i64` helper that boxes one Float from its bits.
+    pub(super) float_new: u32,
+    /// Raw `ValueRef` of every static String literal.
+    pub(super) strings: &'m HashMap<String, u64>,
     /// Address of the VM state block.
     pub(super) vm: u32,
     /// Resolved source types.
@@ -64,6 +68,8 @@ pub(super) struct FunctionCompiler<'a, 'm> {
     pub(super) loops: Vec<(u32, u32)>,
     /// Current structured-control depth inside the body.
     pub(super) depth: u32,
+    /// First of two consecutive rooted locals passed to two-operand core calls.
+    pub(super) pair: Option<u32>,
 }
 
 impl<'a, 'm> FunctionCompiler<'a, 'm> {
@@ -88,6 +94,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
             scratch: parameter_count + 1,
             loops: Vec::new(),
             depth: 0,
+            pair: None,
         }
     }
 
@@ -110,6 +117,23 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         let local = self.next_local;
         self.next_local += 1;
         local
+    }
+
+    /// Allocates `count` rooted locals whose root slots are consecutive.
+    pub(super) fn consecutive_locals(&mut self, count: u32) -> u32 {
+        let first = self.value_local();
+        for _ in 1..count {
+            self.value_local();
+        }
+        first
+    }
+
+    /// Pushes the root-slot address of the rooted local `local`.
+    pub(super) fn push_slot_address(&mut self, local: u32) {
+        let slot = self.slots.get(&local).copied().unwrap_or_default();
+        self.instruction(Instruction::LocalGet(self.frame_local()));
+        self.instruction(Instruction::I32Const((slot * 8).cast_signed()));
+        self.instruction(Instruction::I32Add);
     }
 
     /// Pops the stack's `ValueRef` into a new rooted local.

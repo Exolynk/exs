@@ -2,8 +2,14 @@
 
 use std::collections::HashMap;
 
-use exs_abi::{ABI_VERSION, STATUS_COMPLETE};
-use wasm_encoder::{BlockType, Function, Instruction, ValType};
+use core::mem::offset_of;
+
+use exs_abi::{ABI_VERSION, STATUS_COMPLETE, TYPE_FLOAT, TYPE_INT};
+use exs_layout::{FreeCell, ObjectKind, VmState};
+use exs_value::layout::{EXTRA_SHIFT, INT_BOXED, KIND_SHIFT, type_kind};
+use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
+
+use crate::codegen::immediate;
 
 use super::function::{
     FunctionInfo, emit_push_frame, error, root_stack_end_offset, slot_memory, vm_field,
@@ -127,16 +133,101 @@ impl EntryLayout<'_> {
         function
     }
 
-    /// Returns the `(i64) -> i64` helper that turns one plain Int into its `ValueRef`.
-    pub(super) fn int_new<'a>(
+    /// Returns the `(i64) -> i64` helper that boxes one Int value or Float bits.
+    ///
+    /// Ints inside the `i32` range stay immediates. Otherwise it takes a 16-byte cell straight
+    /// from the size-class free list and only calls the core allocator when the list is empty,
+    /// a collection is due or the heap debug flags are set.
+    pub(super) fn boxed_number<'a>(
         &self,
+        kind: ObjectKind,
         span: SourceSpan<'a>,
     ) -> Result<Function, CompileDiagnostics<'a>> {
-        let mut function = Function::new([]);
+        let (type_bit, extra) = match kind {
+            ObjectKind::BigInt => (TYPE_INT, INT_BOXED),
+            _ => (TYPE_FLOAT, 0),
+        };
+        let cell = 1;
+        let mut function = Function::new([(1, ValType::I32)]);
+        if kind == ObjectKind::BigInt {
+            function.instruction(&Instruction::LocalGet(0));
+            function.instruction(&Instruction::I32WrapI64);
+            function.instruction(&Instruction::I64ExtendI32S);
+            function.instruction(&Instruction::LocalGet(0));
+            function.instruction(&Instruction::I64Eq);
+            function.instruction(&Instruction::If(BlockType::Empty));
+            immediate::push_small_int(&mut function, 0);
+            function.instruction(&Instruction::Return);
+            function.instruction(&Instruction::End);
+        }
+        let field = |offset: usize| vm_field(self.vm, offset as u32);
+        let head = field(offset_of!(VmState, heap.free_heads));
+        let allocated = field(offset_of!(VmState, heap.allocated_since_collection));
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(head));
+        function.instruction(&Instruction::LocalTee(cell));
+        function.instruction(&Instruction::I32Eqz);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(allocated));
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(field(offset_of!(
+            VmState,
+            heap.collection_threshold
+        ))));
+        function.instruction(&Instruction::I32GeU);
+        function.instruction(&Instruction::I32Or);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(field(offset_of!(
+            VmState, heap.flags
+        ))));
+        function.instruction(&Instruction::I32Or);
+        function.instruction(&Instruction::If(BlockType::Empty));
         function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::I32Const(CELL_SIZE.cast_signed()));
+        function.instruction(&Instruction::I32Const(i32::from(kind as u8)));
+        function.instruction(&Instruction::Call(self.core("__exs_core_allocate", span)?));
+        function.instruction(&Instruction::LocalSet(cell));
+        function.instruction(&Instruction::Else);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::LocalGet(cell));
+        function.instruction(&Instruction::I32Load(MemArg {
+            offset: u64::from(FREE_NEXT),
+            align: 2,
+            memory_index: 0,
+        }));
+        function.instruction(&Instruction::I32Store(head));
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(allocated));
+        function.instruction(&Instruction::I32Const(CELL_SIZE.cast_signed()));
+        function.instruction(&Instruction::I32Add);
+        function.instruction(&Instruction::I32Store(allocated));
+        // Header: the kind byte, clear GC bits, size class 0 and a zero header word.
+        function.instruction(&Instruction::LocalGet(cell));
+        function.instruction(&Instruction::I64Const(i64::from(kind as u8)));
+        function.instruction(&Instruction::I64Store(slot_memory(0)));
+        function.instruction(&Instruction::End);
+        function.instruction(&Instruction::LocalGet(cell));
         function.instruction(&Instruction::LocalGet(0));
-        function.instruction(&Instruction::Call(self.core("__exs_core_int", span)?));
+        function.instruction(&Instruction::I64Store(slot_memory(1)));
+        let tag =
+            (i64::from(type_kind(type_bit)) << KIND_SHIFT) | (i64::from(extra) << EXTRA_SHIFT);
+        function.instruction(&Instruction::I64Const(tag));
+        function.instruction(&Instruction::LocalGet(cell));
+        function.instruction(&Instruction::I64ExtendI32U);
+        function.instruction(&Instruction::I64Or);
         function.instruction(&Instruction::End);
         Ok(function)
     }
 }
+
+/// Byte size of the size-class cell that holds one boxed Int or Float.
+const CELL_SIZE: u32 = 16;
+
+/// Byte offset of the next-cell link of a free cell.
+const FREE_NEXT: u32 = offset_of!(FreeCell, next) as u32;
+
+// Boxed numbers are exactly one cell of the smallest size class.
+const _: () = assert!(exs_layout::SIZE_CLASSES[0] == CELL_SIZE);
+const _: () = assert!(core::mem::size_of::<exs_layout::FloatObject>() == CELL_SIZE as usize);
+const _: () = assert!(core::mem::size_of::<exs_layout::BigIntObject>() == CELL_SIZE as usize);

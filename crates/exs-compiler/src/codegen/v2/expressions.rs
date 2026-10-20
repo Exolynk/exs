@@ -3,14 +3,15 @@
 use wasm_encoder::{BlockType, Instruction};
 
 use super::function::{FunctionCompiler, error, unsupported};
-use crate::ast::{BinaryOperator, Expression, UnaryOperator};
+use crate::ast::{BinaryOperator, Expression, FormattedStringPart, UnaryOperator};
 use crate::codegen::VALUE_TYPE;
 use crate::codegen::immediate::{self, IntOperation};
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
+use exs_abi::{TYPE_FLOAT, TYPE_STRING};
+use exs_value::layout::{KIND_SHIFT, type_kind};
+use wasm_encoder::MemArg;
 
-/// Core arithmetic operator codes of `__exs_core_arithmetic`.
-const ADD: i32 = 0;
-/// Core code of `-`.
+/// Core code of `-` for `__exs_core_arithmetic`.
 const SUBTRACT: i32 = 1;
 /// Core code of `*`.
 const MULTIPLY: i32 = 2;
@@ -23,10 +24,26 @@ impl<'a> FunctionCompiler<'a, '_> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         match expression {
             Expression::Integer(value, span) => self.compile_integer(*value, *span)?,
-            Expression::Float(value, span) => {
-                self.push_vm();
+            Expression::Float(value, _) => {
                 self.instruction(Instruction::I64Const(value.to_bits().cast_signed()));
-                self.core_call("__exs_core_float", *span)?;
+                self.instruction(Instruction::Call(self.context.float_new));
+            }
+            Expression::String(text, span) => self.push_string(text, *span)?,
+            Expression::FormattedString { parts, span, .. } => {
+                let mut values = vec![self.static_string("", *span)?];
+                for part in parts {
+                    match part {
+                        FormattedStringPart::Text(text) => {
+                            self.push_string(text, *span)?;
+                            values.push(self.store_new());
+                        }
+                        FormattedStringPart::Expression(expression) => {
+                            self.compile_expression(expression)?;
+                            values.push(self.store_new());
+                        }
+                    }
+                }
+                self.concat_values(&values, *span)?;
             }
             Expression::Bool(value, _) => {
                 immediate::push(&mut self.function, exs_value::ValueRef::boolean(*value));
@@ -116,10 +133,44 @@ impl<'a> FunctionCompiler<'a, '_> {
         if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
             return self.compile_logical(operator, left, right);
         }
+        if matches!(operator, BinaryOperator::Add) {
+            let mut operands = vec![right];
+            let mut leftmost = left;
+            while let Expression::Binary {
+                operator: BinaryOperator::Add,
+                left,
+                right,
+                ..
+            } = leftmost
+            {
+                operands.push(right);
+                leftmost = left;
+            }
+            operands.push(leftmost);
+            operands.reverse();
+            let mut values = Vec::with_capacity(operands.len());
+            for operand in operands {
+                self.compile_expression(operand)?;
+                values.push(self.store_new());
+            }
+            return self.add_values(&values, span);
+        }
         self.compile_expression(left)?;
         let left = self.store_new();
         self.compile_expression(right)?;
         let right = self.store_new();
+        self.int_or_slow_binary(operator, left, right, span)
+    }
+
+    /// Emits `operator` with an inline path for two immediate Ints, then one for two Floats,
+    /// and the core library for every other operand pair.
+    fn int_or_slow_binary(
+        &mut self,
+        operator: BinaryOperator,
+        left: u32,
+        right: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
         if let Some(operation) = IntOperation::from_binary(operator) {
             immediate::both_small_ints_test(&mut self.function, left, right);
             self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
@@ -132,12 +183,28 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.context.int_new,
             );
             self.instruction(Instruction::Else);
-            self.compile_slow_binary(operator, left, right, span)?;
+            self.float_or_slow_binary(operator, left, right, span)?;
             self.instruction(Instruction::End);
+            Ok(())
         } else {
-            self.compile_slow_binary(operator, left, right, span)?;
+            self.float_or_slow_binary(operator, left, right, span)
         }
-        Ok(())
+    }
+
+    /// Emits the inline Float path of `operator`, if it has one, with the core as fallback.
+    fn float_or_slow_binary(
+        &mut self,
+        operator: BinaryOperator,
+        left: u32,
+        right: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        match FloatOperation::from_binary(operator) {
+            Some(float) => self.float_fast_path(float, left, right, |compiler| {
+                compiler.compile_slow_binary(operator, left, right, span)
+            }),
+            None => self.compile_slow_binary(operator, left, right, span),
+        }
     }
 
     /// Calls the core library for one binary operator on two rooted operand locals.
@@ -168,7 +235,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             }
         };
         match operator {
-            BinaryOperator::Add => arithmetic(ADD)(self),
+            BinaryOperator::Add => self.concat_pair(left, right, span),
             BinaryOperator::Subtract => arithmetic(SUBTRACT)(self),
             BinaryOperator::Multiply => arithmetic(MULTIPLY)(self),
             BinaryOperator::Divide => {
@@ -279,6 +346,191 @@ impl<'a> FunctionCompiler<'a, '_> {
         Ok(())
     }
 }
+
+/// A binary operator with an inline path for two Float operands.
+#[derive(Clone, Copy)]
+enum FloatOperation {
+    /// `+`
+    Add,
+    /// `-`
+    Subtract,
+    /// `*`
+    Multiply,
+    /// `/`
+    Divide,
+}
+
+impl FloatOperation {
+    /// Returns the inline Float operation of one source operator, if it has one.
+    const fn from_binary(operator: BinaryOperator) -> Option<Self> {
+        match operator {
+            BinaryOperator::Add => Some(Self::Add),
+            BinaryOperator::Subtract => Some(Self::Subtract),
+            BinaryOperator::Multiply => Some(Self::Multiply),
+            BinaryOperator::Divide => Some(Self::Divide),
+            _ => None,
+        }
+    }
+
+    /// Returns the Wasm instruction combining two `f64` values.
+    const fn instruction(self) -> Instruction<'static> {
+        match self {
+            Self::Add => Instruction::F64Add,
+            Self::Subtract => Instruction::F64Sub,
+            Self::Multiply => Instruction::F64Mul,
+            Self::Divide => Instruction::F64Div,
+        }
+    }
+}
+
+impl<'a> FunctionCompiler<'a, '_> {
+    /// Pushes the static String of one literal.
+    fn push_string(
+        &mut self,
+        text: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let raw =
+            self.context.strings.get(text).copied().ok_or_else(|| {
+                error("E0999", span, "missing v2 static String literal".to_owned())
+            })?;
+        self.instruction(Instruction::I64Const(raw.cast_signed()));
+        Ok(())
+    }
+
+    /// Stores the static String of one literal in a new rooted local.
+    fn static_string(
+        &mut self,
+        text: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<u32, CompileDiagnostics<'a>> {
+        self.push_string(text, span)?;
+        Ok(self.store_new())
+    }
+
+    /// Emits `operation` inline for two Float operands and `otherwise` for anything else.
+    fn float_fast_path(
+        &mut self,
+        operation: FloatOperation,
+        left: u32,
+        right: u32,
+        otherwise: impl FnOnce(&mut Self) -> Result<(), CompileDiagnostics<'a>>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let float_kind = i64::from(type_kind(TYPE_FLOAT));
+        for local in [left, right] {
+            self.instruction(Instruction::LocalGet(local));
+            self.instruction(Instruction::I64Const(i64::from(KIND_SHIFT)));
+            self.instruction(Instruction::I64ShrU);
+            self.instruction(Instruction::I64Const(float_kind));
+            self.instruction(Instruction::I64Eq);
+        }
+        self.instruction(Instruction::I32And);
+        self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
+        for local in [left, right] {
+            self.instruction(Instruction::LocalGet(local));
+            self.instruction(Instruction::I32WrapI64);
+            self.instruction(Instruction::F64Load(MemArg {
+                offset: FLOAT_VALUE,
+                align: 3,
+                memory_index: 0,
+            }));
+        }
+        self.instruction(operation.instruction());
+        self.instruction(Instruction::I64ReinterpretF64);
+        self.instruction(Instruction::Call(self.context.float_new));
+        self.instruction(Instruction::Else);
+        otherwise(self)?;
+        self.instruction(Instruction::End);
+        Ok(())
+    }
+
+    /// Adds the values of `values` left to right with the language's `+`.
+    ///
+    /// A String on the left joins the whole chain with one allocation; otherwise every `+`
+    /// runs in turn with its inline Int and Float paths.
+    fn add_values(
+        &mut self,
+        values: &[u32],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let [first, rest @ ..] = values else {
+            return Err(error("E0999", span, "empty `+` chain".to_owned()));
+        };
+        if let [second] = rest {
+            return self.add_pair(*first, *second, span);
+        }
+        self.instruction(Instruction::LocalGet(*first));
+        immediate::type_mask_test(&mut self.function, TYPE_STRING);
+        self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
+        self.concat_values(values, span)?;
+        self.instruction(Instruction::Else);
+        let mut accumulated = *first;
+        for value in rest {
+            self.add_pair(accumulated, *value, span)?;
+            accumulated = self.store_new();
+        }
+        self.instruction(Instruction::LocalGet(accumulated));
+        self.instruction(Instruction::End);
+        Ok(())
+    }
+
+    /// Emits one `+` of two rooted locals with inline Int and Float paths.
+    fn add_pair(
+        &mut self,
+        left: u32,
+        right: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.int_or_slow_binary(BinaryOperator::Add, left, right, span)
+    }
+
+    /// Calls the core `+` for two rooted locals through the shared operand pair.
+    fn concat_pair(
+        &mut self,
+        left: u32,
+        right: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let pair = match self.pair {
+            Some(pair) => pair,
+            None => {
+                let pair = self.consecutive_locals(2);
+                self.pair = Some(pair);
+                pair
+            }
+        };
+        self.instruction(Instruction::LocalGet(left));
+        self.store(pair);
+        self.instruction(Instruction::LocalGet(right));
+        self.store(pair + 1);
+        self.push_vm();
+        self.push_slot_address(pair);
+        self.instruction(Instruction::I32Const(2));
+        self.core_call("__exs_core_concat", span)
+    }
+
+    /// Joins `values` with the language's `+` in one core call over consecutive root slots.
+    fn concat_values(
+        &mut self,
+        values: &[u32],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let count = u32::try_from(values.len())
+            .map_err(|_| error("E0212", span, "too many `+` operands".to_owned()))?;
+        let block = self.consecutive_locals(count);
+        for (offset, value) in (0..count).zip(values) {
+            self.instruction(Instruction::LocalGet(*value));
+            self.store(block + offset);
+        }
+        self.push_vm();
+        self.push_slot_address(block);
+        self.instruction(Instruction::I32Const(count.cast_signed()));
+        self.core_call("__exs_core_concat", span)
+    }
+}
+
+/// Byte offset of the value inside a Float object.
+const FLOAT_VALUE: u64 = core::mem::offset_of!(exs_layout::FloatObject, value) as u64;
 
 /// Returns the source span of one expression.
 fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
