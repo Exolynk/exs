@@ -1,6 +1,6 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Phases 0, 0.5 and 1 are done; see sections 12 and 12a.
+Status: **approved design**. Phases 0, 0.5, 1 and 2a are done; see sections 12 to 12b.
 
 ## 1. Goal
 
@@ -296,6 +296,34 @@ time after the first execution of a module.
   objects, exhaustion, reachability through Lists, Buffers and Cells, cycles, immediates and
   static objects, page and run reuse, random graphs with and without collection at every
   allocation, mark-stack growth and overflow.
+
+## 12b. Phase 2a results
+
+- **`exs-core-template`** (17 KB) exports the stateless core functions as `__exs_core_*`. A
+  global allocator that refuses every request makes any accidental Rust allocation trap.
+- **VM placement:** the v2 linker puts the VM state block right after the template's
+  `__heap_base` and the heap after it; `__exs_input_alloc` initializes the heap and a 16-page
+  root stack on first use.
+- **Backend selection:** `compile_with_backend(source, options, Backend::V2)`. `CompileOptions`
+  stays unchanged, because Exolynk constructs it field by field.
+- **`codegen/v2`** compiles the functions reachable from public entries: None, Bool, Int (with
+  heap Ints outside `i32`), Float, `+ - * /`, comparisons, `== !=`, `! && ||`, `let`,
+  assignment, `ret`, blocks, `if`, `while`, `for` over literal Ranges of immediate Ints,
+  `break`/`continue`, direct calls and built-in type contracts. Every other construct is
+  compile error E0600. Language Errors do not exist yet, so type errors, overflow, contract
+  violations and excess arguments trap.
+- `backend_v2` tests run programs with both backends and require identical results, including
+  a run that collects repeatedly.
+
+| 1000 iterations | v1 fuel | v2 fuel | change |
+|---|---:|---:|---:|
+| `while` Int loop | 176,620 | 147,598 | −16 % |
+| `for` over a Range | 143,658 | 90,603 | −37 % |
+| sync calls | 292,614 | 195,530 | −33 % |
+| Float loop | 579,772 | 610,040 | +5 % |
+
+The Float loop still calls the Rust allocator for every Float; the inline allocation fast path
+is part of the next steps.
 
 ## 13. Risks and open questions
 

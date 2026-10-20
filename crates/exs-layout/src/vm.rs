@@ -49,6 +49,39 @@ pub struct RootState {
     pub range_count: u32,
 }
 
+/// The shadow stack of root frames that generated functions push and pop inline.
+#[repr(C)]
+pub struct RootStack {
+    /// The live part `start..end` of the stack; `end` is the next free slot. `roots.ranges`
+    /// points here, so the collector always scans exactly the pushed frames.
+    pub range: RootRange,
+    /// Address just past the stack storage.
+    pub limit: u32,
+    /// Reserved, keeps the block 8-byte aligned.
+    pub reserved: u32,
+}
+
+/// Buffers exchanged with the runner, each a collector-owned page run.
+#[repr(C)]
+pub struct BoundaryState {
+    /// Address of the input bytes written by the runner, 0 before the first input.
+    pub input: u32,
+    /// Byte length of the current input.
+    pub input_len: u32,
+    /// Byte capacity of the input storage.
+    pub input_capacity: u32,
+    /// Address of the encoded result, 0 before the first result.
+    pub result: u32,
+    /// Byte length of the current result.
+    pub result_len: u32,
+    /// Byte capacity of the result storage.
+    pub result_capacity: u32,
+    /// Nonzero once the heap and root stack are initialized.
+    pub initialized: u32,
+    /// Reserved, keeps the block 8-byte aligned.
+    pub reserved: u32,
+}
+
 /// The block of execution state at a linker-assigned address.
 #[repr(C)]
 pub struct VmState {
@@ -56,6 +89,10 @@ pub struct VmState {
     pub heap: HeapState,
     /// Root locations.
     pub roots: RootState,
+    /// The root-frame shadow stack.
+    pub root_stack: RootStack,
+    /// Runner input and result buffers.
+    pub boundary: BoundaryState,
 }
 
 const _: () = assert!(core::mem::size_of::<VmState>().is_multiple_of(8));

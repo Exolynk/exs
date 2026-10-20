@@ -11,6 +11,8 @@ workspace = true
 [dependencies]
 exs-runtime = { path = "../exs-runtime", default-features = false }
 exs-abi = { path = "../exs-abi" }
+exs-core-template = { path = "../exs-core-template" }
+exs-layout = { path = "../exs-layout" }
 exs-value = { path = "../exs-value" }
 wasm-encoder.workspace = true
 wasmparser.workspace = true

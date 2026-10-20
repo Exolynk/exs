@@ -17,6 +17,7 @@ mod suspension;
 pub(crate) mod trait_registry;
 mod traits;
 mod types;
+mod v2;
 
 use crate::CompileOptions;
 use crate::ast::Module;
@@ -29,6 +30,16 @@ pub fn compile_project_module<'a>(
     sources: &[crate::SourceInput<'a>],
     options: CompileOptions,
 ) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
+    compile_project_module_for(module, sources, options, crate::Backend::V1)
+}
+
+/// Compiles a resolved source graph like [`compile_project_module`] for one backend.
+pub(crate) fn compile_project_module_for<'a>(
+    module: &mut Module<'a>,
+    sources: &[crate::SourceInput<'a>],
+    options: CompileOptions,
+    backend: crate::Backend,
+) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
     let traits_registry = trait_registry::TraitRegistry::build(module);
     let mut diagnostics = types::validate(module);
     diagnostics.extend(traits::validate(module, &traits_registry));
@@ -38,6 +49,9 @@ pub fn compile_project_module<'a>(
         return Err(diagnostics);
     }
     traits::apply_defaults(module, &traits_registry);
+    if backend == crate::Backend::V2 {
+        return v2::compile(module, &traits_registry);
+    }
     let hir = HirModule::lower(module, &traits_registry);
     let mut suspendability = suspension::Suspendability::analyze(&hir);
     if hir.closures().next().is_some() {

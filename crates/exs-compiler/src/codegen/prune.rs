@@ -3,8 +3,8 @@
 //! The linked module contains the whole runtime template and every compiled prelude function,
 //! although a script uses only a few of them. Compiling unused code costs wall-clock time on
 //! every execution, so the final module keeps only functions reachable from its exports, its
-//! start function, element segments and `ref.func` initializers. The runtime template's
-//! `__exs_rt_*` exports only exist for linking and are dropped first, which makes their
+//! start function, element segments and `ref.func` initializers. The templates' `__exs_rt_*`
+//! and `__exs_core_*` exports only exist for linking and are dropped first, which makes their
 //! functions prunable like any other.
 //!
 //! The resumable dispatcher calls every resumable step function, so its calls of steps are
@@ -19,8 +19,16 @@ use wasmparser::{
     ConstExpr, ElementItems, ExternalKind, FunctionBody, Name, Operator, Parser, Payload, TypeRef,
 };
 
-/// Export-name prefix of runtime-template functions that only the linker resolves.
-const RUNTIME_LINK_EXPORT_PREFIX: &str = "__exs_rt_";
+/// Export-name prefixes of template functions that only the linker resolves: the v1 runtime's
+/// and the v2 core library's.
+const LINK_EXPORT_PREFIXES: [&str; 2] = ["__exs_rt_", "__exs_core_"];
+
+/// Returns whether one export exists only for linking.
+fn is_link_export(name: &str) -> bool {
+    LINK_EXPORT_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
 
 /// Returns `wasm` without functions unreachable from its runner-visible roots.
 ///
@@ -87,9 +95,7 @@ fn live_functions(wasm: &[u8], hints: &PruneHints) -> Result<LiveFunctions, Stri
             Payload::ExportSection(section) => {
                 for export in section {
                     let export = export.map_err(error)?;
-                    if export.kind == ExternalKind::Func
-                        && !export.name.starts_with(RUNTIME_LINK_EXPORT_PREFIX)
-                    {
+                    if export.kind == ExternalKind::Func && !is_link_export(export.name) {
                         roots.push(export.index);
                     }
                 }
@@ -265,9 +271,7 @@ impl Reencode for Pruner {
     ) -> Result<(), reencode::Error<Self::Error>> {
         for export in section {
             let export = export?;
-            if export.kind == ExternalKind::Func
-                && export.name.starts_with(RUNTIME_LINK_EXPORT_PREFIX)
-            {
+            if export.kind == ExternalKind::Func && is_link_export(export.name) {
                 continue;
             }
             self.parse_export(exports, export)?;

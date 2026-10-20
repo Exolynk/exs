@@ -22,7 +22,7 @@ pub(super) const ROOT_SLOT_COUNT: u32 = 64;
 pub(super) const HEAP_START: u32 = PAGE_SIZE;
 
 /// Linear memory backed by a byte vector with an optional page limit.
-pub(super) struct VecMemory {
+pub(crate) struct VecMemory {
     /// Memory contents.
     bytes: Vec<u8>,
     /// Largest number of 64 KiB pages `grow` may reach.

@@ -48,6 +48,19 @@ pub struct CompileOptions {
     pub embed_sources: bool,
 }
 
+/// The code generator and runtime a module is compiled for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Backend {
+    /// The current backend linked against the stateful `exs-runtime` template.
+    #[default]
+    V1,
+    /// The runtime v2 prototype with compiler-owned values and the stateless core library.
+    ///
+    /// It supports a growing subset of the language and reports everything else as a
+    /// compile error.
+    V2,
+}
+
 /// A linked, executable `ExS` WebAssembly module.
 #[derive(Debug, Clone)]
 pub struct CompiledModule {
@@ -109,6 +122,15 @@ pub fn compile<'a>(
     source: SourceInput<'a>,
     options: CompileOptions,
 ) -> Result<CompiledModule, CompileDiagnostics<'a>> {
+    compile_with_backend(source, options, Backend::V1)
+}
+
+/// Compiles one `ExS` module like [`compile`] for the selected backend.
+pub fn compile_with_backend<'a>(
+    source: SourceInput<'a>,
+    options: CompileOptions,
+    backend: Backend,
+) -> Result<CompiledModule, CompileDiagnostics<'a>> {
     let lexed = lexer::lex(source);
     let mut diagnostics = lexed.diagnostics;
     let mut module = match parser::parse(source.source_id, lexed.tokens, true) {
@@ -133,7 +155,7 @@ pub fn compile<'a>(
     prelude.functions = functions;
     let mut sources = prelude::source_inputs();
     sources.push(source);
-    let wasm = codegen::compile_project_module(&mut prelude, &sources, options)?;
+    let wasm = codegen::compile_project_module_for(&mut prelude, &sources, options, backend)?;
     Ok(CompiledModule { wasm })
 }
 

@@ -826,6 +826,8 @@ name = "exs-compiler"
 version = "0.1.0"
 dependencies = [
  "exs-abi",
+ "exs-core-template",
+ "exs-layout",
  "exs-runtime",
  "exs-value",
  "wasm-encoder 0.245.1",
@@ -836,8 +838,16 @@ dependencies = [
 name = "exs-core"
 version = "0.1.0"
 dependencies = [
+ "exs-abi",
  "exs-layout",
  "exs-value",
+]
+
+[[package]]
+name = "exs-core-template"
+version = "0.1.0"
+dependencies = [
+ "exs-core",
 ]
 
 [[package]]
