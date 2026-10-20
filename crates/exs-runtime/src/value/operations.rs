@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use core::str::FromStr;
 
 use exs_abi::{
+    RANGE_BEGIN_FALLBACK, RANGE_STATE_FINISHED, RANGE_STATE_LAST,
     STANDARD_ITERATOR_STEP_TYPE_IDENTITY, STANDARD_ORDERING_TYPE_ID,
     STANDARD_ORDERING_TYPE_IDENTITY,
 };
@@ -17,7 +18,7 @@ use crate::gc;
 use crate::runtime;
 use crate::value::{
     RtValue, RuntimeBytes, RuntimeEnum, RuntimeIterator, RuntimeList, RuntimeObject, RuntimeString,
-    Value, clone, list, numeric, object,
+    SharedName, Value, clone, list, numeric, object,
 };
 
 /// Adds two runtime values through String, List, or numeric dispatch.
@@ -1516,7 +1517,8 @@ pub(crate) fn iter_native_next(snapshot: ValueRef, range_type_id: i32) -> i64 {
     let item = match builtin_iterator_item(snapshot) {
         Some(item) => Some(item),
         None => match u32::try_from(range_type_id) {
-            Ok(range_type_id) => range_next(snapshot, range_type_id),
+            Ok(range_type_id) => range_next_fast(snapshot, range_type_id)
+                .or_else(|| range_next(snapshot, range_type_id)),
             Err(_) => None,
         },
     };
@@ -1660,6 +1662,183 @@ fn native_range_next(receiver: ValueRef) -> Option<ValueRef> {
         RangeAdvance::Overflow => crate::runtime::trap(),
     }
     Some(runtime::allocate(RtValue::Int(item)))
+}
+
+/// Advances a well-formed prelude Range Object of immediate fields with one Object lookup.
+///
+/// Returns `None` without mutating for anything else, which then takes `range_next`.
+fn range_next_fast(receiver: ValueRef, range_type_id: u32) -> Option<Option<ValueRef>> {
+    let [current_ref, end, step, inclusive, done] = prelude_range_fields(receiver, range_type_id)?;
+    let item = *current_ref;
+    let (current, end, step) = (
+        immediate_int(item)?,
+        immediate_int(*end)?,
+        immediate_int(*step)?,
+    );
+    let (inclusive, is_done) = (immediate_bool(*inclusive)?, immediate_bool(*done)?);
+    if is_done {
+        return Some(None);
+    }
+    match range_advance(current, end, step, inclusive) {
+        RangeAdvance::Exhausted => {
+            *done = ValueRef::TRUE;
+            Some(None)
+        }
+        RangeAdvance::Last => {
+            *done = ValueRef::TRUE;
+            Some(Some(item))
+        }
+        RangeAdvance::Next(next) => {
+            *current_ref = ValueRef::small_int(next)?;
+            Some(Some(item))
+        }
+        RangeAdvance::Overflow => None,
+    }
+}
+
+/// Starts counting an unobserved Range variable in a compiled `for` loop.
+///
+/// For a well-formed unit-step Range of immediate fields that is not done and not exhausted,
+/// returns the current value in the low and the last item in the high 32 bits, both as
+/// `i32`. Every other Range, including one whose current value is `i32::MIN`, returns
+/// `RANGE_BEGIN_FALLBACK` and is iterated as an Object. Never mutates the Range.
+pub(crate) fn range_begin(range: ValueRef, range_type_id: i32) -> i64 {
+    let begin = || {
+        let [current, end, step, inclusive, done] =
+            prelude_range_fields(range, u32::try_from(range_type_id).ok()?)?;
+        let (current, end, step) = (
+            immediate_int(*current)?,
+            immediate_int(*end)?,
+            immediate_int(*step)?,
+        );
+        let (inclusive, done) = (immediate_bool(*inclusive)?, immediate_bool(*done)?);
+        if done
+            || step.unsigned_abs() != 1
+            || current == i64::from(i32::MIN)
+            || matches!(
+                range_advance(current, end, step, inclusive),
+                RangeAdvance::Exhausted
+            )
+        {
+            return None;
+        }
+        // Not being exhausted, the Range moves toward a last item between current and end.
+        let last = i32::try_from(if inclusive { end } else { end - step }).ok()?;
+        let current = i32::try_from(current).ok()?;
+        Some(i64::from(current.cast_unsigned()) | i64::from(last.cast_unsigned()) << 32)
+    };
+    begin().unwrap_or(RANGE_BEGIN_FALLBACK)
+}
+
+/// Writes the state of an inline Range back into the Range variable once its loop exits.
+///
+/// `cursor` and `state` are the compiled loop's counter and progress, where `state` is 0
+/// before the last item, `RANGE_STATE_LAST` right after it and `RANGE_STATE_FINISHED` once
+/// the loop asked for another item. The fields then match what `Range::next` would have left.
+pub(crate) fn range_finish(range: ValueRef, range_type_id: i32, cursor: i64, state: i64) {
+    let Some([current, end, step, inclusive, done]) = u32::try_from(range_type_id)
+        .ok()
+        .and_then(|range_type_id| prelude_range_fields(range, range_type_id))
+    else {
+        return;
+    };
+    let (Some(inclusive), Some(end), Some(step)) = (
+        immediate_bool(*inclusive),
+        immediate_int(*end),
+        immediate_int(*step),
+    ) else {
+        return;
+    };
+    // An exclusive Range moves past its last item onto the end and finishes one call later.
+    let (cursor, finished) = match state {
+        RANGE_STATE_LAST | RANGE_STATE_FINISHED if inclusive => (cursor, true),
+        RANGE_STATE_LAST => (cursor + step, false),
+        RANGE_STATE_FINISHED => (end, true),
+        _ => (cursor, false),
+    };
+    if let Some(cursor) = ValueRef::small_int(cursor) {
+        *current = cursor;
+    }
+    if finished {
+        *done = ValueRef::TRUE;
+    }
+}
+
+/// Returns the five fields of a prelude Range Object in declaration order.
+///
+/// Returns `None` for any other value or a Range whose keys differ from the declaration.
+fn prelude_range_fields(
+    receiver: ValueRef,
+    range_type_id: u32,
+) -> Option<[&'static mut ValueRef; 5]> {
+    let Some(RtValue::Object(object)) = runtime::value_mut(receiver) else {
+        return None;
+    };
+    if object.type_id != Some(range_type_id) || object.enum_data.is_some() {
+        return None;
+    }
+    let [
+        (current_key, current),
+        (end_key, end),
+        (step_key, step),
+        (inclusive_key, inclusive),
+        (done_key, done),
+    ] = object.entries.as_mut_slice()
+    else {
+        return None;
+    };
+    // Prelude Ranges share pinned literal keys, which are never freed, so after one full check
+    // their addresses identify the declared layout without comparing bytes.
+    let addresses = literal_key_addresses([
+        &*current_key,
+        &*end_key,
+        &*step_key,
+        &*inclusive_key,
+        &*done_key,
+    ]);
+    let cache = &mut unsafe { crate::state::runtime() }.range_key_addresses;
+    if addresses.is_none() || *cache != addresses {
+        if !(key_is(current_key, b"current")
+            && key_is(end_key, b"end")
+            && key_is(step_key, b"step")
+            && key_is(inclusive_key, b"inclusive")
+            && key_is(done_key, b"done"))
+        {
+            return None;
+        }
+        if addresses.is_some() {
+            *cache = addresses;
+        }
+    }
+    Some([current, end, step, inclusive, done])
+}
+
+/// Returns the text addresses of five pinned literal keys, or `None` if any key is owned.
+fn literal_key_addresses(keys: [&SharedName; 5]) -> Option<[usize; 5]> {
+    let mut addresses = [0; 5];
+    for (address, key) in addresses.iter_mut().zip(keys) {
+        let SharedName::Literal(text) = key else {
+            return None;
+        };
+        *address = text.as_ptr() as usize;
+    }
+    Some(addresses)
+}
+
+/// Returns the value of an immediate Int reference.
+fn immediate_int(value: ValueRef) -> Option<i64> {
+    match value.immediate() {
+        Some(exs_value::Immediate::Int(number)) => Some(i64::from(number)),
+        _ => None,
+    }
+}
+
+/// Returns the value of an immediate Bool reference.
+fn immediate_bool(value: ValueRef) -> Option<bool> {
+    match value.immediate() {
+        Some(exs_value::Immediate::Bool(flag)) => Some(flag),
+        _ => None,
+    }
 }
 
 /// Mirrors the prelude `Range::next` natively, including its field mutations.

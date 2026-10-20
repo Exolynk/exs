@@ -952,6 +952,23 @@ pub extern "C" fn __exs_rt_iter_native_next(snapshot: ValueRef, range_type_id: i
     value::operations::iter_native_next(snapshot, range_type_id)
 }
 
+/// Starts counting an unobserved Range variable, returning its packed bounds or a fallback.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_range_begin(range: ValueRef, range_type_id: i32) -> i64 {
+    value::operations::range_begin(range, range_type_id)
+}
+
+/// Writes the counter of an inline Range loop back into its Range variable.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_range_finish(
+    range: ValueRef,
+    range_type_id: i32,
+    cursor: i64,
+    state: i64,
+) {
+    value::operations::range_finish(range, range_type_id, cursor, state);
+}
+
 /// Returns a NotIterable error for a snapshot the synchronous for lowering cannot advance.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_iter_unsupported(snapshot: ValueRef) -> ValueRef {

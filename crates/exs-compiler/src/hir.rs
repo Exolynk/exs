@@ -337,6 +337,8 @@ struct FunctionLowerer<'a, 'state> {
     parallel_calls: Vec<SourceSpan<'a>>,
     matches: bool,
     for_loops: bool,
+    /// Spans of `for` statements over Range variables that can count without suspending.
+    unobserved_range_loops: Vec<SourceSpan<'a>>,
     instance_targets: &'state InstanceMethodTargets,
     state: &'state LoweringState<'a>,
 }
@@ -363,6 +365,9 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             parallel_calls: Vec::new(),
             matches: false,
             for_loops: false,
+            unobserved_range_loops: crate::codegen::range_variables::unobserved_range_loops(
+                function,
+            ),
             instance_targets,
             state,
         };
@@ -395,6 +400,7 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
             parallel_calls: Vec::new(),
             matches: false,
             for_loops: false,
+            unobserved_range_loops: Vec::new(),
             instance_targets,
             state,
         };
@@ -473,11 +479,14 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 binding,
                 iterable,
                 body,
+                span,
                 ..
             } => {
-                // A literal Range advances natively and can never suspend, unlike a general
-                // iterable whose `Iterator::next` may wait for the host.
-                if !crate::codegen::standard::is_unshared_range(iterable) {
+                // A literal or unobserved Range advances natively and can never suspend, unlike
+                // a general iterable whose `Iterator::next` may wait for the host.
+                if !crate::codegen::standard::is_unshared_range(iterable)
+                    && !self.unobserved_range_loops.contains(span)
+                {
                     self.for_loops = true;
                 }
                 self.lower_expression(iterable);

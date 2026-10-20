@@ -93,6 +93,8 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     return_type: TypeContract,
     /// Linear-memory address of the runtime register block.
     registers_address: u32,
+    /// Spans of `for` statements over Range variables that count in Wasm locals.
+    unobserved_range_loops: Vec<crate::diagnostic::SourceSpan<'a>>,
 }
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
@@ -127,6 +129,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             types: context.types,
             methods: context.methods,
             registers_address: context.registers_address,
+            unobserved_range_loops: crate::codegen::range_variables::unobserved_range_loops(
+                declaration,
+            ),
             // The body is emitted without local declarations; `compile` prepends them.
             function: Function::new([]),
             scopes: vec![parameters],

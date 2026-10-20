@@ -44,7 +44,7 @@ const ASYNC_INT_WHILE_1000_FUEL: u64 = 367_716;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
 const FOR_RANGE_1000_FUEL: u64 = 109_602;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
-const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 813_832;
+const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 108_369;
 /// Fuel ceiling for 100 calls of a small resumable function.
 const ASYNC_CALL_LOOP_100_FUEL: u64 = 196_539;
 /// Fuel ceiling for 1000 iterations building one formatted line with two Ints.

@@ -163,6 +163,8 @@ pub(crate) struct RuntimeState {
     pub(crate) gc_worklist: Vec<ValueRef>,
     /// Released async frame blocks kept for reuse by later frames of the same size.
     pub(crate) frame_block_pool: Vec<Box<[u64]>>,
+    /// Key text addresses of the last prelude Range layout that passed a full key check.
+    pub(crate) range_key_addresses: Option<[usize; 5]>,
     /// Compiler-generated function roots written directly by generated code.
     pub(crate) root_stack: RootStack,
     /// Durable frames for the currently active resumable root execution.
@@ -204,6 +206,7 @@ impl RuntimeState {
             next_gc_at: crate::gc::INITIAL_COLLECTION_THRESHOLD,
             gc_worklist: Vec::new(),
             frame_block_pool: Vec::new(),
+            range_key_addresses: None,
             root_stack: RootStack::new(),
             async_frames: Vec::new(),
             free_async_frames: Vec::new(),

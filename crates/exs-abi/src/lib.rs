@@ -228,6 +228,12 @@ pub const REGISTERS_ROOT_FLOOR_OFFSET: u32 = 16;
 pub const REGISTERS_TRACE_TOP_OFFSET: u32 = 20;
 /// Byte offset of the error-trace buffer's end address in the register block.
 pub const REGISTERS_TRACE_LIMIT_OFFSET: u32 = 24;
+/// Returned by `__exs_rt_range_begin` when a for loop must iterate the Range Object itself.
+pub const RANGE_BEGIN_FALLBACK: i64 = 0x8000_0000;
+/// Inline Range loop state after the last item was yielded.
+pub const RANGE_STATE_LAST: i64 = 1;
+/// Inline Range loop state after another item was requested past the last one.
+pub const RANGE_STATE_FINISHED: i64 = 2;
 /// Byte size of one error-trace entry: the `u32` function id followed by the `u32` call site.
 pub const TRACE_ENTRY_SIZE: u32 = 8;
 /// A host call completed synchronously and has a response available to the runtime.

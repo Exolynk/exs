@@ -485,3 +485,193 @@ fn iterates_literal_ranges_inline_and_through_the_fallback() {
         assert_eq!(error.kind, "TypeError");
     }
 }
+
+/// Keeps Range variable fields identical whether a loop counts inline or advances the Object.
+#[test]
+fn iterates_range_variables_with_prelude_field_semantics() {
+    let source = r#"
+        fn exclusive(start: Int, end: Int, stop: Int) -> List {
+            let range = start..end;
+            let items = [];
+            for value in range {
+                items.push(value);
+                if value == stop { break; }
+            }
+            let between = [range.current, range.done];
+            let rest = [];
+            for value in range { rest.push(value); }
+            ret [items, between, rest, range.current, range.done];
+        }
+        fn inclusive(start: Int, end: Int, stop: Int) -> List {
+            let range = start..=end;
+            let items = [];
+            for value in range {
+                items.push(value);
+                if value == stop { break; }
+            }
+            let between = [range.current, range.done];
+            let rest = [];
+            for value in range { rest.push(value); }
+            ret [items, between, rest, range.current, range.done];
+        }
+        fn first_over(limit: Int) -> Int {
+            let range = 0..limit;
+            for value in range {
+                if value > 2 { ret value; }
+            }
+            ret -1;
+        }
+        fn shadowed() -> List {
+            let range = 0..3;
+            let items = [];
+            {
+                let range = [7, 8];
+                for value in range { items.push(value); }
+            }
+            for value in range { items.push(value); }
+            ret [items, range.current, range.done];
+        }
+        fn observed() -> List {
+            let range = 0..4;
+            let seen = [];
+            for value in range { seen.push(range.current); }
+            ret [seen, range.done];
+        }
+        fn assigned() -> List {
+            let range = 0..5;
+            range.current = 3;
+            let items = [];
+            for value in range { items.push(value); }
+            ret [items, range.current, range.done];
+        }
+        fn nested() -> List {
+            let range = 0..3;
+            let pairs = [];
+            for outer in range {
+                for inner in range { pairs.push([outer, inner]); }
+            }
+            ret [pairs, range.current, range.done];
+        }
+        fn repeated(rounds: Int) -> Int {
+            let total = 0;
+            let round = 0;
+            while round < rounds {
+                let range = 0..3;
+                for value in range { total = total + value; }
+                round = round + 1;
+            }
+            ret total;
+        }
+        fn main(input) {
+            ret [
+                exclusive(0, 3, 99),
+                exclusive(0, 3, 2),
+                exclusive(0, 3, 1),
+                exclusive(3, 0, 99),
+                exclusive(3, 0, 1),
+                exclusive(0, 0, 99),
+                inclusive(0, 2, 99),
+                inclusive(0, 2, 2),
+                inclusive(0, 2, 0),
+                inclusive(2, 0, 99),
+                inclusive(2, 2, 99),
+                inclusive(2, 2, 2),
+                exclusive(2147483645, 2147483647, 99),
+                inclusive(2147483645, 2147483647, 2147483647),
+                exclusive(-2147483648, -2147483646, 99),
+                inclusive(-2147483646, -2147483648, 99),
+                exclusive(2147483646, 2147483649, 2147483647),
+                first_over(10),
+                shadowed(),
+                observed(),
+                assigned(),
+                nested(),
+                repeated(4),
+            ];
+        }
+    "#;
+    let ExsValue::List(results) = execute_source(source, ExsValue::None) else {
+        panic!("Range variable script did not return a List");
+    };
+    let int = ExsValue::Int;
+    let ints = |values: &[i64]| ExsValue::List(values.iter().copied().map(ExsValue::Int).collect());
+    let run = |items: &[i64], between: (i64, bool), rest: &[i64], current: i64, done: bool| {
+        ExsValue::List(vec![
+            ints(items),
+            ExsValue::List(vec![int(between.0), ExsValue::Bool(between.1)]),
+            ints(rest),
+            int(current),
+            ExsValue::Bool(done),
+        ])
+    };
+    let expected = vec![
+        run(&[0, 1, 2], (3, true), &[], 3, true),
+        run(&[0, 1, 2], (3, false), &[], 3, true),
+        run(&[0, 1], (2, false), &[2], 3, true),
+        run(&[3, 2, 1], (0, true), &[], 0, true),
+        run(&[3, 2, 1], (0, false), &[], 0, true),
+        run(&[], (0, true), &[], 0, true),
+        run(&[0, 1, 2], (2, true), &[], 2, true),
+        run(&[0, 1, 2], (2, true), &[], 2, true),
+        run(&[0], (1, false), &[1, 2], 2, true),
+        run(&[2, 1, 0], (0, true), &[], 0, true),
+        run(&[2], (2, true), &[], 2, true),
+        run(&[2], (2, true), &[], 2, true),
+        run(
+            &[2_147_483_645, 2_147_483_646],
+            (2_147_483_647, true),
+            &[],
+            2_147_483_647,
+            true,
+        ),
+        run(
+            &[2_147_483_645, 2_147_483_646, 2_147_483_647],
+            (2_147_483_647, true),
+            &[],
+            2_147_483_647,
+            true,
+        ),
+        run(
+            &[-2_147_483_648, -2_147_483_647],
+            (-2_147_483_646, true),
+            &[],
+            -2_147_483_646,
+            true,
+        ),
+        run(
+            &[-2_147_483_646, -2_147_483_647, -2_147_483_648],
+            (-2_147_483_648, true),
+            &[],
+            -2_147_483_648,
+            true,
+        ),
+        run(
+            &[2_147_483_646, 2_147_483_647],
+            (2_147_483_648, false),
+            &[2_147_483_648],
+            2_147_483_649,
+            true,
+        ),
+        int(3),
+        ExsValue::List(vec![ints(&[7, 8, 0, 1, 2]), int(3), ExsValue::Bool(true)]),
+        ExsValue::List(vec![ints(&[1, 2, 3, 4]), ExsValue::Bool(true)]),
+        ExsValue::List(vec![ints(&[3, 4]), int(5), ExsValue::Bool(true)]),
+        ExsValue::List(vec![
+            ExsValue::List(vec![ints(&[0, 1]), ints(&[0, 2])]),
+            int(3),
+            ExsValue::Bool(true),
+        ]),
+        int(12),
+    ];
+    assert_eq!(results.len(), expected.len());
+    for (index, (result, expected)) in results.iter().zip(&expected).enumerate() {
+        assert_eq!(result, expected, "Range variable case {index}");
+    }
+    let ExsValue::Error(error) = execute_source(
+        "fn main(input) { let range = \"a\"..3; for value in range { } ret range.current; }",
+        ExsValue::None,
+    ) else {
+        panic!("a non-Int Range bound did not return an Error");
+    };
+    assert_eq!(error.kind, "TypeError");
+}
