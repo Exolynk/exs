@@ -1,6 +1,6 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Phases 0 and 0.5 are done; see section 12.
+Status: **approved design**. Phases 0, 0.5 and 1 are done; see sections 12 and 12a.
 
 ## 1. Goal
 
@@ -190,7 +190,7 @@ Each phase ends with measurement and an explicit go / no-go.
 |---|---|---|
 | 0 | Baseline: wall-clock benchmarks; measure the share of CBOR boundary work in `record_roundtrip_20` | done, see section 12 |
 | 0.5 | Link only reachable runtime and prelude functions; cache compiled modules in the runner | done, see section 12 |
-| 1 | `exs-layout`, VM state block, allocator, non-moving GC in the stateless library, unit tests with synthetic heaps | GC and allocator tests green |
+| 1 | `exs-layout`, VM state block, allocator, non-moving GC in the stateless library, unit tests with synthetic heaps | done, see section 12a |
 | 2 | v2 backend for Int/Float/Bool/None, Strings, Lists, untyped and typed Objects, sync functions, `?`, Errors | prototype beats v1 clearly on property, String and literal micro benchmarks; go / no-go |
 | 3 | All built-in methods as stateless helpers over the layout; enums and `match`; closures and cells; iterators; formatted strings | all non-async runtime-value tests green on v2 |
 | 4 | Async: frames as heap objects, scheduler state in memory, host calls, parallel groups, cancellation | full continuation and host-call suites green on v2 |
@@ -277,6 +277,25 @@ Share of executed Wasm operators by category:
 With the cache, start-up per execution (artifact load and instantiation) drops to 0.2–0.5 ms
 for every scenario under both compilers, so Cranelift's faster code no longer costs start-up
 time after the first execution of a module.
+
+## 12a. Phase 1 results
+
+- **`exs-layout`** defines the 8-byte object header, the fixed part of every object kind
+  (String/Bytes, BigInt, Float, Buffer, List, TypedObject, Object, Shape, Enum, Cell, Closure,
+  Error, Frame, free cells), 64 KiB pages with a 16-byte page header, 15 size classes from 16 to
+  2,048 bytes, the VM state block (heap state and root ranges) and, per kind, which fields are
+  `ValueRef` slots and which are `u32` object addresses. Offsets and alignment are checked at
+  compile time.
+- **`exs-core`** is `no_std`, has no state of its own and is generic over a `Memory` trait, with
+  a direct `LinearMemory` implementation for Wasm. It provides `init_heap`, `allocate` (free list
+  per size class, first-fit page runs, memory growth only when nothing is free) and `collect`
+  (non-moving mark and sweep from the root ranges; empty class pages and dead large objects
+  return to merged free page runs; a mark-stack overflow falls back to rescanning marked
+  objects; an option collects before every allocation to test root discipline).
+- Native tests run the same code on a byte-vector memory: object headers and zeroing, large
+  objects, exhaustion, reachability through Lists, Buffers and Cells, cycles, immediates and
+  static objects, page and run reuse, random graphs with and without collection at every
+  allocation, mark-stack growth and overflow.
 
 ## 13. Risks and open questions
 

@@ -833,6 +833,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "exs-core"
+version = "0.1.0"
+dependencies = [
+ "exs-layout",
+ "exs-value",
+]
+
+[[package]]
 name = "exs-fuel-baseline"
 version = "0.1.0"
 dependencies = [
@@ -849,6 +857,10 @@ dependencies = [
  "dlmalloc",
  "exs-abi",
 ]
+
+[[package]]
+name = "exs-layout"
+version = "0.1.0"
 
 [[package]]
 name = "exs-playground"

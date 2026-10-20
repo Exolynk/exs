@@ -2,6 +2,8 @@
 members = [
     "crates/exs-value",
     "crates/exs-abi",
+    "crates/exs-layout",
+    "crates/exs-core",
     "crates/exs-runtime",
     "crates/exs-guest",
     "crates/exs-compiler",
