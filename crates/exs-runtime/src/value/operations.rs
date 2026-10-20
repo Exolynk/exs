@@ -226,8 +226,8 @@ fn ordering_value(variant: &str) -> ValueRef {
     runtime::allocate(RtValue::Object(Box::new(RuntimeObject::enumeration(
         Some(STANDARD_ORDERING_TYPE_ID),
         RuntimeEnum {
-            type_identity: Box::from(STANDARD_ORDERING_TYPE_IDENTITY),
-            variant: Box::from(variant),
+            type_identity: STANDARD_ORDERING_TYPE_IDENTITY.into(),
+            variant: variant.into(),
             fields: Vec::new(),
         },
     ))))
@@ -2583,6 +2583,18 @@ fn float_unary(value: ValueRef, operation: fn(f64) -> f64, error_message: &str) 
 /// Allocates one runtime String result from owned UTF-8 contents.
 fn string_value_result(value: String) -> ValueRef {
     runtime::allocate(RtValue::String(RuntimeString::from_string(value)))
+}
+
+/// Borrows one runtime String value for use as a key or method name.
+pub(crate) fn string_str(reference: ValueRef) -> Result<&'static str, ValueRef> {
+    match runtime::value(reference) {
+        Value::String(value) => Ok(value.as_str()),
+        _ => Err(runtime::recoverable_error(
+            "TypeError",
+            "Object keys and method names require a String value",
+            reference,
+        )),
+    }
 }
 
 /// Copies one runtime String value for use as a key or method name.

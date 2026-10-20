@@ -22,7 +22,7 @@ pub(crate) use closure::RuntimeClosure;
 pub(crate) use error::RuntimeError;
 pub(crate) use iterator::RuntimeIterator;
 pub(crate) use list::RuntimeList;
-pub(crate) use object::{RuntimeEnum, RuntimeObject};
+pub(crate) use object::{RuntimeEnum, RuntimeObject, SharedName, same_name};
 pub(crate) use string::RuntimeString;
 pub(crate) use view::Value;
 

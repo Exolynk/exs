@@ -120,7 +120,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     self.function.instruction(&Instruction::LocalGet(receiver));
                     self.function.instruction(&Instruction::LocalGet(property));
                     self.function.instruction(&Instruction::LocalGet(value));
-                    self.runtime_call("__exs_rt_index_set", *span)?;
+                    self.runtime_call("__exs_rt_property_set", *span)?;
                     self.function.instruction(&Instruction::Drop);
                     self.clear_root_slot(receiver)?;
                     self.clear_root_slot(property)?;

@@ -294,7 +294,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 let property = self.store_stack_value()?;
                 self.function.instruction(&Instruction::LocalGet(receiver));
                 self.function.instruction(&Instruction::LocalGet(property));
-                self.runtime_call("__exs_rt_index_get", *span)?;
+                self.runtime_call("__exs_rt_property_get", *span)?;
                 self.clear_root_slot(receiver)?;
                 self.clear_root_slot(property)?;
             }

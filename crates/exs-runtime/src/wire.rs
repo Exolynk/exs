@@ -318,8 +318,8 @@ fn decode_enum_variant(value: ValueRef, schema: &EnumSchema, variant: &VariantSc
     let result = runtime::allocate(RtValue::Object(Box::new(RuntimeObject::enumeration(
         Some(schema.type_id),
         RuntimeEnum {
-            type_identity: schema.identity.clone().into_boxed_str(),
-            variant: variant.name.clone().into_boxed_str(),
+            type_identity: schema.identity.as_str().into(),
+            variant: variant.name.as_str().into(),
             fields,
         },
     ))));
@@ -344,7 +344,7 @@ fn decode_object(value: ValueRef, schemas: &[ObjectSchema]) -> Option<ValueRef> 
             return Some(decoded);
         }
         gc::push_temporary_root(decoded);
-        entries.push((field.name.clone().into_boxed_str(), decoded));
+        entries.push((field.name.as_str().into(), decoded));
     }
     let result = runtime::allocate(RtValue::Object(Box::new(RuntimeObject {
         type_id: Some(schema.type_id),

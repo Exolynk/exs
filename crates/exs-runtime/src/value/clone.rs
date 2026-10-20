@@ -10,7 +10,7 @@ use crate::gc;
 use crate::runtime;
 use crate::value::{
     RtValue, RuntimeCellValue, RuntimeClosure, RuntimeEnum, RuntimeError, RuntimeList,
-    RuntimeObject, Value,
+    RuntimeObject, SharedName, Value,
 };
 
 /// Deeply clones one source-visible value graph.
@@ -115,12 +115,12 @@ impl CloneContext {
         let entries = object
             .entries
             .iter()
-            .map(|(key, value)| (String::from(key.as_ref()), *value))
+            .map(|(key, value)| (key.clone(), *value))
             .collect::<Vec<_>>();
         let enum_data = object.enum_data.as_ref().map(|enum_data| {
             (
-                String::from(enum_data.type_identity.as_ref()),
-                String::from(enum_data.variant.as_ref()),
+                enum_data.type_identity.clone(),
+                enum_data.variant.clone(),
                 enum_data.fields.clone(),
             )
         });
@@ -133,8 +133,8 @@ impl CloneContext {
         let entries = self.clone_entries(entries)?;
         let enum_data = match enum_data {
             Some((type_identity, variant, fields)) => Some(RuntimeEnum {
-                type_identity: type_identity.into_boxed_str(),
-                variant: variant.into_boxed_str(),
+                type_identity,
+                variant,
                 fields: self.clone_values(fields)?,
             }),
             None => None,
@@ -237,11 +237,11 @@ impl CloneContext {
     /// Clones Object values while retaining their owned, immutable key strings.
     fn clone_entries(
         &mut self,
-        entries: Vec<(String, ValueRef)>,
-    ) -> Result<Vec<(Box<str>, ValueRef)>, ()> {
+        entries: Vec<(SharedName, ValueRef)>,
+    ) -> Result<Vec<(SharedName, ValueRef)>, ()> {
         entries
             .into_iter()
-            .map(|(key, value)| Ok((key.into_boxed_str(), self.clone_value(value)?)))
+            .map(|(key, value)| Ok((key, self.clone_value(value)?)))
             .collect()
     }
 }

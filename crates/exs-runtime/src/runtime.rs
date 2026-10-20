@@ -17,7 +17,7 @@ use crate::state::{AsyncFrame, FrameContinuation, HeapSlot, RuntimeState, runtim
 use crate::value::reference;
 use crate::value::{
     RtValue, RuntimeBytes, RuntimeEnum, RuntimeError, RuntimeList, RuntimeObject, RuntimeString,
-    Value,
+    SharedName, Value, same_name,
 };
 
 #[link(wasm_import_module = "exs")]
@@ -132,6 +132,75 @@ pub(crate) const fn bool_value(flag: bool) -> ValueRef {
     ValueRef::boolean(flag)
 }
 
+/// Returns the text of one pinned compiler literal String used as an enum name.
+///
+/// The compiler only passes literal Strings, which stay pinned for the whole execution.
+fn literal_text(text: ValueRef) -> Option<&'static str> {
+    match value(text) {
+        Value::String(text) => Some(text.as_str()),
+        _ => None,
+    }
+}
+
+/// Allocates one enum value whose names are compiler literals, with room for its payload.
+///
+/// Payload fields are appended afterwards with `enum_push_field`.
+pub(crate) fn enum_new_literal(
+    type_id: u32,
+    type_identity: ValueRef,
+    variant: ValueRef,
+    field_count: usize,
+) -> ValueRef {
+    let Some(type_identity_text) = literal_text(type_identity) else {
+        return recoverable_error(
+            "TypeError",
+            "enum type identity requires a String value",
+            type_identity,
+        );
+    };
+    let Some(variant_text) = literal_text(variant) else {
+        return recoverable_error("TypeError", "enum variant requires a String value", variant);
+    };
+    allocate(RtValue::Object(Box::new(RuntimeObject::enumeration(
+        Some(type_id),
+        RuntimeEnum {
+            type_identity: SharedName::Literal(type_identity_text),
+            variant: SharedName::Literal(variant_text),
+            fields: Vec::with_capacity(field_count),
+        },
+    ))))
+}
+
+/// Appends one payload field to an enum value under construction.
+pub(crate) fn enum_push_field(enum_value: ValueRef, field: ValueRef) {
+    match value_mut(enum_value) {
+        Some(RtValue::Object(object)) => match object.enum_data.as_mut() {
+            Some(enum_data) => enum_data.fields.push(field),
+            None => trap(),
+        },
+        _ => trap(),
+    }
+}
+
+/// Returns whether one value carries the enum identity and variant named by compiler literals.
+pub(crate) fn enum_matches_literal(
+    value_ref: ValueRef,
+    type_identity: ValueRef,
+    variant: ValueRef,
+) -> bool {
+    let Value::Object(object) = value(value_ref) else {
+        return false;
+    };
+    let Some(enum_data) = object.enum_data.as_ref() else {
+        return false;
+    };
+    let (Some(type_identity), Some(variant)) = (literal_text(type_identity), literal_text(variant))
+    else {
+        return false;
+    };
+    same_name(&enum_data.type_identity, type_identity) && same_name(&enum_data.variant, variant)
+}
+
 /// Allocates one tagged enum Object after validating its runtime constructor arguments.
 pub(crate) fn enum_new(
     type_id: u32,
@@ -164,8 +233,8 @@ pub(crate) fn enum_new(
     allocate(RtValue::Object(Box::new(RuntimeObject::enumeration(
         Some(type_id),
         RuntimeEnum {
-            type_identity: type_identity.into_boxed_str(),
-            variant: variant.into_boxed_str(),
+            type_identity: type_identity.into(),
+            variant: variant.into(),
             fields,
         },
     ))))
@@ -1116,7 +1185,7 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
             type_id: None,
             entries: entries
                 .into_iter()
-                .map(|(key, value)| (key.into_boxed_str(), exs_value_to_runtime(value)))
+                .map(|(key, value)| (key.into(), exs_value_to_runtime(value)))
                 .collect(),
             enum_data: None,
         })),
@@ -1127,8 +1196,8 @@ fn exs_value_to_runtime(value: ExsValue) -> ValueRef {
         } => RtValue::Object(Box::new(RuntimeObject::enumeration(
             None,
             RuntimeEnum {
-                type_identity: type_id.into_boxed_str(),
-                variant: variant.into_boxed_str(),
+                type_identity: type_id.into(),
+                variant: variant.into(),
                 fields: fields.into_iter().map(exs_value_to_runtime).collect(),
             },
         ))),

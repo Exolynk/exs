@@ -211,10 +211,6 @@ pub(super) enum Operation<'source, 'function> {
         variant: String,
         /// Ordered payload frame slots.
         fields: Vec<u32>,
-        /// Frame slot retaining the type identity string across further allocations.
-        type_identity_slot: u32,
-        /// Frame slot retaining the variant string across further allocations.
-        variant_slot: u32,
         /// Frame slot receiving the constructed enum value.
         destination: u32,
         /// Source location for this constructor invocation.
@@ -228,10 +224,6 @@ pub(super) enum Operation<'source, 'function> {
         type_identity: String,
         /// Source-visible variant name.
         variant: String,
-        /// Frame slot retaining the identity across literal allocation.
-        type_identity_slot: u32,
-        /// Frame slot retaining the variant across literal allocation.
-        variant_slot: u32,
         /// Frame slot receiving the Boolean test result.
         destination: u32,
         /// Source location for this match pattern.

@@ -98,15 +98,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         )));
                     }
                     let destination = self.temporary(identifier.span)?;
-                    let type_identity_slot = self.temporary(identifier.span)?;
-                    let variant_slot = self.temporary(identifier.span)?;
                     self.operations.push(Operation::Enum {
                         type_id: variant.type_id,
                         type_identity: variant.type_identity.clone(),
                         variant: variant.name.clone(),
                         fields: Vec::new(),
-                        type_identity_slot,
-                        variant_slot,
                         destination,
                         span: identifier.span,
                     });
@@ -522,15 +518,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         fields.push(field);
                     }
                     let destination = self.temporary(*span)?;
-                    let type_identity_slot = self.temporary(*span)?;
-                    let variant_slot = self.temporary(*span)?;
                     self.operations.push(Operation::Enum {
                         type_id: variant.type_id,
                         type_identity: variant.type_identity.clone(),
                         variant: variant.name.clone(),
                         fields,
-                        type_identity_slot,
-                        variant_slot,
                         destination,
                         span: *span,
                     });
@@ -679,15 +671,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         fields.push(field);
                     }
                     let destination = self.temporary(*span)?;
-                    let type_identity_slot = self.temporary(*span)?;
-                    let variant_slot = self.temporary(*span)?;
                     self.operations.push(Operation::Enum {
                         type_id: variant.type_id,
                         type_identity: variant.type_identity.clone(),
                         variant: variant.name.clone(),
                         fields,
-                        type_identity_slot,
-                        variant_slot,
                         destination,
                         span: *span,
                     });
@@ -979,14 +967,10 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         enum_type_name = Some(type_name.name.clone());
                     }
                     let condition = self.temporary(*pattern_span)?;
-                    let type_identity_slot = self.temporary(*pattern_span)?;
-                    let variant_slot = self.temporary(*pattern_span)?;
                     self.operations.push(Operation::EnumMatches {
                         value,
                         type_identity: variant_data.type_identity,
                         variant: variant_data.name,
-                        type_identity_slot,
-                        variant_slot,
                         destination: condition,
                         span: *pattern_span,
                     });

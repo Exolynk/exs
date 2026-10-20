@@ -642,6 +642,71 @@ pub extern "C" fn __exs_rt_enum_new(
     runtime::enum_new(type_id, type_identity, variant, fields)
 }
 
+/// Allocates one enum value named by compiler literals, with room for its payload fields.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_enum_new_literal(
+    type_id: i32,
+    type_identity: ValueRef,
+    variant: ValueRef,
+    field_count: i32,
+) -> ValueRef {
+    let (Ok(type_id), Ok(field_count)) = (u32::try_from(type_id), usize::try_from(field_count))
+    else {
+        runtime::trap();
+    };
+    runtime::enum_new_literal(type_id, type_identity, variant, field_count)
+}
+
+/// Appends one payload field to an enum value under construction.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_enum_push_field(enum_value: ValueRef, field: ValueRef) {
+    runtime::enum_push_field(enum_value, field);
+}
+
+/// Returns whether an enum value selects the identity and variant named by compiler literals.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_enum_matches_literal(
+    value: ValueRef,
+    type_identity: ValueRef,
+    variant: ValueRef,
+) -> ValueRef {
+    runtime::bool_value(runtime::enum_matches_literal(value, type_identity, variant))
+}
+
+/// Reads one property named by a pinned compiler literal String.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_property_get(receiver: ValueRef, key: ValueRef) -> ValueRef {
+    value::object::operations::get_literal(receiver, key)
+}
+
+/// Creates or replaces one property named by a pinned compiler literal String.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_property_set(
+    receiver: ValueRef,
+    key: ValueRef,
+    replacement: ValueRef,
+) -> ValueRef {
+    value::object::operations::set_literal(receiver, key, replacement)
+}
+
+/// Allocates an empty nominal Object with room for its declared fields.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_object_typed_new_with_capacity(type_id: i32, capacity: i32) -> ValueRef {
+    let (Ok(type_id), Ok(capacity)) = (u32::try_from(type_id), usize::try_from(capacity)) else {
+        runtime::trap();
+    };
+    if type_id == 0 {
+        runtime::trap();
+    }
+    value::object::operations::new_typed_with_capacity(type_id, capacity)
+}
+
+/// Appends one compiler-validated field named by a pinned literal to an Object under construction.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_object_push_field(receiver: ValueRef, key: ValueRef, value: ValueRef) {
+    value::object::operations::push_literal_field(receiver, key, value);
+}
+
 /// Allocates internal shared storage for one compiler-captured lexical binding.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_cell_new(value: ValueRef) -> ValueRef {

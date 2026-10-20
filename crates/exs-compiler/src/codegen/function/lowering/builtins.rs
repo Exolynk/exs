@@ -8,18 +8,21 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         arguments: &[Expression<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        self.runtime_call("__exs_rt_list_new", span)?;
-        let fields = self.store_stack_value()?;
+        // Payload values are evaluated and validated in source order before the enum exists.
+        let mut values = Vec::with_capacity(arguments.len());
         for (argument, contract) in arguments.iter().zip(&variant.fields) {
             self.compile_expression(argument)?;
             let value = self.store_stack_value()?;
             self.validate_local_type(value, contract, span)?;
-            self.function.instruction(&Instruction::LocalGet(fields));
-            self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_call("__exs_rt_append", span)?;
-            self.function.instruction(&Instruction::Drop);
-            self.clear_root_slot(value)?;
+            values.push(value);
         }
+        let field_count = i32::try_from(values.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                span,
+                "too many enum payload fields",
+            ))
+        })?;
         self.compile_string(&variant.type_identity, span)?;
         let type_identity = self.store_stack_value()?;
         self.compile_string(&variant.name, span)?;
@@ -30,11 +33,22 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .instruction(&Instruction::LocalGet(type_identity));
         self.function
             .instruction(&Instruction::LocalGet(variant_name));
-        self.function.instruction(&Instruction::LocalGet(fields));
-        self.runtime_call("__exs_rt_enum_new", span)?;
+        self.function
+            .instruction(&Instruction::I32Const(field_count));
+        self.runtime_call("__exs_rt_enum_new_literal", span)?;
         self.clear_root_slot(type_identity)?;
         self.clear_root_slot(variant_name)?;
-        self.clear_root_slot(fields)
+        let enum_value = self.store_stack_value()?;
+        for value in values {
+            self.function
+                .instruction(&Instruction::LocalGet(enum_value));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.runtime_call("__exs_rt_enum_push_field", span)?;
+            self.clear_root_slot(value)?;
+        }
+        self.function
+            .instruction(&Instruction::LocalGet(enum_value));
+        self.clear_root_slot(enum_value)
     }
 
     /// Compiles the reserved `Error(kind, message, data)` source constructor.

@@ -14,29 +14,29 @@ use exs_runner::{CompilerStrategy, ExecutionCancellation, ExecutionReport, Serve
 use support::{block_on, compile_source};
 
 /// Fuel ceiling for an empty function, which measures pure ABI and runtime overhead.
-const EMPTY_MAIN_FUEL: u64 = 69_311;
+const EMPTY_MAIN_FUEL: u64 = 69_309;
 /// Fuel ceiling for a show function that only returns `true`.
-const SHOW_TRUE_FUEL: u64 = 69_329;
+const SHOW_TRUE_FUEL: u64 = 69_327;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 77_298;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 76_797;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 136_846;
+const CONCAT_10_OBJECTS_FUEL: u64 = 133_779;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 750_173;
+const CONCAT_100_OBJECTS_FUEL: u64 = 723_050;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
-const INT_LOOP_1000_FUEL: u64 = 307_228;
+const INT_LOOP_1000_FUEL: u64 = 307_224;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
-const ASYNC_INT_LOOP_100_FUEL: u64 = 133_353;
+const ASYNC_INT_LOOP_100_FUEL: u64 = 131_469;
 /// Fuel ceiling for 1000 iterations of an empty resumable `while` loop.
-const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 251_073;
+const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 250_553;
 /// Fuel ceiling for 1000 iterations of a resumable integer arithmetic `while` loop.
-const ASYNC_INT_WHILE_1000_FUEL: u64 = 414_092;
+const ASYNC_INT_WHILE_1000_FUEL: u64 = 413_572;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
-const FOR_RANGE_1000_FUEL: u64 = 399_620;
+const FOR_RANGE_1000_FUEL: u64 = 395_936;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
-const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 864_192;
+const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 860_040;
 /// Fuel ceiling for 100 calls of a small resumable function.
-const ASYNC_CALL_LOOP_100_FUEL: u64 = 231_606;
+const ASYNC_CALL_LOOP_100_FUEL: u64 = 231_602;
 
 /// Script whose leading host call selects resumable lowering for an otherwise empty `while` loop.
 const ASYNC_EMPTY_WHILE_SOURCE: &str = r#"

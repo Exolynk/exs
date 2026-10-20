@@ -186,7 +186,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 .instruction(&Instruction::LocalGet(object_local));
             self.function.instruction(&Instruction::LocalGet(key));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_call("__exs_rt_index_set", property.span)?;
+            self.runtime_call("__exs_rt_property_set", property.span)?;
             self.function.instruction(&Instruction::Drop);
             self.clear_root_slot(key)?;
             self.clear_root_slot(value)?;
@@ -236,9 +236,17 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 return Ok(());
             }
         }
+        let capacity = i32::try_from(nominal.fields.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                span,
+                "too many fields for one nominal type",
+            ))
+        })?;
         self.function
             .instruction(&Instruction::I32Const(nominal.id.cast_signed()));
-        self.runtime_call("__exs_rt_object_typed_new", span)?;
+        self.function.instruction(&Instruction::I32Const(capacity));
+        self.runtime_call("__exs_rt_object_typed_new_with_capacity", span)?;
         let object = self.store_stack_value()?;
         for property in properties {
             let field = nominal
@@ -260,8 +268,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.function.instruction(&Instruction::LocalGet(object));
             self.function.instruction(&Instruction::LocalGet(key));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_call("__exs_rt_index_set", property.span)?;
-            self.function.instruction(&Instruction::Drop);
+            self.runtime_call("__exs_rt_object_push_field", property.span)?;
             self.clear_root_slot(key)?;
             self.clear_root_slot(value)?;
         }
@@ -277,8 +284,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.function.instruction(&Instruction::LocalGet(object));
             self.function.instruction(&Instruction::LocalGet(key));
             self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_call("__exs_rt_index_set", span)?;
-            self.function.instruction(&Instruction::Drop);
+            self.runtime_call("__exs_rt_object_push_field", span)?;
             self.clear_root_slot(key)?;
             self.clear_root_slot(value)?;
         }

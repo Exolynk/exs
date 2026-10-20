@@ -19,5 +19,7 @@ mod garbage_collection;
 mod immediates;
 #[path = "runtime_values/iteration.rs"]
 mod iteration;
+#[path = "runtime_values/objects.rs"]
+mod objects;
 #[path = "runtime_values/primitives.rs"]
 mod primitives;

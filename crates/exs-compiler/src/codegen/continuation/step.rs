@@ -375,7 +375,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                     self.get_slot(*destination, *span)?;
                     self.string(key, *key_span)?;
                     self.get_slot(*value, *span)?;
-                    self.call_runtime("__exs_rt_index_set", *span)?;
+                    self.call_runtime("__exs_rt_property_set", *span)?;
                     self.function.instruction(&Instruction::Drop);
                 }
                 self.ready(next, *span)?;
@@ -436,49 +436,42 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 type_identity,
                 variant,
                 fields,
-                type_identity_slot,
-                variant_slot,
                 destination,
                 span,
             } => {
+                let field_count = i32::try_from(fields.len()).map_err(|_| {
+                    diagnostics(CompileDiagnostic::new(
+                        "E0212",
+                        *span,
+                        "too many enum payload fields",
+                    ))
+                })?;
+                self.function
+                    .instruction(&Instruction::I32Const(type_id.cast_signed()));
                 self.string(type_identity, *span)?;
-                self.set_slot(*type_identity_slot, *span)?;
                 self.string(variant, *span)?;
-                self.set_slot(*variant_slot, *span)?;
-                self.call_runtime("__exs_rt_list_new", *span)?;
+                self.function
+                    .instruction(&Instruction::I32Const(field_count));
+                self.call_runtime("__exs_rt_enum_new_literal", *span)?;
                 self.set_slot(*destination, *span)?;
                 for field in fields {
                     self.get_slot(*destination, *span)?;
                     self.get_slot(*field, *span)?;
-                    self.call_runtime("__exs_rt_append", *span)?;
-                    self.function.instruction(&Instruction::Drop);
+                    self.call_runtime("__exs_rt_enum_push_field", *span)?;
                 }
-                self.function
-                    .instruction(&Instruction::I32Const(type_id.cast_signed()));
-                self.get_slot(*type_identity_slot, *span)?;
-                self.get_slot(*variant_slot, *span)?;
-                self.get_slot(*destination, *span)?;
-                self.call_runtime("__exs_rt_enum_new", *span)?;
-                self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
             Operation::EnumMatches {
                 value,
                 type_identity,
                 variant,
-                type_identity_slot,
-                variant_slot,
                 destination,
                 span,
             } => {
-                self.string(type_identity, *span)?;
-                self.set_slot(*type_identity_slot, *span)?;
-                self.string(variant, *span)?;
-                self.set_slot(*variant_slot, *span)?;
                 self.get_slot(*value, *span)?;
-                self.get_slot(*type_identity_slot, *span)?;
-                self.get_slot(*variant_slot, *span)?;
-                self.call_runtime("__exs_rt_enum_matches", *span)?;
+                self.string(type_identity, *span)?;
+                self.string(variant, *span)?;
+                self.call_runtime("__exs_rt_enum_matches_literal", *span)?;
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
@@ -555,7 +548,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             } => {
                 self.get_slot(*receiver, *span)?;
                 self.string(property, *property_span)?;
-                self.call_runtime("__exs_rt_index_get", *span)?;
+                self.call_runtime("__exs_rt_property_get", *span)?;
                 self.set_slot(*destination, *span)?;
                 self.ready(next, *span)?;
             }
@@ -582,7 +575,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.get_slot(*receiver, *span)?;
                 self.string(property, *property_span)?;
                 self.get_slot(*value, *span)?;
-                self.call_runtime("__exs_rt_index_set", *span)?;
+                self.call_runtime("__exs_rt_property_set", *span)?;
                 self.function.instruction(&Instruction::Drop);
                 self.ready(next, *span)?;
             }
