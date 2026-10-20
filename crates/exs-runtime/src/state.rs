@@ -92,16 +92,37 @@ pub(crate) struct AsyncFrame {
 
 impl AsyncFrame {
     /// Creates a frame at state 0 with `slot_count` empty slots.
+    ///
+    /// Reuses a pooled block of the same size when one is available.
     pub(crate) fn new(function_id: u32, slot_count: usize, traced: bool) -> Self {
-        let mut block = Vec::new();
-        block.resize(slot_count + 1, 0);
-        let mut frame = Self {
-            block: block.into_boxed_slice(),
+        let pool = &mut unsafe { runtime() }.frame_block_pool;
+        let mut block = match pool.iter().rposition(|block| block.len() == slot_count + 1) {
+            Some(position) => {
+                let mut block = pool.swap_remove(position);
+                block.fill(0);
+                block
+            }
+            None => {
+                let mut block = Vec::new();
+                block.resize(slot_count + 1, 0);
+                block.into_boxed_slice()
+            }
+        };
+        block[0] = u64::from(function_id) << 32;
+        Self {
+            block,
             caller: None,
             traced,
-        };
-        frame.block[0] = u64::from(function_id) << 32;
-        frame
+        }
+    }
+
+    /// Returns this frame's block to the reuse pool and yields its caller continuation.
+    pub(crate) fn release(self) -> Option<FrameContinuation> {
+        let pool = &mut unsafe { runtime() }.frame_block_pool;
+        if pool.len() < FRAME_BLOCK_POOL_LEN {
+            pool.push(self.block);
+        }
+        self.caller
     }
 
     /// Returns the compiler-assigned generated function identifier.
@@ -130,6 +151,8 @@ pub(crate) struct RuntimeState {
     pub(crate) next_gc_at: usize,
     /// Mark worklist reused by every collection to keep its capacity.
     pub(crate) gc_worklist: Vec<ValueRef>,
+    /// Released async frame blocks kept for reuse by later frames of the same size.
+    pub(crate) frame_block_pool: Vec<Box<[u64]>>,
     /// Compiler-generated function roots written directly by generated code.
     pub(crate) root_stack: RootStack,
     /// Durable frames for the currently active resumable root execution.
@@ -152,8 +175,6 @@ pub(crate) struct RuntimeState {
     pub(crate) current_source_position: Option<SourcePositionId>,
     /// Active direct language calls from root to innermost frame.
     pub(crate) frames: Vec<ExsStackFrame>,
-    /// Call-site position consumed by the next generated function entry.
-    pub(crate) pending_call_site: Option<SourcePositionId>,
     /// CBOR bytes supplied by the runner for the next root execution.
     pub(crate) input_buffer: Vec<u8>,
     /// Bytes copied from one compiler-owned passive literal data segment.
@@ -172,6 +193,7 @@ impl RuntimeState {
             free_slots: Vec::new(),
             next_gc_at: crate::gc::INITIAL_COLLECTION_THRESHOLD,
             gc_worklist: Vec::new(),
+            frame_block_pool: Vec::new(),
             root_stack: RootStack::new(),
             async_frames: Vec::new(),
             free_async_frames: Vec::new(),
@@ -183,13 +205,60 @@ impl RuntimeState {
             temporary_roots: Vec::new(),
             current_source_position: None,
             frames: Vec::new(),
-            pending_call_site: None,
             input_buffer: Vec::new(),
             literal_buffer: Vec::new(),
             result_buffer: Vec::new(),
             pinned_literals: Vec::new(),
         }
     }
+}
+
+/// Maximum number of released async frame blocks kept for reuse.
+const FRAME_BLOCK_POOL_LEN: usize = 16;
+
+/// Runtime registers that generated code reads and writes directly in linear memory.
+///
+/// The compiler addresses this block through the static's exported address, so generated
+/// code needs neither a runtime call nor a Wasm global to reach it.
+#[repr(C)]
+pub struct RuntimeRegisters {
+    /// Call-site source position for the next generated function entry, or 0 when absent.
+    pub pending_call_site: u32,
+    /// Remaining scheduler checkpoints of the running task.
+    pub quantum_remaining: u32,
+}
+
+/// Interior-mutable holder of the runtime registers.
+#[repr(transparent)]
+pub struct RegistersCell(pub UnsafeCell<RuntimeRegisters>);
+
+// SAFETY: the runtime is single-threaded; generated code and the runtime never run concurrently.
+unsafe impl Sync for RegistersCell {}
+
+/// The runtime register block exported by address to generated code.
+#[unsafe(no_mangle)]
+pub static __EXS_RT_REGISTERS: RegistersCell = RegistersCell(UnsafeCell::new(RuntimeRegisters {
+    pending_call_site: 0,
+    quantum_remaining: 0,
+}));
+
+// Generated code addresses the registers with the shared ABI offsets.
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, pending_call_site)
+        == exs_abi::REGISTERS_CALL_SITE_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, quantum_remaining)
+        == exs_abi::REGISTERS_QUANTUM_OFFSET as usize
+);
+
+/// Returns the runtime registers shared with generated code.
+///
+/// # Safety
+///
+/// Callers must not retain the reference across generated code that writes the registers.
+pub(crate) unsafe fn registers() -> &'static mut RuntimeRegisters {
+    unsafe { &mut *__EXS_RT_REGISTERS.0.get() }
 }
 
 /// Mutable single-threaded state for one Wasm module instance.

@@ -55,6 +55,9 @@ struct RuntimeTask {
     /// A local or resumed host value awaiting continuation consumption.
     ready_host_result: Option<ValueRef>,
     /// Remaining scheduler checkpoints before this task yields its turn.
+    ///
+    /// While the task runs, the authoritative count lives in the runtime registers, where
+    /// generated code decrements it inline; it is copied back when the task stops running.
     quantum_remaining: u32,
     /// Parallel group and source-order result index when this is a child task.
     parallel: Option<(ValueRef, usize)>,
@@ -135,15 +138,15 @@ impl ExecutionContext {
         let Some(task_id) = self.current else {
             crate::runtime::trap();
         };
-        let task = self.current_task_mut();
-        let Some(remaining) = task.quantum_remaining.checked_sub(1) else {
+        let registers = unsafe { crate::state::registers() };
+        let Some(remaining) = registers.quantum_remaining.checked_sub(1) else {
             crate::runtime::trap();
         };
         if remaining != 0 {
-            task.quantum_remaining = remaining;
+            registers.quantum_remaining = remaining;
             return true;
         }
-        task.quantum_remaining = TASK_QUANTUM;
+        self.current_task_mut().quantum_remaining = TASK_QUANTUM;
         self.transition(task_id, TaskState::Runnable);
         self.enqueue(task_id);
         self.current = None;
@@ -167,6 +170,7 @@ impl ExecutionContext {
         if self.current_task().host_call != Some(call_id) {
             crate::runtime::trap();
         }
+        self.save_current_quantum();
         self.transition(task_id, TaskState::WaitingHost);
         self.current = None;
         self.run_next_if_available();
@@ -284,6 +288,7 @@ impl ExecutionContext {
         if group.results.iter().all(Option::is_some) {
             return;
         }
+        self.save_current_quantum();
         self.transition(parent, TaskState::WaitingChildren);
         self.current = None;
         self.run_next_if_available();
@@ -403,6 +408,14 @@ impl ExecutionContext {
         };
         self.transition(task_id, TaskState::Running);
         self.current = Some(task_id);
+        let quantum = self.current_task().quantum_remaining;
+        unsafe { crate::state::registers() }.quantum_remaining = quantum;
+    }
+
+    /// Copies the running task's quantum from the runtime registers back into the task.
+    fn save_current_quantum(&mut self) {
+        let quantum = unsafe { crate::state::registers() }.quantum_remaining;
+        self.current_task_mut().quantum_remaining = quantum;
     }
 
     /// Selects the next runnable task only when one is queued.

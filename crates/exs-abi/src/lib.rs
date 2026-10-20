@@ -211,6 +211,13 @@ pub const ASYNC_FRAME_STATE_OFFSET: u32 = 0;
 pub const ASYNC_FRAME_FUNCTION_OFFSET: u32 = 4;
 /// Byte offset of the first raw 64-bit `ValueRef` slot in an async frame's block.
 pub const ASYNC_FRAME_SLOTS_OFFSET: u32 = 8;
+
+/// Exported runtime-template global whose constant value is the runtime register block address.
+pub const RUNTIME_REGISTERS_EXPORT: &str = "__EXS_RT_REGISTERS";
+/// Byte offset of the pending call-site position in the runtime register block.
+pub const REGISTERS_CALL_SITE_OFFSET: u32 = 0;
+/// Byte offset of the running task's remaining scheduler checkpoints in the register block.
+pub const REGISTERS_QUANTUM_OFFSET: u32 = 4;
 /// A host call completed synchronously and has a response available to the runtime.
 pub const HOST_CALL_READY: i32 = 0;
 /// A host call is pending and will be resumed by the runner.

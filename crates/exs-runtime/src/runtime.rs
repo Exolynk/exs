@@ -127,6 +127,26 @@ pub(crate) const fn none_value() -> ValueRef {
     ValueRef::NONE
 }
 
+/// Pushes one language stack frame, consuming the pending call site from the registers.
+pub(crate) fn trace_frame_push(function_id: i32) {
+    let Ok(function_id) = u32::try_from(function_id) else {
+        trap();
+    };
+    let registers = unsafe { crate::state::registers() };
+    let call_site = core::mem::take(&mut registers.pending_call_site);
+    unsafe { runtime() }.frames.push(exs_abi::ExsStackFrame {
+        function_id,
+        call_site: exs_abi::SourcePositionId(call_site),
+    });
+}
+
+/// Removes the innermost language stack frame.
+pub(crate) fn trace_frame_pop() {
+    if unsafe { runtime() }.frames.pop().is_none() {
+        trap();
+    }
+}
+
 /// Returns the immediate Bool value.
 pub(crate) const fn bool_value(flag: bool) -> ValueRef {
     ValueRef::boolean(flag)
@@ -848,7 +868,7 @@ pub(crate) fn async_frame_complete(frame: i32, value: ValueRef) -> i32 {
         }
         return if execution(state).has_current() { 0 } else { 2 };
     }
-    if let Some(continuation) = completed.caller {
+    if let Some(continuation) = completed.release() {
         let caller_index = usize::try_from(continuation.frame - 1).unwrap_or_else(|_| trap());
         let Some(caller) = state
             .async_frames

@@ -266,38 +266,43 @@ pub extern "C" fn __exs_rt_set_source_position(position: i32) {
 }
 
 /// Records the source call site consumed by the next generated function entry.
+///
+/// Generated code usually stores the position into the runtime registers directly.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_set_call_site(position: i32) {
     let Ok(position) = u32::try_from(position) else {
         runtime::trap();
     };
-    unsafe { crate::state::runtime() }.pending_call_site =
-        Some(exs_abi::SourcePositionId(position));
+    unsafe { crate::state::registers() }.pending_call_site = position;
 }
 
 /// Registers one generated direct function invocation.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_frame_push(function_id: i32) {
-    let Ok(function_id) = u32::try_from(function_id) else {
-        runtime::trap();
-    };
-    let state = unsafe { crate::state::runtime() };
-    let call_site = state
-        .pending_call_site
-        .take()
-        .unwrap_or(exs_abi::SourcePositionId(0));
-    state.frames.push(exs_abi::ExsStackFrame {
-        function_id,
-        call_site,
-    });
+    runtime::trace_frame_push(function_id);
 }
 
 /// Removes the innermost generated direct function invocation.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_frame_pop() {
-    if unsafe { crate::state::runtime() }.frames.pop().is_none() {
-        runtime::trap();
-    }
+    runtime::trace_frame_pop();
+}
+
+/// Enters one generated synchronous function: pushes its root frame and trace frame.
+///
+/// Returns the root frame's first slot address, like `__exs_rt_root_push`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_function_enter(function_id: i32, slot_count: i32) -> i32 {
+    let base = gc::push_root_frame(slot_count);
+    runtime::trace_frame_push(function_id);
+    base
+}
+
+/// Leaves one generated synchronous function: pops its root frame and trace frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_function_leave(base: i32) {
+    gc::pop_root_frame(base);
+    runtime::trace_frame_pop();
 }
 
 /// Allocates a Boolean value from its canonical Wasm representation.

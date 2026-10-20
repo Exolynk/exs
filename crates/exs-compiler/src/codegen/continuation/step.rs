@@ -30,6 +30,8 @@ pub(super) struct StepCompiler<'source, 'context> {
     pub(super) source_map: &'context SourceMap<'source>,
     /// Durable child-frame layouts for nominal suspendable method targets.
     pub(super) frame_layouts: &'context HashMap<String, FrameLayout>,
+    /// Linear-memory address of the runtime register block.
+    pub(super) registers_address: u32,
     /// The declared return contract checked before a resumable frame completes.
     pub(super) return_contract: &'context TypeContract,
     /// Wasm function body under construction.

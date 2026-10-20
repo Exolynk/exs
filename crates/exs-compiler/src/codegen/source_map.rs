@@ -56,6 +56,8 @@ pub(super) fn requires_source_position(export: &str) -> bool {
             | "__exs_rt_format_new"
             | "__exs_rt_frame_pop"
             | "__exs_rt_frame_push"
+            | "__exs_rt_function_enter"
+            | "__exs_rt_function_leave"
             | "__exs_rt_host_call_take_ready"
             | "__exs_rt_int_new"
             | "__exs_rt_is_closure"

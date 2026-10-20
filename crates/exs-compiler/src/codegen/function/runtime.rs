@@ -90,9 +90,12 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 "missing source-map position for generated function call",
             ))
         })?;
-        self.function
-            .instruction(&Instruction::I32Const(position.cast_signed()));
-        self.runtime_call_unpositioned("__exs_rt_set_call_site", span)
+        crate::codegen::registers::store_call_site(
+            &mut self.function,
+            self.registers_address,
+            position,
+        );
+        Ok(())
     }
 
     /// Pushes the immediate None value.
@@ -255,14 +258,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 "too many root slots for the Wasm i32 ABI",
             ))
         })?;
-        self.function
-            .instruction(&Instruction::I32Const(slot_count));
-        self.runtime_call("__exs_rt_root_push", self.declaration.span)?;
-        self.function
-            .instruction(&Instruction::LocalSet(self.root_frame_local));
+        // One runtime call pushes both the root frame and the language stack frame.
         self.function
             .instruction(&Instruction::I32Const(self.function_id.cast_signed()));
-        self.runtime_call("__exs_rt_frame_push", self.declaration.span)?;
+        self.function
+            .instruction(&Instruction::I32Const(slot_count));
+        self.runtime_call("__exs_rt_function_enter", self.declaration.span)?;
+        self.function
+            .instruction(&Instruction::LocalSet(self.root_frame_local));
         let signature = self.signatures.get(&self.signature_key).ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0999",
@@ -414,8 +417,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         let result = self.store_stack_value()?;
         self.function
             .instruction(&Instruction::LocalGet(self.root_frame_local));
-        self.runtime_call("__exs_rt_root_pop", self.declaration.span)?;
-        self.runtime_call("__exs_rt_frame_pop", self.declaration.span)?;
+        self.runtime_call("__exs_rt_function_leave", self.declaration.span)?;
         self.function.instruction(&Instruction::LocalGet(result));
         self.function.instruction(&Instruction::Return);
         Ok(())

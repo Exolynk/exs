@@ -360,6 +360,8 @@ struct TemplateLinker<'source, 'module> {
     template_global_import_count: u32,
     suspendable_functions: HashSet<String>,
     frame_layouts: HashMap<String, continuation::FrameLayout>,
+    /// Linear-memory address of the runtime register block.
+    registers_address: u32,
 }
 
 impl<'source, 'module> TemplateLinker<'source, 'module> {
@@ -423,6 +425,7 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             source_map,
             template_has_data_count: template_data.has_data_count,
             template_has_data_section: template_data.has_data_section,
+            registers_address: template_data.registers_address,
             template_function_import_count: 0,
             template_global_import_count: 0,
             suspendable_functions,
@@ -811,6 +814,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                     &self.lifted,
                     methods,
                     &self.type_registry,
+                    self.registers_address,
                 )
                 .map(|compiled| compiled.function)
             } else {
@@ -824,6 +828,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                         source_map: &self.source_map,
                         types: &self.type_registry,
                         methods,
+                        registers_address: self.registers_address,
                     },
                 )
                 .and_then(|mut compiler| compiler.compile())
@@ -850,6 +855,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                         &self.lifted,
                         methods,
                         &self.type_registry,
+                        self.registers_address,
                     )
                     .map(|compiled| compiled.function)
                 } else {
@@ -863,6 +869,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                             source_map: &self.source_map,
                             types: &self.type_registry,
                             methods,
+                            registers_address: self.registers_address,
                         },
                     )
                     .and_then(|mut compiler| compiler.compile())
@@ -887,6 +894,7 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
                 &self.lifted,
                 methods,
                 &self.type_registry,
+                self.registers_address,
             ) {
                 Ok(compiled) => {
                     codes.function(&compiled.function);

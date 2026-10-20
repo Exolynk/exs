@@ -6,6 +6,7 @@ mod function;
 mod immediate;
 mod linker;
 mod literals;
+mod registers;
 pub mod source_map;
 pub(crate) mod standard;
 mod suspension;

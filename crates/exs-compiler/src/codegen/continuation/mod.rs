@@ -82,6 +82,7 @@ pub(super) fn compile_function<'source>(
     lifted: &[LiftedFunction<'source>],
     methods: &MethodRegistry,
     types: &TypeRegistry,
+    registers_address: u32,
 ) -> Result<CompiledContinuation, CompileDiagnostics<'source>> {
     let signature = signatures.get(key).ok_or_else(|| {
         diagnostics(CompileDiagnostic::new(
@@ -104,6 +105,7 @@ pub(super) fn compile_function<'source>(
         literals,
         source_map,
         frame_layouts,
+        registers_address,
         return_contract: &signature.return_type,
         // Locals 1..=9 are i32 scalars, 10..=13 hold ValueRefs and 14..=15 frame block addresses.
         function: StepBody::new(Function::new([

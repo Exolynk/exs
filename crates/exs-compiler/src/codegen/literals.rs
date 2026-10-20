@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use exs_abi::STANDARD_ORDERING_TYPE_IDENTITY;
+use exs_abi::{RUNTIME_REGISTERS_EXPORT, STANDARD_ORDERING_TYPE_IDENTITY};
 use exs_runtime::WASM_TEMPLATE;
 use wasmparser::{Parser as WasmParser, Payload};
 
@@ -129,6 +129,8 @@ pub(super) struct TemplateDataLayout {
     pub(super) count: u32,
     pub(super) has_data_count: bool,
     pub(super) has_data_section: bool,
+    /// Linear-memory address of the runtime register block.
+    pub(super) registers_address: u32,
 }
 
 /// Counts runtime-template data segments before assigning compiler literal indexes.
@@ -139,7 +141,11 @@ pub(super) fn template_data_layout<'a>(
         count: 0,
         has_data_count: false,
         has_data_section: false,
+        registers_address: 0,
     };
+    let mut imported_globals = 0_u32;
+    let mut global_addresses = Vec::new();
+    let mut registers_global = None;
     for payload in WasmParser::new(0).parse_all(WASM_TEMPLATE) {
         let payload = payload.map_err(|error| {
             diagnostics(CompileDiagnostic::new(
@@ -154,9 +160,45 @@ pub(super) fn template_data_layout<'a>(
                 layout.has_data_section = true;
                 layout.count = section.count();
             }
+            Payload::ImportSection(section) => {
+                for imports in section.into_iter().flatten() {
+                    for (_, import) in imports.into_iter().flatten() {
+                        if matches!(import.ty, wasmparser::TypeRef::Global(_)) {
+                            imported_globals += 1;
+                        }
+                    }
+                }
+            }
+            Payload::GlobalSection(section) => {
+                for global in section.into_iter().flatten() {
+                    let mut operators = global.init_expr.get_operators_reader();
+                    global_addresses.push(match operators.read() {
+                        Ok(wasmparser::Operator::I32Const { value }) => u32::try_from(value).ok(),
+                        _ => None,
+                    });
+                }
+            }
+            Payload::ExportSection(section) => {
+                registers_global = section
+                    .into_iter()
+                    .flatten()
+                    .find(|export| export.name == RUNTIME_REGISTERS_EXPORT)
+                    .map(|export| export.index);
+            }
             _ => {}
         }
     }
+    // The register block is a runtime static exported as a constant-address global.
+    layout.registers_address = registers_global
+        .and_then(|index| index.checked_sub(imported_globals))
+        .and_then(|index| global_addresses.get(index as usize).copied().flatten())
+        .ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E1001",
+                module_span(module),
+                "runtime template does not export its register block address",
+            ))
+        })?;
     Ok(layout)
 }
 

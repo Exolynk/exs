@@ -476,11 +476,11 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 "missing source-map position for generated function call",
             ))
         })?;
-        self.function
-            .instruction(&Instruction::I32Const(position.cast_signed()));
-        self.function.instruction(&Instruction::Call(
-            self.runtime_index("__exs_rt_set_call_site", span)?,
-        ));
+        crate::codegen::registers::store_call_site(
+            self.function.raw(),
+            self.registers_address,
+            position,
+        );
         Ok(())
     }
 
@@ -539,16 +539,22 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
     }
 
     /// Consumes one scheduler checkpoint and yields to the driver when the task was rotated.
+    ///
+    /// The quantum is decremented inline; the runtime only runs when it would be exhausted.
     pub(super) fn checkpoint(
         &mut self,
         next: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        for instruction in crate::codegen::registers::checkpoint_countdown(self.registers_address) {
+            self.function.instruction(&instruction);
+        }
         self.call_runtime("__exs_rt_scheduler_checkpoint", span)?;
         self.function.instruction(&Instruction::I32Eqz);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.yield_ready(next);
+        self.function.instruction(&Instruction::End);
         self.function.instruction(&Instruction::End);
         Ok(())
     }

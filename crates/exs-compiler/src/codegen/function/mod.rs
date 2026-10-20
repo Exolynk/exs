@@ -43,6 +43,8 @@ pub(super) struct FunctionCompilerContext<'a, 'module> {
     pub(super) types: &'module TypeRegistry,
     /// Module implementation method dispatch table.
     pub(super) methods: &'module MethodRegistry,
+    /// Linear-memory address of the runtime register block.
+    pub(super) registers_address: u32,
 }
 
 /// Structured Wasm targets and lexical cleanup data for one active source loop.
@@ -86,6 +88,8 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     control_depth: u32,
     function_id: u32,
     return_type: TypeContract,
+    /// Linear-memory address of the runtime register block.
+    registers_address: u32,
 }
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
@@ -142,6 +146,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             source_map: context.source_map,
             types: context.types,
             methods: context.methods,
+            registers_address: context.registers_address,
             // ValueRef locals are the rooted i64 slots; the i32 scalars follow the root frame.
             function: Function::new([
                 (local_count, VALUE_TYPE),
