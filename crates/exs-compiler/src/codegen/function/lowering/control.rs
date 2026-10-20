@@ -165,8 +165,18 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let outcome = self.store_stack_value()?;
+        // Only Errors can be fatal, so other values skip the runtime test.
+        self.function.instruction(&Instruction::LocalGet(outcome));
+        immediate::type_mask_test(&mut self.function, exs_abi::TYPE_ERROR);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.enter_control()?;
         self.function.instruction(&Instruction::LocalGet(outcome));
         self.runtime_call("__exs_rt_is_fatal_error", span)?;
+        self.function.instruction(&Instruction::Else);
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.enter_control()?;

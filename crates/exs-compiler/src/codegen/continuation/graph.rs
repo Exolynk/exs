@@ -386,6 +386,8 @@ pub(super) enum Operation<'source, 'function> {
     /// Creates a linked child frame for a suspendable direct function invocation.
     ChildCall {
         layout: FrameLayout,
+        /// Wasm function index of the child's step function.
+        step: u32,
         arguments: Vec<u32>,
         destination: u32,
         span: SourceSpan<'source>,

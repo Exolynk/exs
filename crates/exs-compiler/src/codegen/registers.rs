@@ -5,9 +5,9 @@
 
 use exs_abi::{
     REGISTERS_ACTIVE_BLOCK_OFFSET, REGISTERS_ACTIVE_FRAME_OFFSET, REGISTERS_ACTIVE_FUNCTION_OFFSET,
-    REGISTERS_CALL_SITE_OFFSET, REGISTERS_QUANTUM_OFFSET, REGISTERS_ROOT_FLOOR_OFFSET,
-    REGISTERS_ROOT_LIMIT_OFFSET, REGISTERS_ROOT_TOP_OFFSET, REGISTERS_TRACE_LIMIT_OFFSET,
-    REGISTERS_TRACE_TOP_OFFSET, TRACE_ENTRY_SIZE,
+    REGISTERS_CALL_SITE_OFFSET, REGISTERS_DIRECT_DEPTH_OFFSET, REGISTERS_QUANTUM_OFFSET,
+    REGISTERS_ROOT_FLOOR_OFFSET, REGISTERS_ROOT_LIMIT_OFFSET, REGISTERS_ROOT_TOP_OFFSET,
+    REGISTERS_TRACE_LIMIT_OFFSET, REGISTERS_TRACE_TOP_OFFSET, TRACE_ENTRY_SIZE,
 };
 use wasm_encoder::{BlockType, Function, Instruction, MemArg};
 
@@ -33,6 +33,24 @@ pub(super) fn load_active_function(address: u32) -> Instruction<'static> {
 /// Returns the load of the cached active async frame's block address.
 pub(super) fn load_active_block(address: u32) -> Instruction<'static> {
     Instruction::I32Load(register(address, REGISTERS_ACTIVE_BLOCK_OFFSET))
+}
+
+/// Returns the load of the number of resumable child steps currently running nested.
+pub(super) fn load_direct_depth(address: u32) -> Instruction<'static> {
+    Instruction::I32Load(register(address, REGISTERS_DIRECT_DEPTH_OFFSET))
+}
+
+/// Returns the instructions that add `delta` to the nested resumable child step count.
+pub(super) fn adjust_direct_depth(address: u32, delta: i32) -> [Instruction<'static>; 6] {
+    let depth = register(address, REGISTERS_DIRECT_DEPTH_OFFSET);
+    [
+        Instruction::I32Const(0),
+        Instruction::I32Const(0),
+        Instruction::I32Load(depth),
+        Instruction::I32Const(delta),
+        Instruction::I32Add,
+        Instruction::I32Store(depth),
+    ]
 }
 
 /// Stores one call-site source position for the next generated function entry.

@@ -3,12 +3,14 @@
 use exs_value::ValueRef;
 use wasm_encoder::{Instruction, MemArg};
 
+use crate::ast::Expression;
 use crate::codegen::diagnostics;
 use crate::codegen::function::FunctionSignature;
 use crate::codegen::immediate;
 use crate::codegen::source_map::requires_source_position;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
+use super::analysis::contains_statements;
 use super::{FunctionCompiler, SCALAR_LOCAL_COUNT};
 use crate::codegen::root_slot_memory_arg;
 
@@ -458,10 +460,71 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             .find_map(|scope| scope.get(name).copied())
     }
 
+    /// Evaluates one operand into a rooted local, evaluated before every expression in `later`.
+    ///
+    /// A plain variable is already rooted in its own local, which nothing in `later` can
+    /// rebind unless it runs statements, so it is used directly instead of a temporary copy.
+    pub(super) fn compile_operand(
+        &mut self,
+        expression: &Expression<'a>,
+        later: &[&Expression<'a>],
+    ) -> Result<Operand, CompileDiagnostics<'a>> {
+        if let Expression::Variable(identifier) = expression
+            && self.types.enum_variant(&identifier.name).is_none()
+            && let Some(local) = self.lookup(&identifier.name)
+            && !later
+                .iter()
+                .any(|expression| contains_statements(expression))
+        {
+            return Ok(Operand {
+                local,
+                temporary: false,
+            });
+        }
+        self.compile_expression(expression)?;
+        Ok(Operand {
+            local: self.store_stack_value()?,
+            temporary: true,
+        })
+    }
+
+    /// Evaluates call arguments in order, each as an operand evaluated before the rest.
+    pub(super) fn compile_operands(
+        &mut self,
+        expressions: &[Expression<'a>],
+    ) -> Result<Vec<Operand>, CompileDiagnostics<'a>> {
+        let mut operands = Vec::with_capacity(expressions.len());
+        for (index, expression) in expressions.iter().enumerate() {
+            let later = expressions[index + 1..].iter().collect::<Vec<_>>();
+            operands.push(self.compile_operand(expression, &later)?);
+        }
+        Ok(operands)
+    }
+
+    /// Clears the root slot of an operand's temporary; variables keep theirs.
+    pub(super) fn release_operand(
+        &mut self,
+        operand: Operand,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if operand.temporary {
+            self.clear_root_slot(operand.local)?;
+        }
+        Ok(())
+    }
+
     /// Reserves the next preallocated ValueRef local slot.
     pub(super) fn allocate_local(&mut self) -> u32 {
         let local = self.next_local;
         self.next_local += 1;
         local
     }
+}
+
+/// One evaluated operand held in a rooted local.
+#[derive(Clone, Copy)]
+pub(super) struct Operand {
+    /// Local holding the operand value.
+    pub(super) local: u32,
+    /// Whether the local is a temporary whose root slot the consumer clears.
+    pub(super) temporary: bool,
 }

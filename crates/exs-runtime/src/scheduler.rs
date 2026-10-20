@@ -531,6 +531,10 @@ impl ExecutionContext {
 }
 
 /// Marks the cached active-frame registers stale.
+///
+/// The block address is cleared as well, so no stale block can match a newly created frame.
 fn clear_active_frame() {
-    unsafe { crate::state::registers() }.active_frame = 0;
+    let registers = unsafe { crate::state::registers() };
+    registers.active_frame = 0;
+    registers.active_block = 0;
 }

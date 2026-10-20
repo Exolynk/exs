@@ -178,7 +178,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             .find(|layout| layout.function_id == target.signature.function_id)
             .copied()
         {
-            self.child_call(next, layout, &[left, right], destination, span)?;
+            self.child_call(
+                next,
+                layout,
+                target.signature.index,
+                &[left, right],
+                destination,
+                span,
+            )?;
         } else {
             self.get_slot(left, span)?;
             self.get_slot(right, span)?;
@@ -293,7 +300,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 self.pack_variadic_tail(arguments, fixed_arity, destination, span)?;
                 child_arguments.push(destination);
             }
-            self.child_call(next, layout, &child_arguments, destination, span)?;
+            self.child_call(
+                next,
+                layout,
+                target.signature.index,
+                &child_arguments,
+                destination,
+                span,
+            )?;
         } else {
             let fixed_arity = target.signature.arity.saturating_sub(1);
             self.get_slot(receiver, span)?;
@@ -353,7 +367,14 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             let mut child_arguments = Vec::with_capacity(arguments.len() + 1);
             child_arguments.push(receiver);
             child_arguments.extend_from_slice(arguments);
-            return self.child_call(next, layout, &child_arguments, destination, span);
+            return self.child_call(
+                next,
+                layout,
+                signature.index,
+                &child_arguments,
+                destination,
+                span,
+            );
         }
         self.get_slot(receiver, span)?;
         for argument in arguments {
@@ -646,8 +667,16 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         value: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        // Only Errors can be fatal, so other values skip the runtime test.
+        self.get_slot(value, span)?;
+        immediate::type_mask_test(self.function.raw(), TYPE_ERROR);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
         self.get_slot(value, span)?;
         self.call_runtime("__exs_rt_is_fatal_error", span)?;
+        self.function.instruction(&Instruction::Else);
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function.instruction(&Instruction::End);
         self.function
             .instruction(&Instruction::If(BlockType::Empty));
         self.get_slot(value, span)?;

@@ -145,20 +145,26 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 BinaryOperator::And => self.compile_logical(left, right, false, *span)?,
                 BinaryOperator::Or => self.compile_logical(left, right, true, *span)?,
                 _ => {
-                    self.compile_expression(left)?;
-                    let left = self.store_stack_value()?;
-                    self.compile_expression(right)?;
-                    let right = self.store_stack_value()?;
+                    let left = self.compile_operand(left, &[right.as_ref()])?;
+                    let right = self.compile_operand(right, &[])?;
                     if let Some(operator_trait) = TraitOperator::from_binary(*operator) {
                         let targets = self.methods.operator(operator_trait).to_vec();
-                        self.emit_operator_dispatch(operator_trait, &targets, left, right, *span)?;
+                        self.emit_operator_dispatch(
+                            operator_trait,
+                            &targets,
+                            left.local,
+                            right.local,
+                            *span,
+                        )?;
                     } else {
-                        self.function.instruction(&Instruction::LocalGet(left));
-                        self.function.instruction(&Instruction::LocalGet(right));
+                        self.function
+                            .instruction(&Instruction::LocalGet(left.local));
+                        self.function
+                            .instruction(&Instruction::LocalGet(right.local));
                         self.runtime_call(runtime_operation(*operator), *span)?;
                     }
-                    self.clear_root_slot(left)?;
-                    self.clear_root_slot(right)?;
+                    self.release_operand(left)?;
+                    self.release_operand(right)?;
                 }
             },
             Expression::Call {
@@ -224,11 +230,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                         ),
                     )));
                 }
-                let mut argument_locals = Vec::new();
-                for argument in arguments {
-                    self.compile_expression(argument)?;
-                    argument_locals.push(self.store_stack_value()?);
-                }
+                let operands = self.compile_operands(arguments)?;
+                let argument_locals = operands
+                    .iter()
+                    .map(|operand| operand.local)
+                    .collect::<Vec<_>>();
                 let packed_tail = self.emit_call_arguments(&argument_locals, &signature, *span)?;
                 self.set_runtime_call_site(*span)?;
                 self.function
@@ -237,8 +243,8 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 if let Some(list) = packed_tail {
                     self.clear_root_slot(list)?;
                 }
-                for local in argument_locals {
-                    self.clear_root_slot(local)?;
+                for operand in operands {
+                    self.release_operand(operand)?;
                 }
             }
             Expression::HostCall { span, .. }
@@ -267,30 +273,28 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 index,
                 span,
             } => {
-                self.compile_expression(receiver)?;
-                let receiver = self.store_stack_value()?;
-                self.compile_expression(index)?;
-                let index = self.store_stack_value()?;
-                self.function.instruction(&Instruction::LocalGet(receiver));
-                self.function.instruction(&Instruction::LocalGet(index));
+                let receiver = self.compile_operand(receiver, &[index.as_ref()])?;
+                let index = self.compile_operand(index, &[])?;
+                self.function
+                    .instruction(&Instruction::LocalGet(receiver.local));
+                self.function
+                    .instruction(&Instruction::LocalGet(index.local));
                 self.runtime_call("__exs_rt_index_get", *span)?;
-                self.clear_root_slot(receiver)?;
-                self.clear_root_slot(index)?;
+                self.release_operand(receiver)?;
+                self.release_operand(index)?;
             }
             Expression::Property {
                 receiver,
                 property,
                 span,
             } => {
-                self.compile_expression(receiver)?;
-                let receiver = self.store_stack_value()?;
+                let receiver = self.compile_operand(receiver, &[])?;
+                // Literal Strings stay pinned, so the key needs no root slot.
+                self.function
+                    .instruction(&Instruction::LocalGet(receiver.local));
                 self.compile_string(&property.name, property.span)?;
-                let property = self.store_stack_value()?;
-                self.function.instruction(&Instruction::LocalGet(receiver));
-                self.function.instruction(&Instruction::LocalGet(property));
                 self.runtime_call("__exs_rt_property_get", *span)?;
-                self.clear_root_slot(receiver)?;
-                self.clear_root_slot(property)?;
+                self.release_operand(receiver)?;
             }
         }
         Ok(())

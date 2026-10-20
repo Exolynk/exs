@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use exs_abi::{
-    ASYNC_FRAME_STATE_OFFSET, HOST_CALL_PENDING, HOST_CALL_READY, STATUS_READY, TYPE_ERROR,
-    TYPE_OBJECT,
+    ASYNC_FRAME_STATE_OFFSET, DIRECT_CHILD_DEPTH_LIMIT, HOST_CALL_PENDING, HOST_CALL_READY,
+    STATUS_READY, TYPE_ERROR, TYPE_OBJECT,
 };
 use exs_value::ValueRef;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
@@ -763,10 +763,11 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             }
             Operation::ChildCall {
                 layout,
+                step,
                 arguments,
                 destination,
                 span,
-            } => self.child_call(next, *layout, arguments, *destination, *span)?,
+            } => self.child_call(next, *layout, *step, arguments, *destination, *span)?,
             Operation::ClosureCall {
                 closure,
                 arguments,
@@ -1048,6 +1049,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         &mut self,
         next: u32,
         layout: FrameLayout,
+        step: u32,
         arguments: &[u32],
         destination: u32,
         span: SourceSpan<'source>,
@@ -1087,9 +1089,73 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             self.function
                 .instruction(&Instruction::I64Store(slot_memory(slot)));
         }
+        self.run_child_directly(next, step, span)?;
         self.function
             .instruction(&Instruction::I32Const(STATUS_READY));
         self.function.instruction(&Instruction::Return);
+        Ok(())
+    }
+
+    /// Runs a just created child frame through a direct Wasm call of its step function.
+    ///
+    /// Applies only while the child is still the active frame, so the call-site checkpoint did
+    /// not rotate tasks, and the nesting stays below `DIRECT_CHILD_DEPTH_LIMIT`. When the child
+    /// completes into this frame, execution continues at `next` without the dispatcher; any
+    /// other outcome is returned to it. Otherwise falls through to the dispatcher path.
+    fn run_child_directly(
+        &mut self,
+        next: u32,
+        step: u32,
+        span: SourceSpan<'source>,
+    ) -> Result<(), CompileDiagnostics<'source>> {
+        let address = self.registers_address;
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function
+            .instruction(&registers::load_active_block(address));
+        self.function
+            .instruction(&Instruction::LocalGet(self.child_block_local));
+        self.function.instruction(&Instruction::I32Eq);
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function
+            .instruction(&registers::load_direct_depth(address));
+        self.function
+            .instruction(&Instruction::I32Const(DIRECT_CHILD_DEPTH_LIMIT));
+        self.function.instruction(&Instruction::I32LtU);
+        self.function.instruction(&Instruction::I32And);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        for instruction in registers::adjust_direct_depth(address, 1) {
+            self.function.instruction(&instruction);
+        }
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function
+            .instruction(&registers::load_active_frame(address));
+        self.function.instruction(&Instruction::Call(step));
+        self.function
+            .instruction(&Instruction::LocalSet(self.completion_local));
+        for instruction in registers::adjust_direct_depth(address, -1) {
+            self.function.instruction(&instruction);
+        }
+        // The child completed into this frame only when this frame is active again.
+        self.function
+            .instruction(&Instruction::LocalGet(self.completion_local));
+        self.function
+            .instruction(&Instruction::I32Const(STATUS_READY));
+        self.function.instruction(&Instruction::I32Eq);
+        self.function.instruction(&Instruction::I32Const(0));
+        self.function
+            .instruction(&registers::load_active_frame(address));
+        self.function.instruction(&Instruction::LocalGet(0));
+        self.function.instruction(&Instruction::I32Eq);
+        self.function.instruction(&Instruction::I32And);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.ready(next, span)?;
+        self.function.instruction(&Instruction::End);
+        self.function
+            .instruction(&Instruction::LocalGet(self.completion_local));
+        self.function.instruction(&Instruction::Return);
+        self.function.instruction(&Instruction::End);
         Ok(())
     }
     /// Starts one dynamically selected closure frame and transfers dispatch to it.

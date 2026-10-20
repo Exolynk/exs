@@ -256,8 +256,12 @@ pub struct RuntimeRegisters {
     pub active_frame: u32,
     /// Generated function id of the cached active async frame.
     pub active_function: u32,
-    /// Block address of the cached active async frame.
+    /// Block address of the cached active async frame, or 0 when not cached.
     pub active_block: u32,
+    /// Number of resumable child steps generated code currently runs nested in Wasm calls.
+    ///
+    /// Only generated code reads and writes it, around each direct child step call.
+    pub direct_depth: u32,
 }
 
 /// Interior-mutable holder of the runtime registers.
@@ -280,6 +284,7 @@ pub static __EXS_RT_REGISTERS: RegistersCell = RegistersCell(UnsafeCell::new(Run
     active_frame: 0,
     active_function: 0,
     active_block: 0,
+    direct_depth: 0,
 }));
 
 // Generated code addresses the registers with the shared ABI offsets.
@@ -322,6 +327,10 @@ const _: () = assert!(
 const _: () = assert!(
     core::mem::offset_of!(RuntimeRegisters, active_block)
         == exs_abi::REGISTERS_ACTIVE_BLOCK_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, direct_depth)
+        == exs_abi::REGISTERS_DIRECT_DEPTH_OFFSET as usize
 );
 
 /// Returns the runtime registers shared with generated code.

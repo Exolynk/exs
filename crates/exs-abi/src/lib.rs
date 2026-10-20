@@ -237,6 +237,12 @@ pub const REGISTERS_ACTIVE_FRAME_OFFSET: u32 = 28;
 pub const REGISTERS_ACTIVE_FUNCTION_OFFSET: u32 = 32;
 /// Byte offset of the cached active async frame's block address.
 pub const REGISTERS_ACTIVE_BLOCK_OFFSET: u32 = 36;
+/// Byte offset of the number of resumable child steps generated code currently runs nested.
+pub const REGISTERS_DIRECT_DEPTH_OFFSET: u32 = 40;
+/// Deepest nesting at which generated code still runs a resumable child step directly.
+///
+/// Deeper calls return to the dispatcher, which runs them from a flat Wasm stack.
+pub const DIRECT_CHILD_DEPTH_LIMIT: i32 = 32;
 /// Returned by `__exs_rt_range_begin` when a for loop must iterate the Range Object itself.
 pub const RANGE_BEGIN_FALLBACK: i64 = 0x8000_0000;
 /// Inline Range loop state after the last item was yielded.

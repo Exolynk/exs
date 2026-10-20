@@ -51,3 +51,54 @@ fn initializes_omitted_local_bindings_to_none() {
         ExsValue::None
     );
 }
+
+/// Runs resumable recursion deeper than the direct child-call limit through the dispatcher.
+#[test]
+fn recurses_beyond_the_direct_child_call_depth() {
+    let source = r#"
+        fn depth(remaining: Int) -> Int {
+            if remaining == 0 { ret 0; }
+            ret depth(remaining - 1) + 1;
+        }
+        fn main(input: Int) -> List {
+            ret [depth(input), depth(3), depth(input)];
+        }
+    "#;
+    let expected = ExsValue::List(vec![
+        ExsValue::Int(500),
+        ExsValue::Int(3),
+        ExsValue::Int(500),
+    ]);
+    // Any closure makes every function resumable, so every call creates a child frame.
+    let resumable = format!("{source} fn force_resumable() {{ ret () => {{ ret 1; }}; }}");
+    for source in [source, resumable.as_str()] {
+        assert_eq!(execute_source(source, ExsValue::Int(500)), expected);
+    }
+}
+
+/// Evaluates variable operands of direct functions before later operands rebind the variable.
+#[test]
+fn reads_variable_operands_before_later_rebinding() {
+    let source = r#"
+        fn pair(left, right) { ret [left, right]; }
+        fn main(input) -> List {
+            let a = 1;
+            let first = pair(a, match input { _ => { a = 10; } });
+            let items = [7];
+            let original = items;
+            items.push(match input { _ => { items = [8]; } });
+            let c = "x";
+            let third = c == match input { _ => { c = None; } };
+            ret [first, a, original, items, third, c];
+        }
+    "#;
+    let expected = ExsValue::List(vec![
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::None]),
+        ExsValue::Int(10),
+        ExsValue::List(vec![ExsValue::Int(7), ExsValue::None]),
+        ExsValue::List(vec![ExsValue::Int(8)]),
+        ExsValue::Bool(false),
+        ExsValue::None,
+    ]);
+    assert_eq!(execute_source(source, ExsValue::None), expected);
+}

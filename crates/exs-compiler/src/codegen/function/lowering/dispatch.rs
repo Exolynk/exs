@@ -139,13 +139,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         arguments: &[Expression<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        self.compile_expression(receiver)?;
-        let receiver = self.store_stack_value()?;
-        let mut argument_locals = Vec::new();
-        for argument in arguments {
-            self.compile_expression(argument)?;
-            argument_locals.push(self.store_stack_value()?);
-        }
+        let later = arguments.iter().collect::<Vec<_>>();
+        let receiver_operand = self.compile_operand(receiver, &later)?;
+        let receiver = receiver_operand.local;
+        let operands = self.compile_operands(arguments)?;
+        let argument_locals = operands
+            .iter()
+            .map(|operand| operand.local)
+            .collect::<Vec<_>>();
         let targets = self.methods.instance(&method.name).map(ToOwned::to_owned);
         let inline = IntOperation::from_method(&method.name, argument_locals.len());
         if let (Some(operation), [divisor]) = (inline, argument_locals.as_slice()) {
@@ -182,9 +183,9 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.function.instruction(&Instruction::End);
             self.exit_control()?;
         }
-        self.clear_root_slot(receiver)?;
-        for argument in argument_locals {
-            self.clear_root_slot(argument)?;
+        self.release_operand(receiver_operand)?;
+        for operand in operands {
+            self.release_operand(operand)?;
         }
         Ok(())
     }

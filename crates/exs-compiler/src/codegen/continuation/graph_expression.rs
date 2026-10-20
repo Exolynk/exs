@@ -601,6 +601,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 if let Some(layout) = self.frame_layouts.get(&callee.name).copied() {
                     self.operations.push(Operation::ChildCall {
                         layout,
+                        step: signature.index,
                         arguments: slots,
                         destination,
                         span: *span,
@@ -750,6 +751,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 if let Some(layout) = self.frame_layouts.get(&key).copied() {
                     self.operations.push(Operation::ChildCall {
                         layout,
+                        step: signature.index,
                         arguments: slots,
                         destination,
                         span: *span,
