@@ -95,7 +95,22 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             )));
         }
         self.compile_expression(value)?;
-        self.runtime_value_call("__exs_rt_propagate", 1, span)?;
+        // Only None needs the runtime, which turns it into a MissingValue Error; every other
+        // value passes through unchanged, and Errors return below.
+        let operand = self.store_stack_value()?;
+        self.function.instruction(&Instruction::LocalGet(operand));
+        immediate::push(&mut self.function, ValueRef::NONE);
+        self.function.instruction(&Instruction::I64Eq);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
+        self.enter_control()?;
+        self.function.instruction(&Instruction::LocalGet(operand));
+        self.runtime_call("__exs_rt_propagate", span)?;
+        self.function.instruction(&Instruction::Else);
+        self.function.instruction(&Instruction::LocalGet(operand));
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        self.clear_root_slot(operand)?;
         self.return_if_error(span)
     }
 

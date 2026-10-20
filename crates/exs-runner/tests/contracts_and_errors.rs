@@ -189,15 +189,21 @@ fn propagates_option_and_result_values() {
 /// Converts None propagation into a MissingValue Error.
 #[test]
 fn converts_none_propagation_to_missing_value_error() {
-    let result = execute_source("fn main(input) { ret None?; }", ExsValue::None);
-    let ExsValue::Error(error) = result else {
-        panic!("None propagation did not return an Error");
-    };
-    assert_eq!(error.severity, ErrorSeverity::Recoverable);
-    assert_eq!(error.kind, "MissingValue");
-    assert_eq!(error.data, Box::new(ExsValue::None));
-    assert!(error.origin.is_some());
-    assert_eq!(error.trace.len(), 1);
+    // The closure makes `main` resumable, which selects the continuation lowering.
+    for source in [
+        "fn main(input) { ret None?; }",
+        "fn main(input) { ret None?; } fn force_resumable() { ret () => { ret 1; }; }",
+    ] {
+        let result = execute_source(source, ExsValue::None);
+        let ExsValue::Error(error) = result else {
+            panic!("None propagation did not return an Error");
+        };
+        assert_eq!(error.severity, ErrorSeverity::Recoverable);
+        assert_eq!(error.kind, "MissingValue");
+        assert_eq!(error.data, Box::new(ExsValue::None));
+        assert!(error.origin.is_some());
+        assert_eq!(error.trace.len(), 1);
+    }
 }
 
 /// Captures direct generated function frames when an Error is created.

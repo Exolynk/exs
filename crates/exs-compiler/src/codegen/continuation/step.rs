@@ -14,7 +14,7 @@ use crate::codegen::literals::LiteralPool;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::TypeContract;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
-use crate::codegen::{diagnostics, immediate, registers};
+use crate::codegen::{VALUE_TYPE, diagnostics, immediate, registers};
 
 use super::FrameLayout;
 use super::body::StepBody;
@@ -616,8 +616,17 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 destination,
                 span,
             } => {
+                // Only None needs the runtime, which turns it into a MissingValue Error.
+                self.get_slot(*value, *span)?;
+                immediate::push(self.function.raw(), ValueRef::NONE);
+                self.function.instruction(&Instruction::I64Eq);
+                self.function
+                    .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
                 self.get_slot(*value, *span)?;
                 self.call_runtime("__exs_rt_propagate", *span)?;
+                self.function.instruction(&Instruction::Else);
+                self.get_slot(*value, *span)?;
+                self.function.instruction(&Instruction::End);
                 self.set_slot(*destination, *span)?;
                 self.get_slot(*destination, *span)?;
                 immediate::type_mask_test(self.function.raw(), TYPE_ERROR);
