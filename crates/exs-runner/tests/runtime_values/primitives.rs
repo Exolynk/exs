@@ -604,3 +604,65 @@ fn calls_builtin_methods_directly_with_dispatcher_semantics() {
         );
     }
 }
+
+/// Concatenates Strings with every supported right operand and rejects the others alike.
+#[test]
+fn concatenates_strings_with_scalar_right_operands() {
+    let source = r#"
+        fn describe(value) {
+            if value is Error { ret "E:" + value.kind(); }
+            ret value;
+        }
+        fn main(input: List) -> List {
+            let results = [];
+            for right in input {
+                results.push(describe("x" + right));
+            }
+            results.push(describe("" + ""));
+            results.push(describe("ä" + "ö"));
+            results.push(describe("a" + "b" + 3 + true + "c"));
+            ret results;
+        }
+    "#;
+    let input = ExsValue::List(vec![
+        ExsValue::String("yz".to_owned()),
+        ExsValue::String(String::new()),
+        ExsValue::Int(0),
+        ExsValue::Int(-42),
+        ExsValue::Int(i64::MAX),
+        ExsValue::Int(i64::MIN),
+        ExsValue::Bool(true),
+        ExsValue::Bool(false),
+        ExsValue::Float(1.5),
+        ExsValue::Float(-0.25),
+        ExsValue::None,
+        ExsValue::List(vec![ExsValue::Int(1)]),
+        ExsValue::Object(Vec::new()),
+    ]);
+    let expected = [
+        "xyz",
+        "x",
+        "x0",
+        "x-42",
+        "x9223372036854775807",
+        "x-9223372036854775808",
+        "xtrue",
+        "xfalse",
+        "x1.5",
+        "x-0.25",
+        "E:TypeError",
+        "E:TypeError",
+        "E:TypeError",
+        "",
+        "äö",
+        "ab3truec",
+    ]
+    .map(|text| ExsValue::String(text.to_owned()));
+    let resumable = format!("{source} fn force_resumable() {{ ret () => {{ ret 1; }}; }}");
+    for source in [source, resumable.as_str()] {
+        assert_eq!(
+            execute_source(source, input.clone()),
+            ExsValue::List(expected.to_vec())
+        );
+    }
+}

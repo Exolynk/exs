@@ -30,9 +30,9 @@ const SHOW_TRUE_FUEL: u64 = 68_739;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
 const SHOW_COMPARE_RECORD_FUEL: u64 = 76_109;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 129_839;
+const CONCAT_10_OBJECTS_FUEL: u64 = 126_865;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 598_144;
+const CONCAT_100_OBJECTS_FUEL: u64 = 568_350;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
 const INT_LOOP_1000_FUEL: u64 = 306_636;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
@@ -50,15 +50,15 @@ const ASYNC_CALL_LOOP_100_FUEL: u64 = 101_363;
 /// Fuel ceiling for 100 calls of a small resumable function.
 const RESUMABLE_CALL_LOOP_100_FUEL: u64 = 165_912;
 /// Fuel ceiling for 1000 iterations building one formatted line with two Ints.
-const FORMAT_LOOP_1000_FUEL: u64 = 2_270_864;
+const FORMAT_LOOP_1000_FUEL: u64 = 2_249_864;
 /// Fuel ceiling for 6000 short-lived Lists, enough allocations to trigger collections.
 const LIST_CHURN_6000_FUEL: u64 = 8_029_192;
 /// Fuel ceiling for 1000 calls of a small typed function.
 const SYNC_CALL_LOOP_1000_FUEL: u64 = 370_630;
 /// Fuel ceiling for parsing and formatting 100 RFC 3339 DateTimes.
-const DATETIME_ROUNDTRIP_100_FUEL: u64 = 6_500_407;
+const DATETIME_ROUNDTRIP_100_FUEL: u64 = 6_029_750;
 /// Fuel ceiling for the Exolynk-style round trip of 20 records.
-const RECORD_ROUNDTRIP_20_FUEL: u64 = 4_501_878;
+const RECORD_ROUNDTRIP_20_FUEL: u64 = 4_388_898;
 
 /// Compiles and executes one scenario with a Winch runner and returns its execution report.
 fn execute_report(scenario: &Scenario) -> ExecutionReport {

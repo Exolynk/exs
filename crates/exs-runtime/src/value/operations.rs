@@ -23,8 +23,11 @@ use crate::value::{
 
 /// Adds two runtime values through String, List, or numeric dispatch.
 pub(crate) fn add(left: ValueRef, right: ValueRef) -> ValueRef {
+    // String concatenation is the common heap case, so it skips the general value view.
+    if let Some(value) = runtime::string_ref(left) {
+        return string_add(value, right);
+    }
     match runtime::value(left) {
-        Value::String(value) => string_add(value, right),
         Value::List(_) => list::operations::add(left, right),
         _ => numeric::arithmetic(left, right, i64::checked_add, |left, right| left + right),
     }
@@ -43,17 +46,6 @@ pub(crate) fn multiply(left: ValueRef, right: ValueRef) -> ValueRef {
 /// Divides two runtime numeric values and always returns a Float.
 pub(crate) fn divide(left: ValueRef, right: ValueRef) -> ValueRef {
     numeric::divide(left, right)
-}
-
-/// Returns the byte length of the decimal rendering of one Int.
-const fn int_len(number: i64) -> usize {
-    let mut remaining = number.unsigned_abs();
-    let mut length = if number < 0 { 2 } else { 1 };
-    while remaining >= 10 {
-        remaining /= 10;
-        length += 1;
-    }
-    length
 }
 
 /// Appends the decimal rendering of one Int without going through `core::fmt`.
@@ -104,23 +96,23 @@ fn push_scalar(buffer: &mut String, value: ValueRef) -> bool {
 
 /// Concatenates a String receiver with one supported scalar right operand.
 fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
-    // Exact capacity keeps the final conversion into the immutable String from reallocating.
-    let right_len = match runtime::value(right) {
-        Value::String(text) => text.as_str().len(),
+    if let Some(right) = runtime::string_ref(right) {
+        return concat_strings(left.as_str(), right.as_str());
+    }
+    let mut digits = [0_u8; 20];
+    let rendered;
+    let right_text = match runtime::value(right) {
         Value::Bool(flag) => {
             if flag {
-                4
+                "true"
             } else {
-                5
+                "false"
             }
         }
-        Value::Int(number) => int_len(number),
+        Value::Int(number) => int_text(number, &mut digits),
         Value::Float(number) => {
-            let right = number.to_string();
-            let mut result = String::with_capacity(left.as_str().len().saturating_add(right.len()));
-            result.push_str(left.as_str());
-            result.push_str(&right);
-            return string_value_result(result);
+            rendered = number.to_string();
+            rendered.as_str()
         }
         _ => {
             return runtime::recoverable_error(
@@ -130,11 +122,15 @@ fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
             );
         }
     };
-    let mut result = String::with_capacity(left.as_str().len().saturating_add(right_len));
-    result.push_str(left.as_str());
-    if !push_scalar(&mut result, right) {
-        crate::runtime::trap();
-    }
+    concat_strings(left.as_str(), right_text)
+}
+
+/// Allocates one runtime String holding `left` followed by `right`.
+fn concat_strings(left: &str, right: &str) -> ValueRef {
+    // Exact capacity keeps the final conversion into the immutable String from reallocating.
+    let mut result = String::with_capacity(left.len().saturating_add(right.len()));
+    result.push_str(left);
+    result.push_str(right);
     string_value_result(result)
 }
 
