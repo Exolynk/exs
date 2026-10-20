@@ -46,6 +46,7 @@ pub(crate) fn heap_reference(value: &RtValue, index: NonZeroU32) -> ValueRef {
         RtValue::Cell(_) => (KIND_CELL, 0),
         RtValue::Closure(_) => (type_kind(TYPE_FN), 0),
         RtValue::BoxedFutureValue(_) => (KIND_FUTURE, 0),
+        RtValue::FormatBuilder(_) => (type_kind(TYPE_STRING), 0),
     };
     match ValueRef::from_parts(kind, extra, index.get()) {
         Some(reference) => reference,

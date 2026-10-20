@@ -707,6 +707,33 @@ pub extern "C" fn __exs_rt_object_push_field(receiver: ValueRef, key: ValueRef, 
     value::object::operations::push_literal_field(receiver, key, value);
 }
 
+/// Allocates an empty formatted-string builder with room for `capacity` bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_format_new(capacity: i32) -> ValueRef {
+    let Ok(capacity) = usize::try_from(capacity) else {
+        runtime::trap();
+    };
+    value::operations::format_new(capacity)
+}
+
+/// Appends one formatted part with `+` semantics and returns the builder or resulting Error.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_format_push(builder: ValueRef, part: ValueRef) -> ValueRef {
+    value::operations::format_push(builder, part)
+}
+
+/// Appends the default `ToString` rendering of one value and returns the builder or Error.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_format_push_default(builder: ValueRef, value: ValueRef) -> ValueRef {
+    value::operations::format_push_default(builder, value)
+}
+
+/// Turns a completed formatted-string builder into an ordinary String in place.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_format_finish(builder: ValueRef) -> ValueRef {
+    value::operations::format_finish(builder)
+}
+
 /// Allocates internal shared storage for one compiler-captured lexical binding.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_cell_new(value: ValueRef) -> ValueRef {

@@ -110,3 +110,52 @@ fn executes_calls_assignments_conditionals_and_booleans() {
         ExsValue::Int(42)
     );
 }
+
+/// Renders every built-in value kind, user `ToString` impls and nested formatted strings alike
+/// in synchronous and resumable functions.
+#[test]
+fn formats_all_value_kinds_in_sync_and_resumable_functions() {
+    let common = r##"
+        type User { name: String }
+        type Count { value: Int }
+        type Plain {}
+        enum State { Ready, Busy(level: Int) }
+        impl ToString for User { fn to_string(self) -> String { ret f"User({self.name})"; } }
+        impl ToString for Count { fn to_string(self) -> String { ret f"#{self.value}"; } }
+    "##;
+    let render = r##"
+        fn render(input) -> List {
+            let user = User { name: "Ada" };
+            ret [
+                f"",
+                f"plain",
+                f"{1}|{-42}|{1.5}|{true}|{None}|{"s"}|{[1]}|{{}}|{Plain {}}|{State::Ready}|{State::Busy(2)}|{b"ab"}",
+                f"{user} and {Count { value: 7 }}",
+                f"a{f"b{1}c"}d",
+            ];
+        }
+    "##;
+    let expected = ExsValue::List(
+        [
+            "",
+            "plain",
+            "1|-42|1.5|true|None|s|[]|{}|{}|test.exs::State::Ready|test.exs::State::Busy|Bytes(2)",
+            "User(Ada) and #7",
+            "ab1cd",
+        ]
+        .into_iter()
+        .map(|text| ExsValue::String(text.to_owned()))
+        .collect(),
+    );
+    let sync = format!("{common}{render} fn main(input) -> List {{ ret render(input); }}");
+    // A for loop selects resumable lowering for both functions.
+    let resumable = format!(
+        "{common}{} fn main(input) -> List {{ for item in [1] {{ }} ret render(input); }}",
+        render.replace(
+            "fn render(input) -> List {",
+            "fn render(input) -> List { for item in [1] { }"
+        )
+    );
+    assert_eq!(execute_source(&sync, ExsValue::None), expected);
+    assert_eq!(execute_source(&resumable, ExsValue::None), expected);
+}

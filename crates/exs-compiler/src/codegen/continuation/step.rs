@@ -18,7 +18,7 @@ use crate::codegen::{diagnostics, immediate};
 
 use super::FrameLayout;
 use super::body::StepBody;
-use super::graph::{HostTimeField, Operation, operation_span};
+use super::graph::{FormatPart, HostTimeField, Operation, operation_span};
 use super::step_calls::{binary_operation, slot_memory};
 
 pub(super) struct StepCompiler<'source, 'context> {
@@ -336,6 +336,66 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 *comparison,
                 *span,
             )?,
+            Operation::FormatNew {
+                capacity,
+                destination,
+                span,
+            } => {
+                self.function.instruction(&Instruction::I32Const(*capacity));
+                self.call_runtime("__exs_rt_format_new", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::FormatPush {
+                builder,
+                part,
+                span,
+            } => {
+                self.get_slot(*builder, *span)?;
+                match part {
+                    FormatPart::Text(text) => self.string(text, *span)?,
+                    FormatPart::Slot(slot) => self.get_slot(*slot, *span)?,
+                }
+                self.call_runtime("__exs_rt_format_push", *span)?;
+                self.set_slot(*builder, *span)?;
+                self.ready(next, *span)?;
+            }
+            Operation::FormatValue {
+                builder,
+                value,
+                type_ids,
+                skip,
+                span,
+            } => {
+                if !type_ids.is_empty() {
+                    for (index, type_id) in type_ids.iter().enumerate() {
+                        self.get_slot(*value, *span)?;
+                        self.emit_object_type_test(*type_id, *span)?;
+                        if index > 0 {
+                            self.function.instruction(&Instruction::I32Or);
+                        }
+                    }
+                    self.function
+                        .instruction(&Instruction::If(BlockType::Empty));
+                    self.ready(next, *span)?;
+                    self.function.instruction(&Instruction::End);
+                }
+                self.get_slot(*builder, *span)?;
+                self.get_slot(*value, *span)?;
+                self.call_runtime("__exs_rt_format_push_default", *span)?;
+                self.set_slot(*builder, *span)?;
+                self.ready(*skip, *span)?;
+            }
+            Operation::FormatFinish {
+                builder,
+                destination,
+                span,
+            } => {
+                self.get_slot(*builder, *span)?;
+                self.call_runtime("__exs_rt_format_finish", *span)?;
+                self.set_slot(*destination, *span)?;
+                self.ready(next, *span)?;
+            }
             Operation::OrderingTest {
                 value,
                 test,

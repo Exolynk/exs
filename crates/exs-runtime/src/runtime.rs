@@ -371,6 +371,7 @@ pub(crate) fn value(reference: ValueRef) -> Value<'static> {
         RtValue::Cell(cell) => Value::Cell(cell),
         RtValue::Closure(closure) => Value::Closure(closure),
         RtValue::BoxedFutureValue(_) => Value::Future,
+        RtValue::FormatBuilder(_) => Value::FormatBuilder,
     }
 }
 
@@ -1152,9 +1153,11 @@ fn runtime_to_exs_value_inner(
             let _removed = active_containers.pop();
             result
         }
-        Value::Cell(_) | Value::Closure(_) | Value::Iterator(_) | Value::Future => {
-            Err(BoundarySerializationError::UnsupportedValue)
-        }
+        Value::Cell(_)
+        | Value::Closure(_)
+        | Value::Iterator(_)
+        | Value::Future
+        | Value::FormatBuilder => Err(BoundarySerializationError::UnsupportedValue),
     }
 }
 

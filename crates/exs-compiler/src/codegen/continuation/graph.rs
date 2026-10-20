@@ -29,6 +29,15 @@ pub(super) struct ComparisonFallback {
     pub(super) next: u32,
 }
 
+/// One part appended to a formatted-string builder.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum FormatPart<'function> {
+    /// A literal text fragment.
+    Text(&'function str),
+    /// A frame slot holding a rendered String or another `+`-compatible value.
+    Slot(u32),
+}
+
 /// One non-suspending operation or host-call boundary in a continuation graph.
 pub(super) enum Operation<'source, 'function> {
     /// Constructs a scalar literal in a destination slot.
@@ -142,6 +151,49 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         /// Built-in comparison shortcut that bypasses the following `OrderingTest` state.
         comparison: Option<ComparisonFallback>,
+        span: SourceSpan<'source>,
+    },
+    /// Allocates one formatted-string builder.
+    FormatNew {
+        /// Initial builder capacity in bytes.
+        capacity: i32,
+        /// Frame slot receiving the builder.
+        destination: u32,
+        /// Source location of the formatted string.
+        span: SourceSpan<'source>,
+    },
+    /// Appends one part to a formatted-string builder with `+` semantics.
+    FormatPush {
+        /// Frame slot holding the builder, replaced by the builder or a resulting Error.
+        builder: u32,
+        /// Appended part.
+        part: FormatPart<'function>,
+        /// Source location of the formatted string.
+        span: SourceSpan<'source>,
+    },
+    /// Appends the default rendering of one value, or falls through to its `ToString` call.
+    ///
+    /// Values of a type with a `ToString` implementation continue with the following
+    /// `to_string` call and `FormatPush` states; all others jump to `skip`.
+    FormatValue {
+        /// Frame slot holding the builder.
+        builder: u32,
+        /// Frame slot holding the interpolated value.
+        value: u32,
+        /// Nominal type ids with a `ToString` implementation.
+        type_ids: Vec<u32>,
+        /// State after the `to_string` call and its `FormatPush`.
+        skip: u32,
+        /// Source location of the formatted string.
+        span: SourceSpan<'source>,
+    },
+    /// Turns a completed formatted-string builder into an ordinary String.
+    FormatFinish {
+        /// Frame slot holding the builder.
+        builder: u32,
+        /// Frame slot receiving the String or Error.
+        destination: u32,
+        /// Source location of the formatted string.
         span: SourceSpan<'source>,
     },
     /// Converts one `Compare` result into a source comparison Bool.
@@ -687,6 +739,10 @@ pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> Sou
         | Operation::Binary { span, .. }
         | Operation::Operator { span, .. }
         | Operation::OrderingTest { span, .. }
+        | Operation::FormatNew { span, .. }
+        | Operation::FormatPush { span, .. }
+        | Operation::FormatValue { span, .. }
+        | Operation::FormatFinish { span, .. }
         | Operation::NativeIterNext { span, .. }
         | Operation::List { span, .. }
         | Operation::Object { span, .. }

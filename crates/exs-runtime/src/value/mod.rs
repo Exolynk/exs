@@ -27,6 +27,7 @@ pub(crate) use string::RuntimeString;
 pub(crate) use view::Value;
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use core::mem::{align_of, size_of};
 
 /// The allocated payload of one ExS value.
@@ -57,6 +58,11 @@ pub(crate) enum RtValue {
     Cell(Box<RuntimeCellValue>),
     /// A compiler-lifted function paired with captured lexical Cells.
     Closure(Box<RuntimeClosure>),
+    /// A formatted-string builder that only compiler-generated code can reach.
+    ///
+    /// It is referenced with the String type kind and becomes an ordinary String in place once
+    /// the formatted string is complete, so source code never observes the builder itself.
+    FormatBuilder(Box<String>),
     /// Reserved shape for future complex runtime values.
     ///
     /// Concrete future complex variants must follow this boxed form.

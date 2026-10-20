@@ -1,6 +1,5 @@
 //! Dynamic Wasm operations shared across runtime value kinds.
 
-use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -45,13 +44,77 @@ pub(crate) fn divide(left: ValueRef, right: ValueRef) -> ValueRef {
     numeric::divide(left, right)
 }
 
+/// Returns the byte length of the decimal rendering of one Int.
+const fn int_len(number: i64) -> usize {
+    let mut remaining = number.unsigned_abs();
+    let mut length = if number < 0 { 2 } else { 1 };
+    while remaining >= 10 {
+        remaining /= 10;
+        length += 1;
+    }
+    length
+}
+
+/// Appends the decimal rendering of one Int without going through `core::fmt`.
+fn push_int(buffer: &mut String, number: i64) {
+    let mut digits = [0_u8; 20];
+    let mut position = digits.len();
+    let mut remaining = number.unsigned_abs();
+    loop {
+        position -= 1;
+        // The remainder is always below ten, so the cast cannot truncate.
+        digits[position] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+        if remaining == 0 {
+            break;
+        }
+    }
+    if number < 0 {
+        buffer.push('-');
+    }
+    match core::str::from_utf8(&digits[position..]) {
+        Ok(text) => buffer.push_str(text),
+        Err(_) => crate::runtime::trap(),
+    }
+}
+
+/// Appends the `+` rendering of one String, Bool, Int, or Float, or returns false otherwise.
+fn push_scalar(buffer: &mut String, value: ValueRef) -> bool {
+    use core::fmt::Write;
+    match runtime::value(value) {
+        Value::String(text) => buffer.push_str(text.as_str()),
+        Value::Bool(flag) => {
+            let _ = write!(buffer, "{flag}");
+        }
+        Value::Int(number) => push_int(buffer, number),
+        Value::Float(number) => {
+            let _ = write!(buffer, "{number}");
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// Concatenates a String receiver with one supported scalar right operand.
 fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
-    let right = match runtime::value(right) {
-        Value::String(value) => String::from(value.as_str()),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => value.to_string(),
+    // Exact capacity keeps the final conversion into the immutable String from reallocating.
+    let right_len = match runtime::value(right) {
+        Value::String(text) => text.as_str().len(),
+        Value::Bool(flag) => {
+            if flag {
+                4
+            } else {
+                5
+            }
+        }
+        Value::Int(number) => int_len(number),
+        Value::Float(number) => {
+            let right = number.to_string();
+            let mut result = String::with_capacity(left.as_str().len().saturating_add(right.len()));
+            result.push_str(left.as_str());
+            result.push_str(&right);
+            return string_value_result(result);
+        }
         _ => {
             return runtime::recoverable_error(
                 "TypeError",
@@ -60,11 +123,80 @@ fn string_add(left: &RuntimeString, right: ValueRef) -> ValueRef {
             );
         }
     };
-    // Exact capacity avoids a growth reallocation and the shrink when boxing the result.
-    let mut result = String::with_capacity(left.as_str().len().saturating_add(right.len()));
+    let mut result = String::with_capacity(left.as_str().len().saturating_add(right_len));
     result.push_str(left.as_str());
-    result.push_str(&right);
+    if !push_scalar(&mut result, right) {
+        crate::runtime::trap();
+    }
     string_value_result(result)
+}
+
+/// Allocates an empty formatted-string builder with room for `capacity` bytes.
+pub(crate) fn format_new(capacity: usize) -> ValueRef {
+    runtime::allocate(RtValue::FormatBuilder(Box::new(String::with_capacity(
+        capacity,
+    ))))
+}
+
+/// Returns the growable contents of one builder, or `None` once it turned into an Error.
+fn builder_buffer(builder: ValueRef) -> Option<&'static mut String> {
+    match runtime::value_mut(builder) {
+        Some(RtValue::FormatBuilder(buffer)) => Some(buffer),
+        _ => None,
+    }
+}
+
+/// Appends one formatted part with `+` semantics and returns the builder or resulting Error.
+///
+/// This matches the former `result + part` chain: unsupported parts produce the same TypeError,
+/// and later parts keep being added onto that Error.
+pub(crate) fn format_push(builder: ValueRef, part: ValueRef) -> ValueRef {
+    match builder_buffer(builder) {
+        Some(buffer) => {
+            if push_scalar(buffer, part) {
+                builder
+            } else {
+                runtime::recoverable_error(
+                    "TypeError",
+                    "String addition requires a String, Bool, Int, or Float right operand",
+                    part,
+                )
+            }
+        }
+        None => add(builder, part),
+    }
+}
+
+/// Turns a completed builder into an ordinary String in place and returns it.
+///
+/// A builder that already turned into an Error is returned unchanged.
+pub(crate) fn format_finish(builder: ValueRef) -> ValueRef {
+    if let Some(slot) = runtime::value_mut(builder)
+        && let RtValue::FormatBuilder(buffer) = slot
+    {
+        let contents = core::mem::take(buffer.as_mut());
+        *slot = RtValue::String(RuntimeString::from_string(contents));
+    }
+    builder
+}
+
+/// Appends the default `ToString` rendering of one value and returns the builder or Error.
+pub(crate) fn format_push_default(builder: ValueRef, value: ValueRef) -> ValueRef {
+    match builder_buffer(builder) {
+        Some(buffer) => {
+            push_default(buffer, value);
+            builder
+        }
+        None => {
+            let checkpoint = gc::temporary_root_checkpoint();
+            gc::push_temporary_root(builder);
+            let rendered = render_default(value);
+            gc::push_temporary_root(rendered);
+            let result = add(builder, rendered);
+            gc::restore_temporary_roots(checkpoint);
+            result
+        }
+    }
 }
 
 /// Tests two runtime values for equality.
@@ -2551,25 +2683,40 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
 
 /// Creates the stable built-in representation shared by `ToString` and `Debug` defaults.
 fn render_default(receiver: ValueRef) -> ValueRef {
-    let rendered = match runtime::value(receiver) {
-        Value::None => "None".to_owned(),
-        Value::Error(_) => "Error".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => value.to_string(),
-        Value::String(value) => String::from(value.as_str()),
-        Value::Bytes(value) => format!("Bytes({})", value.as_slice().len()),
-        Value::List(_) => "[]".to_owned(),
-        Value::Iterator(_) => "Iterator".to_owned(),
-        Value::Object(object) => object.enum_data.as_ref().map_or_else(
-            || "{}".to_owned(),
-            |enumeration| format!("{}::{}", enumeration.type_identity, enumeration.variant),
-        ),
-        Value::Cell(_) => "Cell".to_owned(),
-        Value::Closure(_) => "fn main()".to_owned(),
-        Value::Future => "Future".to_owned(),
-    };
+    let mut rendered = String::new();
+    push_default(&mut rendered, receiver);
     string_value_result(rendered)
+}
+
+/// Appends the default `ToString` and `Debug` rendering of one runtime value.
+fn push_default(buffer: &mut String, receiver: ValueRef) {
+    use core::fmt::Write;
+    let _ = match runtime::value(receiver) {
+        Value::None => buffer.write_str("None"),
+        Value::Error(_) => buffer.write_str("Error"),
+        Value::Bool(value) => write!(buffer, "{value}"),
+        Value::Int(value) => {
+            push_int(buffer, value);
+            Ok(())
+        }
+        Value::Float(value) => write!(buffer, "{value}"),
+        Value::String(value) => buffer.write_str(value.as_str()),
+        Value::Bytes(value) => write!(buffer, "Bytes({})", value.as_slice().len()),
+        Value::List(_) => buffer.write_str("[]"),
+        Value::Iterator(_) => buffer.write_str("Iterator"),
+        Value::Object(object) => match object.enum_data.as_ref() {
+            Some(enumeration) => write!(
+                buffer,
+                "{}::{}",
+                enumeration.type_identity, enumeration.variant
+            ),
+            None => buffer.write_str("{}"),
+        },
+        Value::Cell(_) => buffer.write_str("Cell"),
+        Value::Closure(_) => buffer.write_str("fn main()"),
+        Value::Future => buffer.write_str("Future"),
+        Value::FormatBuilder => buffer.write_str("String"),
+    };
 }
 
 /// Applies one unary Float operation after validating the receiver type.

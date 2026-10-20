@@ -11,7 +11,9 @@ use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
-use super::graph::{BindingSlot, GraphBuilder, HostTimeField, Operation, expression_span};
+use super::graph::{
+    BindingSlot, FormatPart, GraphBuilder, HostTimeField, Operation, expression_span,
+};
 
 impl<'source, 'function> GraphBuilder<'source, 'function> {
     pub(super) fn lower_expression(
@@ -33,56 +35,80 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 Ok(destination)
             }
             Expression::FormattedString { parts, span, .. } => {
-                let mut result = self.temporary(*span)?;
-                self.operations.push(Operation::String {
-                    value: "",
-                    destination: result,
+                let capacity = parts.iter().fold(0_usize, |total, part| {
+                    total.saturating_add(match part {
+                        FormattedStringPart::Text(value) => value.len(),
+                        FormattedStringPart::Expression(_) => {
+                            crate::codegen::standard::FORMATTED_VALUE_CAPACITY
+                        }
+                    })
+                });
+                let builder = self.temporary(*span)?;
+                self.operations.push(Operation::FormatNew {
+                    capacity: i32::try_from(capacity).unwrap_or(i32::MAX),
+                    destination: builder,
                     span: *span,
                 });
+                let targets = self
+                    .methods
+                    .trait_instance(
+                        crate::codegen::standard::TO_STRING_TRAIT,
+                        crate::codegen::standard::TO_STRING_METHOD,
+                    )
+                    .map_or_else(Vec::new, ToOwned::to_owned);
                 for part in parts {
-                    let value = match part {
+                    match part {
                         FormattedStringPart::Text(value) => {
-                            let destination = self.temporary(*span)?;
-                            self.operations.push(Operation::String {
-                                value,
-                                destination,
+                            self.operations.push(Operation::FormatPush {
+                                builder,
+                                part: FormatPart::Text(value),
                                 span: *span,
                             });
-                            destination
                         }
                         FormattedStringPart::Expression(expression) => {
-                            let receiver = self.lower_expression(expression)?;
-                            let destination = self.temporary(*span)?;
-                            self.operations.push(Operation::InstanceCall {
-                                receiver,
-                                method: crate::codegen::standard::TO_STRING_METHOD,
-                                method_span: *span,
-                                arguments: Vec::new(),
-                                targets: self
-                                    .methods
-                                    .trait_instance(
-                                        crate::codegen::standard::TO_STRING_TRAIT,
-                                        crate::codegen::standard::TO_STRING_METHOD,
-                                    )
-                                    .map_or_else(Vec::new, ToOwned::to_owned),
-                                fallback: None,
-                                destination,
+                            let value = self.lower_expression(expression)?;
+                            let format_value = self.operations.len();
+                            self.operations.push(Operation::FormatValue {
+                                builder,
+                                value,
+                                type_ids: targets.iter().map(|target| target.type_id).collect(),
+                                skip: 0,
                                 span: *span,
                             });
-                            destination
+                            if !targets.is_empty() {
+                                let rendered = self.temporary(*span)?;
+                                self.operations.push(Operation::InstanceCall {
+                                    receiver: value,
+                                    method: crate::codegen::standard::TO_STRING_METHOD,
+                                    method_span: *span,
+                                    arguments: Vec::new(),
+                                    targets: targets.clone(),
+                                    fallback: None,
+                                    destination: rendered,
+                                    span: *span,
+                                });
+                                self.operations.push(Operation::FormatPush {
+                                    builder,
+                                    part: FormatPart::Slot(rendered),
+                                    span: *span,
+                                });
+                            }
+                            let after = self.state_id(self.operations.len(), *span)?;
+                            if let Some(Operation::FormatValue { skip, .. }) =
+                                self.operations.get_mut(format_value)
+                            {
+                                *skip = after;
+                            }
                         }
-                    };
-                    let destination = self.temporary(*span)?;
-                    self.operations.push(Operation::Binary {
-                        operator: BinaryOperator::Add,
-                        left: result,
-                        right: value,
-                        destination,
-                        span: *span,
-                    });
-                    result = destination;
+                    }
                 }
-                Ok(result)
+                let destination = self.temporary(*span)?;
+                self.operations.push(Operation::FormatFinish {
+                    builder,
+                    destination,
+                    span: *span,
+                });
+                Ok(destination)
             }
             Expression::Variable(identifier) => {
                 if let Some(variant) = self.types.enum_variant(&identifier.name) {

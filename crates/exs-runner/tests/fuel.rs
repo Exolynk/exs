@@ -20,9 +20,9 @@ const SHOW_TRUE_FUEL: u64 = 69_327;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
 const SHOW_COMPARE_RECORD_FUEL: u64 = 76_797;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 133_779;
+const CONCAT_10_OBJECTS_FUEL: u64 = 130_658;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 723_050;
+const CONCAT_100_OBJECTS_FUEL: u64 = 693_341;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
 const INT_LOOP_1000_FUEL: u64 = 307_224;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
@@ -37,6 +37,8 @@ const FOR_RANGE_1000_FUEL: u64 = 395_936;
 const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 860_040;
 /// Fuel ceiling for 100 calls of a small resumable function.
 const ASYNC_CALL_LOOP_100_FUEL: u64 = 231_602;
+/// Fuel ceiling for 1000 iterations building one formatted line with two Ints.
+const FORMAT_LOOP_1000_FUEL: u64 = 2_819_204;
 
 /// Script whose leading host call selects resumable lowering for an otherwise empty `while` loop.
 const ASYNC_EMPTY_WHILE_SOURCE: &str = r#"
@@ -137,6 +139,20 @@ const ASYNC_INT_LOOP_SOURCE: &str = r#"
             }
         }
         ret total;
+    }
+"#;
+
+/// Script building one formatted line with two interpolated Ints per loop iteration.
+const FORMAT_LOOP_SOURCE: &str = r#"
+    fn main(limit: Int) -> Int {
+        let length = 0;
+        let index = 0;
+        while index < limit {
+            let line = f"row {index}: {index * 2};";
+            length = length + line.length();
+            index = index + 1;
+        }
+        ret length;
     }
 "#;
 
@@ -327,5 +343,20 @@ fn fuel_async_call_loop_100() {
         &report,
         &ExsValue::Int(100),
         ASYNC_CALL_LOOP_100_FUEL,
+    );
+}
+
+/// Measures 1000 iterations building one formatted line with two interpolated Ints.
+#[test]
+fn fuel_format_loop_1000() {
+    let report = execute_report(FORMAT_LOOP_SOURCE, &[ExsValue::Int(1000)]);
+    let expected = (0..1000_i64)
+        .map(|index| format!("row {index}: {};", index * 2).len() as i64)
+        .sum::<i64>();
+    assert_fuel(
+        "format_loop_1000",
+        &report,
+        &ExsValue::Int(expected),
+        FORMAT_LOOP_1000_FUEL,
     );
 }

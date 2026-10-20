@@ -36,4 +36,6 @@ pub(crate) enum Value<'a> {
     Closure(&'a RuntimeClosure),
     /// Reserved shape for future host-owned runtime values.
     Future,
+    /// An unfinished compiler-owned formatted-string builder.
+    FormatBuilder,
 }

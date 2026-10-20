@@ -52,6 +52,8 @@ pub(super) fn requires_source_position(export: &str) -> bool {
             | "__exs_rt_enum_matches_literal"
             | "__exs_rt_enum_push_field"
             | "__exs_rt_float_new"
+            | "__exs_rt_format_finish"
+            | "__exs_rt_format_new"
             | "__exs_rt_frame_pop"
             | "__exs_rt_frame_push"
             | "__exs_rt_host_call_take_ready"

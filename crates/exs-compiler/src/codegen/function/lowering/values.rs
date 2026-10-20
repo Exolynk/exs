@@ -93,57 +93,104 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.runtime_call("__exs_rt_bytes_new", span)
     }
 
-    /// Concatenates formatted-string fragments with the standard String-add conversion rules.
+    /// Builds one formatted string in a single runtime builder, evaluating parts in order.
+    ///
+    /// Values whose type has a `ToString` implementation call it; every other value is
+    /// rendered directly by the runtime, matching the default `to_string` fallback.
     pub(in crate::codegen::function) fn compile_formatted_string(
         &mut self,
         parts: &[FormattedStringPart<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        self.compile_string("", span)?;
-        let result = self.store_stack_value()?;
-        for part in parts {
-            match part {
-                FormattedStringPart::Text(value) => self.compile_string(value, span)?,
-                FormattedStringPart::Expression(expression) => {
-                    self.compile_to_string(expression, span)?
+        let capacity = parts.iter().fold(0_usize, |total, part| {
+            total.saturating_add(match part {
+                FormattedStringPart::Text(value) => value.len(),
+                FormattedStringPart::Expression(_) => {
+                    crate::codegen::standard::FORMATTED_VALUE_CAPACITY
                 }
-            }
-            let value = self.store_stack_value()?;
-            self.function.instruction(&Instruction::LocalGet(result));
-            self.function.instruction(&Instruction::LocalGet(value));
-            self.runtime_call("__exs_rt_add", span)?;
-            self.store_stack_value_in(result)?;
-            self.clear_root_slot(value)?;
-        }
-        self.function.instruction(&Instruction::LocalGet(result));
-        self.clear_root_slot(result)
-    }
-
-    /// Evaluates one formatted value and invokes its `ToString` implementation.
-    pub(in crate::codegen::function) fn compile_to_string(
-        &mut self,
-        expression: &Expression<'a>,
-        span: SourceSpan<'a>,
-    ) -> Result<(), CompileDiagnostics<'a>> {
-        self.compile_expression(expression)?;
-        let receiver = self.store_stack_value()?;
-        let method = crate::ast::Identifier {
-            name: crate::codegen::standard::TO_STRING_METHOD.to_owned(),
-            span,
-        };
+            })
+        });
+        self.function.instruction(&Instruction::I32Const(
+            i32::try_from(capacity).unwrap_or(i32::MAX),
+        ));
+        self.runtime_call("__exs_rt_format_new", span)?;
+        let builder = self.store_stack_value()?;
         let targets = self
             .methods
-            .trait_instance(crate::codegen::standard::TO_STRING_TRAIT, &method.name)
-            .map(ToOwned::to_owned);
-        self.emit_instance_method_dispatch(
-            targets.as_deref().unwrap_or_default(),
-            0,
-            receiver,
-            &[],
-            &method,
-            span,
-        )?;
-        self.clear_root_slot(receiver)
+            .trait_instance(
+                crate::codegen::standard::TO_STRING_TRAIT,
+                crate::codegen::standard::TO_STRING_METHOD,
+            )
+            .map(ToOwned::to_owned)
+            .unwrap_or_default();
+        for part in parts {
+            match part {
+                FormattedStringPart::Text(value) => {
+                    self.compile_string(value, span)?;
+                    let text = self.store_stack_value()?;
+                    self.emit_format_push(builder, text, "__exs_rt_format_push", span)?;
+                    self.clear_root_slot(text)?;
+                }
+                FormattedStringPart::Expression(expression) => {
+                    self.compile_expression(expression)?;
+                    let value = self.store_stack_value()?;
+                    if targets.is_empty() {
+                        self.emit_format_push(
+                            builder,
+                            value,
+                            "__exs_rt_format_push_default",
+                            span,
+                        )?;
+                    } else {
+                        for (index, target) in targets.iter().enumerate() {
+                            self.function.instruction(&Instruction::LocalGet(value));
+                            self.emit_object_type_test(target.type_id, span)?;
+                            if index > 0 {
+                                self.function.instruction(&Instruction::I32Or);
+                            }
+                        }
+                        self.function
+                            .instruction(&Instruction::If(BlockType::Empty));
+                        self.enter_control()?;
+                        let method = crate::ast::Identifier {
+                            name: crate::codegen::standard::TO_STRING_METHOD.to_owned(),
+                            span,
+                        };
+                        self.emit_instance_method_dispatch(&targets, 0, value, &[], &method, span)?;
+                        let rendered = self.store_stack_value()?;
+                        self.emit_format_push(builder, rendered, "__exs_rt_format_push", span)?;
+                        self.clear_root_slot(rendered)?;
+                        self.function.instruction(&Instruction::Else);
+                        self.emit_format_push(
+                            builder,
+                            value,
+                            "__exs_rt_format_push_default",
+                            span,
+                        )?;
+                        self.function.instruction(&Instruction::End);
+                        self.exit_control()?;
+                    }
+                    self.clear_root_slot(value)?;
+                }
+            }
+        }
+        self.function.instruction(&Instruction::LocalGet(builder));
+        self.runtime_call("__exs_rt_format_finish", span)?;
+        self.clear_root_slot(builder)
+    }
+
+    /// Appends one rooted part to a rooted formatted-string builder through `export`.
+    fn emit_format_push(
+        &mut self,
+        builder: u32,
+        part: u32,
+        export: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.function.instruction(&Instruction::LocalGet(builder));
+        self.function.instruction(&Instruction::LocalGet(part));
+        self.runtime_call(export, span)?;
+        self.store_stack_value_in(builder)
     }
 
     /// Constructs a runtime list while evaluating every element in source order.

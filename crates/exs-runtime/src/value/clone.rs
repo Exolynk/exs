@@ -74,7 +74,7 @@ impl CloneContext {
             ),
             Value::Error(error) => self.clone_error(source, error),
             // This reserved boxed shape is the runtime placeholder for future host-owned values.
-            Value::Future => Err(()),
+            Value::Future | Value::FormatBuilder => Err(()),
         }
     }
 

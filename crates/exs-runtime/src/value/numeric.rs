@@ -60,7 +60,8 @@ pub(crate) fn number_of(value: Value<'_>) -> Option<Number> {
         | Value::Object(_)
         | Value::Cell(_)
         | Value::Closure(_)
-        | Value::Future => None,
+        | Value::Future
+        | Value::FormatBuilder => None,
     }
 }
 

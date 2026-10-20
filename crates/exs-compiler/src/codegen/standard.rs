@@ -52,6 +52,9 @@ pub(crate) const TO_STRING_TRAIT: &str = "ToString";
 /// Required instance-method name for the `ToString` protocol.
 pub(crate) const TO_STRING_METHOD: &str = "to_string";
 
+/// Builder bytes reserved per interpolated value of a formatted string.
+pub(crate) const FORMATTED_VALUE_CAPACITY: usize = 8;
+
 /// Default message for a failed `assert` call without an explicit description.
 pub(crate) const ASSERT_DEFAULT_DESCRIPTION: &str = "assert failed";
 

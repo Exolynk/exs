@@ -164,6 +164,7 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
         | RtValue::Float(_)
         | RtValue::String(_)
         | RtValue::Bytes(_)
+        | RtValue::FormatBuilder(_)
         | RtValue::BoxedFutureValue(_) => {}
     }
 }
