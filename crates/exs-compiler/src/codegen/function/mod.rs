@@ -19,6 +19,7 @@ use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
 
+pub(super) use analysis::contains_statements;
 pub(super) use method::{InstanceMethod, MethodRegistry};
 pub(super) use signature::{
     FunctionSignature, LiftedFunction, add_program_types, build_signatures, validate,

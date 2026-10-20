@@ -58,7 +58,7 @@ pub(in crate::codegen::function) fn condition_span<'a>(
 ///
 /// Only `match` block arms embed statements in an expression, so only they can rebind a
 /// variable while a surrounding expression is evaluated. Closures count too, conservatively.
-pub(in crate::codegen::function) fn contains_statements(expression: &Expression<'_>) -> bool {
+pub(in crate::codegen) fn contains_statements(expression: &Expression<'_>) -> bool {
     let any = |expressions: &[Expression<'_>]| expressions.iter().any(contains_statements);
     match expression {
         Expression::Match { .. } | Expression::Closure { .. } => true,

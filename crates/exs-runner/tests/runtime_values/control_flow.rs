@@ -76,7 +76,8 @@ fn recurses_beyond_the_direct_child_call_depth() {
     }
 }
 
-/// Evaluates variable operands of direct functions before later operands rebind the variable.
+/// Evaluates variable operands before later operands rebind the variable, in direct functions
+/// and in resumable continuations.
 #[test]
 fn reads_variable_operands_before_later_rebinding() {
     let source = r#"
@@ -89,7 +90,9 @@ fn reads_variable_operands_before_later_rebinding() {
             items.push(match input { _ => { items = [8]; } });
             let c = "x";
             let third = c == match input { _ => { c = None; } };
-            ret [first, a, original, items, third, c];
+            let e = 1;
+            let listed = [e, match input { _ => { e = 2; } }];
+            ret [first, a, original, items, third, c, listed, e];
         }
     "#;
     let expected = ExsValue::List(vec![
@@ -99,6 +102,12 @@ fn reads_variable_operands_before_later_rebinding() {
         ExsValue::List(vec![ExsValue::Int(8)]),
         ExsValue::Bool(false),
         ExsValue::None,
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::None]),
+        ExsValue::Int(2),
     ]);
-    assert_eq!(execute_source(source, ExsValue::None), expected);
+    // Any closure makes every function resumable, which selects the continuation lowering.
+    let resumable = format!("{source} fn force_resumable() {{ ret () => {{ ret 1; }}; }}");
+    for source in [source, resumable.as_str()] {
+        assert_eq!(execute_source(source, ExsValue::None), expected);
+    }
 }

@@ -7,6 +7,7 @@ use crate::ast::{
     UnaryOperator,
 };
 use crate::codegen::diagnostics;
+use crate::codegen::function::contains_statements;
 use crate::codegen::match_arms::{ArmTest, MatchArms, check_bindings};
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
@@ -291,7 +292,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         *span,
                     );
                 }
-                let left = self.lower_expression(left)?;
+                let left = self.lower_operand(left, contains_statements(right))?;
                 let right = self.lower_expression(right)?;
                 let destination = self.temporary(*span)?;
                 if let Some(operator_trait) = TraitOperator::from_binary(*operator) {
@@ -334,10 +335,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 Ok(destination)
             }
             Expression::List { elements, span } => {
-                let mut slots = Vec::with_capacity(elements.len());
-                for element in elements {
-                    slots.push(self.lower_expression(element)?);
-                }
+                let slots = self.lower_operands(elements)?;
                 let destination = self.temporary(*span)?;
                 self.operations.push(Operation::List {
                     elements: slots,
@@ -348,11 +346,14 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             }
             Expression::Object { properties, span } => {
                 let mut slots = Vec::with_capacity(properties.len());
-                for property in properties {
+                for (index, property) in properties.iter().enumerate() {
+                    let later = properties[index + 1..]
+                        .iter()
+                        .any(|property| contains_statements(&property.value));
                     slots.push((
                         property.key.as_str(),
                         property.key_span,
-                        self.lower_expression(&property.value)?,
+                        self.lower_operand(&property.value, later)?,
                     ));
                 }
                 let destination = self.temporary(*span)?;
@@ -403,11 +404,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 arguments,
                 span,
             } => {
-                let name = self.lower_expression(name)?;
-                let mut slots = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    slots.push(self.lower_expression(argument)?);
-                }
+                let name = self.lower_operand(name, runs_statements(arguments))?;
+                let slots = self.lower_operands(arguments)?;
                 let argument_list = self.temporary(*span)?;
                 let destination = self.temporary(*span)?;
                 self.operations.push(Operation::HostCall {
@@ -434,7 +432,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 index,
                 span,
             } => {
-                let receiver = self.lower_expression(receiver)?;
+                let receiver = self.lower_operand(receiver, contains_statements(index))?;
                 let index = self.lower_expression(index)?;
                 let destination = self.temporary(*span)?;
                 self.operations.push(Operation::Index {
@@ -477,8 +475,10 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                             ),
                         )));
                     }
-                    let kind = self.lower_expression(&arguments[0])?;
-                    let message = self.lower_expression(&arguments[1])?;
+                    let kind =
+                        self.lower_operand(&arguments[0], runs_statements(&arguments[1..]))?;
+                    let message =
+                        self.lower_operand(&arguments[1], runs_statements(&arguments[2..]))?;
                     let data = self.lower_expression(&arguments[2])?;
                     let destination = self.temporary(*span)?;
                     self.operations.push(Operation::Error {
@@ -505,13 +505,18 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                             span: callee.span,
                         });
                         destination
+                    } else if runs_statements(arguments) {
+                        let destination = self.temporary(callee.span)?;
+                        self.operations.push(Operation::Copy {
+                            source: binding.slot,
+                            destination,
+                            span: callee.span,
+                        });
+                        destination
                     } else {
                         binding.slot
                     };
-                    let mut slots = Vec::with_capacity(arguments.len());
-                    for argument in arguments {
-                        slots.push(self.lower_expression(argument)?);
-                    }
+                    let slots = self.lower_operands(arguments)?;
                     let destination = self.temporary(*span)?;
                     self.operations.push(Operation::ClosureCall {
                         closure,
@@ -535,8 +540,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         )));
                     }
                     let mut fields = Vec::with_capacity(arguments.len());
-                    for (argument, contract) in arguments.iter().zip(&variant.fields) {
-                        let field = self.lower_expression(argument)?;
+                    for (index, (argument, contract)) in
+                        arguments.iter().zip(&variant.fields).enumerate()
+                    {
+                        let field =
+                            self.lower_operand(argument, runs_statements(&arguments[index + 1..]))?;
                         self.operations.push(Operation::ValidateSlot {
                             slot: field,
                             contract: contract.clone(),
@@ -592,10 +600,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         ),
                     )));
                 }
-                let mut slots = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    slots.push(self.lower_expression(argument)?);
-                }
+                let mut slots = self.lower_operands(arguments)?;
                 self.pack_variadic_tail(&mut slots, &signature, *span)?;
                 let destination = self.temporary(*span)?;
                 if let Some(layout) = self.frame_layouts.get(&callee.name).copied() {
@@ -661,10 +666,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                             ),
                         )));
                     }
-                    let mut values = Vec::with_capacity(arguments.len());
-                    for argument in arguments {
-                        values.push(self.lower_expression(argument)?);
-                    }
+                    let values = self.lower_operands(arguments)?;
                     let destination = self.temporary(*span)?;
                     self.operations.push(Operation::RuntimeStatic {
                         values,
@@ -689,8 +691,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         )));
                     }
                     let mut fields = Vec::with_capacity(arguments.len());
-                    for (argument, contract) in arguments.iter().zip(&variant.fields) {
-                        let field = self.lower_expression(argument)?;
+                    for (index, (argument, contract)) in
+                        arguments.iter().zip(&variant.fields).enumerate()
+                    {
+                        let field =
+                            self.lower_operand(argument, runs_statements(&arguments[index + 1..]))?;
                         self.operations.push(Operation::ValidateSlot {
                             slot: field,
                             contract: contract.clone(),
@@ -742,10 +747,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         ),
                     )));
                 }
-                let mut slots = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    slots.push(self.lower_expression(argument)?);
-                }
+                let mut slots = self.lower_operands(arguments)?;
                 self.pack_variadic_tail(&mut slots, &signature, *span)?;
                 let destination = self.temporary(*span)?;
                 if let Some(layout) = self.frame_layouts.get(&key).copied() {
@@ -772,11 +774,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 arguments,
                 span,
             } => {
-                let receiver = self.lower_expression(receiver)?;
-                let mut slots = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    slots.push(self.lower_expression(argument)?);
-                }
+                let receiver = self.lower_operand(receiver, runs_statements(arguments))?;
+                let slots = self.lower_operands(arguments)?;
                 let destination = self.temporary(*span)?;
                 let fallback = crate::prelude::iterator_helper(&method.name)
                     .map(|key| {
@@ -830,7 +829,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 ),
             )));
         }
-        let first = self.lower_expression(&arguments[0])?;
+        let first = self.lower_operand(&arguments[0], runs_statements(&arguments[1..]))?;
         let description = if let Some(description) = arguments.get(1) {
             self.lower_expression(description)?
         } else {
@@ -867,8 +866,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 ),
             )));
         }
-        let first = self.lower_expression(&arguments[0])?;
-        let second = self.lower_expression(&arguments[1])?;
+        let first = self.lower_operand(&arguments[0], runs_statements(&arguments[1..]))?;
+        let second = self.lower_operand(&arguments[1], runs_statements(&arguments[2..]))?;
         let operator = TraitOperator::from_binary(BinaryOperator::Equal).ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0999",
@@ -1277,10 +1276,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             destination: name,
             span,
         });
-        let mut slots = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            slots.push(self.lower_expression(argument)?);
-        }
+        let slots = self.lower_operands(arguments)?;
         let argument_list = self.temporary(span)?;
         let handle = self.temporary(span)?;
         self.operations.push(Operation::HostCall {
@@ -1344,10 +1340,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             span,
         });
         let argument_list = self.temporary(span)?;
-        let mut slots = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            slots.push(self.lower_expression(argument)?);
-        }
+        let slots = self.lower_operands(arguments)?;
         let value = self.temporary(span)?;
         self.operations.push(Operation::HostCall {
             name,
@@ -1369,6 +1362,45 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             span,
         });
         Ok(destination)
+    }
+
+    /// Lowers one operand whose slot is read only after the expressions that follow it.
+    ///
+    /// A plain variable lowers to its own binding slot, which a later operand can only rebind
+    /// when `later_runs_statements`; then its current value is copied so it keeps source order.
+    pub(super) fn lower_operand(
+        &mut self,
+        expression: &'function Expression<'source>,
+        later_runs_statements: bool,
+    ) -> Result<u32, CompileDiagnostics<'source>> {
+        let slot = self.lower_expression(expression)?;
+        if later_runs_statements
+            && let Expression::Variable(identifier) = expression
+            && self
+                .lookup_optional(&identifier.name)
+                .is_some_and(|binding| !binding.cell && binding.slot == slot)
+        {
+            let destination = self.temporary(identifier.span)?;
+            self.operations.push(Operation::Copy {
+                source: slot,
+                destination,
+                span: identifier.span,
+            });
+            return Ok(destination);
+        }
+        Ok(slot)
+    }
+
+    /// Lowers operands in source order, each read only after every later operand is evaluated.
+    pub(super) fn lower_operands(
+        &mut self,
+        expressions: &'function [Expression<'source>],
+    ) -> Result<Vec<u32>, CompileDiagnostics<'source>> {
+        let mut slots = Vec::with_capacity(expressions.len());
+        for (index, expression) in expressions.iter().enumerate() {
+            slots.push(self.lower_operand(expression, runs_statements(&expressions[index + 1..]))?);
+        }
+        Ok(slots)
     }
 
     /// Allocates one durable frame slot.
@@ -1413,6 +1445,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             .rev()
             .find_map(|scope| scope.get(name).copied())
     }
+}
+
+/// Returns whether evaluating any of `expressions` can run statements of the current function.
+fn runs_statements(expressions: &[Expression<'_>]) -> bool {
+    expressions.iter().any(contains_statements)
 }
 
 /// Returns whether one compiler-resolved prelude function is the DateTime parser intrinsic.
