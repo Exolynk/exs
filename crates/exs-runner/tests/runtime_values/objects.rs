@@ -283,3 +283,74 @@ fn builds_object_literals_with_distinct_and_repeated_keys() {
         assert_eq!(execute_source(source, ExsValue::None), expected);
     }
 }
+
+/// Reads and writes literal properties on compiler and host Objects and other receivers alike.
+#[test]
+fn accesses_literal_properties_on_every_receiver_kind() {
+    let source = r#"
+        fn describe(value) {
+            if value is Error { ret "E:" + value.kind(); }
+            ret value;
+        }
+        fn main(input) -> List {
+            let local = { a: 1, b: 2 };
+            local.b = 20;
+            local.c = 30;
+            input.name = input.name + "!";
+            input.extra = local.a;
+            let number = 5;
+            let items = [1, 2];
+            ret [
+                local.a,
+                local.b,
+                local.c,
+                local.missing,
+                input.name,
+                input.count,
+                input.extra,
+                input.missing,
+                describe(number.a),
+                describe(items.a),
+                input,
+            ];
+        }
+    "#;
+    let input = ExsValue::Object(vec![
+        ("name".to_owned(), ExsValue::String("host".to_owned())),
+        ("count".to_owned(), ExsValue::Int(3)),
+    ]);
+    let resumable = format!("{source} fn force_resumable() {{ ret () => {{ ret 1; }}; }}");
+    let results = [source, resumable.as_str()].map(|source| execute_source(source, input.clone()));
+    let ExsValue::List(direct) = &results[0] else {
+        panic!("property script did not return a List");
+    };
+    assert_eq!(
+        direct[..8],
+        [
+            ExsValue::Int(1),
+            ExsValue::Int(20),
+            ExsValue::Int(30),
+            ExsValue::None,
+            ExsValue::String("host!".to_owned()),
+            ExsValue::Int(3),
+            ExsValue::Int(1),
+            ExsValue::None,
+        ]
+    );
+    assert_eq!(
+        direct[10],
+        ExsValue::Object(vec![
+            ("name".to_owned(), ExsValue::String("host!".to_owned())),
+            ("count".to_owned(), ExsValue::Int(3)),
+            ("extra".to_owned(), ExsValue::Int(1)),
+        ])
+    );
+    assert_eq!(results[0], results[1]);
+    assert_eq!(
+        direct[8..10],
+        [
+            ExsValue::String("E:TypeError".to_owned()),
+            ExsValue::String("E:IndexError".to_owned()),
+        ]
+    );
+}

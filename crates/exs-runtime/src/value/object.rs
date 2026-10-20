@@ -203,9 +203,9 @@ pub(crate) mod operations {
     fn literal_key(
         key: ValueRef,
     ) -> Result<(&'static str, &'static core::cell::Cell<u32>), ValueRef> {
-        match runtime::value(key) {
-            Value::String(text) => Ok((text.as_str(), text.key_hint())),
-            _ => Err(runtime::recoverable_error(
+        match runtime::string_ref(key) {
+            Some(text) => Ok((text.as_str(), text.key_hint())),
+            None => Err(runtime::recoverable_error(
                 "TypeError",
                 "Object keys and method names require a String value",
                 key,
@@ -217,7 +217,7 @@ pub(crate) mod operations {
     ///
     /// Non-Object receivers keep the generic indexing behavior and errors.
     pub(crate) fn get_literal(receiver: ValueRef, key: ValueRef) -> ValueRef {
-        let Value::Object(object) = runtime::value(receiver) else {
+        let Some(object) = runtime::object_ref(receiver) else {
             return operations::index_get(receiver, key);
         };
         let (text, hint) = match literal_key(key) {
@@ -238,7 +238,7 @@ pub(crate) mod operations {
         key: ValueRef,
         replacement: ValueRef,
     ) -> ValueRef {
-        if !matches!(runtime::value(receiver), Value::Object(_)) {
+        if runtime::object_ref(receiver).is_none() {
             return operations::index_set(receiver, key, replacement);
         }
         let (text, hint) = match literal_key(key) {
