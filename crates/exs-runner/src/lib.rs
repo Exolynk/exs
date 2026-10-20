@@ -198,6 +198,8 @@ impl ServerRunner {
             .instantiate(&mut store, &module)
             .map_err(wasmtime_error)?;
         check_abi(&mut store, &instance)?;
+        let compile_time = execution_started_at.elapsed();
+        let run_started_at = std::time::Instant::now();
         let (input_pointer, input_length) =
             write_input(&mut store, &instance, inputs, &self.limits)?;
         let start = instance
@@ -222,6 +224,7 @@ impl ServerRunner {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
                     let result = result(&mut store, &instance, &self.limits)?;
+                    let execution_time = run_started_at.elapsed();
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
@@ -231,6 +234,8 @@ impl ServerRunner {
                     return Ok(ExecutionReport {
                         value: result,
                         fuel_consumed: self.limits.max_fuel.saturating_sub(remaining_fuel),
+                        compile_time,
+                        execution_time,
                     });
                 }
                 STATUS_PENDING => {

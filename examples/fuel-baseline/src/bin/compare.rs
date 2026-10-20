@@ -1,4 +1,4 @@
-//! Compares the fuel of every ExS fuel scenario with its Rust baseline.
+//! Compares the fuel and wall-clock time of every ExS fuel scenario with its Rust baseline.
 //!
 //! Run through `compare.nu`, which first builds the Rust guest for `wasm32-unknown-unknown`.
 
@@ -24,6 +24,28 @@ mod native {
     /// Fuel budget of the measuring runner, far above every scenario.
     const FUEL_BUDGET: u64 = 1_000_000_000;
 
+    /// Executions per scenario, implementation and compiler whose median time is reported.
+    const TIMING_RUNS: usize = 7;
+
+    /// Median wall-clock times of one scenario implementation under one compiler.
+    #[derive(Clone, Copy)]
+    struct Timing {
+        /// Module compilation and instantiation.
+        compile: Duration,
+        /// Execution from the entry call to the decoded result.
+        execution: Duration,
+    }
+
+    /// Wall-clock times measured for one scenario in both implementations and compilers.
+    struct TimingRow {
+        /// Scenario name.
+        name: &'static str,
+        /// ExS and Rust timings under Winch.
+        winch: (Timing, Timing),
+        /// ExS and Rust timings under Cranelift.
+        cranelift: (Timing, Timing),
+    }
+
     /// Fuel measured for one scenario in both implementations.
     struct Measurement {
         /// Scenario name.
@@ -39,14 +61,10 @@ mod native {
         let path = guest_wasm_path();
         let guest = fs::read(&path)
             .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-        let runner = ServerRunner::new(
-            64 * 1024 * 1024,
-            FUEL_BUDGET,
-            Duration::from_secs(60),
-            ProtectionLevel::Standard,
-        )
-        .with_compiler_strategy(CompilerStrategy::Winch);
+        let runner = measuring_runner(CompilerStrategy::Winch);
+        let cranelift = measuring_runner(CompilerStrategy::Cranelift);
         let mut measurements = Vec::new();
+        let mut timings = Vec::new();
         for scenario in ALL {
             let compiled = compile(
                 SourceInput {
@@ -63,9 +81,113 @@ mod native {
                 exs,
                 rust,
             });
+            timings.push(TimingRow {
+                name: scenario.name,
+                winch: (
+                    time(&runner, &compiled.wasm, "main", scenario)?,
+                    time(&runner, &guest, scenario.name, scenario)?,
+                ),
+                cranelift: (
+                    time(&cranelift, &compiled.wasm, "main", scenario)?,
+                    time(&cranelift, &guest, scenario.name, scenario)?,
+                ),
+            });
         }
         print_table(&measurements);
+        println!();
+        print_timing_table(&timings);
         Ok(())
+    }
+
+    /// Creates the runner used for every measurement with one code generator.
+    fn measuring_runner(compiler: CompilerStrategy) -> ServerRunner {
+        ServerRunner::new(
+            64 * 1024 * 1024,
+            FUEL_BUDGET,
+            Duration::from_secs(60),
+            ProtectionLevel::Standard,
+        )
+        .with_compiler_strategy(compiler)
+    }
+
+    /// Executes one implementation `TIMING_RUNS` times and returns its median timings.
+    fn time(
+        runner: &ServerRunner,
+        wasm: &[u8],
+        function: &str,
+        scenario: &Scenario,
+    ) -> Result<Timing, String> {
+        let inputs = (scenario.inputs)();
+        let mut compile = Vec::with_capacity(TIMING_RUNS);
+        let mut execution = Vec::with_capacity(TIMING_RUNS);
+        for _ in 0..TIMING_RUNS {
+            let report = block_on(runner.execute_with_report(
+                wasm,
+                function,
+                &inputs,
+                &ExecutionCancellation::new(),
+            ))
+            .map_err(|error| format!("timing {} failed: {error}", scenario.name))?;
+            compile.push(report.compile_time);
+            execution.push(report.execution_time);
+        }
+        Ok(Timing {
+            compile: median(&mut compile),
+            execution: median(&mut execution),
+        })
+    }
+
+    /// Returns the median of a non-empty list of durations.
+    fn median(durations: &mut [Duration]) -> Duration {
+        durations.sort_unstable();
+        durations
+            .get(durations.len() / 2)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Prints median execution times in microseconds and ExS compile times in milliseconds.
+    fn print_timing_table(rows: &[TimingRow]) {
+        println!(
+            "median of {TIMING_RUNS} runs; execution in us, compile in ms (ExS / Rust module)"
+        );
+        println!(
+            "{:<26} {:>10} {:>10} {:>7} {:>10} {:>10} {:>7} {:>13} {:>13}",
+            "scenario",
+            "ExS winch",
+            "Rust wnch",
+            "factor",
+            "ExS crane",
+            "Rust crn",
+            "factor",
+            "compile wnch",
+            "compile crn"
+        );
+        let micros = |duration: Duration| duration.as_secs_f64() * 1e6;
+        let millis = |duration: Duration| duration.as_secs_f64() * 1e3;
+        for row in rows {
+            let (exs_winch, rust_winch) = row.winch;
+            let (exs_crane, rust_crane) = row.cranelift;
+            println!(
+                "{:<26} {:>10.1} {:>10.1} {:>7} {:>10.1} {:>10.1} {:>7} {:>6.1}/{:<6.1} {:>6.1}/{:<6.1}",
+                row.name,
+                micros(exs_winch.execution),
+                micros(rust_winch.execution),
+                format_ratio(time_ratio(exs_winch.execution, rust_winch.execution)),
+                micros(exs_crane.execution),
+                micros(rust_crane.execution),
+                format_ratio(time_ratio(exs_crane.execution, rust_crane.execution)),
+                millis(exs_winch.compile),
+                millis(rust_winch.compile),
+                millis(exs_crane.compile),
+                millis(rust_crane.compile),
+            );
+        }
+    }
+
+    /// Returns `left / right` for two durations, or `None` when `right` is zero.
+    fn time_ratio(left: Duration, right: Duration) -> Option<f64> {
+        (!right.is_zero()).then(|| left.as_secs_f64() / right.as_secs_f64())
     }
 
     /// Executes one implementation of a scenario and returns its fuel after checking the result.

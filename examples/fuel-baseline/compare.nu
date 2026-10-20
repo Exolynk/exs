@@ -1,6 +1,7 @@
 #!/usr/bin/env nu
 
-# Builds the Rust fuel baseline guest and compares its fuel with every ExS fuel scenario.
+# Builds the Rust fuel baseline guest and compares its fuel and wall-clock time with every ExS
+# fuel scenario.
 const example_dir = (path self | path dirname)
 
 cd $example_dir

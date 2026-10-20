@@ -1,6 +1,6 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Implementation starts with phase 0; nothing else is implemented yet.
+Status: **approved design**. Phase 0 (measurements) is done; see section 12.
 
 ## 1. Goal
 
@@ -188,7 +188,8 @@ Each phase ends with measurement and an explicit go / no-go.
 
 | Phase | Scope | Exit criterion |
 |---|---|---|
-| 0 | Baseline: wall-clock benchmarks; measure the share of CBOR boundary work in `record_roundtrip_20` | numbers recorded |
+| 0 | Baseline: wall-clock benchmarks; measure the share of CBOR boundary work in `record_roundtrip_20` | done, see section 12 |
+| 0.5 | Link only reachable runtime and prelude functions; cache compiled modules in the runner | compile time per execution measured and reduced |
 | 1 | `exs-layout`, VM state block, allocator, non-moving GC in the stateless library, unit tests with synthetic heaps | GC and allocator tests green |
 | 2 | v2 backend for Int/Float/Bool/None, Strings, Lists, untyped and typed Objects, sync functions, `?`, Errors | prototype beats v1 clearly on property, String and literal micro benchmarks; go / no-go |
 | 3 | All built-in methods as stateless helpers over the layout; enums and `match`; closures and cells; iterators; formatted strings | all non-async runtime-value tests green on v2 |
@@ -197,7 +198,65 @@ Each phase ends with measurement and an explicit go / no-go.
 | 6 | Browser runner and `exs-guest` on the new boundary (or CBOR fallback) | all crates green |
 | 7 | Switch the default to v2, delete v1 code and `exs-runtime` | one backend left |
 
-## 12. Risks and open questions
+## 12. Phase 0 results
+
+Measured with `examples/fuel-baseline/compare.nu` (median of 7 runs) and a per-function fuel
+profiler on the state after `12fbfb4`.
+
+### Wall-clock time is dominated by module compilation
+
+| Scenario | ExS exec Winch | Rust exec Winch | ExS exec Cranelift | Rust exec Cranelift |
+|---|---:|---:|---:|---:|
+| `empty_main` | 86 µs | 59 µs | 67 µs | 47 µs |
+| `int_loop_1000` | 134 µs | 71 µs | 75 µs | 50 µs |
+| `list_churn_6000` | 2,793 µs | 523 µs | 898 µs | 195 µs |
+| `datetime_roundtrip_100` | 2,104 µs | 355 µs | 731 µs | 151 µs |
+| `record_roundtrip_20` | 1,932 µs | 811 µs | 773 µs | 410 µs |
+
+| Module compilation + instantiation | Winch | Cranelift |
+|---|---:|---:|
+| ExS module (any script) | ~19 ms | ~110 ms |
+| Rust guest (all 18 scenarios) | ~4.4 ms | ~17 ms |
+
+Every execution compiles its module, so compilation is 10–200× the execution time of these
+scenarios. An empty ExS script already links a 668 KB module with 684 functions (509 KB of
+code): the whole runtime template (369 KB) plus every compiled prelude function, whether used
+or not. The Rust guest with all 18 scenarios is 101 KB.
+
+Consequences for the plan:
+
+- **Link only reachable functions.** Dead-function elimination over the runtime library and
+  the prelude cuts compile time for every script; the stateless library of v2 makes this
+  easier, but it pays off in v1 already.
+- **Cache compiled modules in the runner.** Compiling once per script and instantiating per
+  execution (Wasmtime `Module` reuse or serialized artifacts) removes most of the remaining
+  wall-clock cost and makes Cranelift's faster code affordable.
+- Both items are independent of the value model and are scheduled before phase 1.
+
+### Fuel: memory management and the host boundary dominate value-heavy scripts
+
+Share of executed Wasm operators by category:
+
+| Category | `record_roundtrip_20` | `datetime_roundtrip_100` |
+|---|---:|---:|
+| Allocation and freeing (`dlmalloc`, value table, `Vec` growth) | 21.8 % | 34.7 % |
+| Garbage collection | 0 % | 10.5 % |
+| CBOR decode/encode and `ExsValue` conversion | 21.1 % | 1.8 % |
+| Typed decode schema parsing (`wire`) | 8.9 % | 1.4 % |
+| Object and property operations | 13.2 % | 8.0 % |
+| Value-table lookups | 7.3 % | 4.3 % |
+| UTF-8 validation | 4.7 % | 0.7 % |
+| Strings and formatting | 3.9 % | 9.0 % |
+| Generated code | 7.5 % | 14.2 % |
+| Other runtime | 11.5 % | 15.5 % |
+
+- Memory management alone is 22–45 %: the bump allocator and the non-moving collector of
+  phase 1 target exactly this.
+- In record-style scripts, about 30 % is boundary work (CBOR, `ExsValue` conversion, schema
+  parsing). The direct-memory boundary of phase 5 removes it; the typed decode schema is
+  re-parsed on every conversion today and could be cached even in v1.
+
+## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.
   The precise root frames exist, but every inline allocation site and every helper that
