@@ -475,7 +475,11 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 body,
                 ..
             } => {
-                self.for_loops = true;
+                // A literal Range advances natively and can never suspend, unlike a general
+                // iterable whose `Iterator::next` may wait for the host.
+                if !crate::codegen::standard::is_unshared_range(iterable) {
+                    self.for_loops = true;
+                }
                 self.lower_expression(iterable);
                 self.scopes.push(HashMap::new());
                 self.declare(&binding.name, binding.span);

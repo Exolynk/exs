@@ -2,15 +2,29 @@
 
 use std::collections::HashMap;
 
-use wasm_encoder::{BlockType, Instruction};
+use wasm_encoder::{BlockType, Instruction, ValType};
 
 use crate::ast::{AssignmentTarget, Block, Expression, Statement};
-use crate::codegen::diagnostics;
 use crate::codegen::standard::is_unshared_range;
+use crate::codegen::{VALUE_TYPE, diagnostics, immediate};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::analysis::condition_span;
 use super::{FunctionCompiler, LoopContext};
+
+/// Wasm locals of a `for` loop counting over a literal Range of immediate Ints.
+pub(super) struct InlineRange {
+    /// Next candidate item as a plain `i64`.
+    cursor: u32,
+    /// Range end as a plain `i64`.
+    last: u32,
+    /// Signed distance between items, 1 or -1.
+    step: u32,
+    /// 1 once the end itself has been yielded, else 0.
+    done: u32,
+    /// Whether the end itself is yielded, as for `a..=b`.
+    inclusive: bool,
+}
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
     /// Compiles statements in one lexical block.
@@ -231,24 +245,38 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         body: &Block<'a>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        let unshared_range = is_unshared_range(iterable);
         let range_type_id = self
             .types
             .get("Range")
             .map_or(-1, |range| range.id.cast_signed());
-        self.compile_expression(iterable)?;
-        let iterable = self.store_stack_value()?;
-        self.function.instruction(&Instruction::LocalGet(iterable));
-        if unshared_range {
-            self.function
-                .instruction(&Instruction::I32Const(range_type_id));
-            self.runtime_call("__exs_rt_iter_range_snapshot", span)?;
-        } else {
-            self.runtime_call("__exs_rt_iter_snapshot", span)?;
-        }
-        self.return_if_error(span)?;
-        let snapshot = self.store_stack_value()?;
-        self.clear_root_slot(iterable)?;
+        let snapshot = self.allocate_local();
+        let inline_range = match iterable {
+            Expression::StaticMethodCall {
+                method,
+                arguments,
+                span: call_span,
+                ..
+            } if is_unshared_range(iterable) && arguments.len() == 2 => {
+                Some(self.begin_literal_range(method, arguments, *call_span, snapshot, span)?)
+            }
+            _ => {
+                let unshared_range = is_unshared_range(iterable);
+                self.compile_expression(iterable)?;
+                let iterable = self.store_stack_value()?;
+                self.function.instruction(&Instruction::LocalGet(iterable));
+                if unshared_range {
+                    self.function
+                        .instruction(&Instruction::I32Const(range_type_id));
+                    self.runtime_call("__exs_rt_iter_range_snapshot", span)?;
+                } else {
+                    self.runtime_call("__exs_rt_iter_snapshot", span)?;
+                }
+                self.return_if_error(span)?;
+                self.store_stack_value_in(snapshot)?;
+                self.clear_root_slot(iterable)?;
+                None
+            }
+        };
 
         let next = self.allocate_local();
         let item = self.allocate_local();
@@ -265,10 +293,25 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.enter_control()?;
         let loop_depth = self.control_depth;
 
+        // An inline range leaves the snapshot empty and counts in locals; otherwise the
+        // runtime advances the snapshot.
+        if let Some(range) = &inline_range {
+            self.function.instruction(&Instruction::LocalGet(snapshot));
+            self.function.instruction(&Instruction::I64Eqz);
+            self.function
+                .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
+            self.enter_control()?;
+            self.emit_inline_range_next(range);
+            self.function.instruction(&Instruction::Else);
+        }
         self.function.instruction(&Instruction::LocalGet(snapshot));
         self.function
             .instruction(&Instruction::I32Const(range_type_id));
         self.runtime_call("__exs_rt_iter_native_next", span)?;
+        if inline_range.is_some() {
+            self.function.instruction(&Instruction::End);
+            self.exit_control()?;
+        }
         self.function.instruction(&Instruction::LocalTee(next));
         self.function.instruction(&Instruction::I64Const(-1));
         self.function.instruction(&Instruction::I64Eq);
@@ -328,6 +371,152 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             self.clear_root_slot(local)?;
         }
         self.clear_root_slot(snapshot)
+    }
+
+    /// Evaluates the bounds of a literal `a..b` or `a..=b` Range for a `for` loop.
+    ///
+    /// When both bounds are immediate Ints, the loop counts in Wasm locals and leaves
+    /// `snapshot` empty. Otherwise it calls `Range::until` or `Range::through`, exactly like
+    /// the desugared literal, and stores the runtime Range snapshot in `snapshot`.
+    fn begin_literal_range(
+        &mut self,
+        method: &crate::ast::Identifier<'a>,
+        arguments: &[Expression<'a>],
+        call_span: SourceSpan<'a>,
+        snapshot: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<InlineRange, CompileDiagnostics<'a>> {
+        let range_type_id = self
+            .types
+            .get("Range")
+            .map_or(-1, |range| range.id.cast_signed());
+        let key = format!("Range::{}", method.name);
+        let signature = self.signatures.get(&key).cloned().ok_or_else(|| {
+            diagnostics(CompileDiagnostic::new(
+                "E0999",
+                call_span,
+                format!("missing prelude `{key}` signature"),
+            ))
+        })?;
+        let mut bounds = Vec::with_capacity(2);
+        for argument in arguments {
+            self.compile_expression(argument)?;
+            bounds.push(self.store_stack_value()?);
+        }
+        let range = InlineRange {
+            cursor: self.allocate_local(),
+            last: self.allocate_local(),
+            step: self.allocate_local(),
+            done: self.allocate_local(),
+            inclusive: method.name == "through",
+        };
+        immediate::both_small_ints_test(&mut self.function, bounds[0], bounds[1]);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.enter_control()?;
+        immediate::push_payload(&mut self.function, bounds[0]);
+        self.function
+            .instruction(&Instruction::LocalSet(range.cursor));
+        immediate::push_payload(&mut self.function, bounds[1]);
+        self.function
+            .instruction(&Instruction::LocalSet(range.last));
+        // Like `Range::until` and `Range::through`, a start after the end counts down.
+        self.function.instruction(&Instruction::I64Const(-1));
+        self.function.instruction(&Instruction::I64Const(1));
+        self.function
+            .instruction(&Instruction::LocalGet(range.cursor));
+        self.function
+            .instruction(&Instruction::LocalGet(range.last));
+        self.function.instruction(&Instruction::I64GtS);
+        self.function.instruction(&Instruction::Select);
+        self.function
+            .instruction(&Instruction::LocalSet(range.step));
+        self.function.instruction(&Instruction::I64Const(0));
+        self.function
+            .instruction(&Instruction::LocalSet(range.done));
+        self.function.instruction(&Instruction::Else);
+        let packed_tail = self.emit_call_arguments(&bounds, &signature, call_span)?;
+        self.set_runtime_call_site(call_span)?;
+        self.function
+            .instruction(&Instruction::Call(signature.index));
+        self.return_if_fatal_error(call_span)?;
+        if let Some(list) = packed_tail {
+            self.clear_root_slot(list)?;
+        }
+        self.function
+            .instruction(&Instruction::I32Const(range_type_id));
+        self.runtime_call("__exs_rt_iter_range_snapshot", span)?;
+        self.return_if_error(span)?;
+        self.store_stack_value_in(snapshot)?;
+        self.function.instruction(&Instruction::End);
+        self.exit_control()?;
+        for bound in bounds {
+            self.clear_root_slot(bound)?;
+        }
+        Ok(range)
+    }
+
+    /// Pushes the next item of an inline literal Range, or 0 once it is exhausted.
+    ///
+    /// Mirrors the prelude `Range::next`: the cursor never moves past the end, so it stays an
+    /// immediate Int.
+    fn emit_inline_range_next(&mut self, range: &InlineRange) {
+        let (past_end_ascending, past_end_descending) = if range.inclusive {
+            (Instruction::I64GtS, Instruction::I64LtS)
+        } else {
+            (Instruction::I64GeS, Instruction::I64LeS)
+        };
+        self.function
+            .instruction(&Instruction::LocalGet(range.done));
+        self.function.instruction(&Instruction::I64Eqz);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
+        self.function
+            .instruction(&Instruction::LocalGet(range.step));
+        self.function.instruction(&Instruction::I64Const(0));
+        self.function.instruction(&Instruction::I64GtS);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(ValType::I32)));
+        self.function
+            .instruction(&Instruction::LocalGet(range.cursor));
+        self.function
+            .instruction(&Instruction::LocalGet(range.last));
+        self.function.instruction(&past_end_ascending);
+        self.function.instruction(&Instruction::Else);
+        self.function
+            .instruction(&Instruction::LocalGet(range.cursor));
+        self.function
+            .instruction(&Instruction::LocalGet(range.last));
+        self.function.instruction(&past_end_descending);
+        self.function.instruction(&Instruction::End);
+        self.function
+            .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
+        self.function.instruction(&Instruction::I64Const(0));
+        self.function.instruction(&Instruction::Else);
+        immediate::push_small_int(&mut self.function, range.cursor);
+        self.function
+            .instruction(&Instruction::LocalGet(range.cursor));
+        self.function
+            .instruction(&Instruction::LocalGet(range.last));
+        self.function.instruction(&Instruction::I64Eq);
+        self.function
+            .instruction(&Instruction::If(BlockType::Empty));
+        self.function.instruction(&Instruction::I64Const(1));
+        self.function
+            .instruction(&Instruction::LocalSet(range.done));
+        self.function.instruction(&Instruction::Else);
+        self.function
+            .instruction(&Instruction::LocalGet(range.cursor));
+        self.function
+            .instruction(&Instruction::LocalGet(range.step));
+        self.function.instruction(&Instruction::I64Add);
+        self.function
+            .instruction(&Instruction::LocalSet(range.cursor));
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::End);
+        self.function.instruction(&Instruction::Else);
+        self.function.instruction(&Instruction::I64Const(0));
+        self.function.instruction(&Instruction::End);
     }
 
     /// Emits break or continue after releasing roots local to the current loop body.

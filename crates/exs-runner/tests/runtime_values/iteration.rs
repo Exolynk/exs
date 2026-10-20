@@ -415,3 +415,73 @@ fn executes_direct_option_values() {
         ExsValue::None,
     );
 }
+
+/// Counts literal Ranges inline for immediate Ints and falls back for other bounds.
+#[test]
+fn iterates_literal_ranges_inline_and_through_the_fallback() {
+    let ints = |values: &[i64]| ExsValue::List(values.iter().copied().map(ExsValue::Int).collect());
+    assert_eq!(
+        execute_source(
+            r#"
+            fn tick(log, value) { log.push(value); ret value; }
+            fn collect_range(start: Int, end: Int, inclusive: Bool) -> List {
+                let values = [];
+                if inclusive {
+                    for value in start..=end { values.push(value); }
+                } else {
+                    for value in start..end { values.push(value); }
+                }
+                ret values;
+            }
+            fn main(input) {
+                let skipped = [];
+                for value in 0..10 {
+                    if value == 2 { continue; }
+                    if value == 6 { break; }
+                    skipped.push(value);
+                }
+                let log = [];
+                let rebound = [];
+                for value in tick(log, 1)..tick(log, 4) {
+                    value = value + 100;
+                    rebound.push(value);
+                }
+                ret [
+                    collect_range(5, 0, false),
+                    collect_range(3, 1, true),
+                    collect_range(0, 0, false),
+                    collect_range(2, 2, true),
+                    collect_range(2147483645, 2147483647, true),
+                    collect_range(-2147483648, -2147483646, false),
+                    collect_range(2147483646, 2147483649, false),
+                    skipped,
+                    log,
+                    rebound,
+                ];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ints(&[5, 4, 3, 2, 1]),
+            ints(&[3, 2, 1]),
+            ints(&[]),
+            ints(&[2]),
+            ints(&[2_147_483_645, 2_147_483_646, 2_147_483_647]),
+            ints(&[-2_147_483_648, -2_147_483_647]),
+            ints(&[2_147_483_646, 2_147_483_647, 2_147_483_648]),
+            ints(&[0, 1, 3, 4, 5]),
+            ints(&[1, 4]),
+            ints(&[101, 102, 103]),
+        ]),
+    );
+    for source in [
+        "fn main(input) { for value in \"a\"..3 { } ret 0; }",
+        "fn main(input) { for value in 1.5..3 { } ret 0; }",
+    ] {
+        let ExsValue::Error(error) = execute_source(source, ExsValue::None) else {
+            panic!("a non-Int Range bound did not return an Error");
+        };
+        assert_eq!(error.kind, "TypeError");
+    }
+}

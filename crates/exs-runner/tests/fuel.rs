@@ -36,13 +36,13 @@ const CONCAT_100_OBJECTS_FUEL: u64 = 603_319;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
 const INT_LOOP_1000_FUEL: u64 = 306_636;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
-const ASYNC_INT_LOOP_100_FUEL: u64 = 126_557;
+const ASYNC_INT_LOOP_100_FUEL: u64 = 92_129;
 /// Fuel ceiling for 1000 iterations of an empty resumable `while` loop.
 const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 204_697;
 /// Fuel ceiling for 1000 iterations of a resumable integer arithmetic `while` loop.
 const ASYNC_INT_WHILE_1000_FUEL: u64 = 367_716;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
-const FOR_RANGE_1000_FUEL: u64 = 349_732;
+const FOR_RANGE_1000_FUEL: u64 = 109_602;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
 const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 813_832;
 /// Fuel ceiling for 100 calls of a small resumable function.

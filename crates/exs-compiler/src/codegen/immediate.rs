@@ -58,6 +58,22 @@ pub(super) fn bool_from_condition(function: &mut Function) {
     function.instruction(&Instruction::I64Or);
 }
 
+/// Pushes the sign-extended `i32` payload of one immediate Int local as a plain `i64`.
+pub(super) fn push_payload(function: &mut Function, local: u32) {
+    payload_as_i64(function, local);
+}
+
+/// Pushes the immediate Int `ValueRef` of one plain `i64` local whose value fits `i32`.
+pub(super) fn push_small_int(function: &mut Function, local: u32) {
+    function.instruction(&Instruction::LocalGet(local));
+    function.instruction(&Instruction::I64Const(0xFFFF_FFFF));
+    function.instruction(&Instruction::I64And);
+    function.instruction(&Instruction::I64Const(
+        i64::from(SMALL_INT_TAG) << EXTRA_SHIFT,
+    ));
+    function.instruction(&Instruction::I64Or);
+}
+
 /// Pushes 1 when both `ValueRef` locals hold immediate Ints, else 0.
 pub(super) fn both_small_ints_test(function: &mut Function, left: u32, right: u32) {
     function.instruction(&Instruction::LocalGet(left));
