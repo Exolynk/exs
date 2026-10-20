@@ -8,7 +8,12 @@ use crate::value::RtValue;
 use crate::value::reference;
 
 /// Minimum value-table size before automatic collection becomes worthwhile.
-pub(crate) const INITIAL_COLLECTION_THRESHOLD: usize = 256;
+///
+/// Typical short scripts stay below it and never collect.
+pub(crate) const INITIAL_COLLECTION_THRESHOLD: usize = 4096;
+
+/// Factor between the live values after a collection and the table size of the next one.
+const COLLECTION_GROWTH_FACTOR: usize = 3;
 
 /// Minimum slot count of one shadow root stack chunk.
 const ROOT_CHUNK_SLOTS: usize = 4096;
@@ -95,24 +100,26 @@ pub(crate) fn restore_temporary_roots(checkpoint: usize) {
 
 /// Marks every value reachable from runtime and compiler roots, then sweeps all other slots.
 pub(crate) fn collect() {
-    let mut worklist = collect_roots();
+    // The worklist keeps its capacity between collections; it starts with the root set.
+    let mut worklist = core::mem::take(&mut unsafe { runtime() }.gc_worklist);
+    worklist.clear();
+    collect_roots(&mut worklist);
     while let Some(reference) = worklist.pop() {
         mark(reference, &mut worklist);
     }
     let live_values = sweep();
     let state = unsafe { runtime() };
+    state.gc_worklist = worklist;
     state.next_gc_at = live_values
-        .saturating_mul(2)
+        .saturating_mul(COLLECTION_GROWTH_FACTOR)
         .max(INITIAL_COLLECTION_THRESHOLD);
 }
 
-/// Copies the current root set after clearing the previous collection's marks.
-fn collect_roots() -> Vec<ValueRef> {
+/// Appends the current root set to the collection worklist.
+///
+/// Marks need no clearing pass here because the previous sweep reset them.
+fn collect_roots(roots: &mut Vec<ValueRef>) {
     let state = unsafe { runtime() };
-    for slot in state.values.iter_mut().flatten() {
-        slot.marked = false;
-    }
-    let mut roots = Vec::new();
     for frame in &state.root_stack.frames {
         let slots = &state.root_stack.chunks[frame.chunk][frame.start..frame.start + frame.len];
         roots.extend(slots.iter().copied().filter_map(raw_root));
@@ -126,7 +133,6 @@ fn collect_roots() -> Vec<ValueRef> {
     }
     roots.extend(state.temporary_roots.iter().copied());
     roots.extend(state.pinned_literals.iter().copied());
-    roots
 }
 
 /// Marks one reachable slot and queues its owned child references.
@@ -169,19 +175,24 @@ fn mark(reference: ValueRef, worklist: &mut Vec<ValueRef>) {
     }
 }
 
-/// Releases all unreachable table entries and records their reusable indices.
+/// Releases all unreachable table entries, records their reusable indices and resets marks.
 fn sweep() -> usize {
     let state = unsafe { runtime() };
     let mut live_values = 0;
-    for (index, slot) in state.values.iter_mut().enumerate() {
-        if slot.as_ref().is_some_and(|slot| !slot.marked) {
-            *slot = None;
+    for (index, entry) in state.values.iter_mut().enumerate() {
+        let Some(slot) = entry.as_mut() else {
+            continue;
+        };
+        if slot.marked {
+            // Resetting here lets the next collection start without a separate clearing pass.
+            slot.marked = false;
+            live_values += 1;
+        } else {
+            *entry = None;
             let Ok(index) = u32::try_from(index) else {
                 crate::runtime::trap();
             };
             state.free_slots.push(index);
-        } else if slot.is_some() {
-            live_values += 1;
         }
     }
     live_values

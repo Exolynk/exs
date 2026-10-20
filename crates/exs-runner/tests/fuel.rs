@@ -22,7 +22,7 @@ const SHOW_COMPARE_RECORD_FUEL: u64 = 76_797;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
 const CONCAT_10_OBJECTS_FUEL: u64 = 130_658;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 693_341;
+const CONCAT_100_OBJECTS_FUEL: u64 = 607_881;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
 const INT_LOOP_1000_FUEL: u64 = 307_224;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
@@ -38,7 +38,9 @@ const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 860_040;
 /// Fuel ceiling for 100 calls of a small resumable function.
 const ASYNC_CALL_LOOP_100_FUEL: u64 = 231_602;
 /// Fuel ceiling for 1000 iterations building one formatted line with two Ints.
-const FORMAT_LOOP_1000_FUEL: u64 = 2_819_204;
+const FORMAT_LOOP_1000_FUEL: u64 = 2_570_997;
+/// Fuel ceiling for 6000 short-lived Lists, enough allocations to trigger collections.
+const LIST_CHURN_6000_FUEL: u64 = 8_032_084;
 
 /// Script whose leading host call selects resumable lowering for an otherwise empty `while` loop.
 const ASYNC_EMPTY_WHILE_SOURCE: &str = r#"
@@ -153,6 +155,20 @@ const FORMAT_LOOP_SOURCE: &str = r#"
             index = index + 1;
         }
         ret length;
+    }
+"#;
+
+/// Script allocating one short-lived List per iteration, enough to trigger collections.
+const LIST_CHURN_SOURCE: &str = r#"
+    fn main(limit: Int) -> Int {
+        let total = 0;
+        let index = 0;
+        while index < limit {
+            let pair = [index, index];
+            total = total + pair[0];
+            index = index + 1;
+        }
+        ret total;
     }
 "#;
 
@@ -358,5 +374,17 @@ fn fuel_format_loop_1000() {
         &report,
         &ExsValue::Int(expected),
         FORMAT_LOOP_1000_FUEL,
+    );
+}
+
+/// Measures 6000 iterations allocating short-lived Lists, which triggers garbage collection.
+#[test]
+fn fuel_list_churn_6000() {
+    let report = execute_report(LIST_CHURN_SOURCE, &[ExsValue::Int(6000)]);
+    assert_fuel(
+        "list_churn_6000",
+        &report,
+        &ExsValue::Int(17_997_000),
+        LIST_CHURN_6000_FUEL,
     );
 }

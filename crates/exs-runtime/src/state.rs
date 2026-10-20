@@ -17,6 +17,8 @@ static ALLOCATOR: GlobalDlmalloc = GlobalDlmalloc;
 /// One runtime value-table entry and its collector mark state.
 pub(crate) struct HeapSlot {
     /// Whether the current collection has reached this value.
+    ///
+    /// Always false outside a collection: the sweep resets it on every survivor.
     pub(crate) marked: bool,
     /// The runtime-owned language payload.
     pub(crate) value: RtValue,
@@ -126,6 +128,8 @@ pub(crate) struct RuntimeState {
     pub(crate) free_slots: Vec<u32>,
     /// Value-table size that triggers the next automatic garbage collection.
     pub(crate) next_gc_at: usize,
+    /// Mark worklist reused by every collection to keep its capacity.
+    pub(crate) gc_worklist: Vec<ValueRef>,
     /// Compiler-generated function roots written directly by generated code.
     pub(crate) root_stack: RootStack,
     /// Durable frames for the currently active resumable root execution.
@@ -167,6 +171,7 @@ impl RuntimeState {
             values: Vec::new(),
             free_slots: Vec::new(),
             next_gc_at: crate::gc::INITIAL_COLLECTION_THRESHOLD,
+            gc_worklist: Vec::new(),
             root_stack: RootStack::new(),
             async_frames: Vec::new(),
             free_async_frames: Vec::new(),
