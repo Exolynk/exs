@@ -146,3 +146,47 @@ fn keeps_survivors_across_repeated_collections() {
         ]),
     );
 }
+
+/// Keeps every root and trace frame intact across many root-stack chunks and trace growth.
+#[test]
+fn keeps_frames_across_root_stack_chunks_and_trace_growth() {
+    assert_eq!(
+        execute_collecting(
+            r#"
+            fn sum(n: Int) -> Int {
+                let keep = [n, { n: n }, f"v{n}"];
+                if n == 0 {
+                    ret 0;
+                }
+                let below = sum(n - 1);
+                ret below + keep[1].n;
+            }
+            fn main(input) {
+                ret [sum(input), sum(input)];
+            }
+        "#,
+            ExsValue::Int(250),
+        ),
+        ExsValue::List(vec![ExsValue::Int(31_375), ExsValue::Int(31_375)]),
+    );
+    let ExsValue::Error(error) = execute_collecting(
+        r#"
+        fn down(n: Int) -> Int | Error {
+            let keep = [n, { n: n }];
+            if n == 0 {
+                ret Error("Deep", "bottom", keep[0]);
+            }
+            ret down(n - 1);
+        }
+        fn main(input) {
+            ret down(input);
+        }
+    "#,
+        ExsValue::Int(400),
+    ) else {
+        panic!("deep recursion did not return its Error");
+    };
+    assert_eq!(error.kind, "Deep");
+    // One frame per `down` call plus `main`.
+    assert_eq!(error.trace.len(), 402);
+}

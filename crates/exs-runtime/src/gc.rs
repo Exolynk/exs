@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use exs_value::ValueRef;
 
-use crate::state::{RootFrame, runtime};
+use crate::state::{registers, runtime};
 use crate::value::RtValue;
 use crate::value::reference;
 
@@ -18,65 +18,116 @@ const COLLECTION_GROWTH_FACTOR: usize = 3;
 /// Minimum slot count of one shadow root stack chunk.
 const ROOT_CHUNK_SLOTS: usize = 4096;
 
+/// Byte size of one root-stack slot holding a raw `ValueRef`.
+const ROOT_SLOT_SIZE: usize = 8;
+
 /// Creates one zeroed compiler-generated root frame and returns its first slot's address.
 ///
 /// Generated code roots a value with a plain `i64.store` of its raw form at `base + slot * 8`
 /// and clears it by storing 0, so the slot count must cover every slot the compiler emits.
+/// Generated functions push frames inline and only call this when a frame needs a new chunk.
 pub(crate) fn push_root_frame(slot_count: i32) -> i32 {
     let Ok(len) = usize::try_from(slot_count) else {
         crate::runtime::trap();
     };
+    let Some(bytes) = len
+        .checked_mul(ROOT_SLOT_SIZE)
+        .and_then(|bytes| u32::try_from(bytes).ok())
+    else {
+        crate::runtime::trap();
+    };
+    let registers = unsafe { registers() };
+    let fits = registers.root_limit != 0
+        && registers
+            .root_top
+            .checked_add(bytes)
+            .is_some_and(|end| end <= registers.root_limit);
+    let base = if fits {
+        let base = registers.root_top;
+        registers.root_top = base + bytes;
+        base
+    } else {
+        enter_next_chunk(len, bytes)
+    };
+    // SAFETY: `base..base + bytes` lies inside the current chunk, which this runtime owns.
+    unsafe { core::ptr::write_bytes(base as usize as *mut u64, 0, len) };
+    let Ok(base) = i32::try_from(base) else {
+        crate::runtime::trap();
+    };
+    base
+}
+
+/// Moves the root stack to the next chunk, sized for at least `len` slots, and returns the
+/// new frame's base address.
+fn enter_next_chunk(len: usize, bytes: u32) -> u32 {
+    let registers = unsafe { registers() };
     let stack = &mut unsafe { runtime() }.root_stack;
-    let (mut chunk, mut start) = stack
-        .frames
-        .last()
-        .map_or((0, 0), |frame| (frame.chunk, frame.start + frame.len));
-    if stack
-        .chunks
-        .get(chunk)
-        .is_some_and(|slots| start + len > slots.len())
-    {
-        chunk += 1;
-        start = 0;
-    }
+    let next = match stack.current {
+        Some(current) => {
+            stack.saved_tops.push(registers.root_top);
+            current + 1
+        }
+        None => 0,
+    };
     // Chunks after the active top frame hold no live frames, so an undersized one may be replaced.
-    if stack
-        .chunks
-        .get(chunk)
-        .is_none_or(|slots| len > slots.len())
-    {
-        let mut slots = Vec::new();
-        slots.resize(len.max(ROOT_CHUNK_SLOTS), 0);
-        let slots = slots.into_boxed_slice();
-        if chunk < stack.chunks.len() {
-            stack.chunks[chunk] = slots;
+    if stack.chunks.get(next).is_none_or(|slots| len > slots.len()) {
+        let slots = alloc::vec![0; len.max(ROOT_CHUNK_SLOTS)].into_boxed_slice();
+        if next < stack.chunks.len() {
+            stack.chunks[next] = slots;
         } else {
             stack.chunks.push(slots);
         }
     }
-    let Some(slots) = stack.chunks[chunk].get_mut(start..start + len) else {
-        crate::runtime::trap();
-    };
-    slots.fill(0);
-    let Ok(base) = i32::try_from(slots.as_mut_ptr() as usize) else {
-        crate::runtime::trap();
-    };
-    stack.frames.push(RootFrame {
-        chunk,
-        start,
-        len,
-        base,
-    });
-    base
+    stack.current = Some(next);
+    let (floor, limit) = chunk_bounds(&stack.chunks[next]);
+    registers.root_floor = floor;
+    registers.root_limit = limit;
+    registers.root_top = floor + bytes;
+    floor
 }
 
-/// Removes the current compiler-generated root frame identified by its base address.
+/// Removes the innermost root frame identified by its base address.
+///
+/// Generated functions pop inline and only call this for the first frame of a chunk.
 pub(crate) fn pop_root_frame(base: i32) {
-    let stack = &mut unsafe { runtime() }.root_stack;
-    if stack.frames.last().is_none_or(|frame| frame.base != base) {
+    let Ok(base) = u32::try_from(base) else {
+        crate::runtime::trap();
+    };
+    let registers = unsafe { registers() };
+    if base < registers.root_floor || base > registers.root_top {
         crate::runtime::trap();
     }
-    let _removed = stack.frames.pop();
+    let stack = &mut unsafe { runtime() }.root_stack;
+    match stack.current {
+        Some(current) if base == registers.root_floor && current > 0 => {
+            let Some(top) = stack.saved_tops.pop() else {
+                crate::runtime::trap();
+            };
+            let previous = current - 1;
+            stack.current = Some(previous);
+            let (floor, limit) = chunk_bounds(&stack.chunks[previous]);
+            registers.root_floor = floor;
+            registers.root_limit = limit;
+            registers.root_top = top;
+        }
+        _ => registers.root_top = base,
+    }
+}
+
+/// Returns the start and end addresses of one root-stack chunk.
+fn chunk_bounds(slots: &[u64]) -> (u32, u32) {
+    let start = slots.as_ptr() as usize;
+    let Some(end) = slots
+        .len()
+        .checked_mul(ROOT_SLOT_SIZE)
+        .and_then(|bytes| start.checked_add(bytes))
+    else {
+        crate::runtime::trap();
+    };
+    match (u32::try_from(start), u32::try_from(end)) {
+        (Ok(start), Ok(end)) => (start, end),
+        _ => crate::runtime::trap(),
+    }
 }
 
 /// Returns a checkpoint for temporary native runtime roots.
@@ -120,9 +171,18 @@ pub(crate) fn collect() {
 /// Marks need no clearing pass here because the previous sweep reset them.
 fn collect_roots(roots: &mut Vec<ValueRef>) {
     let state = unsafe { runtime() };
-    for frame in &state.root_stack.frames {
-        let slots = &state.root_stack.chunks[frame.chunk][frame.start..frame.start + frame.len];
-        roots.extend(slots.iter().copied().filter_map(raw_root));
+    if let Some(current) = state.root_stack.current {
+        let top = unsafe { registers() }.root_top;
+        for (index, slots) in state.root_stack.chunks[..=current].iter().enumerate() {
+            let end = if index == current {
+                top
+            } else {
+                state.root_stack.saved_tops[index]
+            };
+            let (floor, _) = chunk_bounds(slots);
+            let used = (end.saturating_sub(floor) as usize) / ROOT_SLOT_SIZE;
+            roots.extend(slots[..used].iter().copied().filter_map(raw_root));
+        }
     }
     for frame in state.async_frames.iter().flatten() {
         roots.extend(frame.slots().iter().copied().filter_map(raw_root));

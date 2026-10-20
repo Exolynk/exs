@@ -60,12 +60,7 @@ impl RuntimeError {
             message: String::from(message).into_boxed_str(),
             data,
             origin,
-            trace: unsafe { crate::state::runtime() }
-                .frames
-                .iter()
-                .rev()
-                .copied()
-                .collect(),
+            trace: crate::runtime::trace_snapshot(),
             cause: None,
         }
     }

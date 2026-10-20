@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 
 use dlmalloc::GlobalDlmalloc;
-use exs_abi::{ExsStackFrame, SourcePositionId};
+use exs_abi::SourcePositionId;
 use exs_value::ValueRef;
 
 use crate::scheduler::ExecutionContext;
@@ -34,27 +34,18 @@ impl HeapSlot {
     }
 }
 
-/// Location of one active ExS function invocation's slots in the shadow root stack.
-pub(crate) struct RootFrame {
-    /// Index of the chunk holding this frame's slots.
-    pub(crate) chunk: usize,
-    /// First slot of this frame within its chunk.
-    pub(crate) start: usize,
-    /// Number of compiler-declared value locals and parameters in this frame.
-    pub(crate) len: usize,
-    /// Linear-memory address of the first slot, handed to generated code as the frame token.
-    pub(crate) base: i32,
-}
-
 /// Shadow stack of compiler-generated roots that generated code writes directly in memory.
 ///
-/// Each slot holds a raw 64-bit `ValueRef`, or 0 when empty. Chunks are never reallocated while
-/// they hold active frames, so the base address of every active frame stays valid.
+/// Each slot holds a raw 64-bit `ValueRef`, or 0 when empty. Frames are pushed and popped by
+/// moving the root-top register; the runtime only switches chunks when a frame does not fit.
+/// Chunks are never reallocated while they hold active frames, so frame addresses stay valid.
 pub(crate) struct RootStack {
     /// Fixed-size slot chunks, kept after use so later frames can reuse them.
     pub(crate) chunks: Vec<Box<[u64]>>,
-    /// Active frames in call order.
-    pub(crate) frames: Vec<RootFrame>,
+    /// Index of the chunk holding the innermost frames, or `None` before the first frame.
+    pub(crate) current: Option<usize>,
+    /// Root-top address of every chunk below the current one, in chunk order.
+    pub(crate) saved_tops: Vec<u32>,
 }
 
 impl RootStack {
@@ -62,8 +53,27 @@ impl RootStack {
     const fn new() -> Self {
         Self {
             chunks: Vec::new(),
-            frames: Vec::new(),
+            current: None,
+            saved_tops: Vec::new(),
         }
+    }
+}
+
+/// Language stack of active direct calls, stored in linear memory for generated code.
+///
+/// Each entry holds the `u32` function id followed by the `u32` call site; the trace-top
+/// register marks the next free entry. Only the runtime keeps addresses into the buffer, so it
+/// may move the buffer when it grows.
+pub(crate) struct TraceStack {
+    /// Fixed-length entry storage, replaced when it grows; its used prefix ends at the
+    /// trace-top register.
+    pub(crate) buffer: Vec<u64>,
+}
+
+impl TraceStack {
+    /// Creates an empty trace stack without allocating storage.
+    const fn new() -> Self {
+        Self { buffer: Vec::new() }
     }
 }
 
@@ -174,7 +184,7 @@ pub(crate) struct RuntimeState {
     /// Source position applied to the next recoverable runtime Error.
     pub(crate) current_source_position: Option<SourcePositionId>,
     /// Active direct language calls from root to innermost frame.
-    pub(crate) frames: Vec<ExsStackFrame>,
+    pub(crate) trace_stack: TraceStack,
     /// CBOR bytes supplied by the runner for the next root execution.
     pub(crate) input_buffer: Vec<u8>,
     /// Bytes copied from one compiler-owned passive literal data segment.
@@ -204,7 +214,7 @@ impl RuntimeState {
             next_host_call_id: 1,
             temporary_roots: Vec::new(),
             current_source_position: None,
-            frames: Vec::new(),
+            trace_stack: TraceStack::new(),
             input_buffer: Vec::new(),
             literal_buffer: Vec::new(),
             result_buffer: Vec::new(),
@@ -226,6 +236,16 @@ pub struct RuntimeRegisters {
     pub pending_call_site: u32,
     /// Remaining scheduler checkpoints of the running task.
     pub quantum_remaining: u32,
+    /// Address of the next free root-stack slot in the current chunk.
+    pub root_top: u32,
+    /// End address of the current root-stack chunk, or 0 before the first frame.
+    pub root_limit: u32,
+    /// Start address of the current root-stack chunk.
+    pub root_floor: u32,
+    /// Address of the next free error-trace entry.
+    pub trace_top: u32,
+    /// End address of the error-trace buffer, or 0 before the first entry.
+    pub trace_limit: u32,
 }
 
 /// Interior-mutable holder of the runtime registers.
@@ -240,6 +260,11 @@ unsafe impl Sync for RegistersCell {}
 pub static __EXS_RT_REGISTERS: RegistersCell = RegistersCell(UnsafeCell::new(RuntimeRegisters {
     pending_call_site: 0,
     quantum_remaining: 0,
+    root_top: 0,
+    root_limit: 0,
+    root_floor: 0,
+    trace_top: 0,
+    trace_limit: 0,
 }));
 
 // Generated code addresses the registers with the shared ABI offsets.
@@ -250,6 +275,26 @@ const _: () = assert!(
 const _: () = assert!(
     core::mem::offset_of!(RuntimeRegisters, quantum_remaining)
         == exs_abi::REGISTERS_QUANTUM_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, root_top)
+        == exs_abi::REGISTERS_ROOT_TOP_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, root_limit)
+        == exs_abi::REGISTERS_ROOT_LIMIT_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, root_floor)
+        == exs_abi::REGISTERS_ROOT_FLOOR_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, trace_top)
+        == exs_abi::REGISTERS_TRACE_TOP_OFFSET as usize
+);
+const _: () = assert!(
+    core::mem::offset_of!(RuntimeRegisters, trace_limit)
+        == exs_abi::REGISTERS_TRACE_LIMIT_OFFSET as usize
 );
 
 /// Returns the runtime registers shared with generated code.

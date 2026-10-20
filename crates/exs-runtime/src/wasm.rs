@@ -288,6 +288,17 @@ pub extern "C" fn __exs_rt_frame_pop() {
     runtime::trace_frame_pop();
 }
 
+/// Grows the error-trace buffer and returns the address of the next free entry.
+///
+/// Generated functions push trace entries inline and only call this when the buffer is full.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_trace_grow() -> i32 {
+    match i32::try_from(runtime::trace_grow()) {
+        Ok(entry) => entry,
+        Err(_) => runtime::trap(),
+    }
+}
+
 /// Enters one generated synchronous function: pushes its root frame and trace frame.
 ///
 /// Returns the root frame's first slot address, like `__exs_rt_root_push`.

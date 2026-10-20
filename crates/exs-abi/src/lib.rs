@@ -218,6 +218,18 @@ pub const RUNTIME_REGISTERS_EXPORT: &str = "__EXS_RT_REGISTERS";
 pub const REGISTERS_CALL_SITE_OFFSET: u32 = 0;
 /// Byte offset of the running task's remaining scheduler checkpoints in the register block.
 pub const REGISTERS_QUANTUM_OFFSET: u32 = 4;
+/// Byte offset of the next free root-stack slot address in the register block.
+pub const REGISTERS_ROOT_TOP_OFFSET: u32 = 8;
+/// Byte offset of the current root-stack chunk's end address in the register block.
+pub const REGISTERS_ROOT_LIMIT_OFFSET: u32 = 12;
+/// Byte offset of the current root-stack chunk's start address in the register block.
+pub const REGISTERS_ROOT_FLOOR_OFFSET: u32 = 16;
+/// Byte offset of the next free error-trace entry address in the register block.
+pub const REGISTERS_TRACE_TOP_OFFSET: u32 = 20;
+/// Byte offset of the error-trace buffer's end address in the register block.
+pub const REGISTERS_TRACE_LIMIT_OFFSET: u32 = 24;
+/// Byte size of one error-trace entry: the `u32` function id followed by the `u32` call site.
+pub const TRACE_ENTRY_SIZE: u32 = 8;
 /// A host call completed synchronously and has a response available to the runtime.
 pub const HOST_CALL_READY: i32 = 0;
 /// A host call is pending and will be resumed by the runner.

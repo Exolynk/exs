@@ -14,35 +14,35 @@ use exs_runner::{CompilerStrategy, ExecutionCancellation, ExecutionReport, Serve
 use support::{block_on, compile_source};
 
 /// Fuel ceiling for an empty function, which measures pure ABI and runtime overhead.
-const EMPTY_MAIN_FUEL: u64 = 69_302;
+const EMPTY_MAIN_FUEL: u64 = 68_721;
 /// Fuel ceiling for a show function that only returns `true`.
-const SHOW_TRUE_FUEL: u64 = 69_320;
+const SHOW_TRUE_FUEL: u64 = 68_739;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 76_790;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 76_209;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 130_487;
+const CONCAT_10_OBJECTS_FUEL: u64 = 130_430;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 603_220;
+const CONCAT_100_OBJECTS_FUEL: u64 = 603_319;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
-const INT_LOOP_1000_FUEL: u64 = 307_217;
+const INT_LOOP_1000_FUEL: u64 = 306_636;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
-const ASYNC_INT_LOOP_100_FUEL: u64 = 126_970;
+const ASYNC_INT_LOOP_100_FUEL: u64 = 126_557;
 /// Fuel ceiling for 1000 iterations of an empty resumable `while` loop.
-const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 204_748;
+const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 204_697;
 /// Fuel ceiling for 1000 iterations of a resumable integer arithmetic `while` loop.
-const ASYNC_INT_WHILE_1000_FUEL: u64 = 367_767;
+const ASYNC_INT_WHILE_1000_FUEL: u64 = 367_716;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
-const FOR_RANGE_1000_FUEL: u64 = 350_145;
+const FOR_RANGE_1000_FUEL: u64 = 349_732;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
-const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 814_245;
+const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 813_832;
 /// Fuel ceiling for 100 calls of a small resumable function.
-const ASYNC_CALL_LOOP_100_FUEL: u64 = 196_790;
+const ASYNC_CALL_LOOP_100_FUEL: u64 = 196_539;
 /// Fuel ceiling for 1000 iterations building one formatted line with two Ints.
-const FORMAT_LOOP_1000_FUEL: u64 = 2_570_990;
+const FORMAT_LOOP_1000_FUEL: u64 = 2_570_409;
 /// Fuel ceiling for 6000 short-lived Lists, enough allocations to trigger collections.
-const LIST_CHURN_6000_FUEL: u64 = 8_032_077;
+const LIST_CHURN_6000_FUEL: u64 = 8_031_457;
 /// Fuel ceiling for 1000 calls of a small typed function.
-const SYNC_CALL_LOOP_1000_FUEL: u64 = 553_211;
+const SYNC_CALL_LOOP_1000_FUEL: u64 = 370_630;
 
 /// Script whose leading host call selects resumable lowering for an otherwise empty `while` loop.
 const ASYNC_EMPTY_WHILE_SOURCE: &str = r#"

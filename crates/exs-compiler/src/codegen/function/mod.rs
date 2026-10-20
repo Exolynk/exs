@@ -27,7 +27,7 @@ pub(super) use signature::{
 
 /// Number of Wasm i32 scalar locals declared after the ValueRef locals, starting with the root
 /// frame base address.
-const SCALAR_LOCAL_COUNT: u32 = 5;
+const SCALAR_LOCAL_COUNT: u32 = 6;
 
 /// Immutable module-wide dependencies used while lowering one direct function.
 pub(super) struct FunctionCompilerContext<'a, 'module> {
@@ -84,6 +84,8 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     variadic_length_local: u32,
     /// Wasm i32 local holding the current variadic List index during parameter validation.
     variadic_index_local: u32,
+    /// Scalar i32 local holding this function's error-trace entry address during entry.
+    trace_entry_local: u32,
     root_frame_local: u32,
     control_depth: u32,
     function_id: u32,
@@ -163,6 +165,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             literal_pointer_local: root_frame_local + 2,
             variadic_length_local: root_frame_local + 3,
             variadic_index_local: root_frame_local + 4,
+            trace_entry_local: root_frame_local + 5,
             root_frame_local,
             control_depth: 0,
             function_id: context

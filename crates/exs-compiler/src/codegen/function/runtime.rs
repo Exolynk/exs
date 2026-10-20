@@ -117,6 +117,18 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.runtime_call("__exs_rt_object_is_type", span)
     }
 
+    /// Returns the runtime exports used by inline function entry and exit.
+    fn frame_exports(
+        &self,
+    ) -> Result<crate::codegen::registers::FrameExports, CompileDiagnostics<'a>> {
+        let span = self.declaration.span;
+        Ok(crate::codegen::registers::FrameExports {
+            root_push: self.runtime_function("__exs_rt_root_push", span)?,
+            root_pop: self.runtime_function("__exs_rt_root_pop", span)?,
+            trace_grow: self.runtime_function("__exs_rt_trace_grow", span)?,
+        })
+    }
+
     /// Returns the function index of one runtime ABI export.
     pub(super) fn runtime_function(
         &self,
@@ -258,14 +270,19 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 "too many root slots for the Wasm i32 ABI",
             ))
         })?;
-        // One runtime call pushes both the root frame and the language stack frame.
-        self.function
-            .instruction(&Instruction::I32Const(self.function_id.cast_signed()));
-        self.function
-            .instruction(&Instruction::I32Const(slot_count));
-        self.runtime_call("__exs_rt_function_enter", self.declaration.span)?;
-        self.function
-            .instruction(&Instruction::LocalSet(self.root_frame_local));
+        // The root frame and language stack frame are pushed inline; the runtime only runs when
+        // a frame needs a new root-stack chunk or the trace buffer is full.
+        let exports = self.frame_exports()?;
+        for instruction in crate::codegen::registers::function_enter(
+            self.registers_address,
+            exports,
+            self.function_id,
+            slot_count.cast_unsigned(),
+            self.root_frame_local,
+            self.trace_entry_local,
+        ) {
+            self.function.instruction(&instruction);
+        }
         let signature = self.signatures.get(&self.signature_key).ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0999",
@@ -415,9 +432,14 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     /// Returns the ValueRef on the stack after safely removing this function's root frame.
     pub(super) fn return_stack_value(&mut self) -> Result<(), CompileDiagnostics<'a>> {
         let result = self.store_stack_value()?;
-        self.function
-            .instruction(&Instruction::LocalGet(self.root_frame_local));
-        self.runtime_call("__exs_rt_function_leave", self.declaration.span)?;
+        let exports = self.frame_exports()?;
+        for instruction in crate::codegen::registers::function_leave(
+            self.registers_address,
+            exports,
+            self.root_frame_local,
+        ) {
+            self.function.instruction(&instruction);
+        }
         self.function.instruction(&Instruction::LocalGet(result));
         self.function.instruction(&Instruction::Return);
         Ok(())

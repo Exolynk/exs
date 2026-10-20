@@ -127,24 +127,82 @@ pub(crate) const fn none_value() -> ValueRef {
     ValueRef::NONE
 }
 
+/// Initial number of entries in the trace buffer.
+const TRACE_INITIAL_ENTRIES: usize = 64;
+
 /// Pushes one language stack frame, consuming the pending call site from the registers.
+///
+/// Generated synchronous functions push their entries inline and share this layout.
 pub(crate) fn trace_frame_push(function_id: i32) {
     let Ok(function_id) = u32::try_from(function_id) else {
         trap();
     };
     let registers = unsafe { crate::state::registers() };
     let call_site = core::mem::take(&mut registers.pending_call_site);
-    unsafe { runtime() }.frames.push(exs_abi::ExsStackFrame {
-        function_id,
-        call_site: exs_abi::SourcePositionId(call_site),
-    });
+    let entry = if registers.trace_top < registers.trace_limit {
+        registers.trace_top
+    } else {
+        trace_grow()
+    };
+    // SAFETY: `entry` is the next free, aligned entry inside the runtime-owned trace buffer.
+    unsafe {
+        (entry as usize as *mut u64).write(u64::from(function_id) | (u64::from(call_site) << 32));
+    }
+    registers.trace_top = entry + exs_abi::TRACE_ENTRY_SIZE;
 }
 
 /// Removes the innermost language stack frame.
 pub(crate) fn trace_frame_pop() {
-    if unsafe { runtime() }.frames.pop().is_none() {
+    let registers = unsafe { crate::state::registers() };
+    let base = trace_base();
+    if registers.trace_top <= base {
         trap();
     }
+    registers.trace_top -= exs_abi::TRACE_ENTRY_SIZE;
+}
+
+/// Doubles the trace buffer, keeping its entries, and returns the next free entry address.
+pub(crate) fn trace_grow() -> u32 {
+    let registers = unsafe { crate::state::registers() };
+    let used = if registers.trace_limit == 0 {
+        0
+    } else {
+        ((registers.trace_top - trace_base()) / exs_abi::TRACE_ENTRY_SIZE) as usize
+    };
+    let stack = &mut unsafe { runtime() }.trace_stack;
+    let capacity = (stack.buffer.len() * 2).max(TRACE_INITIAL_ENTRIES);
+    let mut buffer = alloc::vec![0_u64; capacity];
+    buffer[..used].copy_from_slice(&stack.buffer[..used]);
+    stack.buffer = buffer;
+    let base = trace_base();
+    registers.trace_limit = base + (capacity as u32) * exs_abi::TRACE_ENTRY_SIZE;
+    registers.trace_top = base + (used as u32) * exs_abi::TRACE_ENTRY_SIZE;
+    registers.trace_top
+}
+
+/// Returns the start address of the trace buffer.
+fn trace_base() -> u32 {
+    match u32::try_from(unsafe { runtime() }.trace_stack.buffer.as_ptr() as usize) {
+        Ok(base) => base,
+        Err(_) => trap(),
+    }
+}
+
+/// Returns the active language stack frames from innermost to root.
+pub(crate) fn trace_snapshot() -> Vec<exs_abi::ExsStackFrame> {
+    let registers = unsafe { crate::state::registers() };
+    if registers.trace_limit == 0 {
+        return Vec::new();
+    }
+    let used = ((registers.trace_top - trace_base()) / exs_abi::TRACE_ENTRY_SIZE) as usize;
+    unsafe { runtime() }.trace_stack.buffer[..used]
+        .iter()
+        .rev()
+        .map(|entry| exs_abi::ExsStackFrame {
+            function_id: *entry as u32,
+            call_site: exs_abi::SourcePositionId((*entry >> 32) as u32),
+        })
+        .collect()
 }
 
 /// Returns the immediate Bool value.
@@ -738,8 +796,8 @@ pub(crate) fn async_frame_pop_trace(frame: i32) {
         .and_then(Option::as_mut)
         .map(|frame| core::mem::replace(&mut frame.traced, false))
         .unwrap_or_else(|| trap());
-    if traced && unsafe { runtime() }.frames.pop().is_none() {
-        trap();
+    if traced {
+        trace_frame_pop();
     }
 }
 
