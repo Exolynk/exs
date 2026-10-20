@@ -833,6 +833,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "exs-fuel-baseline"
+version = "0.1.0"
+dependencies = [
+ "exs-abi",
+ "exs-compiler",
+ "exs-guest",
+ "exs-runner",
+]
+
+[[package]]
 name = "exs-guest"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,28 @@
+[package]
+name = "exs-fuel-baseline"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+compare = ["dep:exs-abi", "dep:exs-compiler", "dep:exs-runner"]
+
+[dependencies]
+exs-guest = { path = "../../crates/exs-guest" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+exs-abi = { path = "../../crates/exs-abi", optional = true }
+exs-compiler = { path = "../../crates/exs-compiler", optional = true }
+exs-runner = { path = "../../crates/exs-runner", optional = true }
+
+[[bin]]
+name = "compare"
+path = "src/bin/compare.rs"
+required-features = ["compare"]

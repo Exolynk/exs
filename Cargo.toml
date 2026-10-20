@@ -10,6 +10,7 @@ members = [
     "crates/exs-cli",
     "examples/playground",
     "examples/rust-guest",
+    "examples/fuel-baseline",
 ]
 resolver = "3"
 
