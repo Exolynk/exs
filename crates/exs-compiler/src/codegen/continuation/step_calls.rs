@@ -8,6 +8,7 @@ use exs_value::ValueRef;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 use crate::ast::{BinaryOperator, Expression};
+use crate::codegen::builtin_calls::builtin_call;
 use crate::codegen::function::InstanceMethod;
 use crate::codegen::source_map::requires_source_position;
 use crate::codegen::trait_registry::TraitOperator;
@@ -397,12 +398,15 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         destination: u32,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
-        if let Some(export) = builtin_runtime_method_export(method, arguments.len()) {
+        if let Some(call) = builtin_call(method, arguments.len()) {
             self.get_slot(receiver, span)?;
+            if let Some(method) = call.method {
+                self.function.instruction(&Instruction::I32Const(method));
+            }
             for argument in arguments {
                 self.get_slot(*argument, span)?;
             }
-            self.call_runtime(export, span)?;
+            self.call_runtime(call.export, span)?;
             self.set_slot(destination, span)?;
             return self.ready(next, span);
         }
@@ -1047,24 +1051,6 @@ pub(super) fn slot_memory(slot: u32) -> MemArg {
         offset: u64::from(ASYNC_FRAME_SLOTS_OFFSET) + u64::from(slot) * 8,
         align: 3,
         memory_index: 0,
-    }
-}
-
-/// Returns the direct runtime export for one fixed-arity built-in member fallback.
-fn builtin_runtime_method_export(method: &str, arity: usize) -> Option<&'static str> {
-    match (method, arity) {
-        ("length", 0) => Some("__exs_rt_length"),
-        ("is_empty", 0) => Some("__exs_rt_is_empty"),
-        ("slice", 2) => Some("__exs_rt_slice"),
-        ("contains", 1) => Some("__exs_rt_contains"),
-        ("starts_with", 1) => Some("__exs_rt_starts_with"),
-        ("ends_with", 1) => Some("__exs_rt_ends_with"),
-        ("trim", 0) => Some("__exs_rt_trim"),
-        ("trim_start", 0) => Some("__exs_rt_trim_start"),
-        ("trim_end", 0) => Some("__exs_rt_trim_end"),
-        ("replace", 2) => Some("__exs_rt_replace"),
-        ("split", 1) => Some("__exs_rt_split"),
-        _ => None,
     }
 }
 

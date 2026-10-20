@@ -518,3 +518,89 @@ fn static_math_functions_require_float_arguments() {
     };
     assert_eq!(error.kind, "TypeError");
 }
+
+/// Runs built-in methods through the direct and inline paths with the dispatcher's results.
+#[test]
+fn calls_builtin_methods_directly_with_dispatcher_semantics() {
+    let values: [i64; 11] = [
+        -7,
+        7,
+        -2,
+        2,
+        0,
+        1,
+        -1,
+        2_147_483_647,
+        -2_147_483_648,
+        3_000_000_000,
+        -3_000_000_000,
+    ];
+    let source = r#"
+        fn describe(value) {
+            if value is Error { ret "E:" + value.kind(); }
+            ret value;
+        }
+        fn main(values: List) -> List {
+            let results = [];
+            for left in values {
+                results.push(left.to_string());
+                for right in values {
+                    results.push(describe(left.div_euclid(right)));
+                    results.push(describe(left.rem_euclid(right)));
+                }
+            }
+            let seven = 7;
+            let nine = 9;
+            let negative = -5;
+            results.push(describe("ab".div_euclid(2)));
+            results.push(describe(seven.div_euclid(2.5)));
+            results.push(describe(seven.abs(1)));
+            results.push(describe(seven.unknown()));
+            results.push("ab".repeat(3));
+            results.push(nine.clamp(1, 4));
+            results.push([4, 5].first());
+            results.push({ a: 1 }.get("a"));
+            results.push(negative.abs());
+            ret results;
+        }
+    "#;
+    let mut expected = Vec::new();
+    for left in values {
+        expected.push(ExsValue::String(left.to_string()));
+        for right in values {
+            for result in [
+                left.checked_div_euclid(right),
+                left.checked_rem_euclid(right),
+            ] {
+                expected.push(match result {
+                    Some(value) => ExsValue::Int(value),
+                    None => ExsValue::String("E:DivisionByZeroError".to_owned()),
+                });
+            }
+        }
+    }
+    for text in [
+        "E:TypeError",
+        "E:TypeError",
+        "E:ArityError",
+        "E:MethodNotFound",
+    ] {
+        expected.push(ExsValue::String(text.to_owned()));
+    }
+    expected.extend([
+        ExsValue::String("ababab".to_owned()),
+        ExsValue::Int(4),
+        ExsValue::Int(4),
+        ExsValue::Int(1),
+        ExsValue::Int(5),
+    ]);
+    let input = ExsValue::List(values.iter().copied().map(ExsValue::Int).collect());
+    // Any closure makes every function resumable, which selects the continuation lowering.
+    let resumable = format!("{source} fn force_resumable() {{ ret () => {{ ret 1; }}; }}");
+    for source in [source, resumable.as_str()] {
+        assert_eq!(
+            execute_source(source, input.clone()),
+            ExsValue::List(expected.clone())
+        );
+    }
+}

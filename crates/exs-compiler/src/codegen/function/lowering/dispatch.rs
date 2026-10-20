@@ -1,4 +1,6 @@
 use super::*;
+use crate::codegen::builtin_calls::builtin_call;
+use crate::codegen::immediate::IntOperation;
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
     /// Compiles one static nominal type method call.
@@ -145,6 +147,29 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             argument_locals.push(self.store_stack_value()?);
         }
         let targets = self.methods.instance(&method.name).map(ToOwned::to_owned);
+        let inline = IntOperation::from_method(&method.name, argument_locals.len());
+        if let (Some(operation), [divisor]) = (inline, argument_locals.as_slice()) {
+            // An immediate Int is never a nominal Object, so the inline result is exactly what
+            // the dispatch below would return; a zero divisor keeps the runtime's Error.
+            let int_new = self.runtime_function("__exs_rt_int_new", span)?;
+            immediate::both_small_ints_test(&mut self.function, receiver, *divisor);
+            self.function.instruction(&Instruction::LocalGet(*divisor));
+            self.function.instruction(&Instruction::I32WrapI64);
+            self.function.instruction(&Instruction::I32Const(0));
+            self.function.instruction(&Instruction::I32Ne);
+            self.function.instruction(&Instruction::I32And);
+            self.function
+                .instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
+            self.enter_control()?;
+            operation.emit(
+                &mut self.function,
+                receiver,
+                *divisor,
+                self.immediate_scratch_local,
+                int_new,
+            );
+            self.function.instruction(&Instruction::Else);
+        }
         self.emit_instance_method_dispatch(
             targets.as_deref().unwrap_or_default(),
             0,
@@ -153,6 +178,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             method,
             span,
         )?;
+        if inline.is_some() && argument_locals.len() == 1 {
+            self.function.instruction(&Instruction::End);
+            self.exit_control()?;
+        }
         self.clear_root_slot(receiver)?;
         for argument in argument_locals {
             self.clear_root_slot(argument)?;
@@ -334,12 +363,15 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         method: &crate::ast::Identifier<'a>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if let Some(export) = builtin_runtime_method_export(&method.name, arguments.len()) {
+        if let Some(call) = builtin_call(&method.name, arguments.len()) {
             self.function.instruction(&Instruction::LocalGet(receiver));
+            if let Some(method) = call.method {
+                self.function.instruction(&Instruction::I32Const(method));
+            }
             for argument in arguments {
                 self.function.instruction(&Instruction::LocalGet(*argument));
             }
-            return self.runtime_call(export, span);
+            return self.runtime_call(call.export, span);
         }
         self.runtime_call("__exs_rt_list_new", span)?;
         let list = self.store_stack_value()?;
@@ -357,23 +389,5 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.runtime_call("__exs_rt_call_method", span)?;
         self.clear_root_slot(method)?;
         self.clear_root_slot(list)
-    }
-}
-
-/// Returns the direct runtime export for one fixed-arity built-in member fallback.
-fn builtin_runtime_method_export(method: &str, arity: usize) -> Option<&'static str> {
-    match (method, arity) {
-        ("length", 0) => Some("__exs_rt_length"),
-        ("is_empty", 0) => Some("__exs_rt_is_empty"),
-        ("slice", 2) => Some("__exs_rt_slice"),
-        ("contains", 1) => Some("__exs_rt_contains"),
-        ("starts_with", 1) => Some("__exs_rt_starts_with"),
-        ("ends_with", 1) => Some("__exs_rt_ends_with"),
-        ("trim", 0) => Some("__exs_rt_trim"),
-        ("trim_start", 0) => Some("__exs_rt_trim_start"),
-        ("trim_end", 0) => Some("__exs_rt_trim_end"),
-        ("replace", 2) => Some("__exs_rt_replace"),
-        ("split", 1) => Some("__exs_rt_split"),
-        _ => None,
     }
 }

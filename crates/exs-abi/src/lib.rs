@@ -6,6 +6,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub use builtin_method::BuiltinMethod;
+
+mod builtin_method;
 pub mod cbor;
 #[cfg(feature = "serde")]
 mod serde;

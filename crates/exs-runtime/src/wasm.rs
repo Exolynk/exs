@@ -969,6 +969,34 @@ pub extern "C" fn __exs_rt_range_finish(
     value::operations::range_finish(range, range_type_id, cursor, state);
 }
 
+/// Calls the zero-argument built-in method with index `method` on one receiver.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_call_builtin0(receiver: ValueRef, method: i32) -> ValueRef {
+    let none = runtime::none_value();
+    value::operations::call_builtin_id(method, receiver, none, none)
+}
+
+/// Calls the one-argument built-in method with index `method` on one receiver.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_call_builtin1(
+    receiver: ValueRef,
+    method: i32,
+    first: ValueRef,
+) -> ValueRef {
+    value::operations::call_builtin_id(method, receiver, first, runtime::none_value())
+}
+
+/// Calls the two-argument built-in method with index `method` on one receiver.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_call_builtin2(
+    receiver: ValueRef,
+    method: i32,
+    first: ValueRef,
+    second: ValueRef,
+) -> ValueRef {
+    value::operations::call_builtin_id(method, receiver, first, second)
+}
+
 /// Returns a NotIterable error for a snapshot the synchronous for lowering cannot advance.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_iter_unsupported(snapshot: ValueRef) -> ValueRef {

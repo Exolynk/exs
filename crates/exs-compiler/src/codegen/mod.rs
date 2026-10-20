@@ -1,5 +1,6 @@
 //! WebAssembly code generation and runtime-template linking.
 
+mod builtin_calls;
 mod continuation;
 mod entry;
 mod function;

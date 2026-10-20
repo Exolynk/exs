@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use core::str::FromStr;
 
 use exs_abi::{
-    RANGE_BEGIN_FALLBACK, RANGE_STATE_FINISHED, RANGE_STATE_LAST,
+    BuiltinMethod, RANGE_BEGIN_FALLBACK, RANGE_STATE_FINISHED, RANGE_STATE_LAST,
     STANDARD_ITERATOR_STEP_TYPE_IDENTITY, STANDARD_ORDERING_TYPE_ID,
     STANDARD_ORDERING_TYPE_IDENTITY,
 };
@@ -59,6 +59,13 @@ const fn int_len(number: i64) -> usize {
 /// Appends the decimal rendering of one Int without going through `core::fmt`.
 fn push_int(buffer: &mut String, number: i64) {
     let mut digits = [0_u8; 20];
+    buffer.push_str(int_text(number, &mut digits));
+}
+
+/// Writes the decimal text of one Int into the end of `digits` and returns it.
+///
+/// Twenty bytes hold every `i64`, including the sign of `i64::MIN`.
+fn int_text(number: i64, digits: &mut [u8; 20]) -> &str {
     let mut position = digits.len();
     let mut remaining = number.unsigned_abs();
     loop {
@@ -71,12 +78,11 @@ fn push_int(buffer: &mut String, number: i64) {
         }
     }
     if number < 0 {
-        buffer.push('-');
+        position -= 1;
+        digits[position] = b'-';
     }
-    match core::str::from_utf8(&digits[position..]) {
-        Ok(text) => buffer.push_str(text),
-        Err(_) => crate::runtime::trap(),
-    }
+    // SAFETY: only ASCII digits and the minus sign were written from `position` onward.
+    unsafe { core::str::from_utf8_unchecked(&digits[position..]) }
 }
 
 /// Appends the `+` rendering of one String, Bool, Int, or Float, or returns false otherwise.
@@ -2449,93 +2455,88 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
         Ok(method) => method,
         Err(error) => return error,
     };
-    match method.as_str() {
-        "add" => match list::operations::single_argument(arguments) {
-            Ok(argument) => add(receiver, argument),
-            Err(error) => error,
+    let Some(builtin) = BuiltinMethod::from_name(method.as_str()) else {
+        return runtime::recoverable_error(
+            "MethodNotFound",
+            "receiver does not support this method",
+            receiver,
+        );
+    };
+    let none = runtime::none_value();
+    let (first, second) = match builtin.arity() {
+        0 => match list::operations::require_no_arguments(arguments) {
+            Ok(()) => (none, none),
+            Err(error) => return error,
         },
-        "sub" => match list::operations::single_argument(arguments) {
-            Ok(argument) => subtract(receiver, argument),
-            Err(error) => error,
+        1 => match list::operations::single_argument(arguments) {
+            Ok(argument) => (argument, none),
+            Err(error) => return error,
         },
-        "mul" => match list::operations::single_argument(arguments) {
-            Ok(argument) => multiply(receiver, argument),
-            Err(error) => error,
+        _ => match list::operations::two_arguments(arguments) {
+            Ok(arguments) => arguments,
+            Err(error) => return error,
         },
-        "div" => match list::operations::single_argument(arguments) {
-            Ok(argument) => divide(receiver, argument),
-            Err(error) => error,
+    };
+    call_builtin(builtin, receiver, first, second)
+}
+
+/// Runs the built-in method with index `method`, as the compiler's direct calls do.
+///
+/// Traps on an index the compiler never emits.
+pub(crate) fn call_builtin_id(
+    method: i32,
+    receiver: ValueRef,
+    first: ValueRef,
+    second: ValueRef,
+) -> ValueRef {
+    let Some(method) = u32::try_from(method).ok().and_then(BuiltinMethod::from_id) else {
+        runtime::trap();
+    };
+    call_builtin(method, receiver, first, second)
+}
+
+/// Runs one built-in method with its already counted arguments.
+///
+/// Shared by the name-based `call_method` and the compiler's direct fixed-arity calls.
+///
+/// Arguments beyond the method's arity are ignored; callers pass None for them.
+pub(crate) fn call_builtin(
+    method: BuiltinMethod,
+    receiver: ValueRef,
+    first: ValueRef,
+    second: ValueRef,
+) -> ValueRef {
+    match method {
+        BuiltinMethod::Add => add(receiver, first),
+        BuiltinMethod::Sub => subtract(receiver, first),
+        BuiltinMethod::Mul => multiply(receiver, first),
+        BuiltinMethod::Div => divide(receiver, first),
+        BuiltinMethod::DivEuclid => numeric::divide_euclid(receiver, first),
+        BuiltinMethod::RemEuclid => numeric::remainder_euclid(receiver, first),
+        BuiltinMethod::Compare => compare(receiver, first),
+        BuiltinMethod::ToString | BuiltinMethod::Debug => render_default(receiver),
+        BuiltinMethod::Abs => match runtime::value(receiver) {
+            Value::Int(_) => integer_abs(receiver),
+            Value::Float(_) => float_abs(receiver),
+            _ => runtime::recoverable_error(
+                "TypeError",
+                "abs requires an Int or Float receiver",
+                receiver,
+            ),
         },
-        "div_euclid" => match list::operations::single_argument(arguments) {
-            Ok(argument) => numeric::divide_euclid(receiver, argument),
-            Err(error) => error,
-        },
-        "rem_euclid" => match list::operations::single_argument(arguments) {
-            Ok(argument) => numeric::remainder_euclid(receiver, argument),
-            Err(error) => error,
-        },
-        "compare" => match list::operations::single_argument(arguments) {
-            Ok(argument) => compare(receiver, argument),
-            Err(error) => error,
-        },
-        "to_string" | "debug" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => render_default(receiver),
-            Err(error) => error,
-        },
-        "abs" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => match runtime::value(receiver) {
-                Value::Int(_) => integer_abs(receiver),
-                Value::Float(_) => float_abs(receiver),
-                _ => runtime::recoverable_error(
-                    "TypeError",
-                    "abs requires an Int or Float receiver",
-                    receiver,
-                ),
-            },
-            Err(error) => error,
-        },
-        "floor" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_floor(receiver),
-            Err(error) => error,
-        },
-        "ceil" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_ceil(receiver),
-            Err(error) => error,
-        },
-        "round" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_round(receiver),
-            Err(error) => error,
-        },
-        "trunc" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_trunc(receiver),
-            Err(error) => error,
-        },
-        "fract" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_fract(receiver),
-            Err(error) => error,
-        },
-        "signum" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => integer_signum(receiver),
-            Err(error) => error,
-        },
-        "is_even" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => integer_is_even(receiver),
-            Err(error) => error,
-        },
-        "is_odd" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => integer_is_odd(receiver),
-            Err(error) => error,
-        },
-        "gcd" => match list::operations::single_argument(arguments) {
-            Ok(other) => integer_gcd(receiver, other),
-            Err(error) => error,
-        },
-        "lcm" => match list::operations::single_argument(arguments) {
-            Ok(other) => integer_lcm(receiver, other),
-            Err(error) => error,
-        },
-        "pow" => match list::operations::single_argument(arguments) {
-            Ok(other) => match runtime::value(receiver) {
+        BuiltinMethod::Floor => float_floor(receiver),
+        BuiltinMethod::Ceil => float_ceil(receiver),
+        BuiltinMethod::Round => float_round(receiver),
+        BuiltinMethod::Trunc => float_trunc(receiver),
+        BuiltinMethod::Fract => float_fract(receiver),
+        BuiltinMethod::Signum => integer_signum(receiver),
+        BuiltinMethod::IsEven => integer_is_even(receiver),
+        BuiltinMethod::IsOdd => integer_is_odd(receiver),
+        BuiltinMethod::Gcd => integer_gcd(receiver, first),
+        BuiltinMethod::Lcm => integer_lcm(receiver, first),
+        BuiltinMethod::Pow => {
+            let other = first;
+            match runtime::value(receiver) {
                 Value::Int(_) => integer_pow(receiver, other),
                 Value::Float(_) => float_pow(receiver, other),
                 _ => runtime::recoverable_error(
@@ -2543,11 +2544,11 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "pow requires an Int or Float receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "min" => match list::operations::single_argument(arguments) {
-            Ok(other) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::Min => {
+            let other = first;
+            match runtime::value(receiver) {
                 Value::Int(_) => integer_min(receiver, other),
                 Value::Float(_) => float_min(receiver, other),
                 _ => runtime::recoverable_error(
@@ -2555,11 +2556,11 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "min requires an Int or Float receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "max" => match list::operations::single_argument(arguments) {
-            Ok(other) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::Max => {
+            let other = first;
+            match runtime::value(receiver) {
                 Value::Int(_) => integer_max(receiver, other),
                 Value::Float(_) => float_max(receiver, other),
                 _ => runtime::recoverable_error(
@@ -2567,11 +2568,11 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "max requires an Int or Float receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "clamp" => match list::operations::two_arguments(arguments) {
-            Ok((minimum, maximum)) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::Clamp => {
+            let (minimum, maximum) = (first, second);
+            match runtime::value(receiver) {
                 Value::Int(_) => integer_clamp(receiver, minimum, maximum),
                 Value::Float(_) => float_clamp(receiver, minimum, maximum),
                 _ => runtime::recoverable_error(
@@ -2579,51 +2580,21 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "clamp requires an Int or Float receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "to_float" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => integer_to_float(receiver),
-            Err(error) => error,
-        },
-        "to_int" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_to_int(receiver),
-            Err(error) => error,
-        },
-        "is_nan" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_is_nan(receiver),
-            Err(error) => error,
-        },
-        "is_finite" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_is_finite(receiver),
-            Err(error) => error,
-        },
-        "is_infinite" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_is_infinite(receiver),
-            Err(error) => error,
-        },
-        "sqrt" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => float_sqrt(receiver),
-            Err(error) => error,
-        },
-        "clone" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => clone::deep_clone(receiver),
-            Err(error) => error,
-        },
-        "length" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => length(receiver),
-            Err(error) => error,
-        },
-        "is_empty" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => is_empty(receiver),
-            Err(error) => error,
-        },
-        "to_list" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => bytes_to_list(receiver),
-            Err(error) => error,
-        },
-        "slice" => match list::operations::two_arguments(arguments) {
-            Ok((start, end)) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::ToFloat => integer_to_float(receiver),
+        BuiltinMethod::ToInt => float_to_int(receiver),
+        BuiltinMethod::IsNan => float_is_nan(receiver),
+        BuiltinMethod::IsFinite => float_is_finite(receiver),
+        BuiltinMethod::IsInfinite => float_is_infinite(receiver),
+        BuiltinMethod::Sqrt => float_sqrt(receiver),
+        BuiltinMethod::Clone => clone::deep_clone(receiver),
+        BuiltinMethod::Length => length(receiver),
+        BuiltinMethod::IsEmpty => is_empty(receiver),
+        BuiltinMethod::ToList => bytes_to_list(receiver),
+        BuiltinMethod::Slice => {
+            let (start, end) = (first, second);
+            match runtime::value(receiver) {
                 Value::Bytes(_) => bytes_slice(receiver, start, end),
                 Value::String(_) => string_slice(receiver, start, end),
                 Value::List(_) => list::operations::slice(receiver, start, end),
@@ -2632,23 +2603,14 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "slice requires a Bytes, List, or String receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "concat" => match list::operations::single_argument(arguments) {
-            Ok(other) => bytes_concat(receiver, other),
-            Err(error) => error,
-        },
-        "decode_utf8" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => bytes_decode_utf8(receiver),
-            Err(error) => error,
-        },
-        "encode_utf8" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => bytes_from_utf8(receiver),
-            Err(error) => error,
-        },
-        "contains" => match list::operations::single_argument(arguments) {
-            Ok(other) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::Concat => bytes_concat(receiver, first),
+        BuiltinMethod::DecodeUtf8 => bytes_decode_utf8(receiver),
+        BuiltinMethod::EncodeUtf8 => bytes_from_utf8(receiver),
+        BuiltinMethod::Contains => {
+            let other = first;
+            match runtime::value(receiver) {
                 Value::Bytes(_) => bytes_contains(receiver, other),
                 Value::String(_) => string_contains(receiver, other),
                 Value::List(_) => list::operations::contains(receiver, other),
@@ -2657,11 +2619,11 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "contains requires a Bytes, List, or String receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "starts_with" => match list::operations::single_argument(arguments) {
-            Ok(other) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::StartsWith => {
+            let other = first;
+            match runtime::value(receiver) {
                 Value::Bytes(_) => bytes_starts_with(receiver, other),
                 Value::String(_) => string_starts_with(receiver, other),
                 _ => runtime::recoverable_error(
@@ -2669,11 +2631,11 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "starts_with requires a Bytes or String receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "ends_with" => match list::operations::single_argument(arguments) {
-            Ok(other) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::EndsWith => {
+            let other = first;
+            match runtime::value(receiver) {
                 Value::Bytes(_) => bytes_ends_with(receiver, other),
                 Value::String(_) => string_ends_with(receiver, other),
                 _ => runtime::recoverable_error(
@@ -2681,11 +2643,11 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "ends_with requires a Bytes or String receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "repeat" => match list::operations::single_argument(arguments) {
-            Ok(count) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::Repeat => {
+            let count = first;
+            match runtime::value(receiver) {
                 Value::Bytes(_) => bytes_repeat(receiver, count),
                 Value::String(_) => string_repeat(receiver, count),
                 _ => runtime::recoverable_error(
@@ -2693,71 +2655,26 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "repeat requires a Bytes or String receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
-        },
-        "to_hex" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => bytes_to_hex(receiver),
-            Err(error) => error,
-        },
-        "to_base64" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => bytes_to_base64(receiver),
-            Err(error) => error,
-        },
-        "trim" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => string_trim(receiver),
-            Err(error) => error,
-        },
-        "trim_start" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => string_trim_start(receiver),
-            Err(error) => error,
-        },
-        "trim_end" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => string_trim_end(receiver),
-            Err(error) => error,
-        },
-        "replace" => match list::operations::two_arguments(arguments) {
-            Ok((from, to)) => string_replace(receiver, from, to),
-            Err(error) => error,
-        },
-        "split" => match list::operations::single_argument(arguments) {
-            Ok(delimiter) => string_split(receiver, delimiter),
-            Err(error) => error,
-        },
-        "to_lowercase" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => string_to_lowercase(receiver),
-            Err(error) => error,
-        },
-        "to_uppercase" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => string_to_uppercase(receiver),
-            Err(error) => error,
-        },
-        "kind" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => error_kind(receiver),
-            Err(error) => error,
-        },
-        "message" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => error_message(receiver),
-            Err(error) => error,
-        },
-        "data" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => error_data(receiver),
-            Err(error) => error,
-        },
-        "cause" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => error_cause(receiver),
-            Err(error) => error,
-        },
-        "next" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => iterator_next(receiver),
-            Err(error) => error,
-        },
-        "push" => match list::operations::single_argument(arguments) {
-            Ok(item) => list::operations::append(receiver, item),
-            Err(error) => error,
-        },
-        "get" => match list::operations::single_argument(arguments) {
-            Ok(index) => match runtime::value(receiver) {
+            }
+        }
+        BuiltinMethod::ToHex => bytes_to_hex(receiver),
+        BuiltinMethod::ToBase64 => bytes_to_base64(receiver),
+        BuiltinMethod::Trim => string_trim(receiver),
+        BuiltinMethod::TrimStart => string_trim_start(receiver),
+        BuiltinMethod::TrimEnd => string_trim_end(receiver),
+        BuiltinMethod::Replace => string_replace(receiver, first, second),
+        BuiltinMethod::Split => string_split(receiver, first),
+        BuiltinMethod::ToLowercase => string_to_lowercase(receiver),
+        BuiltinMethod::ToUppercase => string_to_uppercase(receiver),
+        BuiltinMethod::Kind => error_kind(receiver),
+        BuiltinMethod::Message => error_message(receiver),
+        BuiltinMethod::Data => error_data(receiver),
+        BuiltinMethod::Cause => error_cause(receiver),
+        BuiltinMethod::Next => iterator_next(receiver),
+        BuiltinMethod::Push => list::operations::append(receiver, first),
+        BuiltinMethod::Get => {
+            let index = first;
+            match runtime::value(receiver) {
                 Value::List(_) => list::operations::get_or_none(receiver, index),
                 Value::Object(_) => object::operations::get(receiver, index),
                 _ => runtime::recoverable_error(
@@ -2765,103 +2682,45 @@ pub(crate) fn call_method(receiver: ValueRef, method: ValueRef, arguments: Value
                     "get requires a List or Object receiver",
                     receiver,
                 ),
-            },
-            Err(error) => error,
+            }
+        }
+        BuiltinMethod::First => list::operations::first(receiver),
+        BuiltinMethod::Last => list::operations::last(receiver),
+        BuiltinMethod::Extend => list::operations::extend(receiver, first),
+        BuiltinMethod::Reverse => list::operations::reverse(receiver),
+        BuiltinMethod::Reversed => list::operations::reversed(receiver),
+        BuiltinMethod::IndexOf => list::operations::index_of(receiver, first),
+        BuiltinMethod::LastIndexOf => list::operations::last_index_of(receiver, first),
+        BuiltinMethod::Join => list::operations::join(receiver, first),
+        BuiltinMethod::Pop => list::operations::pop(receiver),
+        BuiltinMethod::Insert => list::operations::insert(receiver, first, second),
+        BuiltinMethod::Remove => list::operations::remove(receiver, first),
+        BuiltinMethod::Clear => match runtime::value(receiver) {
+            Value::List(_) => list::operations::clear(receiver),
+            Value::Object(_) => object::operations::clear(receiver),
+            _ => runtime::recoverable_error(
+                "TypeError",
+                "clear requires a List or Object receiver",
+                receiver,
+            ),
         },
-        "first" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => list::operations::first(receiver),
-            Err(error) => error,
-        },
-        "last" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => list::operations::last(receiver),
-            Err(error) => error,
-        },
-        "extend" => match list::operations::single_argument(arguments) {
-            Ok(other) => list::operations::extend(receiver, other),
-            Err(error) => error,
-        },
-        "reverse" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => list::operations::reverse(receiver),
-            Err(error) => error,
-        },
-        "reversed" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => list::operations::reversed(receiver),
-            Err(error) => error,
-        },
-        "index_of" => match list::operations::single_argument(arguments) {
-            Ok(item) => list::operations::index_of(receiver, item),
-            Err(error) => error,
-        },
-        "last_index_of" => match list::operations::single_argument(arguments) {
-            Ok(item) => list::operations::last_index_of(receiver, item),
-            Err(error) => error,
-        },
-        "join" => match list::operations::single_argument(arguments) {
-            Ok(separator) => list::operations::join(receiver, separator),
-            Err(error) => error,
-        },
-        "pop" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => list::operations::pop(receiver),
-            Err(error) => error,
-        },
-        "insert" => match list::operations::two_arguments(arguments) {
-            Ok((index, value)) => list::operations::insert(receiver, index, value),
-            Err(error) => error,
-        },
-        "remove" => match list::operations::single_argument(arguments) {
-            Ok(index) => list::operations::remove(receiver, index),
-            Err(error) => error,
-        },
-        "clear" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => match runtime::value(receiver) {
-                Value::List(_) => list::operations::clear(receiver),
-                Value::Object(_) => object::operations::clear(receiver),
-                _ => runtime::recoverable_error(
-                    "TypeError",
-                    "clear requires a List or Object receiver",
-                    receiver,
-                ),
-            },
-            Err(error) => error,
-        },
-        "has" => match list::operations::single_argument(arguments) {
-            Ok(key) => object::operations::has(receiver, key),
-            Err(error) => error,
-        },
-        "delete" => match list::operations::single_argument(arguments) {
-            Ok(key) => object::operations::delete(receiver, key),
-            Err(error) => error,
-        },
-        "keys" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => object::operations::keys(receiver),
-            Err(error) => error,
-        },
-        "values" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => object::operations::values(receiver),
-            Err(error) => error,
-        },
-        "get_or" => match list::operations::two_arguments(arguments) {
-            Ok((key, default)) => object::operations::get_or(receiver, key, default),
-            Err(error) => error,
-        },
-        "entries" => match list::operations::require_no_arguments(arguments) {
-            Ok(()) => object::operations::entries(receiver),
-            Err(error) => error,
-        },
-        "merge" => match list::operations::single_argument(arguments) {
-            Ok(other) => object::operations::merge(receiver, other),
-            Err(error) => error,
-        },
-        _ => runtime::recoverable_error(
-            "MethodNotFound",
-            "receiver does not support this method",
-            receiver,
-        ),
+        BuiltinMethod::Has => object::operations::has(receiver, first),
+        BuiltinMethod::Delete => object::operations::delete(receiver, first),
+        BuiltinMethod::Keys => object::operations::keys(receiver),
+        BuiltinMethod::Values => object::operations::values(receiver),
+        BuiltinMethod::GetOr => object::operations::get_or(receiver, first, second),
+        BuiltinMethod::Entries => object::operations::entries(receiver),
+        BuiltinMethod::Merge => object::operations::merge(receiver, first),
     }
 }
 
 /// Creates the stable built-in representation shared by `ToString` and `Debug` defaults.
 fn render_default(receiver: ValueRef) -> ValueRef {
+    // Ints are the common case, so they skip the growing buffer and get an exact allocation.
+    if let Value::Int(number) = runtime::value(receiver) {
+        let mut digits = [0_u8; 20];
+        return string_value_result(String::from(int_text(number, &mut digits)));
+    }
     let mut rendered = String::new();
     push_default(&mut rendered, receiver);
     string_value_result(rendered)
