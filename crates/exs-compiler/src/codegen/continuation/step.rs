@@ -445,14 +445,38 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 destination,
                 span,
             } => {
-                self.call_runtime("__exs_rt_object_new", *span)?;
+                // Distinct keys append to a pre-sized Object; repeated keys keep the replacing
+                // property writes.
+                let unique = crate::codegen::standard::has_unique_keys(
+                    properties.iter().map(|(key, _, _)| *key),
+                );
+                if unique {
+                    let capacity = i32::try_from(properties.len()).map_err(|_| {
+                        diagnostics(CompileDiagnostic::new(
+                            "E0212",
+                            *span,
+                            "too many properties for one Object literal",
+                        ))
+                    })?;
+                    self.function.instruction(&Instruction::I32Const(capacity));
+                    self.call_runtime("__exs_rt_object_new_with_capacity", *span)?;
+                } else {
+                    self.call_runtime("__exs_rt_object_new", *span)?;
+                }
                 self.set_slot(*destination, *span)?;
+                let (append, result) = if unique {
+                    ("__exs_rt_object_push_field", false)
+                } else {
+                    ("__exs_rt_property_set", true)
+                };
                 for (key, key_span, value) in properties {
                     self.get_slot(*destination, *span)?;
                     self.string(key, *key_span)?;
                     self.get_slot(*value, *span)?;
-                    self.call_runtime("__exs_rt_property_set", *span)?;
-                    self.function.instruction(&Instruction::Drop);
+                    self.call_runtime(append, *span)?;
+                    if result {
+                        self.function.instruction(&Instruction::Drop);
+                    }
                 }
                 self.ready(next, *span)?;
             }

@@ -16,6 +16,16 @@ pub(crate) fn is_unshared_range(expression: &Expression<'_>) -> bool {
     )
 }
 
+/// Returns whether every key of one Object literal is distinct.
+///
+/// Such a literal can append its properties to a pre-sized Object instead of replacing earlier
+/// entries with the same key.
+pub(crate) fn has_unique_keys<'k>(keys: impl Iterator<Item = &'k str> + Clone) -> bool {
+    keys.clone()
+        .enumerate()
+        .all(|(index, key)| keys.clone().take(index).all(|earlier| earlier != key))
+}
+
 /// Canonical source name for the protocol invoked by the `+` operator.
 pub(crate) const ADD_TRAIT: &str = "Add";
 

@@ -453,6 +453,19 @@ pub(crate) fn value(reference: ValueRef) -> Value<'static> {
     }
 }
 
+/// Returns the String behind one reference, or `None` for any other value.
+///
+/// Skips the general `Value` view, for hot paths that only accept Strings.
+pub(crate) fn string_ref(reference: ValueRef) -> Option<&'static RuntimeString> {
+    if reference.immediate().is_some() {
+        return None;
+    }
+    match heap_value(reference) {
+        RtValue::String(string) => Some(string),
+        _ => None,
+    }
+}
+
 /// Returns the heap payload of one reference already known not to be immediate.
 fn heap_value(reference: ValueRef) -> &'static RtValue {
     let index = reference::payload_index(reference);

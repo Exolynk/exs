@@ -626,6 +626,15 @@ pub extern "C" fn __exs_rt_object_new() -> ValueRef {
     value::object::operations::new_value()
 }
 
+/// Allocates one mutable Object with room for the given number of literal properties.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_rt_object_new_with_capacity(capacity: i32) -> ValueRef {
+    let Ok(capacity) = usize::try_from(capacity) else {
+        runtime::trap();
+    };
+    value::object::operations::new_with_capacity(capacity)
+}
+
 /// Builds one mutable Object from a List of two-item key-value List entries.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_rt_object_from_entries(entries: ValueRef) -> ValueRef {

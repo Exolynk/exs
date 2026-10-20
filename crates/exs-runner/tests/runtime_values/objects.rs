@@ -229,3 +229,57 @@ fn keeps_indexing_behavior_for_non_object_receivers() {
         ExsValue::List(vec![ExsValue::Int(1)]),
     );
 }
+
+/// Builds Object literals identically whether their keys are distinct or repeated.
+#[test]
+fn builds_object_literals_with_distinct_and_repeated_keys() {
+    let source = r#"
+        fn tick(log, value) { log.push(value); ret value; }
+        fn main(input) -> List {
+            let log = [];
+            let unique = { b: tick(log, 1), a: tick(log, 2), c: { inner: tick(log, 3) } };
+            let repeated = { a: tick(log, 4), b: tick(log, 5), a: tick(log, 6) };
+            let empty = {};
+            unique.d = 7;
+            unique.a = 8;
+            empty.x = 9;
+            ret [
+                unique.keys(),
+                unique.values(),
+                unique.c.inner,
+                repeated.keys(),
+                repeated.values(),
+                empty,
+                log,
+            ];
+        }
+    "#;
+    let strings = |values: &[&str]| {
+        ExsValue::List(
+            values
+                .iter()
+                .map(|value| ExsValue::String((*value).to_owned()))
+                .collect(),
+        )
+    };
+    let ints = |values: &[i64]| ExsValue::List(values.iter().copied().map(ExsValue::Int).collect());
+    let expected = ExsValue::List(vec![
+        strings(&["b", "a", "c", "d"]),
+        ExsValue::List(vec![
+            ExsValue::Int(1),
+            ExsValue::Int(8),
+            ExsValue::Object(vec![("inner".to_owned(), ExsValue::Int(3))]),
+            ExsValue::Int(7),
+        ]),
+        ExsValue::Int(3),
+        strings(&["a", "b"]),
+        ints(&[6, 5]),
+        ExsValue::Object(vec![("x".to_owned(), ExsValue::Int(9))]),
+        ints(&[1, 2, 3, 4, 5, 6]),
+    ]);
+    // Any closure makes every function resumable, which selects the continuation lowering.
+    let resumable = format!("{source} fn force_resumable() {{ ret () => {{ ret 1; }}; }}");
+    for source in [source, resumable.as_str()] {
+        assert_eq!(execute_source(source, ExsValue::None), expected);
+    }
+}

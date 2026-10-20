@@ -44,7 +44,7 @@ const ASYNC_INT_WHILE_1000_FUEL: u64 = 367_725;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
 const FOR_RANGE_1000_FUEL: u64 = 109_602;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
-const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 108_369;
+const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 108_219;
 /// Fuel ceiling for 100 calls of a small function with a `match`.
 const ASYNC_CALL_LOOP_100_FUEL: u64 = 101_363;
 /// Fuel ceiling for 100 calls of a small resumable function.
@@ -56,9 +56,9 @@ const LIST_CHURN_6000_FUEL: u64 = 8_029_192;
 /// Fuel ceiling for 1000 calls of a small typed function.
 const SYNC_CALL_LOOP_1000_FUEL: u64 = 370_630;
 /// Fuel ceiling for parsing and formatting 100 RFC 3339 DateTimes.
-const DATETIME_ROUNDTRIP_100_FUEL: u64 = 6_906_914;
+const DATETIME_ROUNDTRIP_100_FUEL: u64 = 6_576_853;
 /// Fuel ceiling for the Exolynk-style round trip of 20 records.
-const RECORD_ROUNDTRIP_20_FUEL: u64 = 4_765_482;
+const RECORD_ROUNDTRIP_20_FUEL: u64 = 4_601_988;
 
 /// Compiles and executes one scenario with a Winch runner and returns its execution report.
 fn execute_report(scenario: &Scenario) -> ExecutionReport {

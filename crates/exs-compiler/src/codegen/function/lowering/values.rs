@@ -222,6 +222,11 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         properties: &[ObjectProperty<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        if crate::codegen::standard::has_unique_keys(
+            properties.iter().map(|property| property.key.as_str()),
+        ) {
+            return self.compile_unique_object(properties, span);
+        }
         self.runtime_call("__exs_rt_object_new", span)?;
         let object_local = self.store_stack_value()?;
         for property in properties {
@@ -241,6 +246,38 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.function
             .instruction(&Instruction::LocalGet(object_local));
         Ok(())
+    }
+
+    /// Builds an Object literal with distinct keys by appending to a pre-sized Object.
+    fn compile_unique_object(
+        &mut self,
+        properties: &[ObjectProperty<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let capacity = i32::try_from(properties.len()).map_err(|_| {
+            diagnostics(CompileDiagnostic::new(
+                "E0212",
+                span,
+                "too many properties for one Object literal",
+            ))
+        })?;
+        self.function.instruction(&Instruction::I32Const(capacity));
+        self.runtime_call("__exs_rt_object_new_with_capacity", span)?;
+        let object = self.store_stack_value()?;
+        for property in properties {
+            self.compile_expression(&property.value)?;
+            let value = self.store_stack_value()?;
+            self.compile_string(&property.key, property.key_span)?;
+            let key = self.store_stack_value()?;
+            self.function.instruction(&Instruction::LocalGet(object));
+            self.function.instruction(&Instruction::LocalGet(key));
+            self.function.instruction(&Instruction::LocalGet(value));
+            self.runtime_call("__exs_rt_object_push_field", property.span)?;
+            self.clear_root_slot(key)?;
+            self.clear_root_slot(value)?;
+        }
+        self.function.instruction(&Instruction::LocalGet(object));
+        self.clear_root_slot(object)
     }
 
     /// Constructs one nominal Object and validates every declared field contract.

@@ -257,6 +257,13 @@ pub(crate) mod operations {
         replacement
     }
 
+    /// Allocates an empty mutable Object with room for `capacity` literal properties.
+    pub(crate) fn new_with_capacity(capacity: usize) -> ValueRef {
+        let mut object = RuntimeObject::new();
+        object.entries.reserve_exact(capacity);
+        runtime::allocate(RtValue::Object(Box::new(object)))
+    }
+
     /// Allocates an empty nominal Object with room for its declared fields.
     pub(crate) fn new_typed_with_capacity(type_id: u32, capacity: usize) -> ValueRef {
         let mut object = RuntimeObject::typed(type_id);
@@ -266,9 +273,10 @@ pub(crate) mod operations {
 
     /// Appends one compiler-validated field to an Object under construction without a key scan.
     pub(crate) fn push_literal_field(receiver: ValueRef, key: ValueRef, value: ValueRef) {
-        let Ok((text, _)) = literal_key(key) else {
+        let Some(key) = runtime::string_ref(key) else {
             runtime::trap();
         };
+        let text = key.as_str();
         let Some(RtValue::Object(object)) = runtime::value_mut(receiver) else {
             runtime::trap();
         };
