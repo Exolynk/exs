@@ -49,6 +49,8 @@ mod host_time;
 mod host_values;
 mod limits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod module_cache;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod report;
@@ -92,6 +94,8 @@ pub struct ServerRunner {
     limits: ExecutionLimits,
     /// Code generator used to compile every executed module.
     compiler: CompilerStrategy,
+    /// Compiled artifacts of recently executed modules, shared by clones of this runner.
+    module_cache: module_cache::ModuleCache,
 }
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -118,6 +122,9 @@ impl ServerRunner {
             registry: HostFunctionRegistry::new(),
             limits,
             compiler: CompilerStrategy::default(),
+            module_cache: module_cache::ModuleCache::new(
+                module_cache::DEFAULT_MODULE_CACHE_CAPACITY,
+            ),
         }
     }
 
@@ -125,6 +132,16 @@ impl ServerRunner {
     #[must_use]
     pub fn with_compiler_strategy(mut self, compiler: CompilerStrategy) -> Self {
         self.compiler = compiler;
+        self
+    }
+
+    /// Returns this runner keeping the compiled artifacts of at most `capacity` modules.
+    ///
+    /// Executing a cached module skips its compilation; 0 disables caching. The default keeps
+    /// 16 modules. Replacing the capacity starts with an empty cache.
+    #[must_use]
+    pub fn with_module_cache_capacity(mut self, capacity: usize) -> Self {
+        self.module_cache = module_cache::ModuleCache::new(capacity);
         self
     }
 
@@ -171,8 +188,10 @@ impl ServerRunner {
         }
         let execution_started_at = std::time::Instant::now();
         let engine = limited_engine(&self.limits, self.compiler)?;
-        let module =
-            Module::new(&engine, wasm).map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        let module = self
+            .module_cache
+            .module(&engine, self.compiler, wasm)
+            .map_err(|error| RunnerError::Wasm(error.to_string()))?;
         check_task_metering_imports(&module)?;
         let deadline = deadline::ExecutionDeadline::new(engine.clone(), self.limits.timeout)
             .map_err(|error| {

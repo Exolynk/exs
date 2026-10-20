@@ -76,3 +76,53 @@ fn executes_root_main_without_visibility_modifier() {
     let result = block_on(runner.execute(&compiled.wasm, "main", &[], &cancellation));
     assert!(matches!(result, Ok(ExsValue::Int(0))));
 }
+
+/// Returns identical results and fuel whether a module is compiled or taken from the cache.
+#[test]
+fn reuses_cached_modules_with_identical_results() {
+    let compile_text = |text: &str| match compile(
+        SourceInput {
+            source_id: "test.exs",
+            text,
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(module) => module.wasm,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    let doubled = compile_text("fn main(input: Int) -> Int { ret input * 2; }");
+    let greeted = compile_text(r#"fn main(input: String) -> String { ret "hi " + input; }"#);
+    let cases = [
+        (&doubled, ExsValue::Int(21), ExsValue::Int(42)),
+        (
+            &greeted,
+            ExsValue::String("ExS".to_owned()),
+            ExsValue::String("hi ExS".to_owned()),
+        ),
+    ];
+    let uncached = ServerRunner::default().with_module_cache_capacity(0);
+    // A single cache slot makes the alternating modules evict each other every time.
+    for runner in [
+        ServerRunner::default(),
+        ServerRunner::default().with_module_cache_capacity(1),
+    ] {
+        for _ in 0..3 {
+            for (wasm, input, expected) in &cases {
+                let execute = |runner: &ServerRunner| match block_on(runner.execute_with_report(
+                    wasm,
+                    "main",
+                    std::slice::from_ref(input),
+                    &ExecutionCancellation::new(),
+                )) {
+                    Ok(report) => report,
+                    Err(error) => panic!("execution failed: {error}"),
+                };
+                let cached = execute(&runner);
+                let reference = execute(&uncached);
+                assert_eq!(&cached.value, expected);
+                assert_eq!(cached.value, reference.value);
+                assert_eq!(cached.fuel_consumed, reference.fuel_consumed);
+            }
+        }
+    }
+}

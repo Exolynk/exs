@@ -1,6 +1,6 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Phase 0 (measurements) is done; see section 12.
+Status: **approved design**. Phases 0 and 0.5 are done; see section 12.
 
 ## 1. Goal
 
@@ -189,7 +189,7 @@ Each phase ends with measurement and an explicit go / no-go.
 | Phase | Scope | Exit criterion |
 |---|---|---|
 | 0 | Baseline: wall-clock benchmarks; measure the share of CBOR boundary work in `record_roundtrip_20` | done, see section 12 |
-| 0.5 | Link only reachable runtime and prelude functions; cache compiled modules in the runner | compile time per execution measured and reduced |
+| 0.5 | Link only reachable runtime and prelude functions; cache compiled modules in the runner | done, see section 12 |
 | 1 | `exs-layout`, VM state block, allocator, non-moving GC in the stateless library, unit tests with synthetic heaps | GC and allocator tests green |
 | 2 | v2 backend for Int/Float/Bool/None, Strings, Lists, untyped and typed Objects, sync functions, `?`, Errors | prototype beats v1 clearly on property, String and literal micro benchmarks; go / no-go |
 | 3 | All built-in methods as stateless helpers over the layout; enums and `match`; closures and cells; iterators; formatted strings | all non-async runtime-value tests green on v2 |
@@ -255,6 +255,28 @@ Share of executed Wasm operators by category:
 - In record-style scripts, about 30 % is boundary work (CBOR, `ExsValue` conversion, schema
   parsing). The direct-memory boundary of phase 5 removes it; the typed decode schema is
   re-parsed on every conversion today and could be cached even in v1.
+
+### Phase 0.5 results
+
+- **Pruning:** the compiler now drops the runtime template's `__exs_rt_*` link exports and
+  every function unreachable from runner-visible exports, the start function, element segments
+  and `ref.func`. The resumable dispatcher's calls of step functions are weak; suspendable
+  entry points and lifted closures are roots, because only their frames are created by
+  function id, and every child call calls its step directly.
+- **Module cache:** `ServerRunner` keeps the compiled artifacts of the 16 most recently
+  executed modules (`with_module_cache_capacity`, 0 disables it). Each execution still gets its
+  own engine, so deadline and cancellation epochs stay isolated; a cache hit only loads the
+  artifact. Fuel is unchanged.
+
+| Module | Size before → after | First compile Winch | First compile Cranelift |
+|---|---:|---:|---:|
+| empty script | 668 KB → 226 KB | 21 ms → 6 ms | 110 ms → 20 ms |
+| `datetime_roundtrip_100` | 553 KB → 417 KB | 13.5 ms → 9.3 ms | 92 ms → 50 ms |
+| `record_roundtrip_20` | 601 KB → 466 KB | → 10.9 ms | → 59 ms |
+
+With the cache, start-up per execution (artifact load and instantiation) drops to 0.2–0.5 ms
+for every scenario under both compilers, so Cranelift's faster code no longer costs start-up
+time after the first execution of a module.
 
 ## 13. Risks and open questions
 

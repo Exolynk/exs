@@ -22,6 +22,7 @@ use super::function::{
     add_program_types, build_signatures,
 };
 use super::literals::{LiteralPool, TemplateDataLayout, template_data_layout};
+use super::prune::PruneHints;
 use super::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
 use super::trait_registry::TraitRegistry;
 use super::types::TypeRegistry;
@@ -47,7 +48,7 @@ pub(super) fn link<'source>(
     lifted: Vec<LiftedFunction<'source>>,
     suspendable_functions: &HashSet<String>,
     traits: &TraitRegistry<'source>,
-) -> Result<Vec<u8>, CompileDiagnostics<'source>> {
+) -> Result<(Vec<u8>, PruneHints), CompileDiagnostics<'source>> {
     let type_registry = TypeRegistry::build(module, traits)?;
     let literal_pool = LiteralPool::collect(module, &type_registry)?;
     let template_data = template_data_layout(module)?;
@@ -92,7 +93,8 @@ pub(super) fn link<'source>(
             data: linker.source_map.encode_source(sources).into(),
         });
     }
-    Ok(wasm.finish())
+    let hints = linker.prune_hints();
+    Ok((wasm.finish(), hints))
 }
 
 /// Copies closure source bodies and HIR capture data into linker-owned lifted declarations.
@@ -431,6 +433,38 @@ impl<'source, 'module> TemplateLinker<'source, 'module> {
             suspendable_functions,
             frame_layouts: HashMap::new(),
         })
+    }
+
+    /// Returns the functions the pruner must keep although no direct call reaches them.
+    ///
+    /// Suspendable entry points and lifted closures get their frames by function id, so only
+    /// the dispatcher would call their steps; every other step is called directly.
+    fn prune_hints(&self) -> PruneHints {
+        let signature_index = |key: &str| {
+            self.signatures
+                .as_ref()
+                .and_then(|signatures| signatures.get(key))
+                .map(|signature| signature.index)
+        };
+        let entries = self
+            .entry_names
+            .iter()
+            .filter(|name| self.suspendable_functions.contains(*name))
+            .filter_map(|name| signature_index(name));
+        let closures = self
+            .lifted
+            .iter()
+            .filter_map(|closure| signature_index(&closure.key));
+        let steps = self
+            .frame_layouts
+            .keys()
+            .filter_map(|key| signature_index(key))
+            .collect();
+        PruneHints {
+            weak_caller: self.dispatch_index,
+            weak_targets: steps,
+            roots: entries.chain(closures).collect(),
+        }
     }
 
     /// Converts an internal linker-state failure into a compiler diagnostic.

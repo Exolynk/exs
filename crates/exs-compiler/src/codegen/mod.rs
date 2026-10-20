@@ -8,6 +8,7 @@ mod immediate;
 mod linker;
 mod literals;
 mod match_arms;
+mod prune;
 pub(crate) mod range_variables;
 mod registers;
 pub mod source_map;
@@ -47,14 +48,21 @@ pub fn compile_project_module<'a>(
     let lifted = linker::lifted_functions(module, &hir);
     let suspendable_functions = suspendability.functions().clone();
     drop(hir);
-    linker::link(
+    let (wasm, hints) = linker::link(
         module,
         sources,
         options,
         lifted,
         &suspendable_functions,
         &traits_registry,
-    )
+    )?;
+    prune::prune_unreachable(&wasm, &hints).map_err(|message| {
+        CompileDiagnostics::from(CompileDiagnostic::new(
+            "E1001",
+            module_span(module),
+            message,
+        ))
+    })
 }
 
 /// Returns a diagnostic span covering the module's first function.

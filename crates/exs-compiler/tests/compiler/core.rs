@@ -227,3 +227,44 @@ fn rejects_non_final_variadic_parameter() {
         "{error:?}"
     );
 }
+
+/// Links only functions reachable from runner-visible exports into the final module.
+#[test]
+fn prunes_unreachable_runtime_and_prelude_functions() {
+    let compiled = match compile(
+        SourceInput {
+            source_id: "main.exs",
+            text: "fn main() {}",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(module) => module,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    assert!(Validator::new().validate_all(&compiled.wasm).is_ok());
+    let mut function_exports = Vec::new();
+    let mut function_count = 0;
+    for payload in Parser::new(0).parse_all(&compiled.wasm) {
+        match payload {
+            Ok(Payload::ExportSection(exports)) => {
+                for export in exports.into_iter().flatten() {
+                    if export.kind == wasmparser::ExternalKind::Func {
+                        function_exports.push(export.name.to_owned());
+                    }
+                }
+            }
+            Ok(Payload::FunctionSection(functions)) => function_count = functions.count(),
+            Ok(_) => {}
+            Err(error) => panic!("invalid module: {error}"),
+        }
+    }
+    assert!(
+        function_exports
+            .iter()
+            .all(|name| !name.starts_with("__exs_rt_")),
+        "runtime link exports survived: {function_exports:?}"
+    );
+    // The full runtime template plus prelude has about 680 functions; an empty script needs
+    // only the entry, the runner ABI and the input and result codecs.
+    assert!(function_count < 300, "{function_count} functions survived");
+}
