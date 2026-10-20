@@ -19,7 +19,6 @@ use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
 
-use analysis::{ROOT_FRAME_RESERVED_LOCALS, count_expressions_block, count_lets};
 pub(super) use method::{InstanceMethod, MethodRegistry};
 pub(super) use signature::{
     FunctionSignature, LiftedFunction, add_program_types, build_signatures, validate,
@@ -84,6 +83,8 @@ pub(super) struct FunctionCompiler<'a, 'module> {
     variadic_length_local: u32,
     /// Wasm i32 local holding the current variadic List index during parameter validation.
     variadic_index_local: u32,
+    /// First Wasm local holding a ValueRef temporary; earlier non-parameter locals are i32 scalars.
+    first_value_local: u32,
     /// Scalar i32 local holding this function's error-trace entry address during entry.
     trace_entry_local: u32,
     root_frame_local: u32,
@@ -101,25 +102,6 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         signature_key: &str,
         context: FunctionCompilerContext<'a, 'module>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
-        let expression_locals = count_expressions_block(&declaration.body)
-            .checked_mul(10)
-            .ok_or_else(|| {
-                diagnostics(CompileDiagnostic::new(
-                    "E0212",
-                    declaration.span,
-                    "too many expression temporaries for one function",
-                ))
-            })?;
-        let local_count = count_lets(&declaration.body)
-            .checked_add(expression_locals)
-            .and_then(|count| count.checked_add(ROOT_FRAME_RESERVED_LOCALS))
-            .ok_or_else(|| {
-                diagnostics(CompileDiagnostic::new(
-                    "E0212",
-                    declaration.span,
-                    "too many locals for one function",
-                ))
-            })?;
         let parameter_count = u32::try_from(declaration.parameters.len()).map_err(|_| {
             diagnostics(CompileDiagnostic::new(
                 "E0212",
@@ -127,14 +109,10 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                 "too many parameters for one function",
             ))
         })?;
-        let root_slot_count = parameter_count.checked_add(local_count).ok_or_else(|| {
-            diagnostics(CompileDiagnostic::new(
-                "E0212",
-                declaration.span,
-                "too many root slots for one function",
-            ))
-        })?;
-        let root_frame_local = root_slot_count;
+        // Scalar i32 locals directly follow the parameters so their indices do not depend on how
+        // many ValueRef temporaries the body needs; those are declared once compilation ends.
+        let root_frame_local = parameter_count;
+        let first_value_local = parameter_count + SCALAR_LOCAL_COUNT;
         let mut parameters = HashMap::new();
         for (index, parameter) in declaration.parameters.iter().enumerate() {
             parameters.insert(parameter.name.name.clone(), index as u32);
@@ -149,18 +127,16 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
             types: context.types,
             methods: context.methods,
             registers_address: context.registers_address,
-            // ValueRef locals are the rooted i64 slots; the i32 scalars follow the root frame.
-            function: Function::new([
-                (local_count, VALUE_TYPE),
-                (SCALAR_LOCAL_COUNT, ValType::I32),
-            ]),
+            // The body is emitted without local declarations; `compile` prepends them.
+            function: Function::new([]),
             scopes: vec![parameters],
             loops: Vec::new(),
             // Reserve one reusable local for return contracts so multiple return paths do not
             // consume additional statically declared Wasm locals.
-            next_local: parameter_count + 2,
-            return_value_local: parameter_count,
-            immediate_scratch_local: parameter_count + 1,
+            next_local: first_value_local + 2,
+            return_value_local: first_value_local,
+            immediate_scratch_local: first_value_local + 1,
+            first_value_local,
             type_match_local: root_frame_local + 1,
             literal_pointer_local: root_frame_local + 2,
             variadic_length_local: root_frame_local + 3,
@@ -184,7 +160,7 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
                     ))
                 })?,
         };
-        compiler.initialize_root_frame(root_slot_count)?;
+        compiler.store_parameters()?;
         Ok(compiler)
     }
 
@@ -195,7 +171,20 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         self.validate_return_type(self.declaration.span)?;
         self.return_stack_value()?;
         self.function.instruction(&Instruction::End);
-        let placeholder = Function::new([]);
-        Ok(std::mem::replace(&mut self.function, placeholder))
+        // Only now is the number of ValueRef temporaries known, which sizes both the declared
+        // locals and the root frame pushed on entry.
+        let value_locals = self.next_local - self.first_value_local;
+        let mut function = Function::new([
+            (SCALAR_LOCAL_COUNT, ValType::I32),
+            (value_locals, VALUE_TYPE),
+        ]);
+        let slot_count = self.root_frame_local + value_locals;
+        for instruction in self.function_entry(slot_count)? {
+            function.instruction(&instruction);
+        }
+        let body = std::mem::replace(&mut self.function, Function::new([])).into_raw_body();
+        // A body built without locals starts with one byte encoding a zero local-group count.
+        function.raw(body.get(1..).unwrap_or_default().iter().copied());
+        Ok(function)
     }
 }

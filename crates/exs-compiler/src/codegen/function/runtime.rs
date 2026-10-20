@@ -9,7 +9,7 @@ use crate::codegen::immediate;
 use crate::codegen::source_map::requires_source_position;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
-use super::FunctionCompiler;
+use super::{FunctionCompiler, SCALAR_LOCAL_COUNT};
 use crate::codegen::root_slot_memory_arg;
 
 impl<'a, 'module> FunctionCompiler<'a, 'module> {
@@ -258,31 +258,31 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
         Ok(())
     }
 
-    /// Creates this invocation's root frame and registers its parameters.
-    pub(super) fn initialize_root_frame(
-        &mut self,
-        root_slot_count: u32,
-    ) -> Result<(), CompileDiagnostics<'a>> {
-        let slot_count = i32::try_from(root_slot_count).map_err(|_| {
-            diagnostics(CompileDiagnostic::new(
+    /// Returns the inline entry pushing this function's root frame of `slot_count` slots and
+    /// its language stack frame; the runtime only runs when a frame needs a new chunk.
+    pub(super) fn function_entry(
+        &self,
+        slot_count: u32,
+    ) -> Result<Vec<Instruction<'static>>, CompileDiagnostics<'a>> {
+        if i32::try_from(slot_count).is_err() {
+            return Err(diagnostics(CompileDiagnostic::new(
                 "E0212",
                 self.declaration.span,
                 "too many root slots for the Wasm i32 ABI",
-            ))
-        })?;
-        // The root frame and language stack frame are pushed inline; the runtime only runs when
-        // a frame needs a new root-stack chunk or the trace buffer is full.
-        let exports = self.frame_exports()?;
-        for instruction in crate::codegen::registers::function_enter(
+            )));
+        }
+        Ok(crate::codegen::registers::function_enter(
             self.registers_address,
-            exports,
+            self.frame_exports()?,
             self.function_id,
-            slot_count.cast_unsigned(),
+            slot_count,
             self.root_frame_local,
             self.trace_entry_local,
-        ) {
-            self.function.instruction(&instruction);
-        }
+        ))
+    }
+
+    /// Roots every parameter and validates it against its declared contract.
+    pub(super) fn store_parameters(&mut self) -> Result<(), CompileDiagnostics<'a>> {
         let signature = self.signatures.get(&self.signature_key).ok_or_else(|| {
             diagnostics(CompileDiagnostic::new(
                 "E0999",
@@ -419,14 +419,19 @@ impl<'a, 'module> FunctionCompiler<'a, 'module> {
     /// The frame local holds the slot base address, so every slot must lie inside the frame
     /// allocated by `__exs_rt_root_push`; slot indexes are therefore validated at compile time.
     fn root_slot_memory_arg(&self, local: u32) -> Result<MemArg, CompileDiagnostics<'a>> {
-        if local >= self.root_frame_local {
+        // Parameters use the first slots; ValueRef temporaries follow, skipping the i32 scalars.
+        let slot = if local < self.root_frame_local {
+            local
+        } else if local >= self.first_value_local {
+            local - SCALAR_LOCAL_COUNT
+        } else {
             return Err(diagnostics(CompileDiagnostic::new(
                 "E0212",
                 self.declaration.span,
-                "root slot exceeds the function root frame",
+                "scalar local has no root slot",
             )));
-        }
-        Ok(root_slot_memory_arg(local))
+        };
+        Ok(root_slot_memory_arg(slot))
     }
 
     /// Returns the ValueRef on the stack after safely removing this function's root frame.

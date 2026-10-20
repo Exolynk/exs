@@ -40,7 +40,7 @@ const ASYNC_CALL_LOOP_100_FUEL: u64 = 196_539;
 /// Fuel ceiling for 1000 iterations building one formatted line with two Ints.
 const FORMAT_LOOP_1000_FUEL: u64 = 2_570_409;
 /// Fuel ceiling for 6000 short-lived Lists, enough allocations to trigger collections.
-const LIST_CHURN_6000_FUEL: u64 = 8_031_457;
+const LIST_CHURN_6000_FUEL: u64 = 8_029_192;
 /// Fuel ceiling for 1000 calls of a small typed function.
 const SYNC_CALL_LOOP_1000_FUEL: u64 = 370_630;
 
