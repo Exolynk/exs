@@ -20,6 +20,9 @@ use crate::vm::Vm;
 /// Allocation volume after which the first collection runs.
 pub(crate) const INITIAL_COLLECTION_THRESHOLD: u32 = 1 << 20;
 
+/// Number of cells one refill links into a class's free list.
+const LINK_CHUNK: u32 = 64;
+
 /// Header class value of objects that occupy their own page run.
 pub(crate) const LARGE_CLASS: u16 = u16::MAX;
 
@@ -80,29 +83,57 @@ fn allocate_cell(memory: &mut impl Memory, vm: Vm, class: usize) -> Option<u32> 
     Some(cell)
 }
 
-/// Takes one page for `class` and links all of its cells into the class's free list.
+/// Links the next [`LINK_CHUNK`] never-used cells of `class` into its free list, taking a new
+/// page for the class when its current page has none left.
+///
+/// Linking a whole page at once would make the first allocation of every size class pay for
+/// thousands of cells.
 fn refill_class(memory: &mut impl Memory, vm: Vm, class: usize) -> Option<()> {
-    let page = take_pages(memory, vm, 1)?;
-    write_run(
-        memory,
-        page,
-        Run {
-            kind: PageKind::Class,
-            pages: 1,
-            detail: class as u32,
-        },
-        0,
-    );
+    let mut cursor = vm.class_cursor(memory, class);
+    if cursor == 0 {
+        let page = take_pages(memory, vm, 1)?;
+        write_run(
+            memory,
+            page,
+            Run {
+                kind: PageKind::Class,
+                pages: 1,
+                detail: class as u32,
+            },
+            0,
+        );
+        cursor = page + PAGE_HEADER_SIZE;
+    }
     let size = SIZE_CLASSES[class];
+    let page_end = page_of(cursor) + PAGE_HEADER_SIZE + cells_per_page(class) * size;
+    let count = ((page_end - cursor) / size).min(LINK_CHUNK);
+    let end = cursor + count * size;
+    vm.set_class_cursor(memory, class, if end == page_end { 0 } else { end });
     let mut next = vm.free_head(memory, class);
     // Linking from the end keeps the list in address order.
-    for index in (0..cells_per_page(class)).rev() {
-        let cell = page + PAGE_HEADER_SIZE + index * size;
+    for index in (0..count).rev() {
+        let cell = cursor + index * size;
         write_free_cell(memory, cell, class, next);
         next = cell;
     }
     vm.set_free_head(memory, class, next);
     Some(())
+}
+
+/// Returns the first address of the page containing `address`.
+pub(crate) const fn page_of(address: u32) -> u32 {
+    address & !(PAGE_SIZE - 1)
+}
+
+/// Returns how many cells of the class page at `page` may hold objects: all of them, unless
+/// the page is its class's partly linked page, whose cells from the cursor on are unused.
+pub(crate) fn used_cells(memory: &impl Memory, vm: Vm, page: u32, class: usize) -> u32 {
+    let cursor = vm.class_cursor(memory, class);
+    if cursor != 0 && page_of(cursor) == page {
+        (cursor - page - PAGE_HEADER_SIZE) / SIZE_CLASSES[class]
+    } else {
+        cells_per_page(class)
+    }
 }
 
 /// Allocates a page run for one object of `size` bytes and returns it with its page count.

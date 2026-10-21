@@ -1,7 +1,7 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Phases 0, 0.5, 1, 2a, 2b, 2c-1 and 2c-2 are done; see sections
-12 to 12e.
+Status: **approved design**. Phases 0, 0.5, 1, 2a, 2b, 2c-1, 2c-2 and lazy class-page
+linking are done; see sections 12 to 12f.
 
 ## 1. Goal
 
@@ -418,12 +418,33 @@ whenever a literal names its fields in declaration order.
 | `concat_10_objects` | 136,378 | 352,451 | +158 % |
 | `concat_100_objects` | 664,705 | 860,076 | +29 % |
 
-The Object scenarios with runner input lose because of a fixed start-up cost, not per Object:
-decoding an empty List argument already costs about 147,000 fuel in v2 against 70,000 in v1,
-while every further Object costs less in v2 (about 3,800 against 4,600). The allocator links
-all cells of a fresh class page into the free list at once, e.g. 4,080 cells for the 16-byte
-class, so every size class a script touches first costs a full page of linking. Linking
-lazily in small chunks removes most of this cost and is the next allocator change.
+The Object scenarios with runner input lost because of a fixed start-up cost, not per Object:
+decoding an empty List argument cost about 147,000 fuel in v2 against 70,000 in v1, while every
+further Object cost less in v2 (about 3,800 against 4,600). The allocator linked all cells of a
+fresh class page into the free list at once, e.g. 4,080 cells for the 16-byte class. Section
+12f removes this cost.
+
+## 12f. Lazy class-page linking
+
+- A refill links at most 64 cells of the class's current page into its free list. Each size
+  class keeps a cursor (`HeapState::class_cursors`) at its first never-linked cell, and the next
+  refill continues there until the page is used up.
+- Cells from the cursor on never held an object and may hold stale bytes of a reused page, so
+  sweeping and the rescan after a mark-stack overflow only look at the cells before it. A
+  cursor page that sweeps empty returns to the free runs and its cursor is cleared.
+- The inline allocation fast path of boxed numbers is unchanged; it still pops the free list.
+
+| | v1 fuel | v2 before | v2 after | v2 vs v1 |
+|---|---:|---:|---:|---:|
+| `concat_10_objects` | 136,378 | 352,451 | 81,864 | −40 % |
+| `concat_100_objects` | 664,705 | 860,076 | 578,633 | −13 % |
+| untyped property read and write, 1000 iterations | 731,720 | 478,150 | 290,696 | −60 % |
+| untyped Object literal per row, 1000 iterations | 1,167,940 | 887,774 | 705,493 | −40 % |
+| typed property read and write, 1000 iterations | 731,746 | 295,526 | 249,095 | −66 % |
+| typed Object and List literal per row, 1000 iterations | 1,952,885 | 927,873 | 833,879 | −57 % |
+| List index read and write, 1000 iterations | 692,015 | 428,675 | 319,757 | −54 % |
+| `for` over a 100-element List | 449,855 | 371,718 | 186,953 | −58 % |
+| Float loop, 1000 iterations | 579,772 | 318,437 | 280,825 | −52 % |
 
 ## 13. Risks and open questions
 

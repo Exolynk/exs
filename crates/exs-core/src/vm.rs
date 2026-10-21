@@ -85,6 +85,21 @@ impl Vm {
         self.0 + offset_of!(VmState, heap.free_heads) as u32 + class as u32 * 4
     }
 
+    /// Returns the address of the link cursor of one size class.
+    fn class_cursor_address(self, class: usize) -> u32 {
+        self.0 + offset_of!(VmState, heap.class_cursors) as u32 + class as u32 * 4
+    }
+
+    /// Reads the link cursor of one size class.
+    pub(crate) fn class_cursor(self, memory: &impl Memory, class: usize) -> u32 {
+        memory.load_u32(self.class_cursor_address(class))
+    }
+
+    /// Writes the link cursor of one size class.
+    pub(crate) fn set_class_cursor(self, memory: &mut impl Memory, class: usize, value: u32) {
+        memory.store_u32(self.class_cursor_address(class), value);
+    }
+
     /// Reads the free-list head of one size class.
     pub(crate) fn free_head(self, memory: &impl Memory, class: usize) -> u32 {
         memory.load_u32(self.free_head_address(class))

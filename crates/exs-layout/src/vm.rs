@@ -28,6 +28,12 @@ pub struct HeapState {
     pub flags: u32,
     /// Number of completed collections.
     pub collections: u32,
+    /// Per size class, the address of the first never-linked cell of the class's current page,
+    /// 0 when the class has no partly linked page. Cells from there on hold no object and may
+    /// hold stale bytes, so the collector never looks at them.
+    pub class_cursors: [u32; CLASS_COUNT],
+    /// Reserved, keeps the block 8-byte aligned.
+    pub reserved: u32,
 }
 
 /// One range of raw `ValueRef` root slots, `start..end` in bytes.

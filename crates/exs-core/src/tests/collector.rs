@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 use std::vec::Vec;
 
-use exs_layout::{GC_STATIC, ObjectKind, PAGE_SIZE, VM_FLAG_COLLECT_EVERY_ALLOCATION};
+use exs_layout::{
+    GC_STATIC, ObjectKind, PAGE_HEADER_SIZE, PAGE_SIZE, VM_FLAG_COLLECT_EVERY_ALLOCATION,
+};
 use exs_value::ValueRef;
 
 use super::heap::{Heap, ROOT_SLOT_COUNT, VM, reference};
@@ -200,4 +202,67 @@ fn grows_the_mark_stack_for_wide_objects() {
     heap.collect();
     assert!(leaves.iter().all(|leaf| heap.is_live(*leaf)));
     assert_eq!(collection_count(&heap.memory, VM), 2);
+}
+
+/// Never looks at the unused cells of a partly linked page, even when a reused page still holds
+/// bytes that look like marked objects, also when marking overflows and rescans.
+#[test]
+fn ignores_stale_bytes_behind_the_link_cursor() {
+    let mut heap = Heap::new(15);
+    // A dead one-page object leaves bytes that look like marked Cells referencing the heap.
+    let stale = heap.allocate(PAGE_SIZE - PAGE_HEADER_SIZE - 64, ObjectKind::Bytes);
+    for offset in (8..PAGE_SIZE - PAGE_HEADER_SIZE - 64).step_by(8) {
+        heap.memory.store_u8(stale + offset, ObjectKind::Cell as u8);
+        heap.memory
+            .store_u8(stale + offset + 1, exs_layout::GC_MARK);
+        heap.memory.store_u32(stale + offset + 4, 0);
+    }
+    heap.collect();
+    // The 128-byte class reuses the page and links only its first chunk.
+    let text = heap.string(100);
+    assert_eq!(text, stale);
+    heap.set_root(1, reference(text));
+    let untouched = stale + 64 * 128;
+    let before = heap.memory.load_u8(untouched + 1);
+    // Wide fan-out overflows the one-page mark stack, so marking rescans every class page.
+    let leaves: Vec<u32> = (0..30_000).map(|_| heap.cell(0)).collect();
+    let values: Vec<u64> = leaves.iter().map(|leaf| reference(*leaf)).collect();
+    let fan = heap.buffer(&values);
+    heap.set_root(0, reference(fan));
+    heap.collect();
+    assert_eq!(
+        heap.memory.load_u32(
+            VM + core::mem::offset_of!(exs_layout::VmState, heap.mark_stack_capacity) as u32
+        ),
+        (PAGE_SIZE - PAGE_HEADER_SIZE) / 4,
+        "the mark stack grew, so marking did not overflow"
+    );
+    assert!(heap.is_live(text));
+    assert!(leaves.iter().all(|leaf| heap.is_live(*leaf)));
+    assert_eq!(
+        heap.memory.load_u8(untouched + 1),
+        before,
+        "a stale cell was swept"
+    );
+    // The page keeps handing out its remaining cells, zeroed.
+    for _ in 0..100 {
+        let next = heap.string(100);
+        // The allocator zeroes the requested 120 bytes; the header occupies the first 8.
+        assert!((8..120).all(|offset| heap.memory.load_u8(next + offset) == 0));
+    }
+}
+
+/// Forgets the link cursor of a partly linked page that becomes empty and is released.
+#[test]
+fn resets_the_cursor_of_a_released_page() {
+    let mut heap = Heap::new(64);
+    let first = heap.string(100);
+    heap.collect();
+    assert!(!heap.is_live(first));
+    // A large run reuses the released page, so the class must start a new page.
+    let large = heap.allocate(PAGE_SIZE - PAGE_HEADER_SIZE - 64, ObjectKind::Bytes);
+    heap.set_root(0, reference(large));
+    assert_eq!(large, first);
+    let next = heap.string(100);
+    assert_ne!(next & !(PAGE_SIZE - 1), first & !(PAGE_SIZE - 1));
 }

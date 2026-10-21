@@ -17,7 +17,7 @@ use exs_layout::{
 use exs_value::ValueRef;
 
 use crate::allocator::{
-    INITIAL_COLLECTION_THRESHOLD, LARGE_CLASS, cells_per_page, write_free_cell,
+    INITIAL_COLLECTION_THRESHOLD, LARGE_CLASS, page_of, used_cells, write_free_cell,
 };
 use crate::memory::Memory;
 use crate::pages::{Run, pages_bytes, read_run, release_run, take_pages, write_run};
@@ -141,7 +141,7 @@ impl Marker {
             match run.kind {
                 PageKind::Class => {
                     let class = run.detail as usize;
-                    for index in 0..cells_per_page(class) {
+                    for index in 0..used_cells(memory, self.vm, page, class) {
                         let cell = page + PAGE_HEADER_SIZE + index * SIZE_CLASSES[class];
                         if is_marked(memory, cell) {
                             self.trace(memory, cell);
@@ -349,11 +349,16 @@ fn sweep(memory: &mut impl Memory, vm: Vm) {
 fn sweep_class_page(memory: &mut impl Memory, vm: Vm, page: u32, class: usize) -> u32 {
     let size = SIZE_CLASSES[class];
     let cell_at = |index: u32| page + PAGE_HEADER_SIZE + index * size;
-    let cells = cells_per_page(class);
+    let cells = used_cells(memory, vm, page, class);
     let live = (0..cells)
         .filter(|index| is_marked(memory, cell_at(*index)))
         .count() as u32;
     if live == 0 {
+        // The page returns to the free runs, so it can no longer be its class's current page.
+        let cursor = vm.class_cursor(memory, class);
+        if cursor != 0 && page_of(cursor) == page {
+            vm.set_class_cursor(memory, class, 0);
+        }
         return 0;
     }
     let mut head = vm.free_head(memory, class);

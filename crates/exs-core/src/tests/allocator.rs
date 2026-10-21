@@ -73,3 +73,43 @@ fn reports_exhausted_memory() {
     let small = crate::allocate(&mut heap.memory, super::heap::VM, 32, ObjectKind::Bytes);
     assert!(small.is_some());
 }
+
+/// Links a fresh class page in chunks instead of all at once and continues where it stopped.
+#[test]
+fn links_class_pages_in_chunks() {
+    let mut heap = Heap::new(64);
+    let first = heap.allocate(16, ObjectKind::Bytes);
+    assert_eq!(
+        free_cells(&heap, 0),
+        63,
+        "one chunk minus the allocated cell"
+    );
+    let mut previous = first;
+    // Crossing several chunk boundaries keeps handing out consecutive cells of the page.
+    for _ in 1..200 {
+        let next = heap.allocate(16, ObjectKind::Bytes);
+        assert_eq!(next, previous + 16);
+        previous = next;
+    }
+    let cells = (PAGE_SIZE - PAGE_HEADER_SIZE) / 16;
+    for _ in 200..cells {
+        heap.allocate(16, ObjectKind::Bytes);
+    }
+    // The first page is used up, so the next cell starts a second page.
+    let next = heap.allocate(16, ObjectKind::Bytes);
+    assert_eq!(next, first + PAGE_SIZE);
+}
+
+/// Returns the length of the free list of size class `class`.
+pub(super) fn free_cells(heap: &Heap, class: u32) -> u32 {
+    let head = super::heap::VM
+        + core::mem::offset_of!(exs_layout::VmState, heap.free_heads) as u32
+        + class * 4;
+    let mut cell = heap.memory.load_u32(head);
+    let mut count = 0;
+    while cell != 0 {
+        count += 1;
+        cell = heap.memory.load_u32(cell + 8);
+    }
+    count
+}
