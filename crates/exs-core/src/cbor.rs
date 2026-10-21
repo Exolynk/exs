@@ -21,7 +21,7 @@ use crate::objects::{
 use crate::shapes::{key, key_count};
 use crate::strings::{DATA, byte_len, copy_string, string_object};
 use crate::typed::{
-    extra, ordered_slot, slot_address, slot_count, type_entry, type_id, typed_object,
+    extra, ordered_slot, slot_address, slot_count, type_entry, type_entry_at, type_id, typed_object,
 };
 use crate::vm::Vm;
 
@@ -581,8 +581,9 @@ pub(crate) fn resolve_enum(
         crate::strings::text(memory, object).as_bytes() == memory.bytes(text.0, text.1)
     };
     let count = Vm(vm).program_type_count(memory);
-    (0..count).find_map(|type_id| {
-        let entry = type_entry(memory, vm, type_id)?;
+    (0..count).find_map(|index| {
+        let entry = type_entry_at(memory, vm, index)?;
+        let type_id = entry.type_id;
         let name = string_object(entry.identity)?;
         if !same(name, identity) {
             return None;

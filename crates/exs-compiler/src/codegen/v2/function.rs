@@ -81,6 +81,8 @@ pub(super) struct Context<'m> {
     pub(super) closures: &'m HashMap<(String, u32, u32), ClosureInfo>,
     /// Index of the generated closure dispatcher, when the program creates closures.
     pub(super) closure_dispatcher: Option<u32>,
+    /// Ids of the nominal types values of the program can have.
+    pub(super) used_types: &'m HashSet<u32>,
 }
 
 /// Lowering state of one function body.

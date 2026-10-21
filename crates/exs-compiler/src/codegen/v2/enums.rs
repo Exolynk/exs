@@ -5,16 +5,20 @@
 
 use std::collections::HashMap;
 
-use wasm_encoder::{BlockType, Instruction};
+use exs_abi::TYPE_OBJECT;
+use exs_value::layout::{EXTRA_SHIFT, HEAP_TYPE_EXTRA, nominal_tag, tag, type_kind};
+use wasm_encoder::{BlockType, Instruction, ValType};
 
 use super::collections::{u32_field, value_field};
-use super::function::{FunctionCompiler, error, unsupported};
+use super::function::{FunctionCompiler, error};
 use crate::ast::{Expression, Identifier, MatchArm, MatchArmBody, MatchPattern, TypeAnnotation};
 use crate::codegen::match_arms::{ArmTest, MatchArms, check_bindings};
 use crate::codegen::types::{EnumVariant, NominalKind};
 use crate::codegen::{VALUE_TYPE, immediate};
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
+/// Byte offset of the header word, which holds the type id of typed Objects and enums.
+const HEADER_WORD: u64 = 4;
 /// Byte offset of the variant index inside an enum object.
 const VARIANT: u64 = core::mem::offset_of!(exs_layout::EnumObject, variant) as u64;
 /// Byte offset of the payload field count inside an enum object.
@@ -45,20 +49,41 @@ impl<'a> FunctionCompiler<'a, '_> {
             .ok_or_else(|| error("E0999", span, format!("unknown enum identity `{identity}`")))
     }
 
-    /// Replaces the `ValueRef` on the stack with 1 when it carries the tag of `type_id`.
+    /// Replaces the `ValueRef` on the stack with 1 when it is a value of the nominal type
+    /// `type_id`: through its inline tag, or for a type id too large to inline through the
+    /// type id in its heap header.
     pub(super) fn type_tag_test(
         &mut self,
         type_id: u32,
-        span: SourceSpan<'a>,
+        _span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if immediate::object_type_test(&mut self.function, type_id) {
-            Ok(())
-        } else {
-            Err(unsupported(
-                span,
-                "contracts of more than 65534 nominal types",
-            ))
+        if let Some(expected) = nominal_tag(type_id) {
+            self.instruction(Instruction::I64Const(i64::from(EXTRA_SHIFT)));
+            self.instruction(Instruction::I64ShrU);
+            self.instruction(Instruction::I64Const(i64::from(expected)));
+            self.instruction(Instruction::I64Eq);
+            return Ok(());
         }
+        let value = self.scalar_local();
+        self.instruction(Instruction::LocalTee(value));
+        self.instruction(Instruction::I64Const(i64::from(EXTRA_SHIFT)));
+        self.instruction(Instruction::I64ShrU);
+        self.instruction(Instruction::I64Const(i64::from(tag(
+            type_kind(TYPE_OBJECT),
+            HEAP_TYPE_EXTRA,
+        ))));
+        self.instruction(Instruction::I64Eq);
+        self.instruction(Instruction::If(BlockType::Result(ValType::I32)));
+        // Typed Objects and enums keep their type id in the header word.
+        self.instruction(Instruction::LocalGet(value));
+        self.instruction(Instruction::I32WrapI64);
+        self.instruction(Instruction::I32Load(u32_field(HEADER_WORD)));
+        self.instruction(Instruction::I32Const(type_id.cast_signed()));
+        self.instruction(Instruction::I32Eq);
+        self.instruction(Instruction::Else);
+        self.instruction(Instruction::I32Const(0));
+        self.instruction(Instruction::End);
+        Ok(())
     }
 
     /// Constructs one enum value after checking each payload against its declared contract

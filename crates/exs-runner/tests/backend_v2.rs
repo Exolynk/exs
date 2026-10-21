@@ -1005,6 +1005,31 @@ fn reports_boundary_fuel_and_time() {
     }
 }
 
+/// Tests, dispatches, reads and encodes values of nominal types whose ids are too large to
+/// inline like v1, through the type id in their heap header.
+#[test]
+fn matches_v1_beyond_the_inline_type_ids() {
+    let mut declarations = String::new();
+    for index in 0..65_540 {
+        declarations.push_str(&format!("type T{index} {{ v: Int }}\n"));
+    }
+    declarations.push_str("enum Big { A, B(value: Int), }\n");
+    declarations.push_str("impl T65539 { fn get(self) -> Int { ret self.v; } }\n");
+    let program = format!(
+        "{declarations} fn main(input) {{ let t = T65539 {{ v: 7 }}; t.v = t.v + 1; let b = Big::B(3); \
+         ret [t, t.get(), t.v, t is T65539, t is T65538, T65533 {{ v: 1 }} is T65533, b, b is Big, \
+         match b {{ Big::A => 0, Big::B(value) => value, }}, input is Big, f\"{{b}}\", {{ x: 1 }}.x]; }}"
+    );
+    compare(
+        &program,
+        &[ExsValue::Enum {
+            type_id: "test.exs::Big".to_owned(),
+            variant: "A".to_owned(),
+            fields: Vec::new(),
+        }],
+    );
+}
+
 /// Runs `par` like v1: static and dynamic tasks, their results in source order, host calls
 /// that suspend single tasks, nested `par`, v1's Errors for invalid dynamic operands, and a
 /// fatal Error that ends every task.

@@ -115,7 +115,8 @@ pub struct ErrorState {
 /// Compiler-provided static metadata about the program's types.
 #[repr(C)]
 pub struct ProgramState {
-    /// Address of an array of [`TypeEntry`]s indexed by nominal type id, 0 when there is none.
+    /// Address of an array of [`TypeEntry`]s sorted by nominal type id, one per type the program
+    /// uses, 0 when there is none.
     pub types: u32,
     /// Number of entries in `types`.
     pub type_count: u32,
@@ -137,6 +138,10 @@ pub struct TypeEntry {
     pub field_names: u32,
     /// Raw `ValueRef` of the static identity String of an enum, 0 for Object types.
     pub identity: u64,
+    /// The nominal type id the entry describes.
+    pub type_id: u32,
+    /// Reserved, keeps entries 8-byte aligned.
+    pub reserved: u32,
 }
 
 /// The block of execution state at a linker-assigned address.

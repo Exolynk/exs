@@ -1,9 +1,9 @@
 //! The nominal types whose names the static type table holds.
 //!
 //! Every name in the table is a static String and adds to a program's initialized data, which
-//! costs fuel on every execution. The table names every type the program declares, but of the
-//! prelude's types only those reached code uses, together with the types their fields and
-//! payloads contain: values of other prelude types cannot exist.
+//! costs fuel on every execution. The table names the types reached code uses, together with
+//! the types their fields and payloads contain: values of other types cannot exist, and an
+//! input enum of a type no code names is a host enum, which behaves the same.
 
 use std::collections::HashSet;
 
@@ -18,14 +18,9 @@ use crate::codegen::types::{TypeContract, TypeRegistry};
 /// Prefix of the source ids of the prelude.
 const PRELUDE_SOURCE: &str = "<std>/";
 
-/// Returns the ids of the types the type table names for `module` and its `reached` units.
-pub(super) fn used_types(
-    module: &Module<'_>,
-    types: &TypeRegistry,
-    reached: &[&Unit<'_, '_>],
-) -> HashSet<u32> {
-    let mut used = declared_types(module, types);
-    used.insert(STANDARD_ORDERING_TYPE_ID);
+/// Returns the ids of the types the type table names for the `reached` units.
+pub(super) fn used_types(types: &TypeRegistry, reached: &[&Unit<'_, '_>]) -> HashSet<u32> {
+    let mut used = HashSet::from([STANDARD_ORDERING_TYPE_ID]);
     let mut collector = Collector {
         types,
         used: &mut used,

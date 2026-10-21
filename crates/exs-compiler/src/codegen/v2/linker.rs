@@ -180,7 +180,7 @@ pub(in crate::codegen) fn compile<'a>(
     let resumable_keys = resumable_units(&hir, &dispatch, &reached_keys, &parallel);
     drop(hir);
     let functions: Vec<_> = reached.iter().map(|unit| unit.declaration).collect();
-    let used = used_types(module, &types, &reached);
+    let used = used_types(&types, &reached);
     let statics = StaticStrings::build(
         &string_literals(&functions, TypeTable::field_names(&types, &used)),
         &bytes_literals(&functions),
@@ -321,6 +321,7 @@ pub(in crate::codegen) fn compile<'a>(
         captured: &captured,
         closures: &closures,
         closure_dispatcher,
+        used_types: &used,
     };
     for unit in &reached {
         if let Some(resumable) = &resumable

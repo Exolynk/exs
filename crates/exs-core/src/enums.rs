@@ -8,7 +8,7 @@ use core::mem::{offset_of, size_of};
 use exs_abi::{STANDARD_ORDERING_TYPE_ID, TYPE_OBJECT};
 use exs_layout::{EnumObject, HOST_ENUM_VARIANT, ObjectKind};
 use exs_value::ValueRef;
-use exs_value::layout::{KIND_SHIFT, object_type_extra, type_kind};
+use exs_value::layout::{KIND_SHIFT, nominal_extra, type_kind};
 
 use crate::allocator::allocate;
 use crate::memory::Memory;
@@ -60,8 +60,8 @@ pub(crate) fn payload_count(memory: &impl Memory, object: u32) -> u32 {
 }
 
 /// Type id of host enums whose identity the program does not declare, which no declared type
-/// has, as programs are limited to fewer inline type ids.
-const FOREIGN_ENUM_TYPE_ID: u32 = exs_value::layout::MAX_INLINE_TYPE_ID;
+/// has.
+const FOREIGN_ENUM_TYPE_ID: u32 = u32::MAX;
 
 /// Creates a host enum with the rooted `identity` and `name` Strings and `count` empty
 /// payload fields: a value of a variant or an identity the program does not declare.
@@ -74,15 +74,14 @@ pub(crate) fn host_enum(
 ) -> Option<u64> {
     let identity_object = string_object(identity)?;
     let type_id = (0..crate::vm::Vm(vm).program_type_count(memory))
-        .find(|type_id| {
-            type_entry(memory, vm, *type_id)
-                .and_then(|entry| string_object(entry.identity))
-                .is_some_and(|declared| {
-                    crate::strings::text(memory, declared)
-                        == crate::strings::text(memory, identity_object)
-                })
+        .filter_map(|index| crate::typed::type_entry_at(memory, vm, index))
+        .find(|entry| {
+            string_object(entry.identity).is_some_and(|declared| {
+                crate::strings::text(memory, declared)
+                    == crate::strings::text(memory, identity_object)
+            })
         })
-        .unwrap_or(FOREIGN_ENUM_TYPE_ID);
+        .map_or(FOREIGN_ENUM_TYPE_ID, |entry| entry.type_id);
     let raw = allocate_enum(
         memory,
         vm,
@@ -114,7 +113,7 @@ pub(crate) fn allocate_enum(
     memory.store_u32(object + TYPE_ID, type_id);
     memory.store_u32(object + VARIANT, variant);
     memory.store_u32(object + FIELD_COUNT, count);
-    let extra = object_type_extra(Some(type_id));
+    let extra = nominal_extra(type_id);
     ValueRef::from_parts(type_kind(TYPE_OBJECT), extra, object).map(ValueRef::raw)
 }
 

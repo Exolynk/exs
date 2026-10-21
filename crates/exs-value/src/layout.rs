@@ -49,6 +49,37 @@ pub const fn type_kind(type_bit: u32) -> u16 {
     type_bit as u16
 }
 
+/// Runtime v2: the Object extra bits of a typed Object or enum whose nominal type id is too
+/// large to inline, so only its heap header names the type. Unlike extra bits 0, which mark
+/// untyped Objects, they never match an untyped Object's inline tests.
+pub const HEAP_TYPE_EXTRA: u16 = u16::MAX;
+
+/// Runtime v2: the largest nominal type id carried in the extra bits, one below v1's limit,
+/// as [`HEAP_TYPE_EXTRA`] is reserved.
+pub const NOMINAL_MAX_INLINE_TYPE_ID: u32 = u16::MAX as u32 - 2;
+
+/// Runtime v2: returns the Object extra bits of a value of the nominal type `type_id`.
+#[inline]
+#[must_use]
+pub const fn nominal_extra(type_id: u32) -> u16 {
+    if type_id <= NOMINAL_MAX_INLINE_TYPE_ID {
+        (type_id + 1) as u16
+    } else {
+        HEAP_TYPE_EXTRA
+    }
+}
+
+/// Runtime v2: returns the upper 32 bits of every value of the nominal type `type_id`, or
+/// `None` when the id is not inlined and only the heap header names it.
+#[inline]
+#[must_use]
+pub const fn nominal_tag(type_id: u32) -> Option<u32> {
+    if type_id > NOMINAL_MAX_INLINE_TYPE_ID {
+        return None;
+    }
+    Some(tag(type_kind(TYPE_OBJECT), nominal_extra(type_id)))
+}
+
 /// Returns the Object extra bits encoding one nominal type id, or 0 when it is not inlined.
 #[inline]
 #[must_use]

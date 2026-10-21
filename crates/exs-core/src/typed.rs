@@ -77,17 +77,35 @@ pub(crate) const fn slot_address(object: u32, index: u32) -> u32 {
 }
 
 /// Returns the program's metadata of nominal type `type_id`, or `None` when the program has
-/// no entry for it.
+/// no entry for it. Entries are sorted by type id.
 pub(crate) fn type_entry(memory: &impl Memory, vm: u32, type_id: u32) -> Option<TypeEntry> {
+    let (mut low, mut high) = (0, Vm(vm).program_type_count(memory));
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let entry = type_entry_at(memory, vm, middle)?;
+        match entry.type_id.cmp(&type_id) {
+            core::cmp::Ordering::Equal => return Some(entry),
+            core::cmp::Ordering::Less => low = middle + 1,
+            core::cmp::Ordering::Greater => high = middle,
+        }
+    }
+    None
+}
+
+/// Returns entry `index` of the program's type table, or `None` past its end.
+pub(crate) fn type_entry_at(memory: &impl Memory, vm: u32, index: u32) -> Option<TypeEntry> {
     let vm = Vm(vm);
-    if type_id >= vm.program_type_count(memory) {
+    if index >= vm.program_type_count(memory) {
         return None;
     }
-    let entry = vm.program_types(memory) + type_id * size_of::<TypeEntry>() as u32;
+    let entry = vm.program_types(memory) + index * size_of::<TypeEntry>() as u32;
+    let field = |offset: usize| entry + offset as u32;
     Some(TypeEntry {
-        field_count: memory.load_u32(entry + offset_of!(TypeEntry, field_count) as u32),
-        field_names: memory.load_u32(entry + offset_of!(TypeEntry, field_names) as u32),
-        identity: memory.load_u64(entry + offset_of!(TypeEntry, identity) as u32),
+        field_count: memory.load_u32(field(offset_of!(TypeEntry, field_count))),
+        field_names: memory.load_u32(field(offset_of!(TypeEntry, field_names))),
+        identity: memory.load_u64(field(offset_of!(TypeEntry, identity))),
+        type_id: memory.load_u32(field(offset_of!(TypeEntry, type_id))),
+        reserved: 0,
     })
 }
 
@@ -117,7 +135,7 @@ pub(crate) fn allocate_typed(
     let object = crate::allocator::allocate(memory, vm, size, ObjectKind::TypedObject)?;
     memory.store_u32(object + TYPE_ID, type_id);
     memory.store_u32(object + SLOT_COUNT, slots);
-    let extra = exs_value::layout::object_type_extra(Some(type_id));
+    let extra = exs_value::layout::nominal_extra(type_id);
     exs_value::ValueRef::from_parts(type_kind(TYPE_OBJECT), extra, object)
         .map(exs_value::ValueRef::raw)
 }

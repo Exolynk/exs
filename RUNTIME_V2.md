@@ -2,8 +2,9 @@
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
 linking) are done and phase 2 got its go; phase 3 is done except programs with more than
-65,534 nominal types (section 12r); phase 4 is done except one test under a 2 MiB memory
-limit (section 12w); phase 5 is done (section 12x). See sections 12 to 12x.
+65,534 nominal types; phase 4 is done except one test under a 2 MiB memory limit; phase 5 is
+done (section 12x). Both remaining gaps are closed, so every runner suite passes on v2 (section
+12y). See sections 12 to 12y.
 
 ## 1. Goal
 
@@ -213,11 +214,6 @@ Each phase ends with measurement and an explicit go / no-go.
   `Float::parse`, replacing the small tables, and moving the uninitialized VM state block out
   of the initialized span (a memory layout change). Goal: typical programs stay in one block
   with margin. To be planned and approved separately.
-- **More than 65,534 nominal types.** Inline type-tag tests need a heap type-id fallback
-  (section 12r).
-- **Initial memory.** v2 needs more than 2 MiB before a program runs: the template's 1 MiB
-  Rust stack, a 1 MiB root stack and the trace and heap pages (section 12v). Smaller stacks
-  or growing them on demand are a memory layout change.
 - **Input adoption.** Adopting an image builds every Object key as a new String and walks
   the shape transitions per entry, so 200 small records still cost about 8,000 fuel each
   (section 12x). Interning keys the program knows statically is the lever.
@@ -1075,6 +1071,32 @@ runner is not metered as fuel; the execution times above include it.
 `backend_v2.rs` compares results, inputs and host-call values of every kind with v1,
 including Errors with origins, traces and causes, values that cannot cross the boundary,
 variadic entries, excess arguments and host enums in every operation listed above.
+
+## 12y. Closing the last gaps: small memory limits and many nominal types
+
+- **Small memory limits:** the core template's Rust stack shrinks from 1 MiB to 256 KiB, so a
+  module starts in 5 instead of 17 pages; v2 still reaches v1's nesting depths for `clone`,
+  `debug`, equality and formatted strings, where the fuel limit ends both first. The root
+  stack keeps its 16 pages: recursion roots many slots per frame, and with 8 pages it would
+  end before the WebAssembly stack does, with a less precise error. For v2 modules the
+  runner refuses memory growth beyond the limit instead of trapping and records the refusal;
+  the allocator then collects and retries, and a trap after a refusal is reported as the
+  exceeded memory limit like before. v1 keeps trapping on growth.
+- **Many nominal types:** type ids beyond 65,533 are no longer inlined; such values carry the
+  reserved extra bits `HEAP_TYPE_EXTRA`, so they never pass an untyped Object's inline tests,
+  and type tests compare the type id in their heap header. The type table is now sparse: one
+  entry per type reached code uses, sorted by type id and searched binarily, so declared but
+  unused types cost neither data nor fuel. Inline property access only tests types the
+  program uses. The test with 65,600 types builds a 3.3 MB module (v1: 3.5 MB), most of it
+  the source map.
+
+| Suite on v2 | after 5d | now |
+|---|---:|---:|
+| `runtime_values` | 95 / 96 | 96 / 96 |
+| `closures_parallel` | 16 / 17 | 17 / 17 |
+| every other runner suite | all | all |
+
+The fuel suite on v2 is unchanged.
 
 ## 13. Risks and open questions
 

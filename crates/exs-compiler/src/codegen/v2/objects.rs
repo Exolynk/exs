@@ -11,9 +11,10 @@
 
 use core::mem::size_of;
 
+use exs_abi::TYPE_OBJECT;
 use exs_layout::{ObjectKind, TypedObject};
 use exs_value::ValueRef;
-use exs_value::layout::object_tag;
+use exs_value::layout::{nominal_extra, nominal_tag, tag, type_kind};
 use wasm_encoder::{BlockType, Instruction};
 
 use super::collections::{u32_field, value_field};
@@ -134,8 +135,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     ) -> Result<u32, CompileDiagnostics<'a>> {
         let count = u32::try_from(nominal.fields.len())
             .map_err(|_| error("E0212", span, "too many fields for one nominal type".into()))?;
-        let tag = object_tag(nominal.id)
-            .ok_or_else(|| super::function::unsupported(span, "more than 65534 nominal types"))?;
+        let tag = tag(type_kind(TYPE_OBJECT), nominal_extra(nominal.id));
         self.push_vm();
         self.instruction(Instruction::I32Const(
             (SLOTS as u32 + count * 8).cast_signed(),
@@ -180,20 +180,23 @@ impl<'a> FunctionCompiler<'a, '_> {
         Some(self.static_array(order))
     }
 
-    /// Returns the inline tag and slot offset of every nominal Object type declaring
-    /// `property`.
+    /// Returns the inline tag and slot offset of every nominal Object type the program uses
+    /// that declares `property`.
     fn property_slots(&self, property: &str) -> Vec<(u32, u64)> {
         let mut slots: Vec<(u32, u64)> = self
             .context
             .types
             .nominal_types()
-            .filter(|nominal| nominal.kind == NominalKind::Object)
+            // Types no value of the program can have need no test.
+            .filter(|nominal| {
+                nominal.kind == NominalKind::Object && self.context.used_types.contains(&nominal.id)
+            })
             .filter_map(|nominal| {
                 let index = nominal
                     .fields
                     .iter()
                     .position(|field| field.name == property)?;
-                Some((object_tag(nominal.id)?, SLOTS + index as u64 * 8))
+                Some((nominal_tag(nominal.id)?, SLOTS + index as u64 * 8))
             })
             .collect();
         // A stable order keeps the generated code deterministic.

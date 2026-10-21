@@ -1,8 +1,9 @@
 //! The static type table the core library reads to name the fields of typed Objects and the
 //! identities and variants of enums.
 //!
-//! The table is an array of `exs_layout::TypeEntry`s indexed by nominal type id, followed by
-//! the name arrays they point to, each a run of raw `ValueRef`s of static Strings.
+//! The table is an array of `exs_layout::TypeEntry`s, one per used nominal type sorted by type
+//! id, followed by the name arrays they point to, each a run of raw `ValueRef`s of static
+//! Strings. Programs with many unused types pay nothing for them.
 
 use std::collections::{HashMap, HashSet};
 
@@ -55,9 +56,9 @@ impl TypeTable {
             .collect()
     }
 
-    /// Lays out the table for `types` at `base`, naming the fields, variants and enum
-    /// identities of the `used` types with the static Strings in `strings`; other entries stay
-    /// empty. Returns `None` when an address leaves linear memory or a name is missing.
+    /// Lays out the table of the `used` types at `base`, naming the fields, variants and enum
+    /// identities with the static Strings in `strings`. Returns `None` when an address leaves
+    /// linear memory or a name is missing.
     pub(super) fn build(
         types: &TypeRegistry,
         used: &HashSet<u32>,
@@ -65,19 +66,17 @@ impl TypeTable {
         base: u32,
     ) -> Option<Self> {
         let base = base.next_multiple_of(8);
-        let count = types
-            .nominal_types()
-            .map(|nominal| nominal.id + 1)
-            .max()
-            .unwrap_or_default();
-        let entry_size = size_of::<TypeEntry>() as u32;
-        let mut entries = vec![(0_u32, 0_u32, 0_u64); count as usize];
-        let mut names = Vec::new();
-        let names_base = base.checked_add(count.checked_mul(entry_size)?)?;
-        for nominal in types
+        let mut nominals: Vec<_> = types
             .nominal_types()
             .filter(|nominal| used.contains(&nominal.id))
-        {
+            .collect();
+        nominals.sort_by_key(|nominal| nominal.id);
+        let count = u32::try_from(nominals.len()).ok()?;
+        let entry_size = size_of::<TypeEntry>() as u32;
+        let mut entries = Vec::with_capacity(nominals.len());
+        let mut names = Vec::new();
+        let names_base = base.checked_add(count.checked_mul(entry_size)?)?;
+        for nominal in nominals {
             let (listed, identity): (Vec<&str>, u64) = match (&nominal.kind, &nominal.enum_type_id)
             {
                 (NominalKind::Enum, Some(identity)) => (
@@ -93,21 +92,24 @@ impl TypeTable {
                     0,
                 ),
             };
-            if listed.is_empty() && identity == 0 {
-                continue;
-            }
             let address = names_base.checked_add(u32::try_from(names.len()).ok()?)?;
             for name in &listed {
                 names.extend(strings.get(*name)?.to_le_bytes());
             }
-            *entries.get_mut(nominal.id as usize)? =
-                (u32::try_from(listed.len()).ok()?, address, identity);
+            entries.push((
+                u32::try_from(listed.len()).ok()?,
+                address,
+                identity,
+                nominal.id,
+            ));
         }
         let mut bytes = Vec::with_capacity(entries.len() * entry_size as usize + names.len());
-        for (field_count, field_names, identity) in entries {
+        for (field_count, field_names, identity, type_id) in entries {
             bytes.extend(field_count.to_le_bytes());
             bytes.extend(field_names.to_le_bytes());
             bytes.extend(identity.to_le_bytes());
+            bytes.extend(type_id.to_le_bytes());
+            bytes.extend(0_u32.to_le_bytes());
         }
         bytes.extend(names);
         Some(Self { base, count, bytes })
