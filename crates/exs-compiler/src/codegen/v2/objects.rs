@@ -188,8 +188,16 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::Block(BlockType::Result(VALUE_TYPE)));
         self.instruction(Instruction::Block(BlockType::Empty));
         self.property_dispatch(object, property, 1, |compiler, offset| {
+            // A declared field removed by `delete` or `clear` holds an empty slot: None.
+            let scratch = compiler.scratch;
             compiler.push_address(object);
             compiler.instruction(Instruction::I64Load(value_field(offset)));
+            compiler.instruction(Instruction::LocalSet(scratch));
+            immediate::push(&mut compiler.function, ValueRef::NONE);
+            compiler.instruction(Instruction::LocalGet(scratch));
+            compiler.instruction(Instruction::LocalGet(scratch));
+            compiler.instruction(Instruction::I64Eqz);
+            compiler.instruction(Instruction::Select);
         });
         self.cached_slot_or_branch(object, cache, 0);
         self.instruction(Instruction::I64Load(value_field(VALUE_SLOTS)));
@@ -222,6 +230,14 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::Block(BlockType::Empty));
         self.instruction(Instruction::Block(BlockType::Empty));
         self.property_dispatch(object, property, 1, |compiler, offset| {
+            // Like the core, refuse to restore a removed declared field, whose v1 position is
+            // after every other key.
+            compiler.push_address(object);
+            compiler.instruction(Instruction::I64Load(value_field(offset)));
+            compiler.instruction(Instruction::I64Eqz);
+            compiler.instruction(Instruction::If(BlockType::Empty));
+            compiler.instruction(Instruction::Unreachable);
+            compiler.instruction(Instruction::End);
             compiler.push_address(object);
             compiler.instruction(Instruction::LocalGet(value));
             compiler.instruction(Instruction::I64Store(value_field(offset)));

@@ -130,3 +130,33 @@ pub fn for_snapshot(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> 
     }
     crate::errors::not_iterable(memory, vm, raw)
 }
+
+/// Sets the number of elements of the List at `list`, which must not exceed its capacity.
+pub(crate) fn set_len(memory: &mut impl Memory, list: u32, len: u32) {
+    memory.store_u32(list + LEN, len);
+}
+
+/// Grows the Buffer of the List at `list` so it holds at least `needed` elements.
+///
+/// The List must be rooted, because growing allocates.
+pub(crate) fn ensure_capacity(
+    memory: &mut impl Memory,
+    vm: u32,
+    list: u32,
+    needed: u32,
+) -> Option<()> {
+    let items = memory.load_u32(list + ITEMS);
+    let capacity = memory.load_u32(items + CAPACITY);
+    if needed <= capacity {
+        return Some(());
+    }
+    let grown = capacity.saturating_mul(2).max(needed).max(MIN_CAPACITY);
+    let size = grown.checked_mul(8)?.checked_add(SLOTS)?;
+    let replacement = allocate(memory, vm, size, ObjectKind::Buffer)?;
+    memory.store_u32(replacement + CAPACITY, grown);
+    // The List still references the old Buffer, so nothing was collected while allocating.
+    let items = memory.load_u32(list + ITEMS);
+    memory.copy(replacement + SLOTS, items + SLOTS, len(memory, list) * 8);
+    memory.store_u32(list + ITEMS, replacement);
+    Some(())
+}

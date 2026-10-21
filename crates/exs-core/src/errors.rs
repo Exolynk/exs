@@ -289,3 +289,20 @@ pub fn method_arity_error(
     };
     recoverable(memory, vm, "ArityError", message, arguments)
 }
+
+/// Allocates a copy of the Error at `object` sharing its parts, for `clone` to fill in.
+pub(crate) fn copy_error(memory: &mut impl Memory, vm: u32, object: u32) -> Option<u64> {
+    let copy = allocate(
+        memory,
+        vm,
+        size_of::<ErrorObject>() as u32,
+        ObjectKind::Error,
+    )?;
+    memory.copy(copy + 4, object + 4, size_of::<ErrorObject>() as u32 - 4);
+    ValueRef::from_parts(type_kind(TYPE_ERROR), 0, copy).map(ValueRef::raw)
+}
+
+/// Returns the addresses of the data and cause fields of the Error at `object`.
+pub(crate) const fn error_value_fields(object: u32) -> [u32; 2] {
+    [object + DATA, object + CAUSE]
+}

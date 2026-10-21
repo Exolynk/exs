@@ -82,3 +82,20 @@ pub(crate) fn field_address(memory: &impl Memory, vm: u32, object: u32, name: u6
         })
         .map(|index| slot_address(object, index))
 }
+
+/// Allocates a typed Object of nominal type `type_id` with `slots` empty field slots and
+/// returns its reference.
+pub(crate) fn allocate_typed(
+    memory: &mut impl Memory,
+    vm: u32,
+    type_id: u32,
+    slots: u32,
+) -> Option<u64> {
+    let size = slots.checked_mul(8)?.checked_add(SLOTS)?;
+    let object = crate::allocator::allocate(memory, vm, size, ObjectKind::TypedObject)?;
+    memory.store_u32(object + TYPE_ID, type_id);
+    memory.store_u32(object + SLOT_COUNT, slots);
+    let extra = exs_value::layout::object_type_extra(Some(type_id));
+    exs_value::ValueRef::from_parts(type_kind(TYPE_OBJECT), extra, object)
+        .map(exs_value::ValueRef::raw)
+}

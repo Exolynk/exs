@@ -69,6 +69,22 @@ pub(crate) fn text_string(memory: &mut impl Memory, vm: u32, text: &str) -> Opti
     string_reference(object)
 }
 
+/// Creates one String of `len` bytes and `chars` characters whose text `write` stores at the
+/// address it receives.
+///
+/// Every value `write` reads must be rooted, because the String is allocated first.
+pub(crate) fn copy_string_object<M: Memory>(
+    memory: &mut M,
+    vm: u32,
+    len: u32,
+    chars: u32,
+    write: impl FnOnce(&mut M, u32),
+) -> Option<u64> {
+    let object = allocate_string(memory, vm, len, chars)?;
+    write(memory, object + DATA);
+    string_reference(object)
+}
+
 /// Creates one String from `len` bytes of validated UTF-8 at `source`.
 pub(crate) fn copy_string(
     memory: &mut impl Memory,

@@ -1,10 +1,14 @@
 //! Built-in receiver methods and static functions of built-in types, as stateless helpers
 //! with v1's results, Error kinds and messages.
 
+mod clone;
 mod dispatch;
 mod float_parse;
+mod lists;
 mod numbers;
+mod objects;
 mod statics;
+mod strings;
 mod values;
 
 pub use dispatch::call_builtin;

@@ -8,6 +8,7 @@ use crate::errors::recoverable;
 use crate::memory::Memory;
 use crate::methods::float_parse::parse_f64;
 use crate::methods::numbers::{float_pair, float_unary, type_error};
+use crate::methods::objects::from_entries;
 use crate::numbers::{float_value, int_value};
 use crate::strings::{string_object, text};
 
@@ -26,6 +27,7 @@ pub fn call_static(
     };
     match function {
         StaticFunction::IntParse => parse_int(memory, vm, first),
+        StaticFunction::ObjectFromEntries => from_entries(memory, vm, first),
         StaticFunction::FloatParse => parse_float(memory, vm, first),
         StaticFunction::MathPi => float_value(memory, vm, core::f64::consts::PI),
         StaticFunction::MathTau => float_value(memory, vm, core::f64::consts::TAU),

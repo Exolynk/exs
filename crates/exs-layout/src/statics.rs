@@ -9,6 +9,8 @@ pub enum StaticFunction {
     IntParse,
     /// `Float::parse(text)`.
     FloatParse,
+    /// `Object::from_entries(entries)`.
+    ObjectFromEntries,
     /// `Math::pi()`.
     MathPi,
     /// `Math::tau()`.
@@ -42,9 +44,10 @@ pub enum StaticFunction {
 }
 
 /// Every static function in index order.
-const ALL: [StaticFunction; 17] = [
+const ALL: [StaticFunction; 18] = [
     StaticFunction::IntParse,
     StaticFunction::FloatParse,
+    StaticFunction::ObjectFromEntries,
     StaticFunction::MathPi,
     StaticFunction::MathTau,
     StaticFunction::MathE,
@@ -89,6 +92,7 @@ impl StaticFunction {
         match self {
             Self::IntParse => ("Int", "parse"),
             Self::FloatParse => ("Float", "parse"),
+            Self::ObjectFromEntries => ("Object", "from_entries"),
             Self::MathPi => ("Math", "pi"),
             Self::MathTau => ("Math", "tau"),
             Self::MathE => ("Math", "e"),

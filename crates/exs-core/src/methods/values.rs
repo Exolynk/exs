@@ -4,11 +4,9 @@ use crate::errors::{error_object, error_parts};
 use crate::lists::{len as list_len, list_object};
 use crate::memory::Memory;
 use crate::methods::numbers::{boolean, type_error};
+use crate::methods::objects::object_len;
 use crate::numbers::{Arithmetic, arithmetic, divide, int_value};
-use crate::objects::{shape, untyped_object};
-use crate::shapes::key_count;
 use crate::strings::{char_count, concat, format, string_object};
-use crate::typed::{extra, slot_count, typed_object};
 use crate::vm::Vm;
 
 /// Evaluates the `add`, `sub`, `mul` or `div` method exactly like the operator.
@@ -61,34 +59,20 @@ pub(crate) fn render(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option
     })
 }
 
-/// Returns the number of entries of an Object: declared fields and extra keys of a typed
-/// Object, keys of an untyped one.
-fn object_len(memory: &impl Memory, receiver: u64) -> Option<u32> {
-    if let Some(object) = typed_object(memory, receiver) {
-        let extra = match extra(memory, object) {
-            0 => 0,
-            keys => key_count(memory, shape(memory, keys)),
-        };
-        return Some(slot_count(memory, object) + extra);
-    }
-    let object = untyped_object(memory, receiver)?;
-    Some(key_count(memory, shape(memory, object)))
-}
-
 /// Returns the visible length of a String, List or Object.
-fn visible_len(memory: &impl Memory, receiver: u64) -> Option<u32> {
+fn visible_len(memory: &impl Memory, vm: u32, receiver: u64) -> Option<u32> {
     if let Some(object) = string_object(receiver) {
         return Some(char_count(memory, object));
     }
     if let Some(list) = list_object(receiver) {
         return Some(list_len(memory, list));
     }
-    object_len(memory, receiver)
+    object_len(memory, vm, receiver)
 }
 
 /// Evaluates `length`.
 pub(crate) fn length(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option<u64> {
-    match visible_len(memory, receiver) {
+    match visible_len(memory, vm, receiver) {
         Some(len) => int_value(memory, vm, i64::from(len)),
         None => type_error(
             memory,
@@ -101,7 +85,7 @@ pub(crate) fn length(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option
 
 /// Evaluates `is_empty`.
 pub(crate) fn is_empty(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option<u64> {
-    match visible_len(memory, receiver) {
+    match visible_len(memory, vm, receiver) {
         Some(len) => Some(boolean(len == 0)),
         None => type_error(
             memory,

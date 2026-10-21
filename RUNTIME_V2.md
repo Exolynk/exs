@@ -1,8 +1,8 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done and phase 2 got its go; phase 3 is in progress (3a and 3b-1 done). See
-sections 12 to 12j.
+linking) are done and phase 2 got its go; phase 3 is in progress (3a, 3b-1 and 3b-2a done). See
+sections 12 to 12k.
 
 ## 1. Goal
 
@@ -602,6 +602,30 @@ data costs every script.
 | formatted string per row, 1000 rows | 1,747,893 | 2,376,298 | 1,633,914 |
 | `+` chain per row, 1000 rows | 1,792,893 | 2,041,298 | 1,792,914 |
 | `concat_10_objects` | 82,213 | 99,998 | 82,254 |
+
+## 12k. Phase 3b-2a results
+
+- **List methods** (`push`, `pop`, `get`, `first`, `last`, `slice`, `extend`, `reverse`,
+  `reversed`, `contains`, `index_of`, `last_index_of`, `join`, `insert`, `remove`, `clear`),
+  **Object methods** (`has`, `get`, `get_or`, `delete`, `keys`, `values`, `entries`, `merge`,
+  `clear`, `Object::from_entries`), **String methods** (`slice` by characters, `contains`,
+  `starts_with`, `ends_with`, `repeat`, `trim`, `trim_start`, `trim_end`, `replace`, `split`)
+  and deep **`clone`** return v1's results and Errors, with v1's order of checks (index
+  arguments before receivers). Lists grow by doubling their Buffer; `delete` on an untyped
+  Object rebuilds its shape from the remaining keys. `clone` keeps aliases and cycles through
+  a hash table from source to copy in a rooted List.
+- v1 lets `delete` and `clear` remove declared fields of typed Objects. v2 marks such a field
+  with an empty slot: it reads as None and is no entry for `keys`, `length`, `entries` or CBOR.
+  Setting it again traps, because v1 appends it after every other key, an order fixed slots
+  cannot express. The inline typed-property paths check for the empty slot, which costs
+  about 17 fuel per property access in the property benchmark (248,271 → 265,271, still −64 %
+  against v1).
+- **Data budget:** `str::find`'s searcher and String slicing reach `core`'s panic formatting,
+  which adds Unicode grapheme tables and panic texts. The core searches bytes itself and
+  slices with `get`; the template's data is 12,798 bytes, 3.6 KiB below the 16 KiB block.
+- `runtime_values` on v2: 41 of 96 (was 31), still without a single differing result. The
+  leading blockers are now `List<T>` and enum contracts (3c), static methods of nominal types
+  and closures.
 
 ## 13. Risks and open questions
 

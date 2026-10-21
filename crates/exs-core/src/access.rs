@@ -24,24 +24,44 @@ enum ListSlot {
     Error(u64),
 }
 
-/// Checks `index` against the List at `list` like v1: first that it is a non-negative Int,
-/// then that it lies inside the List.
-fn list_slot(memory: &mut impl Memory, vm: u32, list: u32, index: u64) -> Option<ListSlot> {
+/// Reads a List index like v1: a non-negative Int in the supported range, else the IndexError
+/// value (`Err(None)` when memory is exhausted).
+pub(crate) fn list_index(
+    memory: &mut impl Memory,
+    vm: u32,
+    index: u64,
+) -> Result<u32, Option<u64>> {
     let is_bool = matches!(
         reference(index).and_then(ValueRef::immediate),
         Some(Immediate::Bool(_))
     );
     let message = match number(memory, index) {
         Some(Number::Int(position)) if !is_bool && position >= 0 => match u32::try_from(position) {
-            Ok(position) if position < len(memory, list) => {
-                return Some(ListSlot::Slot(item_address(memory, list, position)));
-            }
-            Ok(_) => "List index is outside the List bounds",
+            Ok(position) => return Ok(position),
             Err(_) => "List index is outside the supported range",
         },
         _ => "List index requires a non-negative Int value",
     };
-    recoverable(memory, vm, "IndexError", message, index).map(ListSlot::Error)
+    Err(recoverable(memory, vm, "IndexError", message, index))
+}
+
+/// Checks `index` against the List at `list` like v1: first that it is a non-negative Int,
+/// then that it lies inside the List.
+fn list_slot(memory: &mut impl Memory, vm: u32, list: u32, index: u64) -> Option<ListSlot> {
+    match list_index(memory, vm, index) {
+        Ok(position) if position < len(memory, list) => {
+            Some(ListSlot::Slot(item_address(memory, list, position)))
+        }
+        Ok(_) => recoverable(
+            memory,
+            vm,
+            "IndexError",
+            "List index is outside the List bounds",
+            index,
+        )
+        .map(ListSlot::Error),
+        Err(error) => error.map(ListSlot::Error),
+    }
 }
 
 /// Where the key `name` of an Object receiver lives.
@@ -86,7 +106,11 @@ pub fn index_get(memory: &mut impl Memory, vm: u32, receiver: u64, index: u64) -
         return recoverable(memory, vm, "TypeError", KEY_NOT_STRING, index);
     };
     Some(match owner {
-        KeyOwner::Field(slot) => memory.load_u64(slot),
+        // A declared field removed by `delete` or `clear` reads as None.
+        KeyOwner::Field(slot) => match memory.load_u64(slot) {
+            0 => ValueRef::NONE.raw(),
+            value => value,
+        },
         KeyOwner::Untyped(object) => object_get(memory, object, name),
         KeyOwner::Extra(typed) => match extra(memory, typed) {
             0 => ValueRef::NONE.raw(),
@@ -130,6 +154,11 @@ pub fn index_set(
     }
     let object = match owner {
         KeyOwner::Field(slot) => {
+            // v1 appends a removed declared field again after all other keys, an order the
+            // fixed slots cannot express; v2 refuses that until it can.
+            if memory.load_u64(slot) == 0 {
+                return None;
+            }
             memory.store_u64(slot, value);
             return Some(value);
         }

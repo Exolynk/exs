@@ -9,7 +9,7 @@ use exs_value::layout::{EXTRA_SHIFT, tag, type_kind};
 
 use crate::allocator::allocate;
 use crate::memory::Memory;
-use crate::shapes::{find_key, key_count, root_shape, transition};
+use crate::shapes::{find_key, key, key_count, root_shape, transition};
 use crate::strings::string_object;
 use crate::vm::Vm;
 
@@ -160,4 +160,42 @@ pub fn object_lookup(memory: &impl Memory, raw: u64, name: u64) -> Option<u64> {
     let object = untyped_object(memory, raw)?;
     let position = find_value(memory, object, string_object(name)?)?;
     Some(u64::from(shape(memory, object)) << 32 | u64::from(position))
+}
+
+/// Removes the key named by the String at `name` from the untyped Object at `object` and
+/// returns its value, or `Some(None)` when the Object lacks the key.
+///
+/// The remaining keys keep their order under a shape rebuilt from the root; the Object must be
+/// rooted, because the new shape may be allocated.
+pub(crate) fn object_remove(
+    memory: &mut impl Memory,
+    vm: u32,
+    object: u32,
+    name: u32,
+) -> Option<Option<u64>> {
+    let Some(index) = find_value(memory, object, name) else {
+        return Some(None);
+    };
+    let old_shape = shape(memory, object);
+    let count = key_count(memory, old_shape);
+    let mut next = root_shape(memory, vm)?;
+    for position in (0..count).filter(|position| *position != index) {
+        // Keys stay alive through the old shape, which is never collected.
+        next = transition(memory, vm, next, key(memory, old_shape, position))?;
+    }
+    let removed = memory.load_u64(value_address(memory, object, index));
+    let slot = value_address(memory, object, index);
+    memory.copy(slot, slot + 8, (count - index - 1) * 8);
+    memory.store_u64(value_address(memory, object, count - 1), 0);
+    memory.store_u32(object + SHAPE, next);
+    Some(Some(removed))
+}
+
+/// Removes every key of the untyped Object at `object`.
+pub(crate) fn object_clear(memory: &mut impl Memory, vm: u32, object: u32) -> Option<()> {
+    let count = key_count(memory, shape(memory, object));
+    memory.fill(value_address(memory, object, 0), count * 8, 0);
+    let root = root_shape(memory, vm)?;
+    memory.store_u32(object + SHAPE, root);
+    Some(())
 }

@@ -54,6 +54,38 @@ const fn is_supported(method: BuiltinMethod) -> bool {
             | BuiltinMethod::Message
             | BuiltinMethod::Data
             | BuiltinMethod::Cause
+            | BuiltinMethod::Clone
+            | BuiltinMethod::Slice
+            | BuiltinMethod::Contains
+            | BuiltinMethod::StartsWith
+            | BuiltinMethod::EndsWith
+            | BuiltinMethod::Repeat
+            | BuiltinMethod::Trim
+            | BuiltinMethod::TrimStart
+            | BuiltinMethod::TrimEnd
+            | BuiltinMethod::Replace
+            | BuiltinMethod::Split
+            | BuiltinMethod::Push
+            | BuiltinMethod::Get
+            | BuiltinMethod::First
+            | BuiltinMethod::Last
+            | BuiltinMethod::Extend
+            | BuiltinMethod::Reverse
+            | BuiltinMethod::Reversed
+            | BuiltinMethod::IndexOf
+            | BuiltinMethod::LastIndexOf
+            | BuiltinMethod::Join
+            | BuiltinMethod::Pop
+            | BuiltinMethod::Insert
+            | BuiltinMethod::Remove
+            | BuiltinMethod::Clear
+            | BuiltinMethod::Has
+            | BuiltinMethod::Delete
+            | BuiltinMethod::Keys
+            | BuiltinMethod::Values
+            | BuiltinMethod::GetOr
+            | BuiltinMethod::Entries
+            | BuiltinMethod::Merge
     )
 }
 

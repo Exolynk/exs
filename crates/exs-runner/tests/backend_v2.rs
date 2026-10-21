@@ -455,3 +455,71 @@ fn matches_v1_for_static_builtins() {
         compare(program, &[]);
     }
 }
+
+/// Evaluates List methods like v1, including their Errors and order of checks.
+#[test]
+fn matches_v1_for_list_methods() {
+    let programs = [
+        "fn main() { let items = [1]; let lengths = [items.push(2), items.push([3])]; ret [items, lengths, items.pop(), items.pop(), items.pop(), items.pop(), items]; }",
+        "fn main() { let items = [1, 2, 3]; ret [items.get(1), items.get(5), items.get(-1), items.first(), items.last(), [].first(), [].last(), (1).first()]; }",
+        "fn main() { let items = [1, 2, 3, 4]; ret [items.slice(1, 3), items.slice(0, 0), items.slice(3, 1), items.slice(0, 9), items.slice(-1, 2), \"x\".slice(0, 1), (1).slice(0, 1)]; }",
+        "fn main() { let items = [1, 2]; let more = [3]; ret [items.extend(more), items, items.extend(items), items, items.extend(1)]; }",
+        "fn main() { let items = [1, 2, 3]; let copy = items.reversed(); ret [items.reverse(), items, copy, [].reversed()]; }",
+        "fn main() { let items = [1, 2.0, \"a\", None, 2]; ret [items.contains(2), items.contains(\"a\"), items.contains(None), items.contains(5), items.index_of(2), items.last_index_of(2), items.index_of(7), (1).contains(1)]; }",
+        "fn main() { ret [[\"a\", \"b\", \"c\"].join(\", \"), [].join(\"-\"), [\"ä\"].join(\"\"), [\"a\", 1].join(\"-\"), [\"a\"].join(1), (1).join(\"x\")]; }",
+        "fn main() { let items = [1, 3]; ret [items.insert(1, 2), items, items.insert(3, 4), items, items.insert(9, 0), items.remove(0), items, items.remove(5), items.remove(true)]; }",
+        "fn main() { let items = [1, 2]; let object = { a: 1 }; ret [items.clear(), items, object.clear(), object, (1).clear()]; }",
+        "fn main() { let items = []; let index = 0; while index < 100 { items.push(index); index = index + 1; } let total = 0; while items.length() > 0 { total = total + items.pop(); } ret [total, items]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
+/// Evaluates Object methods like v1, on untyped and typed Objects.
+#[test]
+fn matches_v1_for_object_methods() {
+    let programs = [
+        "fn main() { let object = { a: 1, b: 2 }; ret [object.has(\"a\"), object.has(\"z\"), object.has(1), object.get(\"b\"), object.get(\"z\"), object.get_or(\"z\", 9), object.get_or(\"a\", 9), (1).has(\"a\")]; }",
+        "fn main() { let object = { a: 1, b: 2, c: 3 }; ret [object.delete(\"b\"), object, object.delete(\"z\"), object.keys(), object.values(), object.entries(), object.length()]; }",
+        "fn main() { let object = { a: 1, b: 2 }; object.delete(\"a\"); object.a = 5; object.d = 4; ret [object, object.keys()]; }",
+        "fn main() { let left = { a: 1, b: 2 }; let right = { b: 3, c: 4 }; ret [left.merge(right), left, right, left.merge(1), (1).merge(left)]; }",
+        "fn main() { ret [Object::from_entries([[\"a\", 1], [\"b\", 2], [\"a\", 3]]), Object::from_entries([]), Object::from_entries([[1, 2]]), Object::from_entries([[\"a\"]]), Object::from_entries(1)]; }",
+        "type Point { x: Int, y: Int } fn main() { let point = Point { x: 1, y: 2 }; point.label = \"p\"; ret [point.keys(), point.values(), point.entries(), point.length(), point.has(\"label\"), point.get(\"y\"), point.merge({ z: 3 })]; }",
+        "type Point { x: Int, y: Int } fn main() { let point = Point { x: 1, y: 2 }; point.extra = 3; ret [point.delete(\"x\"), point.delete(\"extra\"), point, point.x, point.length(), point.keys(), point.has(\"x\")]; }",
+        "type Point { x: Int, y: Int } fn main() { let point = Point { x: 1, y: 2 }; point.extra = 3; point.clear(); ret [point, point.length(), point.y]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
+/// Evaluates String methods like v1, by characters and with Unicode whitespace.
+#[test]
+fn matches_v1_for_string_methods() {
+    let programs = [
+        "fn main() { let text = \"häll😀o\"; ret [text.slice(1, 4), text.slice(0, 7), text.slice(3, 1), text.slice(0, 8), text.slice(-1, 2), text.slice(0, 1.0)]; }",
+        "fn main() { let text = \"hello world\"; ret [text.contains(\"lo w\"), text.contains(\"\"), text.contains(\"x\"), text.starts_with(\"he\"), text.ends_with(\"ld\"), text.ends_with(\"\"), text.contains(1), (1).starts_with(\"a\")]; }",
+        "fn main() { ret [\"ab\".repeat(3), \"ä\".repeat(0), \"x\".repeat(-1), \"x\".repeat(1.5), (1).repeat(2)]; }",
+        "fn main() { let text = \" \\t\\u{3000}hi \\n\"; ret [text.trim(), text.trim_start(), text.trim_end(), \"\".trim(), (1).trim()]; }",
+        "fn main() { ret [\"a-b-c\".replace(\"-\", \"+\"), \"aaaa\".replace(\"aa\", \"b\"), \"ab\".replace(\"\", \"-\"), \"äöü\".replace(\"ö\", \"oe\"), \"x\".replace(\"y\", \"z\"), \"x\".replace(1, \"z\"), \"x\".replace(\"x\", 2)]; }",
+        "fn main() { ret [\"a,b,,c\".split(\",\"), \"abc\".split(\"\"), \"\".split(\",\"), \"äxöxü\".split(\"x\"), \"aaa\".split(\"aa\"), \"a\".split(1), (1).split(\",\")]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
+/// Clones values deeply like v1, keeping aliases and cycles.
+#[test]
+fn matches_v1_for_clone() {
+    let programs = [
+        "fn main() { let inner = [1, 2]; let outer = [inner, inner, { list: inner }]; let copy = outer.clone(); copy[0].push(3); ret [outer, copy]; }",
+        "fn main() { let items = [1]; items.push(items); let copy = items.clone(); copy.push(2); ret [items.length(), copy.length(), copy[1].length()]; }",
+        "type Point { x: Int, y: Int } fn main() { let point = Point { x: 1, y: 2 }; point.tag = [1]; let copy = point.clone(); copy.x = 5; copy.tag.push(2); ret [point, copy]; }",
+        "fn main() { let error = Error(\"K\", \"m\", [1]); let copy = error.clone(); ret [copy, copy == error, \"s\".clone(), (1).clone(), None.clone()]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}

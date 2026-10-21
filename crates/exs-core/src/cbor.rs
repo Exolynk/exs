@@ -558,17 +558,24 @@ impl Sink {
         } else {
             key_count(memory, shape(memory, extra))
         };
-        let count = entry.field_count.checked_add(extra_count);
+        // Declared fields removed by `delete` or `clear` hold an empty slot and are skipped.
+        let present = (0..entry.field_count)
+            .filter(|index| memory.load_u64(slot_address(object, *index)) != 0)
+            .count() as u32;
+        let count = present.checked_add(extra_count);
         self.head(
             memory,
             MAJOR_MAP,
             u64::from(count.ok_or(CborError::Unsupported)?),
         )?;
         for index in 0..entry.field_count {
+            let value = memory.load_u64(slot_address(object, index));
+            if value == 0 {
+                continue;
+            }
             let name = memory.load_u64(entry.field_names + index * 8);
             let name = string_object(name).ok_or(CborError::Unsupported)?;
             self.string(memory, name)?;
-            let value = memory.load_u64(slot_address(object, index));
             self.value(memory, vm, value, depth + 1)?;
         }
         if extra != 0 {

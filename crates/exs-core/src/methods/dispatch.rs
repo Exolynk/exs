@@ -2,13 +2,21 @@
 
 use exs_abi::BuiltinMethod;
 
+use crate::lists::list_object;
 use crate::memory::Memory;
+use crate::methods::clone::deep_clone;
+use crate::methods::numbers::type_error;
 use crate::methods::numbers::{
     abs, boolean, clamp, euclidean, float_predicate, float_unary, gcd_or_lcm, int_unary,
     min_or_max, pow, signum, to_float, to_int,
 };
+use crate::methods::objects::Collect;
+use crate::methods::strings::{Relation, Trim};
 use crate::methods::values::{ErrorPart, error_part, is_empty, length, operator, render};
+use crate::methods::{lists, objects, strings};
 use crate::numbers::Arithmetic;
+use crate::strings::string_object;
+use exs_value::ValueRef;
 
 /// Calls the built-in method `method` on `receiver` with up to two arguments, like v1's
 /// `call_builtin`; all three values must be rooted.
@@ -94,6 +102,109 @@ pub fn call_builtin(
         BuiltinMethod::Message => error_part(memory, vm, receiver, ErrorPart::Message),
         BuiltinMethod::Data => error_part(memory, vm, receiver, ErrorPart::Data),
         BuiltinMethod::Cause => error_part(memory, vm, receiver, ErrorPart::Cause),
+        BuiltinMethod::Push => lists::push(memory, vm, receiver, first),
+        BuiltinMethod::Pop => lists::pop(memory, vm, receiver),
+        BuiltinMethod::Get if list_object(receiver).is_some() => {
+            lists::get(memory, vm, receiver, first)
+        }
+        BuiltinMethod::Get if objects::is_object(memory, receiver) => {
+            objects::get(memory, vm, receiver, first)
+        }
+        BuiltinMethod::Get => type_error(
+            memory,
+            vm,
+            "get requires a List or Object receiver",
+            receiver,
+        ),
+        BuiltinMethod::First => lists::end(memory, vm, receiver, false),
+        BuiltinMethod::Last => lists::end(memory, vm, receiver, true),
+        BuiltinMethod::Extend => lists::extend(memory, vm, receiver, first),
+        BuiltinMethod::Reverse => lists::reverse(memory, vm, receiver, false),
+        BuiltinMethod::Reversed => lists::reverse(memory, vm, receiver, true),
+        BuiltinMethod::IndexOf => lists::index_of(memory, vm, receiver, first, false),
+        BuiltinMethod::LastIndexOf => lists::index_of(memory, vm, receiver, first, true),
+        BuiltinMethod::Join => lists::join(memory, vm, receiver, first),
+        BuiltinMethod::Insert => lists::insert(memory, vm, receiver, first, second),
+        BuiltinMethod::Remove => lists::remove(memory, vm, receiver, first),
+        BuiltinMethod::Clear => {
+            if let Some(list) = list_object(receiver) {
+                lists::clear(memory, list);
+            } else if objects::is_object(memory, receiver) {
+                objects::clear(memory, vm, receiver)?;
+            } else {
+                return type_error(
+                    memory,
+                    vm,
+                    "clear requires a List or Object receiver",
+                    receiver,
+                );
+            }
+            Some(ValueRef::NONE.raw())
+        }
+        BuiltinMethod::Has => objects::has(memory, vm, receiver, first),
+        BuiltinMethod::Delete => objects::delete(memory, vm, receiver, first),
+        BuiltinMethod::Keys => objects::collect(memory, vm, receiver, Collect::Keys),
+        BuiltinMethod::Values => objects::collect(memory, vm, receiver, Collect::Values),
+        BuiltinMethod::Entries => objects::collect(memory, vm, receiver, Collect::Entries),
+        BuiltinMethod::GetOr => objects::get_or(memory, vm, receiver, first, second),
+        BuiltinMethod::Merge => objects::merge(memory, vm, receiver, first),
+        BuiltinMethod::Contains if string_object(receiver).is_some() => {
+            strings::relation(memory, vm, receiver, first, Relation::Contains)
+        }
+        BuiltinMethod::Contains if list_object(receiver).is_some() => {
+            lists::contains(memory, vm, receiver, first)
+        }
+        BuiltinMethod::Contains => type_error(
+            memory,
+            vm,
+            "contains requires a Bytes, List, or String receiver",
+            receiver,
+        ),
+        BuiltinMethod::Slice if string_object(receiver).is_some() => {
+            strings::slice(memory, vm, receiver, first, second)
+        }
+        BuiltinMethod::Slice if list_object(receiver).is_some() => {
+            lists::slice(memory, vm, receiver, first, second)
+        }
+        BuiltinMethod::Slice => type_error(
+            memory,
+            vm,
+            "slice requires a Bytes, List, or String receiver",
+            receiver,
+        ),
+        BuiltinMethod::StartsWith if string_object(receiver).is_some() => {
+            strings::relation(memory, vm, receiver, first, Relation::StartsWith)
+        }
+        BuiltinMethod::StartsWith => type_error(
+            memory,
+            vm,
+            "starts_with requires a Bytes or String receiver",
+            receiver,
+        ),
+        BuiltinMethod::EndsWith if string_object(receiver).is_some() => {
+            strings::relation(memory, vm, receiver, first, Relation::EndsWith)
+        }
+        BuiltinMethod::EndsWith => type_error(
+            memory,
+            vm,
+            "ends_with requires a Bytes or String receiver",
+            receiver,
+        ),
+        BuiltinMethod::Repeat if string_object(receiver).is_some() => {
+            strings::repeat(memory, vm, receiver, first)
+        }
+        BuiltinMethod::Repeat => type_error(
+            memory,
+            vm,
+            "repeat requires a Bytes or String receiver",
+            receiver,
+        ),
+        BuiltinMethod::Trim => strings::trim(memory, vm, receiver, Trim::Both),
+        BuiltinMethod::TrimStart => strings::trim(memory, vm, receiver, Trim::Start),
+        BuiltinMethod::TrimEnd => strings::trim(memory, vm, receiver, Trim::End),
+        BuiltinMethod::Replace => strings::replace(memory, vm, receiver, first, second),
+        BuiltinMethod::Split => strings::split(memory, vm, receiver, first),
+        BuiltinMethod::Clone => deep_clone(memory, vm, receiver),
         _ => None,
     }
 }
