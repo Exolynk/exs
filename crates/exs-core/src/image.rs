@@ -20,7 +20,8 @@ use crate::execution::input;
 use crate::lists::{allocate_list, list_reference, push_unchecked};
 use crate::memory::Memory;
 use crate::numbers::{float_value, int_value};
-use crate::objects::{empty_object, find_value, object_reference, object_set};
+use crate::objects::{empty_object, find_value, object_append, object_reference, shape};
+use crate::shapes::child_key;
 use crate::strings::{copy_string, string_object};
 use crate::vm::Vm;
 
@@ -320,8 +321,14 @@ fn adopt_object(
         for index in 0..count {
             let entry = entries + index * 8;
             let (start, len) = image.text(memory, memory.load_u32(entry))?;
-            let chars = memory.load_u32(start - 8);
-            let name = copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?;
+            // Objects of an existing key sequence share its key instead of a copy.
+            let name = match child_key(memory, shape(memory, object), start, len) {
+                Some(key) => key,
+                None => {
+                    let chars = memory.load_u32(start - 8);
+                    copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?
+                }
+            };
             let mark = state
                 .push_root(memory, name)
                 .ok_or(CborError::OutOfMemory)?;
@@ -332,7 +339,7 @@ fn adopt_object(
             state
                 .push_root(memory, value)
                 .ok_or(CborError::OutOfMemory)?;
-            object_set(memory, vm, object, name, value).ok_or(CborError::OutOfMemory)?;
+            object_append(memory, vm, object, name, value).ok_or(CborError::OutOfMemory)?;
             state.pop_roots(memory, mark);
         }
         Ok(raw)

@@ -132,6 +132,21 @@ pub(crate) fn object_set(
         memory.store_u64(value_address(memory, object, index), value);
         return Some(());
     }
+    object_append(memory, vm, object, name, value)
+}
+
+/// Appends the key named by the String `name`, which the Object at `object` must lack, with
+/// `value`.
+///
+/// The Object, `name` and `value` must be reachable from the roots, because adding a key may
+/// allocate.
+pub(crate) fn object_append(
+    memory: &mut impl Memory,
+    vm: u32,
+    object: u32,
+    name: u64,
+    value: u64,
+) -> Option<()> {
     let current = shape(memory, object);
     let next = transition(memory, vm, current, name)?;
     let count = key_count(memory, current);

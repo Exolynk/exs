@@ -416,11 +416,21 @@ pub(crate) fn strings_equal(memory: &impl Memory, left: u32, right: u32) -> bool
     if left == right {
         return true;
     }
-    let len = byte_len(memory, left);
-    len == byte_len(memory, right)
-        && (0..len).all(|offset| {
-            memory.load_u8(left + DATA + offset) == memory.load_u8(right + DATA + offset)
-        })
+    text_equals(memory, left, right + DATA, byte_len(memory, right))
+}
+
+/// Returns whether the String at `object` holds exactly the `len` bytes at `start`, which must
+/// be 8-byte aligned like String data.
+pub(crate) fn text_equals(memory: &impl Memory, object: u32, start: u32, len: u32) -> bool {
+    if byte_len(memory, object) != len {
+        return false;
+    }
+    // Compare eight bytes at a time.
+    let words = len / 8;
+    (0..words)
+        .all(|word| memory.load_u64(object + DATA + word * 8) == memory.load_u64(start + word * 8))
+        && (words * 8..len)
+            .all(|offset| memory.load_u8(object + DATA + offset) == memory.load_u8(start + offset))
 }
 
 /// Compares two Strings byte by byte.

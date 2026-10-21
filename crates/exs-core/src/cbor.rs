@@ -16,7 +16,7 @@ use crate::lists::{allocate_list, item_address, len, list_object, list_reference
 use crate::memory::Memory;
 use crate::numbers::{Number, float_value, int_value, number, reference};
 use crate::objects::{
-    empty_object, find_value, object_reference, object_set, shape, untyped_object, value_address,
+    empty_object, find_value, object_append, object_reference, shape, untyped_object, value_address,
 };
 use crate::shapes::{key, key_count};
 use crate::strings::{DATA, byte_len, copy_string, string_object};
@@ -652,7 +652,7 @@ fn decode_entry(
         state
             .push_root(memory, value)
             .ok_or(CborError::OutOfMemory)?;
-        object_set(memory, vm, object, name, value).ok_or(CborError::OutOfMemory)
+        object_append(memory, vm, object, name, value).ok_or(CborError::OutOfMemory)
     });
     state.pop_roots(memory, root);
     result

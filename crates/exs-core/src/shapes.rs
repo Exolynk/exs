@@ -11,7 +11,7 @@ use exs_layout::{BufferObject, ObjectKind, ShapeObject};
 
 use crate::allocator::allocate;
 use crate::memory::Memory;
-use crate::strings::{string_object, strings_equal};
+use crate::strings::{string_object, strings_equal, text_equals};
 use crate::vm::Vm;
 
 /// Byte offset of the key count in the header word.
@@ -62,6 +62,25 @@ pub(crate) fn find_key(memory: &impl Memory, shape: u32, name: u32) -> Option<u3
         string_object(key(memory, shape, *index))
             .is_some_and(|candidate| strings_equal(memory, candidate, name))
     })
+}
+
+/// Returns the key String of the existing shape that extends the shape at `shape` by the key
+/// in the `len` bytes at `start`, if an Object already had that key sequence.
+///
+/// Objects adopted from inputs share it instead of copying their keys.
+pub(crate) fn child_key(memory: &impl Memory, shape: u32, start: u32, len: u32) -> Option<u64> {
+    let count = key_count(memory, shape);
+    let mut child = memory.load_u32(shape + FIRST_CHILD);
+    while child != 0 {
+        if key_count(memory, child) == count + 1 {
+            let last = key(memory, child, count);
+            if string_object(last).is_some_and(|key| text_equals(memory, key, start, len)) {
+                return Some(last);
+            }
+        }
+        child = memory.load_u32(child + NEXT_SIBLING);
+    }
+    None
 }
 
 /// Returns the shape extending the shape at `shape` by the String `name`, creating it when
