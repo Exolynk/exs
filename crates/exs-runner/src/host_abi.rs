@@ -674,7 +674,8 @@ fn store_ready_response(
         .min(limits.max_cbor_payload_bytes);
     // An image applies the payload limit to the size of the equivalent CBOR itself.
     let (response, payload_len) = if caller.data().direct {
-        let image = crate::direct::write_image(&value, cbor_limits)
+        let image = value
+            .to_image_with_limits(cbor_limits)
             .map_err(|error| host_cbor_error(caller, HostCborError::Invalid(error)))?;
         (image, 0)
     } else {

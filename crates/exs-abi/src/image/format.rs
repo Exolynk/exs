@@ -1,5 +1,5 @@
-//! The image format in which the runner passes values into a module: inputs and host-call
-//! responses.
+//! The image format of values crossing the boundary: inputs and host-call responses for
+//! runtime v2 modules, and every value both ways for Rust guests.
 //!
 //! An image is a sequence of 8-byte aligned records. It starts with an 8-byte header, the
 //! [`IMAGE_MAGIC`] followed by the offset of the root record. Every record starts with a `u32`
@@ -19,8 +19,9 @@
 //! | [`RECORD_ENUM`] | field count | `u32` identity and variant offsets (String records), one `u32` offset per field |
 //! | [`RECORD_ERROR`] | 1 if fatal | `u32` kind, message and data offsets, `u32` origin + 1 or 0, `u32` cause offset or 0, `u32` trace count, the `u64` trace entries |
 //!
-//! Payloads are padded to 8 bytes. The runner writes valid UTF-8 with its character count, so
-//! the module copies Strings without validating them.
+//! Payloads are padded to 8 bytes. Writers store valid UTF-8 with its character count, so a
+//! runtime v2 module copies Strings without validating them; readers of untrusted images
+//! validate them.
 
 /// Magic number of an image, `EXSI` in ASCII.
 pub const IMAGE_MAGIC: u32 = u32::from_le_bytes(*b"EXSI");

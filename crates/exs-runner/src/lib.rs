@@ -517,7 +517,8 @@ fn encode_boundary_value(
         cbor_limits.max_payload_bytes = cbor_limits
             .max_payload_bytes
             .min(limits.max_cbor_payload_bytes);
-        direct::write_image(value, cbor_limits)
+        value
+            .to_image_with_limits(cbor_limits)
             .map_err(|error| cbor_error(error, &format!("could not encode {label} image")))
     } else {
         encode_limited_cbor(value, limits, LimitKind::CborPayload, label)

@@ -16,7 +16,6 @@ mod case_mapping;
 mod case_mapping_tests;
 mod case_tables;
 mod header;
-pub mod image;
 mod objects;
 mod page;
 mod size_class;

@@ -1,11 +1,11 @@
 //! Adoption of the images in which the runner passes inputs and host-call responses.
 //!
-//! The runner lays values out as records of the `exs_layout::image` format. Adopting an image
+//! The runner lays values out as records of the `exs_abi::image` format. Adopting an image
 //! walks its records from the root and builds the values on the heap: Strings and Bytes are
 //! copied as they are, without parsing or UTF-8 validation. Every offset is checked against the
 //! image, and nesting is bounded like the CBOR codec's.
 
-use exs_layout::image::{
+use exs_abi::image::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
     RECORD_FLOAT, RECORD_HEADER_SIZE, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT,
     RECORD_STRING,

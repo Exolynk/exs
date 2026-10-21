@@ -895,7 +895,6 @@ dependencies = [
  "exs-abi",
  "exs-compiler",
  "exs-core",
- "exs-layout",
  "exs-runtime",
  "exs-value",
  "jiff",

@@ -10,6 +10,7 @@ pub use builtin_method::BuiltinMethod;
 
 mod builtin_method;
 pub mod cbor;
+pub mod image;
 #[cfg(feature = "serde")]
 mod serde;
 #[cfg(feature = "serde")]

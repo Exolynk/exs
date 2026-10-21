@@ -1,26 +1,28 @@
-//! Writing values as images in the `exs_layout::image` format.
+//! Writing values as images.
 //!
 //! The writer applies the runner's CBOR limits as if it encoded the value as CBOR: nesting,
 //! collection entries and the byte size of the equivalent CBOR, so both boundaries accept the
 //! same values.
 
-use exs_abi::{CborError, CborLimits, ErrorSeverity, ExsError, ExsValue};
-use exs_layout::image::{
+use alloc::vec::Vec;
+
+use super::format::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
     RECORD_FLOAT, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT, RECORD_STRING,
 };
+use crate::cbor::{CborError, CborLimits, ErrorSeverity, ExsError, ExsValue};
 
 /// CBOR tag of an ExS Error.
-const ERROR_TAG: u64 = 60_001;
+pub(super) const ERROR_TAG: u64 = 60_001;
 /// CBOR tag of an ExS enum.
-const ENUM_TAG: u64 = 60_005;
+pub(super) const ENUM_TAG: u64 = 60_005;
 
 /// Returns `value` as an image, or the CBOR limit it exceeds.
 ///
 /// # Errors
 ///
 /// Returns the exceeded limit, or `CborError::Encode` for an image beyond 4 GiB.
-pub(crate) fn write_image(value: &ExsValue, limits: CborLimits) -> Result<Vec<u8>, CborError> {
+pub(super) fn write_image(value: &ExsValue, limits: CborLimits) -> Result<Vec<u8>, CborError> {
     let mut writer = Writer {
         bytes: Vec::with_capacity(64),
         cbor_len: 0,
@@ -35,7 +37,7 @@ pub(crate) fn write_image(value: &ExsValue, limits: CborLimits) -> Result<Vec<u8
 }
 
 /// Returns the byte length of a CBOR head with `argument`.
-const fn head_len(argument: u64) -> usize {
+pub(super) const fn head_len(argument: u64) -> usize {
     match argument {
         0..=23 => 1,
         24..=0xff => 2,
@@ -46,7 +48,7 @@ const fn head_len(argument: u64) -> usize {
 }
 
 /// Returns the byte length of the CBOR encoding of the Int `value`.
-const fn int_len(value: i64) -> usize {
+pub(super) const fn int_len(value: i64) -> usize {
     if value < 0 {
         head_len((-1 - value).cast_unsigned())
     } else {
