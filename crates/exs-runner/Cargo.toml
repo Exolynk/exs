@@ -20,6 +20,7 @@ serde = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 exs-core = { path = "../exs-core" }
+exs-layout = { path = "../exs-layout" }
 wasmtime = { workspace = true, optional = true }
 jiff = { workspace = true, features = ["std", "tz-system", "tz-fat", "tzdb-bundle-platform", "tzdb-zoneinfo", "tzdb-concatenated"] }
 

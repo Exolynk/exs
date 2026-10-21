@@ -52,6 +52,9 @@ pub(crate) struct HostAbiState {
     store_limits: StoreLimits,
     /// The most recent hard-limit violation reported through a Wasm import.
     limit_violation: Option<LimitKind>,
+    /// Whether the module uses the direct boundary of runtime v2, which takes host responses
+    /// as images instead of CBOR.
+    direct: bool,
 }
 
 impl HostAbiState {
@@ -86,7 +89,18 @@ impl HostAbiState {
             execution_started_at,
             deadline_at,
             limit_violation: None,
+            direct: false,
         }
+    }
+
+    /// Returns whether the module uses the direct boundary.
+    pub(crate) const fn is_direct(&self) -> bool {
+        self.direct
+    }
+
+    /// Makes the module take host responses as images of the direct boundary.
+    pub(crate) fn use_direct_boundary(&mut self) {
+        self.direct = true;
     }
 
     /// Removes every pending host future together with its runtime-assigned identifier.
@@ -654,9 +668,22 @@ fn store_ready_response(
     value: ExsValue,
 ) -> Result<(), wasmtime::Error> {
     let limits = caller.data().limits.clone();
-    let response = encode_result_with_limits(&value, limits.cbor_limits())
-        .map_err(|error| host_cbor_error(caller, error))?;
-    if response.len() > limits.max_cbor_payload_bytes {
+    let mut cbor_limits = limits.cbor_limits();
+    cbor_limits.max_payload_bytes = cbor_limits
+        .max_payload_bytes
+        .min(limits.max_cbor_payload_bytes);
+    // An image applies the payload limit to the size of the equivalent CBOR itself.
+    let (response, payload_len) = if caller.data().direct {
+        let image = crate::direct::write_image(&value, cbor_limits)
+            .map_err(|error| host_cbor_error(caller, HostCborError::Invalid(error)))?;
+        (image, 0)
+    } else {
+        let bytes = encode_result_with_limits(&value, limits.cbor_limits())
+            .map_err(|error| host_cbor_error(caller, error))?;
+        let len = bytes.len();
+        (bytes, len)
+    };
+    if payload_len > limits.max_cbor_payload_bytes {
         caller
             .data_mut()
             .report_limit_violation(LimitKind::CborPayload);

@@ -99,10 +99,11 @@ pub extern "C" fn __exs_core_reserve_input(vm: i32, length: i32) -> i32 {
     }
 }
 
-/// Decodes the runner's arguments into `capacity` root slots and returns the argument count.
+/// Adopts the runner's argument image into `capacity` root slots and returns the argument
+/// count.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_decode_inputs(vm: i32, slots: i32, capacity: i32) -> i32 {
-    match exs_core::decode_inputs(
+pub extern "C" fn __exs_core_adopt_inputs(vm: i32, slots: i32, capacity: i32) -> i32 {
+    match exs_core::image_inputs(
         &mut memory(),
         address(vm),
         address(slots),
@@ -113,19 +114,11 @@ pub extern "C" fn __exs_core_decode_inputs(vm: i32, slots: i32, capacity: i32) -
     }
 }
 
-/// Encodes the result value for the runner.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_encode_result(vm: i32, value: i64) {
-    if exs_core::encode_result(&mut memory(), address(vm), value.cast_unsigned()).is_err() {
-        trap();
-    }
-}
-
-/// Decodes the runner's arguments of a variadic entry with `fixed` parameters into the
+/// Adopts the runner's argument image of a variadic entry with `fixed` parameters into the
 /// rooted `slots`.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_decode_variadic_inputs(vm: i32, slots: i32, fixed: i32) {
-    if exs_core::decode_variadic_inputs(
+pub extern "C" fn __exs_core_adopt_variadic_inputs(vm: i32, slots: i32, fixed: i32) {
+    if exs_core::image_variadic_inputs(
         &mut memory(),
         address(vm),
         address(slots),
@@ -135,18 +128,6 @@ pub extern "C" fn __exs_core_decode_variadic_inputs(vm: i32, slots: i32, fixed: 
     {
         trap();
     }
-}
-
-/// Returns the address of the encoded result.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_result_ptr(vm: i32) -> i32 {
-    exs_core::result(&memory(), address(vm)).0.cast_signed()
-}
-
-/// Returns the byte length of the encoded result.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_result_len(vm: i32) -> i32 {
-    exs_core::result(&memory(), address(vm)).1.cast_signed()
 }
 
 /// Allocates one zeroed heap object of `size` bytes with header kind `kind`.
@@ -862,7 +843,7 @@ pub extern "C" fn __exs_core_error_new(vm: i32, kind: i64, message: i64, data: i
 /// Creates the fatal ArityError for an entry that received too many arguments.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_arity_error(vm: i32) -> i64 {
-    match exs_core::arity_error(&mut memory(), address(vm)) {
+    match exs_core::image_arity_error(&mut memory(), address(vm)) {
         Ok(error) => error.cast_signed(),
         Err(_) => trap(),
     }

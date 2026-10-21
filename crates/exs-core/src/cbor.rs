@@ -372,7 +372,11 @@ fn decode_list(
 }
 
 /// Decodes the one value encoded in the `length` bytes at `address`.
-pub(crate) fn decode_at(
+///
+/// # Errors
+///
+/// Returns why the bytes could not be decoded.
+pub fn decode_at(
     memory: &mut impl Memory,
     vm: u32,
     address: u32,
@@ -567,7 +571,7 @@ fn decode_enum(
 
 /// Finds the enum type whose identity and the variant whose name equal the text at the
 /// `(address, length)` ranges, returning the type id and variant index.
-fn resolve_enum(
+pub(crate) fn resolve_enum(
     memory: &impl Memory,
     vm: u32,
     identity: (u32, u32),

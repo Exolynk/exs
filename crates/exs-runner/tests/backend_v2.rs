@@ -3,7 +3,10 @@
 use std::time::Duration;
 
 use exs_compiler::{Backend, CompileOptions, SourceInput, compile_with_backend};
-use exs_runner::{ExecutionCancellation, ExsValue, ProtectionLevel, ServerRunner};
+use exs_runner::{
+    ErrorSeverity, ExecutionCancellation, ExsError, ExsValue, ProtectionLevel, ServerRunner,
+    SourcePositionId,
+};
 
 /// Polls one runner future to completion.
 fn block_on<Output>(future: impl std::future::Future<Output = Output>) -> Output {
@@ -893,6 +896,66 @@ fn matches_v1_for_boundary_results() {
     for program in programs {
         compare(program, &[]);
     }
+}
+
+/// Adopts inputs and host responses of every kind like v1 decodes them: echoed back as the
+/// result, rendered, and passed through a host call that suspends.
+#[test]
+fn matches_v1_for_boundary_inputs() {
+    let error = ExsValue::Error(ExsError {
+        severity: ErrorSeverity::Recoverable,
+        kind: "Kind".to_owned(),
+        message: "message ü".to_owned(),
+        data: Box::new(ExsValue::List(vec![ExsValue::Int(1)])),
+        origin: Some(SourcePositionId(3)),
+        trace: vec![exs_abi::ExsStackFrame {
+            function_id: 2,
+            call_site: SourcePositionId(7),
+        }],
+        cause: Some(Box::new(ExsValue::String("cause".to_owned()))),
+    });
+    let values = [
+        ExsValue::None,
+        ExsValue::Bool(true),
+        ExsValue::Int(-5),
+        ExsValue::Int(i64::MIN),
+        ExsValue::Int(3_000_000_000),
+        ExsValue::Float(-0.5),
+        ExsValue::String("aé𝄞".to_owned()),
+        ExsValue::String(String::new()),
+        ExsValue::Bytes(vec![0, 255, 7]),
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::List(Vec::new())]),
+        ExsValue::Object(vec![
+            ("b".to_owned(), ExsValue::Int(1)),
+            ("a".to_owned(), ExsValue::Object(Vec::new())),
+        ]),
+        ExsValue::Enum {
+            type_id: "std::Ordering".to_owned(),
+            variant: "Greater".to_owned(),
+            fields: Vec::new(),
+        },
+        error,
+    ];
+    for value in values {
+        let inputs = [value];
+        compare("fn main(value) { ret value; }", &inputs);
+        compare(
+            "fn main(value) { ret [f\"{value}\", value == value]; }",
+            &inputs,
+        );
+        compare(
+            r#"fn main(value) { ret Host::call("echo", value); }"#,
+            &inputs,
+        );
+    }
+    let rest = [
+        ExsValue::Int(1),
+        ExsValue::String("x".to_owned()),
+        ExsValue::None,
+    ];
+    compare("fn main(first, rest...) { ret [first, rest]; }", &rest);
+    compare("fn main(first) { ret first; }", &rest);
+    compare("fn main(a, b, c, d) { ret [a, b, c, d]; }", &rest);
 }
 
 /// Runs `par` like v1: static and dynamic tasks, their results in source order, host calls

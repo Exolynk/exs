@@ -115,11 +115,11 @@ impl EntryLayout<'_> {
         function.instruction(&Instruction::I32Const(target.arity.cast_signed()));
         if variadic {
             function.instruction(&Instruction::Call(
-                self.core("__exs_core_decode_variadic_inputs", span)?,
+                self.core("__exs_core_adopt_variadic_inputs", span)?,
             ));
         } else {
             function.instruction(&Instruction::Call(
-                self.core("__exs_core_decode_inputs", span)?,
+                self.core("__exs_core_adopt_inputs", span)?,
             ));
             function.instruction(&Instruction::LocalSet(count));
             // Like v1, excess arguments make the result a fatal ArityError instead of a call.

@@ -26,6 +26,7 @@ mod datetime;
 mod enums;
 mod errors;
 mod execution;
+mod image;
 mod lists;
 mod memory;
 mod methods;
@@ -50,8 +51,8 @@ pub use allocator::{allocate, init_heap};
 pub use boundary::serialization_message;
 pub use bytes::bytes_object;
 pub use cbor::{
-    CborError, CborOutput, arity_error, decode_inputs, decode_variadic_inputs, encode_result,
-    encode_value,
+    CborError, CborOutput, arity_error, decode_at, decode_inputs, decode_variadic_inputs,
+    encode_result, encode_value,
 };
 pub use closures::{cell_new, closure_arity_error, closure_new, not_callable, parallel_list_error};
 pub use collector::collect;
@@ -64,6 +65,7 @@ pub use errors::{
 pub use execution::{init_execution, reserve_input, result};
 pub use exs_abi::BuiltinMethod;
 pub use exs_layout::{ObjectKind, StaticFunction};
+pub use image::{image_arity_error, image_inputs, image_variadic_inputs};
 pub use lists::{for_snapshot, list_add, list_copy, list_new, list_object};
 #[cfg(target_arch = "wasm32")]
 pub use memory::LinearMemory;

@@ -1,5 +1,4 @@
-//! The direct boundary of runtime v2 modules: the runner reads results and host-call
-//! arguments from the module's memory instead of CBOR the module encoded.
+//! Reading results and host-call arguments from a runtime v2 module's memory.
 //!
 //! The runner walks the value with the core library's encoder on a bounds-checked view of the
 //! memory, so a corrupted heap can neither read outside the memory nor make the walk
@@ -95,7 +94,7 @@ pub(crate) fn is_direct(store: &mut Store<host_abi::HostAbiState>, instance: &In
 }
 
 /// Returns the address of the VM state block of the direct-boundary module of `instance`.
-pub(crate) fn vm_address(
+fn vm_address(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
 ) -> Result<u32, RunnerError> {
@@ -144,7 +143,7 @@ pub(crate) fn result(
 
 /// Returns v1's SerializationError with `message`: fatal for a result, recoverable for
 /// host-call arguments.
-pub(crate) fn serialization_error(message: &str, fatal: bool) -> ExsError {
+fn serialization_error(message: &str, fatal: bool) -> ExsError {
     ExsError {
         severity: if fatal {
             ErrorSeverity::Fatal

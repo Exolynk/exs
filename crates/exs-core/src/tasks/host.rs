@@ -3,9 +3,9 @@
 use exs_abi::{HOST_CALL_READY, HOST_CALL_UNSUPPORTED};
 
 use super::state::{Field, load, store};
-use crate::cbor::decode_at;
 use crate::errors::recoverable;
 use crate::execution::reserve_input;
+use crate::image::adopt_at;
 use crate::lists::list_object;
 use crate::memory::Memory;
 use crate::strings::{byte_len, string_object};
@@ -118,7 +118,7 @@ pub fn host_call_take(memory: &mut impl Memory, host: &mut impl Host, vm: u32) -
     if host.response_copy(call_id, buffer, len) != 0 {
         return None;
     }
-    let value = decode_at(memory, vm, buffer, len).ok()?;
+    let value = adopt_at(memory, vm, buffer, len).ok()?;
     store(memory, vm, Field::HostCall, 0);
     Some(value)
 }
@@ -136,7 +136,7 @@ pub fn host_call_resume(
     if call_id == 0 || !super::scheduler::waits_for(memory, vm, call_id) {
         return Some(1);
     }
-    let value = decode_at(memory, vm, address, length).ok()?;
+    let value = adopt_at(memory, vm, address, length).ok()?;
     let delivered = super::scheduler::deliver(memory, vm, call_id, value)?;
     Some(i32::from(!delivered))
 }

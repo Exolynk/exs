@@ -219,6 +219,9 @@ impl ServerRunner {
             .instantiate(&mut store, &module)
             .map_err(wasmtime_error)?;
         check_abi(&mut store, &instance)?;
+        if direct::is_direct(&mut store, &instance) {
+            store.data_mut().use_direct_boundary();
+        }
         let compile_time = execution_started_at.elapsed();
         let run_started_at = std::time::Instant::now();
         let (input_pointer, input_length) =
@@ -496,6 +499,27 @@ fn encode_limited_cbor(
     Ok(bytes)
 }
 
+/// Encodes one runner-owned value for the module: as an image for a module of the direct
+/// boundary, as CBOR otherwise, with the configured limits.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+fn encode_boundary_value(
+    store: &Store<host_abi::HostAbiState>,
+    value: &ExsValue,
+    limits: &ExecutionLimits,
+    label: &str,
+) -> Result<Vec<u8>, RunnerError> {
+    if store.data().is_direct() {
+        let mut cbor_limits = limits.cbor_limits();
+        cbor_limits.max_payload_bytes = cbor_limits
+            .max_payload_bytes
+            .min(limits.max_cbor_payload_bytes);
+        direct::write_image(value, cbor_limits)
+            .map_err(|error| cbor_error(error, &format!("could not encode {label} image")))
+    } else {
+        encode_limited_cbor(value, limits, LimitKind::CborPayload, label)
+    }
+}
+
 /// Maps a bounded CBOR failure to a typed runner limit or an ABI diagnostic.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn cbor_error(error: CborError, context: &str) -> RunnerError {
@@ -517,7 +541,7 @@ fn write_response(
     response: &ExsValue,
     limits: &ExecutionLimits,
 ) -> Result<(i32, i32), RunnerError> {
-    let bytes = encode_limited_cbor(response, limits, LimitKind::CborPayload, "host response")?;
+    let bytes = encode_boundary_value(store, response, limits, "host response")?;
     let length = i32::try_from(bytes.len())
         .map_err(|_| RunnerError::Abi("host response exceeds Wasm i32 length".to_owned()))?;
     let allocate = instance
@@ -574,7 +598,7 @@ fn write_input(
     limits: &ExecutionLimits,
 ) -> Result<(i32, i32), RunnerError> {
     let input = ExsValue::List(inputs.to_vec());
-    let bytes = encode_limited_cbor(&input, limits, LimitKind::CborPayload, "input")?;
+    let bytes = encode_boundary_value(store, &input, limits, "input")?;
     let length = i32::try_from(bytes.len())
         .map_err(|_| RunnerError::Abi("input CBOR exceeds Wasm i32 length".to_owned()))?;
     let allocate = instance
