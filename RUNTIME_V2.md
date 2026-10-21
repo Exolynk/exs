@@ -1,8 +1,9 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done and phase 2 got its go; phase 3 is done except programs with more than 65,534 nominal types (section 12r). See
-sections 12 to 12r.
+linking) are done and phase 2 got its go; phase 3 is done except programs with more than
+65,534 nominal types (section 12r); phase 4 is done except one test under a 2 MiB memory
+limit (section 12w). See sections 12 to 12w.
 
 ## 1. Goal
 
@@ -195,7 +196,7 @@ Each phase ends with measurement and an explicit go / no-go.
 | 1 | `exs-layout`, VM state block, allocator, non-moving GC in the stateless library, unit tests with synthetic heaps | done, see section 12a |
 | 2 | v2 backend for Int/Float/Bool/None, Strings, Lists, untyped and typed Objects, sync functions, `?`, Errors | prototype beats v1 clearly on property, String and literal micro benchmarks; go / no-go |
 | 3 | All built-in methods as stateless helpers over the layout; enums and `match`; closures and cells; iterators; formatted strings | all non-async runtime-value tests green on v2 |
-| 4 | Async: frames as heap objects, scheduler state in memory, host calls, parallel groups, cancellation | full continuation and host-call suites green on v2 |
+| 4 | Async: frames as heap objects, scheduler state in memory, host calls, parallel groups, cancellation | done, see sections 12t to 12w |
 | 5 | Host boundary v2 for the Wasmtime runner | runner tests green, boundary cost measured |
 | 6 | Browser runner and `exs-guest` on the new boundary (or CBOR fallback) | all crates green |
 | 7 | Switch the default to v2, delete v1 code and `exs-runtime` | one backend left |
@@ -214,6 +215,12 @@ Each phase ends with measurement and an explicit go / no-go.
   with margin. To be planned and approved separately.
 - **More than 65,534 nominal types.** Inline type-tag tests need a heap type-id fallback
   (section 12r).
+- **Initial memory.** v2 needs more than 2 MiB before a program runs: the template's 1 MiB
+  Rust stack, a 1 MiB root stack and the trace and heap pages (section 12v). Smaller stacks
+  or growing them on demand are a memory layout change.
+- **Resumable loop overhead.** A loop in a resumable function loads and stores frame slots
+  for every operation, so `async_int_while_1000` is only 3 % below v1 (section 12w); keeping
+  values of one state machine in locals between suspension points is the lever.
 
 ## 12. Phase 0 results
 
@@ -968,6 +975,44 @@ layout question outside phase 4.
 nested `par`, `par` inside closures and loops of 300 `par` blocks, recoverable Errors of
 single tasks, their traces, v1's Errors for invalid dynamic operands, and fatal Errors that
 end every task.
+
+## 12w. Phase 4d: measurements and the end of phase 4
+
+Fuel (Winch) and median execution time of 21 runs, without module compilation, from
+`reports_resumable_fuel_and_time`; `echo` suspends the task, `add` finishes at once:
+
+| Scenario | v1 fuel | v2 fuel | v1 time | v2 time |
+|---|---:|---:|---:|---:|
+| host call, then a loop of 1,000 | 362,144 | 351,360 | 179 µs | 145 µs |
+| 100 pending host calls | 493,464 | 310,837 | 370 µs | 275 µs |
+| 100 ready host calls | 481,284 | 302,299 | 308 µs | 207 µs |
+| 100 calls of a resumable function | 214,164 | 154,946 | 174 µs | 119 µs |
+| 100 calls of a suspending closure | 278,647 | 156,410 | 206 µs | 111 µs |
+| `par` over 100 tasks with host calls | 1,039,865 | 526,461 | 592 µs | 372 µs |
+
+The fuel suite's resumable scenarios: `async_int_loop_100` 88,929 → 54,804,
+`async_empty_while_1000` 204,743 → 165,680, `async_int_while_1000` 367,762 → 358,774,
+`async_call_loop_100` 93,547 → 41,197, `resumable_call_loop_100` 164,417 → 40,097. Precise
+suspendability keeps every synchronous function at its synchronous cost; what remains
+expensive is a loop inside a resumable function, whose operations go through frame slots.
+
+### Phase 4 summary
+
+| Suite on v2 | after 3f | after 4c | remaining failures |
+|---|---:|---:|---|
+| `continuations` | 0 / 18 | 18 / 18 | |
+| `host_calls` | 11 / 31 | 31 / 31 | |
+| `closures_parallel` | 7 / 17 | 16 / 17 | 2 MiB memory limit (section 12v) |
+| `limits` | 9 / 11 | 11 / 11 | |
+| `fuel` | 16 / 18 | 18 / 18 | |
+| `runtime_values` | 87 / 96 | 95 / 96 | more than 65,534 nominal types |
+| `protocols_and_nominal` | 20 / 27 | 26 / 27 | enum input of an undeclared variant (section 12o) |
+| `contracts_and_errors` | 15 / 15 | 15 / 15 | |
+
+Phase 4's exit criterion, the continuation, host-call, closure and parallel and limit suites
+green on v2, holds except for the memory-limit test. No compared program differs from v1,
+except the documented ones: the interleaving of parallel tasks on shared state (approved) and
+a host-decoded `Ordering` as a `Compare` result (section 12t).
 
 ## 13. Risks and open questions
 

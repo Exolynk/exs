@@ -901,6 +901,87 @@ fn matches_v1_for_parallel_tasks() {
     }
 }
 
+/// Compiles `source` with `backend` and returns its fuel and the median execution time of
+/// `runs` executions, which exclude compiling and instantiating the module.
+fn measure(source: &str, backend: Backend, inputs: &[ExsValue], runs: usize) -> (u64, Duration) {
+    let compiled = match compile_with_backend(
+        SourceInput {
+            source_id: "test.exs",
+            text: source,
+        },
+        CompileOptions::default(),
+        backend,
+    ) {
+        Ok(module) => module,
+        Err(error) => panic!("{backend:?} compilation failed: {error}"),
+    };
+    let mut runner = ServerRunner::new(
+        64 << 20,
+        1_000_000_000,
+        Duration::from_secs(60),
+        ProtectionLevel::Standard,
+    );
+    register_hosts(&mut runner);
+    let mut fuel = 0;
+    let mut times = Vec::with_capacity(runs);
+    for _ in 0..runs {
+        match block_on(runner.execute_with_report(
+            &compiled.wasm,
+            "main",
+            inputs,
+            &ExecutionCancellation::new(),
+        )) {
+            Ok(report) => {
+                fuel = report.fuel_consumed;
+                times.push(report.execution_time);
+            }
+            Err(error) => panic!("{backend:?} execution failed: {error}"),
+        }
+    }
+    times.sort();
+    (fuel, times.get(runs / 2).copied().unwrap_or_default())
+}
+
+/// Prints the fuel and median execution time of both backends for programs that suspend.
+#[test]
+fn reports_resumable_fuel_and_time() {
+    let scenarios = [
+        (
+            "host_then_loop_1000",
+            r#"fn main(limit: Int) -> Int { Host::call("echo", 1); let total = 0; let index = 0; while index < limit { total = total + index * 3 + 1; index = index + 1; } ret total; }"#,
+        ),
+        (
+            "pending_calls_100",
+            r#"fn main(limit: Int) -> Int { let total = 0; let index = 0; while index < limit / 10 { total = total + Host::call("echo", index); index = index + 1; } ret total; }"#,
+        ),
+        (
+            "ready_calls_100",
+            r#"fn main(limit: Int) -> Int { let total = 0; let index = 0; while index < limit / 10 { total = Host::call("add", total, index); index = index + 1; } ret total; }"#,
+        ),
+        (
+            "resumable_calls_100",
+            r#"fn step(value) { if value == 0 { Host::call("echo", 0); } ret value + 1; } fn main(limit: Int) -> Int { let total = 0; let index = 0; while index < limit / 10 { total = step(total); index = index + 1; } ret total; }"#,
+        ),
+        (
+            "closure_calls_100",
+            r#"fn main(limit: Int) -> Int { let total = 0; let bump = (value) => { if value == 0 { Host::call("echo", 0); } ret value + 1; }; let index = 0; while index < limit / 10 { total = bump(total); index = index + 1; } ret total; }"#,
+        ),
+        (
+            "par_fan_out_100",
+            r#"fn main(limit: Int) -> Int { let tasks = []; let index = 0; while index < limit / 10 { let value = index; tasks.push(() => { ret Host::call("echo", value); }); index = index + 1; } let total = 0; for value in par(tasks) { total = total + value; } ret total; }"#,
+        ),
+    ];
+    let inputs = [ExsValue::Int(1000)];
+    for (name, source) in scenarios {
+        compare(source, &inputs);
+        let (v1_fuel, v1_time) = measure(source, Backend::V1, &inputs, 21);
+        let (v2_fuel, v2_time) = measure(source, Backend::V2, &inputs, 21);
+        println!(
+            "resumable {name}: fuel v1 {v1_fuel} v2 {v2_fuel}, time v1 {v1_time:?} v2 {v2_time:?}"
+        );
+    }
+}
+
 /// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
 /// before host enums arrive.
 #[test]
