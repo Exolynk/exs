@@ -389,3 +389,21 @@ impl<M: Memory> Visitor<M> for Builder {
         self.complete(ExsValue::None)
     }
 }
+
+/// Returns v1's SerializationError with `message`: fatal for a result, recoverable for
+/// host-call arguments.
+pub(crate) fn serialization_error(message: &str, fatal: bool) -> ExsError {
+    ExsError {
+        severity: if fatal {
+            ErrorSeverity::Fatal
+        } else {
+            ErrorSeverity::Recoverable
+        },
+        kind: "SerializationError".to_owned(),
+        message: message.to_owned(),
+        data: Box::new(ExsValue::None),
+        origin: None,
+        trace: Vec::new(),
+        cause: None,
+    }
+}

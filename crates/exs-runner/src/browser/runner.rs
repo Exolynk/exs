@@ -1,6 +1,10 @@
-use super::bindings::{create_browser_runner, execute_browser_runner};
+use super::bindings::{
+    ValueReader, browser_runner_direct, create_browser_runner, execute_browser_runner,
+};
+use super::direct;
 use super::host::{rejected_browser_value, start_host_call};
 use super::*;
+use crate::value_reader::{ReadError, serialization_error};
 
 /// Browser-specific configuration used when creating one reusable runner.
 #[derive(Default)]
@@ -26,8 +30,10 @@ impl BrowserRunnerConfig {
 pub struct BrowserRunner {
     /// Browser-compiled module and its JavaScript execution controller.
     controller: JsValue,
+    /// Whether the module uses the direct boundary of runtime v2.
+    direct: bool,
     /// Rust callback retained for as long as JavaScript may invoke the Host ABI imports.
-    _host_callback: Closure<dyn FnMut(String, Uint8Array, i32, i32, f64) -> JsValue>,
+    _host_callback: Closure<dyn FnMut(String, JsValue, i32, i32, f64) -> JsValue>,
     /// Rust callback retained for execution-scoped host stream cleanup.
     _release_callback: Closure<dyn FnMut(i32)>,
 }
@@ -44,7 +50,7 @@ impl BrowserRunner {
         let callback_registry = registry.clone();
         let callback = Closure::wrap(Box::new(
             move |name: String,
-                  arguments: Uint8Array,
+                  request: JsValue,
                   source_position: i32,
                   execution_id: i32,
                   execution_started_at: f64| {
@@ -55,13 +61,13 @@ impl BrowserRunner {
                     &callback_registry,
                     execution_id,
                     &name,
-                    &arguments.to_vec(),
+                    &request,
                     source_position,
                     execution_started_at,
                 )
             },
         )
-            as Box<dyn FnMut(String, Uint8Array, i32, i32, f64) -> JsValue>);
+            as Box<dyn FnMut(String, JsValue, i32, i32, f64) -> JsValue>);
         let release_registry = registry.clone();
         let release = Closure::wrap(Box::new(move |execution_id: i32| {
             if let Ok(execution_id) = u32::try_from(execution_id) {
@@ -75,6 +81,7 @@ impl BrowserRunner {
             .map_err(browser_error)?;
         let controller = JsFuture::from(promise).await.map_err(browser_error)?;
         Ok(Self {
+            direct: browser_runner_direct(&controller),
             controller,
             _host_callback: callback,
             _release_callback: release,
@@ -92,18 +99,35 @@ impl BrowserRunner {
         function: &str,
         inputs: &[ExsValue],
     ) -> Result<ExsValue, RunnerError> {
-        let input = ExsValue::List(inputs.to_vec())
-            .to_cbor()
-            .map_err(|error| RunnerError::Abi(format!("could not encode input CBOR: {error}")))?;
+        let inputs = ExsValue::List(inputs.to_vec());
+        let input = if self.direct {
+            direct::image(&inputs).map_err(RunnerError::Abi)?
+        } else {
+            inputs.to_cbor().map_err(|error| {
+                RunnerError::Abi(format!("could not encode input CBOR: {error}"))
+            })?
+        };
         let input = Uint8Array::from(input.as_slice());
         let promise =
             execute_browser_runner(&self.controller, function, &input).map_err(browser_error)?;
         let result = JsFuture::from(promise).await.map_err(browser_error)?;
-        let result = result.dyn_into::<Uint8Array>().map_err(|_| {
-            RunnerError::Abi("browser runner returned a non-byte result".to_owned())
-        })?;
-        ExsValue::from_cbor(&result.to_vec())
-            .map_err(|error| RunnerError::Abi(format!("invalid result CBOR: {error}")))
+        if let Some(result) = result.dyn_ref::<Uint8Array>() {
+            return ExsValue::from_cbor(&result.to_vec())
+                .map_err(|error| RunnerError::Abi(format!("invalid result CBOR: {error}")));
+        }
+        if !self.direct || !result.is_object() {
+            return Err(RunnerError::Abi(
+                "browser runner returned a non-byte result".to_owned(),
+            ));
+        }
+        // Like v1, a result that cannot cross becomes a fatal SerializationError.
+        match direct::read(result.unchecked_ref::<ValueReader>()) {
+            Ok(value) => Ok(value),
+            Err(ReadError::Unsupported(message)) => {
+                Ok(ExsValue::Error(serialization_error(message, true)))
+            }
+            Err(error) => Err(RunnerError::Abi(format!("invalid result: {error:?}"))),
+        }
     }
 }
 

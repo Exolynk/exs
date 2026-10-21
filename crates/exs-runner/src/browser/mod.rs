@@ -21,6 +21,7 @@ use crate::{HostCborError, RunnerError, decode_arguments, encode_result};
 use serde::{Serialize, de::DeserializeOwned};
 
 mod bindings;
+mod direct;
 mod host;
 mod runner;
 

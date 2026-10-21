@@ -11,5 +11,9 @@ workspace = true
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# Builds the template itself: the `no_std` exports, allocator and panic handler.
+template = []
+
 [dependencies]
 exs-core = { path = "../exs-core" }

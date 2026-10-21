@@ -4,12 +4,12 @@
 //! builds the value directly, so a corrupted heap can neither read outside the memory nor make
 //! the walk unbounded: nesting is limited and the equivalent CBOR has a byte budget.
 
-use exs_abi::{CborLimits, ErrorSeverity, ExsError, ExsValue, RESULT_VALUE_EXPORT, VM_EXPORT};
+use exs_abi::{CborLimits, ExsValue, RESULT_VALUE_EXPORT, VM_EXPORT};
 use exs_core::SliceMemory;
 use wasmtime::{Instance, Store};
 
 use crate::limits::ExecutionLimits;
-use crate::value_reader::{ReadError, read_value};
+use crate::value_reader::{ReadError, read_value, serialization_error};
 use crate::{LimitKind, RunnerError, host_abi};
 
 /// Reads the value `raw` of the module memory `data`, whose VM state block is at `vm`, on a
@@ -93,23 +93,5 @@ pub(crate) fn result(
         Err(error) => Err(RunnerError::LimitExceeded(
             limit_kind(error).unwrap_or(LimitKind::Result),
         )),
-    }
-}
-
-/// Returns v1's SerializationError with `message`: fatal for a result, recoverable for
-/// host-call arguments.
-fn serialization_error(message: &str, fatal: bool) -> ExsError {
-    ExsError {
-        severity: if fatal {
-            ErrorSeverity::Fatal
-        } else {
-            ErrorSeverity::Recoverable
-        },
-        kind: "SerializationError".to_owned(),
-        message: message.to_owned(),
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
     }
 }

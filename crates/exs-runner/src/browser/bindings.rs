@@ -5,6 +5,9 @@ use super::*;
 #[wasm_bindgen(inline_js = r#"
 const HOST_CALL_READY = 0;
 const HOST_CALL_PENDING = 1;
+const HOST_CALL_UNSUPPORTED = 3;
+const PAGE_SIZE = 65536;
+const RESULT_VALUE_EXPORT = "__exs_result_value";
 const STATUS_COMPLETE = 2;
 const STATUS_PENDING = 1;
 const STATUS_CANCELLED = 3;
@@ -38,6 +41,24 @@ function write(memory, pointer, value, label) {
     new Uint8Array(memory.buffer).set(output, start);
 }
 
+function valueReader(memory, value, vm) {
+    const bits = BigInt.asUintN(64, BigInt(value));
+    return {
+        low: Number(bits & 0xffffffffn),
+        high: Number(bits >> 32n),
+        vm: vm >>> 0,
+        size: memory.buffer.byteLength,
+        page(index) {
+            const start = index * PAGE_SIZE;
+            const end = Math.min(start + PAGE_SIZE, memory.buffer.byteLength);
+            if (!Number.isInteger(index) || index < 0 || start >= end) {
+                throw new RangeError("memory page lies outside linear memory");
+            }
+            return new Uint8Array(memory.buffer.slice(start, end));
+        },
+    };
+}
+
 function exportedFunction(exports, name) {
     const value = exports[name];
     if (typeof value !== "function") {
@@ -54,8 +75,10 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
     if (typeof release !== "function") {
         throw new TypeError("browser host cleanup callback must be a function");
     }
+    const direct = WebAssembly.Module.exports(module).some((entry) => entry.name === RESULT_VALUE_EXPORT);
     let nextExecutionId = 1;
     return {
+        direct,
         async execute(functionName, input) {
             if (nextExecutionId > 2_147_483_647) {
                 throw new RangeError("browser execution identity overflow");
@@ -66,24 +89,34 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
             const pending = new Map();
             let activeTasks = 0;
             let memory;
+            const hostName = (pointer, length) => new TextDecoder("utf-8", { fatal: true }).decode(
+                read(memory, pointer, length, "host function name"),
+            );
+            const startHostCall = (callId, name, request, sourcePosition) => {
+                const response = host(name, request, sourcePosition, executionId, executionStartedAt);
+                if (response === null) {
+                    return HOST_CALL_UNSUPPORTED;
+                }
+                if (response && typeof response.then === "function") {
+                    pending.set(
+                        callId,
+                        Promise.resolve(response).then((value) => ({ callId, value: bytes(value, "host response") })),
+                    );
+                    return HOST_CALL_PENDING;
+                }
+                ready.set(callId, bytes(response, "host response"));
+                return HOST_CALL_READY;
+            };
             try {
                 const imports = {
                 exs: {
                     __exs_host_call_start(callId, namePointer, nameLength, requestPointer, requestLength, sourcePosition) {
-                        const name = new TextDecoder("utf-8", { fatal: true }).decode(
-                            read(memory, namePointer, nameLength, "host function name"),
-                        );
                         const request = read(memory, requestPointer, requestLength, "host-call request");
-                        const response = host(name, request, sourcePosition, executionId, executionStartedAt);
-                        if (response && typeof response.then === "function") {
-                            pending.set(
-                                callId,
-                                Promise.resolve(response).then((value) => ({ callId, value: bytes(value, "host response") })),
-                            );
-                            return HOST_CALL_PENDING;
-                        }
-                        ready.set(callId, bytes(response, "host response"));
-                        return HOST_CALL_READY;
+                        return startHostCall(callId, hostName(namePointer, nameLength), request, sourcePosition);
+                    },
+                    __exs_host_call_start_value(callId, namePointer, nameLength, args, vm, sourcePosition) {
+                        const request = valueReader(memory, args, vm);
+                        return startHostCall(callId, hostName(namePointer, nameLength), request, sourcePosition);
                     },
                     __exs_host_call_response_len(callId) {
                         const response = ready.get(callId);
@@ -136,11 +169,15 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
                 throw new TypeError("ExS function name must be a non-empty string");
                 }
                 const start = exportedFunction(instance.exports, `__exs_start_${functionName}`);
-                const resultPointer = exportedFunction(instance.exports, "__exs_result_ptr");
-                const resultLength = exportedFunction(instance.exports, "__exs_result_len");
+                const resultPointer = () => exportedFunction(instance.exports, "__exs_result_ptr")();
+                const resultLength = () => exportedFunction(instance.exports, "__exs_result_len")();
                 let status = start(inputPointer, inputBytes.length);
                 while (true) {
                 if (status === STATUS_COMPLETE) {
+                    if (direct) {
+                        const vm = exportedFunction(instance.exports, "__exs_vm")();
+                        return valueReader(memory, exportedFunction(instance.exports, RESULT_VALUE_EXPORT)(), vm);
+                    }
                     return read(memory, resultPointer(), resultLength(), "ExS result");
                 }
                 if (status === STATUS_CANCELLED) {
@@ -166,6 +203,10 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
     };
 }
 
+export function browserRunnerDirect(controller) {
+    return Boolean(controller && controller.direct);
+}
+
 export function executeBrowserRunner(controller, functionName, input) {
     if (!controller || typeof controller.execute !== "function") {
         throw new TypeError("invalid ExS browser runner controller");
@@ -183,6 +224,10 @@ extern "C" {
         expected_abi_version: i32,
     ) -> Result<Promise, JsValue>;
 
+    /// Returns whether the controller's module uses the direct boundary of runtime v2.
+    #[wasm_bindgen(js_name = browserRunnerDirect)]
+    pub(super) fn browser_runner_direct(controller: &JsValue) -> bool;
+
     /// Executes one isolated ExS instance through the JavaScript controller.
     #[wasm_bindgen(catch, js_name = executeBrowserRunner)]
     pub(super) fn execute_browser_runner(
@@ -190,6 +235,32 @@ extern "C" {
         function: &str,
         input: &Uint8Array,
     ) -> Result<Promise, JsValue>;
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// A value in the memory of a runtime v2 module, whose pages JavaScript copies on demand.
+    pub(super) type ValueReader;
+
+    /// Returns the low 32 bits of the value.
+    #[wasm_bindgen(method, getter)]
+    pub(super) fn low(this: &ValueReader) -> u32;
+
+    /// Returns the high 32 bits of the value.
+    #[wasm_bindgen(method, getter)]
+    pub(super) fn high(this: &ValueReader) -> u32;
+
+    /// Returns the address of the module's VM state block.
+    #[wasm_bindgen(method, getter)]
+    pub(super) fn vm(this: &ValueReader) -> u32;
+
+    /// Returns the byte size of the module's memory.
+    #[wasm_bindgen(method, getter)]
+    pub(super) fn size(this: &ValueReader) -> f64;
+
+    /// Returns a copy of 64 KiB page `index` of the module's memory.
+    #[wasm_bindgen(method, catch)]
+    pub(super) fn page(this: &ValueReader, index: u32) -> Result<Uint8Array, JsValue>;
 }
 
 #[wasm_bindgen(inline_js = r#"
