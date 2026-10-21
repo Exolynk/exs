@@ -5,6 +5,7 @@ mod boundary;
 mod collector;
 mod errors;
 mod execution;
+mod float_parse;
 mod heap;
 mod lists;
 mod methods;

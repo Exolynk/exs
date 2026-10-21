@@ -6,6 +6,7 @@ use exs_layout::StaticFunction;
 
 use crate::errors::recoverable;
 use crate::memory::Memory;
+use crate::methods::float_parse::parse_f64;
 use crate::methods::numbers::{float_pair, float_unary, type_error};
 use crate::numbers::{float_value, int_value};
 use crate::strings::{string_object, text};
@@ -93,12 +94,12 @@ fn parse_int(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     }
 }
 
-/// Evaluates `Float::parse(text)` with Rust's `f64` syntax, like v1.
+/// Evaluates `Float::parse(text)` with Rust's `f64` syntax and results, like v1.
 fn parse_float(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     let Some(object) = string_object(value) else {
         return type_error(memory, vm, "Float::parse requires a String value", value);
     };
-    match f64::from_str(text(memory, object)) {
+    match parse_f64(text(memory, object).as_bytes()).ok_or(()) {
         Ok(parsed) => float_value(memory, vm, parsed),
         Err(_) => recoverable(
             memory,

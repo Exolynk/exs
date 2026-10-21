@@ -1,8 +1,8 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done and phase 2 got its go; phase 3 is in progress (3a done). See sections 12 to
-12h.
+linking) are done and phase 2 got its go; phase 3 is in progress (3a and 3b-1 done). See
+sections 12 to 12j.
 
 ## 1. Goal
 
@@ -555,6 +555,54 @@ Compile errors across the non-async suites, by cause:
 The traps are Bytes and Error runner inputs (phase 5 and 3b), the guarded trait
 implementations (3d) and literal Range bounds outside `i32` (3f).
 
+## 12i. Phase 3b-1 results
+
+- **Method calls** on built-in values evaluate receiver and arguments and call one core
+  dispatcher, `__exs_core_call_builtin`, with the `exs_abi::BuiltinMethod` index. Number
+  methods, `add`/`sub`/`mul`/`div`, `div_euclid`/`rem_euclid`, `to_string`/`debug`,
+  `length`/`is_empty` and the Error methods `kind`/`message`/`data`/`cause` return v1's
+  results and Errors. Like v1, an unknown method name is a MethodNotFound Error and a built-in
+  called with another number of arguments an ArityError; the compiler decides both from the
+  static name.
+- **Static functions** of built-in types (`Int::parse`, `Float::parse`, every `Math`
+  function) go through `__exs_core_call_static` with an `exs_layout::StaticFunction` index.
+  Floating-point functions use `libm`, as v1 does, for bit-identical results.
+- A receiver whose type implements a method of the same name traps until implementations are
+  compiled (phase 3d), like the operator guards of 3a.
+- `runtime_values` on v2: 31 of 96 (was 26). The leading blockers are `push` and the other
+  List and Object methods (3b-2) and `List<T>` and enum contracts (3c).
+
+## 12j. Fuel accounting of data and bulk memory
+
+Measured with Wasmtime 47 directly: `memory.fill` and `memory.copy` consume one fuel per byte,
+and initializing data segments at instantiation consumes one fuel per byte in blocks of 16 KiB
+(16,384 fuel per started block). The core template's data segment is initialized on every
+execution, and pruning removes unused functions but not their data, so every byte of template
+data costs every script.
+
+- 3b-1 added `f64::from_str`, whose `POWER_OF_FIVE_128` table alone is 10,416 bytes. It pushed
+  the template's data from 5,494 to 22,487 bytes, a second block, and every execution
+  16,384 fuel more. `Float::parse` now uses a table-free exact parser: Clinger's fast path and
+  otherwise one big-integer division with round-half-to-even on at most 800 significant digits.
+  Native tests compare it bit for bit with `f64::from_str` on edge cases and 1.6 million
+  random inputs, including rounding midpoints, subnormals, overflow and invalid syntax.
+- **Data budget:** the template's data must stay below 16 KiB; it is 10,054 bytes now. Every
+  new table needs a size check, and large tables (Unicode case mapping in 3b-2) need a compact
+  form or must come from compiler-emitted data that only programs using them carry.
+- 3a's formatted strings had lost the inlined rendering of `+` chains (a function pointer per
+  part); joining is generic again and formatting takes the `+` rendering path when every part
+  is a String or scalar.
+- Allocation zeroes each object and every call zeroes its root frame with `memory.fill`, which
+  also costs per byte; skipping zeroing for objects that are written completely is a later
+  optimization.
+
+| | 2d | 3b-1 before the fix | now |
+|---|---:|---:|---:|
+| `while` Int loop, 1000 iterations | 147,254 | 163,659 | 147,275 |
+| formatted string per row, 1000 rows | 1,747,893 | 2,376,298 | 1,633,914 |
+| `+` chain per row, 1000 rows | 1,792,893 | 2,041,298 | 1,792,914 |
+| `concat_10_objects` | 82,213 | 99,998 | 82,254 |
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.
@@ -564,6 +612,8 @@ implementations (3d) and literal Range bounds outside `i32` (3f).
 - **Shape growth:** shapes are never collected, so keys computed from data create shapes for
   the rest of the execution. This is bounded by the execution, but a script that builds Objects
   with many distinct dynamic keys keeps all of their shapes.
+- **Template data budget:** fuel grows by 16,384 per started 16 KiB of template data on every
+  execution, so the core library must keep large tables out of its data (section 12j).
 - **Fragmentation** of the non-moving heap for long-running tasks; measured in phase 2.
 - **Wall-clock vs fuel:** Winch generates slower machine code than Cranelift; whether
   production should switch compilers is a separate decision informed by phase 0 numbers.
