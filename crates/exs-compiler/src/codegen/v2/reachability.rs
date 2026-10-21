@@ -87,6 +87,21 @@ pub(super) fn string_literals<'t>(
     literals
 }
 
+/// Returns every distinct Bytes literal of `functions`.
+pub(super) fn bytes_literals(functions: &[&FunctionDeclaration<'_>]) -> Vec<String> {
+    let mut literals: Vec<String> = Vec::new();
+    for function in functions {
+        visit_block(&function.body, &mut |expression| {
+            if let Expression::Bytes(text, _) = expression
+                && !literals.contains(text)
+            {
+                literals.push(text.clone());
+            }
+        });
+    }
+    literals
+}
+
 /// Returns the distinct keys of one Object literal in order of first appearance.
 pub(super) fn literal_keys(properties: &[ObjectProperty<'_>]) -> Vec<String> {
     let mut keys: Vec<String> = Vec::with_capacity(properties.len());

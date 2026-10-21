@@ -11,6 +11,14 @@ pub enum StaticFunction {
     FloatParse,
     /// `Object::from_entries(entries)`.
     ObjectFromEntries,
+    /// `Bytes::from_list(values)`.
+    BytesFromList,
+    /// `Bytes::from_utf8(text)`.
+    BytesFromUtf8,
+    /// `Bytes::from_hex(text)`.
+    BytesFromHex,
+    /// `Bytes::from_base64(text)`.
+    BytesFromBase64,
     /// `Math::pi()`.
     MathPi,
     /// `Math::tau()`.
@@ -44,10 +52,14 @@ pub enum StaticFunction {
 }
 
 /// Every static function in index order.
-const ALL: [StaticFunction; 18] = [
+const ALL: [StaticFunction; 22] = [
     StaticFunction::IntParse,
     StaticFunction::FloatParse,
     StaticFunction::ObjectFromEntries,
+    StaticFunction::BytesFromList,
+    StaticFunction::BytesFromUtf8,
+    StaticFunction::BytesFromHex,
+    StaticFunction::BytesFromBase64,
     StaticFunction::MathPi,
     StaticFunction::MathTau,
     StaticFunction::MathE,
@@ -93,6 +105,10 @@ impl StaticFunction {
             Self::IntParse => ("Int", "parse"),
             Self::FloatParse => ("Float", "parse"),
             Self::ObjectFromEntries => ("Object", "from_entries"),
+            Self::BytesFromList => ("Bytes", "from_list"),
+            Self::BytesFromUtf8 => ("Bytes", "from_utf8"),
+            Self::BytesFromHex => ("Bytes", "from_hex"),
+            Self::BytesFromBase64 => ("Bytes", "from_base64"),
             Self::MathPi => ("Math", "pi"),
             Self::MathTau => ("Math", "tau"),
             Self::MathE => ("Math", "e"),

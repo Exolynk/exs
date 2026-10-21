@@ -93,6 +93,9 @@ pub fn index_get(memory: &mut impl Memory, vm: u32, receiver: u64, index: u64) -
             ListSlot::Error(error) => Some(error),
         };
     }
+    if crate::bytes::bytes_object(receiver).is_some() {
+        return crate::methods::bytes_get(memory, vm, receiver, index);
+    }
     let Some(owner) = key_owner(memory, vm, receiver, index) else {
         return recoverable(
             memory,

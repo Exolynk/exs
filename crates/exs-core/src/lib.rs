@@ -17,6 +17,7 @@ extern crate std;
 
 mod access;
 mod allocator;
+mod bytes;
 mod cbor;
 mod collector;
 mod errors;
@@ -39,6 +40,7 @@ mod tests;
 
 pub use access::{index_get, index_set, property_get, property_set};
 pub use allocator::{allocate, init_heap};
+pub use bytes::bytes_object;
 pub use cbor::{CborError, arity_error, decode_inputs, encode_result};
 pub use collector::collect;
 pub use errors::{

@@ -2,8 +2,10 @@
 
 use exs_abi::BuiltinMethod;
 
+use crate::bytes::bytes_object;
 use crate::lists::list_object;
 use crate::memory::Memory;
+use crate::methods::bytes::Relation as BytesRelation;
 use crate::methods::clone::deep_clone;
 use crate::methods::numbers::type_error;
 use crate::methods::numbers::{
@@ -13,7 +15,7 @@ use crate::methods::numbers::{
 use crate::methods::objects::Collect;
 use crate::methods::strings::{Relation, Trim};
 use crate::methods::values::{ErrorPart, error_part, is_empty, length, operator, render};
-use crate::methods::{lists, objects, strings};
+use crate::methods::{bytes, lists, objects, strings};
 use crate::numbers::Arithmetic;
 use crate::strings::string_object;
 use exs_value::ValueRef;
@@ -148,6 +150,9 @@ pub fn call_builtin(
         BuiltinMethod::Entries => objects::collect(memory, vm, receiver, Collect::Entries),
         BuiltinMethod::GetOr => objects::get_or(memory, vm, receiver, first, second),
         BuiltinMethod::Merge => objects::merge(memory, vm, receiver, first),
+        BuiltinMethod::Contains if bytes_object(receiver).is_some() => {
+            bytes::relation(memory, vm, receiver, first, BytesRelation::Contains)
+        }
         BuiltinMethod::Contains if string_object(receiver).is_some() => {
             strings::relation(memory, vm, receiver, first, Relation::Contains)
         }
@@ -160,6 +165,9 @@ pub fn call_builtin(
             "contains requires a Bytes, List, or String receiver",
             receiver,
         ),
+        BuiltinMethod::Slice if bytes_object(receiver).is_some() => {
+            bytes::slice(memory, vm, receiver, first, second)
+        }
         BuiltinMethod::Slice if string_object(receiver).is_some() => {
             strings::slice(memory, vm, receiver, first, second)
         }
@@ -172,6 +180,9 @@ pub fn call_builtin(
             "slice requires a Bytes, List, or String receiver",
             receiver,
         ),
+        BuiltinMethod::StartsWith if bytes_object(receiver).is_some() => {
+            bytes::relation(memory, vm, receiver, first, BytesRelation::StartsWith)
+        }
         BuiltinMethod::StartsWith if string_object(receiver).is_some() => {
             strings::relation(memory, vm, receiver, first, Relation::StartsWith)
         }
@@ -181,6 +192,9 @@ pub fn call_builtin(
             "starts_with requires a Bytes or String receiver",
             receiver,
         ),
+        BuiltinMethod::EndsWith if bytes_object(receiver).is_some() => {
+            bytes::relation(memory, vm, receiver, first, BytesRelation::EndsWith)
+        }
         BuiltinMethod::EndsWith if string_object(receiver).is_some() => {
             strings::relation(memory, vm, receiver, first, Relation::EndsWith)
         }
@@ -190,6 +204,9 @@ pub fn call_builtin(
             "ends_with requires a Bytes or String receiver",
             receiver,
         ),
+        BuiltinMethod::Repeat if bytes_object(receiver).is_some() => {
+            bytes::repeat(memory, vm, receiver, first)
+        }
         BuiltinMethod::Repeat if string_object(receiver).is_some() => {
             strings::repeat(memory, vm, receiver, first)
         }
@@ -205,6 +222,12 @@ pub fn call_builtin(
         BuiltinMethod::Replace => strings::replace(memory, vm, receiver, first, second),
         BuiltinMethod::Split => strings::split(memory, vm, receiver, first),
         BuiltinMethod::Clone => deep_clone(memory, vm, receiver),
+        BuiltinMethod::ToList => bytes::to_list(memory, vm, receiver),
+        BuiltinMethod::Concat => bytes::concat(memory, vm, receiver, first),
+        BuiltinMethod::DecodeUtf8 => bytes::decode_utf8(memory, vm, receiver),
+        BuiltinMethod::EncodeUtf8 => bytes::from_utf8(memory, vm, receiver),
+        BuiltinMethod::ToHex => bytes::to_hex(memory, vm, receiver),
+        BuiltinMethod::ToBase64 => bytes::to_base64(memory, vm, receiver),
         _ => None,
     }
 }

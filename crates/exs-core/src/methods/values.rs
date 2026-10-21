@@ -67,6 +67,9 @@ fn visible_len(memory: &impl Memory, vm: u32, receiver: u64) -> Option<u32> {
     if let Some(list) = list_object(receiver) {
         return Some(list_len(memory, list));
     }
+    if let Some(object) = crate::bytes::bytes_object(receiver) {
+        return Some(crate::bytes::bytes_len(memory, object));
+    }
     object_len(memory, vm, receiver)
 }
 

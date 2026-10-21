@@ -3,11 +3,11 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use exs_abi::TYPE_STRING;
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, MODULE_METADATA_SECTION,
     RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, START_EXPORT_PREFIX,
 };
+use exs_abi::{TYPE_BYTES, TYPE_STRING};
 use exs_layout::{GC_STATIC, ObjectKind, VmState};
 use exs_value::layout::type_kind;
 use wasm_encoder::reencode::{self, Reencode};
@@ -20,7 +20,7 @@ use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 use super::entry::EntryLayout;
 use super::function::{Context, FunctionCompiler, FunctionInfo, error};
 use super::protocols::Protocols;
-use super::reachability::{object_key_lists, reachable_functions, string_literals};
+use super::reachability::{bytes_literals, object_key_lists, reachable_functions, string_literals};
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use crate::ast::{FunctionVisibility, Module};
@@ -148,6 +148,7 @@ pub(in crate::codegen) fn compile<'a>(
     let functions = reachable_functions(module);
     let statics = StaticStrings::build(
         &string_literals(&functions, TypeTable::field_names(&types)),
+        &bytes_literals(&functions),
         vm + core::mem::size_of::<VmState>() as u32,
     )
     .ok_or_else(|| {
@@ -222,6 +223,7 @@ pub(in crate::codegen) fn compile<'a>(
         int_new,
         float_new,
         strings: &statics.references,
+        bytes: &statics.bytes_references,
         vm,
         types: &types,
         object_keys: &static_keys.addresses,
@@ -336,40 +338,58 @@ pub(in crate::codegen) fn compile<'a>(
     prune_unreachable(&wasm.finish(), &hints).map_err(|message| error("E1001", span, message))
 }
 
-/// Static String objects placed between the VM state block and the heap.
+/// Static String and Bytes objects placed between the VM state block and the heap.
 struct StaticStrings {
     /// Address of the first object.
     base: u32,
     /// Encoded objects, 8-byte aligned.
     bytes: Vec<u8>,
-    /// Raw `ValueRef` of every literal text.
+    /// Raw `ValueRef` of every String literal text.
     references: HashMap<String, u64>,
+    /// Raw `ValueRef` of every Bytes literal, keyed by its source text.
+    bytes_references: HashMap<String, u64>,
 }
 
 impl StaticStrings {
-    /// Lays out one static String object per literal starting at `base`.
-    fn build(literals: &[String], base: u32) -> Option<Self> {
+    /// Lays out one static String object per String literal and one static Bytes object per
+    /// Bytes literal starting at `base`.
+    fn build(literals: &[String], bytes_literals: &[String], base: u32) -> Option<Self> {
         let base = base.next_multiple_of(8);
-        let mut bytes = Vec::new();
-        let mut references = HashMap::new();
-        for literal in literals {
-            let address = base.checked_add(u32::try_from(bytes.len()).ok()?)?;
-            let len = u32::try_from(literal.len()).ok()?;
-            let chars = u32::try_from(literal.chars().count()).ok()?;
-            bytes.extend([ObjectKind::String as u8, GC_STATIC, 0, 0]);
-            bytes.extend(chars.to_le_bytes());
-            bytes.extend(len.to_le_bytes());
-            bytes.extend(0_u32.to_le_bytes());
-            bytes.extend(literal.as_bytes());
-            bytes.resize(bytes.len().next_multiple_of(8), 0);
-            let reference = exs_value::ValueRef::from_parts(type_kind(TYPE_STRING), 0, address)?;
-            references.insert(literal.clone(), reference.raw());
-        }
-        Some(Self {
+        let mut statics = Self {
             base,
-            bytes,
-            references,
-        })
+            bytes: Vec::new(),
+            references: HashMap::new(),
+            bytes_references: HashMap::new(),
+        };
+        for literal in literals {
+            let reference = statics.push(literal, ObjectKind::String, TYPE_STRING)?;
+            statics.references.insert(literal.clone(), reference);
+        }
+        for literal in bytes_literals {
+            let reference = statics.push(literal, ObjectKind::Bytes, TYPE_BYTES)?;
+            statics.bytes_references.insert(literal.clone(), reference);
+        }
+        Some(statics)
+    }
+
+    /// Appends one static object of `kind` holding the octets of `literal` and returns its
+    /// reference; Strings record their character count, Bytes none.
+    fn push(&mut self, literal: &str, kind: ObjectKind, type_bit: u32) -> Option<u64> {
+        let address = self
+            .base
+            .checked_add(u32::try_from(self.bytes.len()).ok()?)?;
+        let len = u32::try_from(literal.len()).ok()?;
+        let chars = match kind {
+            ObjectKind::String => u32::try_from(literal.chars().count()).ok()?,
+            _ => 0,
+        };
+        self.bytes.extend([kind as u8, GC_STATIC, 0, 0]);
+        self.bytes.extend(chars.to_le_bytes());
+        self.bytes.extend(len.to_le_bytes());
+        self.bytes.extend(0_u32.to_le_bytes());
+        self.bytes.extend(literal.as_bytes());
+        self.bytes.resize(self.bytes.len().next_multiple_of(8), 0);
+        Some(exs_value::ValueRef::from_parts(type_kind(type_bit), 0, address)?.raw())
     }
 
     /// Returns the first address after the static objects.

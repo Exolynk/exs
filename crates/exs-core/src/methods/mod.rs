@@ -1,6 +1,7 @@
 //! Built-in receiver methods and static functions of built-in types, as stateless helpers
 //! with v1's results, Error kinds and messages.
 
+mod bytes;
 mod clone;
 mod dispatch;
 mod float_parse;
@@ -11,6 +12,7 @@ mod statics;
 mod strings;
 mod values;
 
+pub(crate) use bytes::get as bytes_get;
 pub use dispatch::call_builtin;
 #[cfg(test)]
 pub(crate) use float_parse::parse_f64;

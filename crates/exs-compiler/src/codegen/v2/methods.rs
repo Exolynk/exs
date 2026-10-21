@@ -86,6 +86,12 @@ const fn is_supported(method: BuiltinMethod) -> bool {
             | BuiltinMethod::GetOr
             | BuiltinMethod::Entries
             | BuiltinMethod::Merge
+            | BuiltinMethod::ToList
+            | BuiltinMethod::Concat
+            | BuiltinMethod::DecodeUtf8
+            | BuiltinMethod::EncodeUtf8
+            | BuiltinMethod::ToHex
+            | BuiltinMethod::ToBase64
     )
 }
 

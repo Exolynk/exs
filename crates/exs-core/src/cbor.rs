@@ -1,12 +1,13 @@
 //! CBOR encoding of runner inputs and results.
 //!
 //! The runner passes the entry arguments as one CBOR array and expects one CBOR value back.
-//! This version handles None, Bool, Int, Float, String, List and untyped Object values both
+//! This version handles None, Bool, Int, Float, String, Bytes, List and untyped Object values both
 //! ways, encodes typed Objects as maps of their declared fields followed by their extra keys
 //! and Errors as the codec's tagged seven-field map; other values are reported as unsupported.
 
 use exs_value::{Immediate, ValueRef};
 
+use crate::bytes::{bytes_len, bytes_object, new_bytes};
 use crate::errors::{error_object, error_parts, new_error};
 use crate::execution::{input, reserve_result};
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, push_unchecked};
@@ -39,6 +40,8 @@ pub enum CborError {
 const MAJOR_UNSIGNED: u8 = 0;
 /// CBOR major type of negative integers.
 const MAJOR_NEGATIVE: u8 = 1;
+/// CBOR major type of byte strings.
+const MAJOR_BYTES: u8 = 2;
 /// CBOR major type of text strings.
 const MAJOR_TEXT: u8 = 3;
 /// CBOR major type of arrays.
@@ -122,6 +125,12 @@ impl Reader {
             (MAJOR_NEGATIVE, _) => {
                 Scalar::Number(Number::Int(-1 - self.int_argument(memory, info)?))
             }
+            (MAJOR_BYTES, _) => {
+                let len = self.count(memory, info)?;
+                let start = self.position;
+                self.position = start + len;
+                Scalar::Bytes { start, len }
+            }
             (MAJOR_TEXT, _) => {
                 let len = self.count(memory, info)?;
                 let start = self.position;
@@ -163,6 +172,13 @@ enum Scalar {
         len: u32,
         /// Character count.
         chars: u32,
+    },
+    /// Octets of `len` bytes at `start`.
+    Bytes {
+        /// Address of the first octet.
+        start: u32,
+        /// Number of octets.
+        len: u32,
     },
 }
 
@@ -252,6 +268,10 @@ fn decode_value(
         Scalar::Text { start, len, chars } => {
             copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?
         }
+        Scalar::Bytes { start, len } => new_bytes(memory, vm, len, |memory, position| {
+            memory.copy(position, start, len);
+        })
+        .ok_or(CborError::OutOfMemory)?,
     })
 }
 
@@ -468,6 +488,14 @@ impl Sink {
     ) -> Result<(), CborError> {
         if let Some(object) = string_object(raw) {
             return self.string(memory, object);
+        }
+        if let Some(object) = bytes_object(raw) {
+            let len = bytes_len(memory, object);
+            self.head(memory, MAJOR_BYTES, u64::from(len))?;
+            if let Some(start) = self.start {
+                memory.copy(start + self.len, object + DATA, len);
+            }
+            return self.advance(len);
         }
         if let Some(list) = list_object(raw) {
             return self.list(memory, vm, list, depth);

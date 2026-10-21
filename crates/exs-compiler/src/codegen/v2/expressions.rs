@@ -29,6 +29,12 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.instruction(Instruction::Call(self.context.float_new));
             }
             Expression::String(text, span) => self.push_string(text, *span)?,
+            Expression::Bytes(text, span) => {
+                let raw = self.context.bytes.get(text).copied().ok_or_else(|| {
+                    error("E0999", *span, "missing v2 static Bytes literal".to_owned())
+                })?;
+                self.instruction(Instruction::I64Const(raw.cast_signed()));
+            }
             Expression::FormattedString { parts, span, .. } => {
                 self.compile_formatted(parts, *span)?
             }

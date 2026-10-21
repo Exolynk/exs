@@ -11,6 +11,7 @@ use exs_value::layout::{KIND_SHIFT, type_kind};
 use exs_value::{Immediate, ValueRef};
 
 use crate::allocator::allocate;
+use crate::bytes::{bytes_len, bytes_object};
 use crate::errors::recoverable;
 use crate::lists::{list_add, list_object};
 use crate::memory::Memory;
@@ -19,7 +20,7 @@ use crate::render::default_text;
 use crate::vm::Vm;
 
 /// Byte offset of [`StringObject::len`].
-const LEN: u32 = offset_of!(StringObject, len) as u32;
+pub(crate) const LEN: u32 = offset_of!(StringObject, len) as u32;
 /// Byte offset of the first text byte.
 pub(crate) const DATA: u32 = size_of::<StringObject>() as u32;
 /// Byte offset of the character count in the header word.
@@ -139,6 +140,8 @@ enum Part {
     Scalar(Scalar),
     /// The fixed ASCII default rendering of another value.
     Text(&'static str),
+    /// The default rendering `Bytes(n)` of Bytes with `n` octets.
+    Bytes(u32),
 }
 
 /// A scalar value that renders as text.
@@ -248,6 +251,9 @@ fn part(memory: &impl Memory, raw: u64) -> Option<Part> {
 /// otherwise with its default text.
 #[inline(always)]
 fn default_part(memory: &impl Memory, raw: u64) -> Option<Part> {
+    if let Some(object) = bytes_object(raw) {
+        return Some(Part::Bytes(bytes_len(memory, object)));
+    }
     Some(part(memory, raw).unwrap_or(Part::Text(default_text(raw))))
 }
 
@@ -260,6 +266,10 @@ fn part_size(memory: &impl Memory, part: Part) -> (u32, u32) {
             (len, len)
         }
         Part::Text(text) => (text.len() as u32, text.len() as u32),
+        Part::Bytes(len) => {
+            let len = 7 + int_len(i64::from(len));
+            (len, len)
+        }
     }
 }
 
@@ -388,6 +398,12 @@ fn join<M: Memory>(
             }
             Part::Scalar(scalar) => position = scalar.write(memory, position),
             Part::Text(text) => position = write_bytes(memory, position, text.as_bytes()),
+            Part::Bytes(len) => {
+                let mut digits = [0_u8; 20];
+                position = write_bytes(memory, position, b"Bytes(");
+                position = write_bytes(memory, position, int_text(i64::from(len), &mut digits));
+                position = write_bytes(memory, position, b")");
+            }
         }
     }
     string_reference(object)

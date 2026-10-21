@@ -523,3 +523,24 @@ fn matches_v1_for_clone() {
         compare(program, &[]);
     }
 }
+
+/// Evaluates Bytes literals, methods and constructors like v1, including their Errors.
+#[test]
+fn matches_v1_for_bytes() {
+    let programs = [
+        r#"fn main() { let data = b"häll"; ret [data, data.length(), data.is_empty(), b"".is_empty(), data[0], data[9], data[-1], data == b"häll", data == b"x", data.to_string(), f"{data}"]; }"#,
+        r#"fn main() { let data = b"abcdef"; ret [data.slice(1, 3), data.slice(3, 1), data.slice(0, 9), data.slice(-1, 2), data.concat(b"gh"), data.concat("gh"), "x".concat(data)]; }"#,
+        r#"fn main() { let data = b"abcabc"; ret [data.contains(b"ca"), data.contains(b""), data.contains(b"x"), data.starts_with(b"ab"), data.ends_with(b"bc"), data.contains("ca"), data.repeat(2), data.repeat(-1), data.repeat(0)]; }"#,
+        r#"fn main() { ret [Bytes::from_list([255, 0]).to_hex(), b"hi!".to_base64(), b"h".to_base64(), b"hi".to_base64(), b"".to_base64(), b"ok".decode_utf8(), "äb".encode_utf8()]; }"#,
+        r#"fn main() { ret [Bytes::from_list([0, 255, 7]), Bytes::from_list([256]), Bytes::from_list([1.0]), Bytes::from_list(1), Bytes::from_utf8("ä"), Bytes::from_utf8(1)]; }"#,
+        r#"fn main() { ret [Bytes::from_hex("00ffA0"), Bytes::from_hex("abc"), Bytes::from_hex("zz"), Bytes::from_base64("aGkh"), Bytes::from_base64("aA=="), Bytes::from_base64("aB=="), Bytes::from_base64("aGk"), Bytes::from_base64("a=bc"), Bytes::from_base64("")]; }"#,
+        r#"fn main() { let data = Bytes::from_list([255]); ret [data.decode_utf8(), data.clone() == data, [data].contains(Bytes::from_list([255]))]; }"#,
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+    compare(
+        "fn main(data) { ret [data, data.length(), data.to_hex()]; }",
+        &[ExsValue::Bytes(vec![1, 2, 250])],
+    );
+}

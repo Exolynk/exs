@@ -1,13 +1,14 @@
 //! Equality and ordering across value kinds.
 
+use crate::bytes::{bytes_object, octets};
 use crate::memory::Memory;
 use crate::numbers::{NumericError, Ordering, number, numbers_equal, order_numbers};
 use crate::strings::{compare_strings, string_object, strings_equal};
 
 /// Tests two references for the language's `==`.
 ///
-/// Numbers compare by value with Float promotion and Strings by text; any other pair is equal
-/// only when both raw references are identical.
+/// Numbers compare by value with Float promotion, Strings by text and Bytes by octets; any
+/// other pair is equal only when both raw references are identical.
 #[must_use]
 pub fn equal(memory: &impl Memory, left: u64, right: u64) -> bool {
     if let (Some(left), Some(right)) = (number(memory, left), number(memory, right)) {
@@ -15,6 +16,9 @@ pub fn equal(memory: &impl Memory, left: u64, right: u64) -> bool {
     }
     if let (Some(left), Some(right)) = (string_object(left), string_object(right)) {
         return strings_equal(memory, left, right);
+    }
+    if let (Some(left), Some(right)) = (bytes_object(left), bytes_object(right)) {
+        return octets(memory, left) == octets(memory, right);
     }
     left == right
 }

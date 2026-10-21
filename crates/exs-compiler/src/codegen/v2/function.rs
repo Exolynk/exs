@@ -47,6 +47,8 @@ pub(super) struct Context<'m> {
     pub(super) float_new: u32,
     /// Raw `ValueRef` of every static String literal.
     pub(super) strings: &'m HashMap<String, u64>,
+    /// Raw `ValueRef` of every static Bytes literal, keyed by its source text.
+    pub(super) bytes: &'m HashMap<String, u64>,
     /// Address of the VM state block.
     pub(super) vm: u32,
     /// Resolved source types.
