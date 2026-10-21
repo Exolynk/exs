@@ -6,9 +6,10 @@
 //! runs are exhausted, after a collection once the allocation volume reaches its threshold.
 
 use core::mem::{offset_of, size_of};
+use core::num::NonZeroU32;
 
 use exs_layout::{
-    FreeCell, ObjectKind, PAGE_HEADER_SIZE, PAGE_SIZE, PageKind, SIZE_CLASSES,
+    CLASS_COUNT, FreeCell, ObjectKind, PAGE_HEADER_SIZE, PAGE_SIZE, PageKind, SIZE_CLASSES,
     VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState, class_for_size,
 };
 
@@ -134,7 +135,7 @@ pub(crate) const fn page_of(address: u32) -> u32 {
 pub(crate) fn used_cells(memory: &impl Memory, vm: Vm, page: u32, class: usize) -> u32 {
     let cursor = vm.class_cursor(memory, class);
     if cursor != 0 && page_of(cursor) == page {
-        (cursor - page - PAGE_HEADER_SIZE) / SIZE_CLASSES[class]
+        (cursor - page - PAGE_HEADER_SIZE) / class_size(class)
     } else {
         cells_per_page(class)
     }
@@ -173,8 +174,13 @@ fn over_threshold(memory: &impl Memory, vm: Vm) -> bool {
 }
 
 /// Returns the number of cells of `class` in one page.
-pub(crate) const fn cells_per_page(class: usize) -> u32 {
-    (PAGE_SIZE - PAGE_HEADER_SIZE) / SIZE_CLASSES[class]
+pub(crate) fn cells_per_page(class: usize) -> u32 {
+    (PAGE_SIZE - PAGE_HEADER_SIZE) / class_size(class)
+}
+
+/// Returns the cell size of `class`, which must be a size class, as a divisor.
+pub(crate) fn class_size(class: usize) -> NonZeroU32 {
+    NonZeroU32::new(SIZE_CLASSES[class % CLASS_COUNT]).unwrap_or(NonZeroU32::MIN)
 }
 
 /// Writes one free cell of `class` linking to `next`.

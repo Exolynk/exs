@@ -2,7 +2,6 @@
 //!
 //! A String's header word holds its character count, so the length needs no scan.
 
-use core::fmt::Write;
 use core::mem::{offset_of, size_of};
 
 use exs_abi::TYPE_STRING;
@@ -14,6 +13,7 @@ use crate::allocator::allocate;
 use crate::bytes::{bytes_len, bytes_object};
 use crate::enums::{enum_object, names};
 use crate::errors::recoverable;
+use crate::float_text::{MAX_LEN, float_text};
 use crate::lists::{list_add, list_object};
 use crate::memory::Memory;
 use crate::numbers::{Arithmetic, Number, arithmetic, number, reference};
@@ -100,44 +100,12 @@ pub(crate) fn copy_string(
     string_reference(object)
 }
 
-/// Counts the bytes written through `core::fmt`.
-#[derive(Default)]
-struct Counter {
-    /// Bytes written.
-    bytes: u32,
-}
-
-impl Write for Counter {
-    fn write_str(&mut self, text: &str) -> core::fmt::Result {
-        self.bytes += text.len() as u32;
-        Ok(())
-    }
-}
-
-/// Writes text produced by `core::fmt` into linear memory.
-struct MemoryWriter<'memory, M: Memory> {
-    /// The target memory.
-    memory: &'memory mut M,
-    /// Address of the next byte.
-    position: u32,
-}
-
-impl<M: Memory> Write for MemoryWriter<'_, M> {
-    fn write_str(&mut self, text: &str) -> core::fmt::Result {
-        for byte in text.bytes() {
-            self.memory.store_u8(self.position, byte);
-            self.position += 1;
-        }
-        Ok(())
-    }
-}
-
 /// One `+` operand rendered into a String: an existing String or a scalar's text.
 #[derive(Clone, Copy)]
 enum Part {
     /// The String at this address.
     String(u32),
-    /// A Bool, Int or Float rendered with `core::fmt`.
+    /// A rendered Bool, Int or Float.
     Scalar(Scalar),
     /// The fixed ASCII default rendering of another value.
     Text(&'static str),
@@ -172,9 +140,8 @@ impl Scalar {
             Self::Bool(false) => 5,
             Self::Int(value) => int_len(value),
             Self::Float(value) => {
-                let mut counter = Counter::default();
-                let _ = write!(counter, "{value}");
-                counter.bytes
+                let mut text = [0_u8; MAX_LEN];
+                float_text(value, &mut text) as u32
             }
         }
     }
@@ -191,9 +158,9 @@ impl Scalar {
                 write_bytes(memory, position, int_text(value, &mut digits))
             }
             Self::Float(value) => {
-                let mut writer = MemoryWriter { memory, position };
-                let _ = write!(writer, "{value}");
-                writer.position
+                let mut text = [0_u8; MAX_LEN];
+                let len = float_text(value, &mut text);
+                write_bytes(memory, position, text.get(..len).unwrap_or(&[]))
             }
         }
     }
@@ -222,20 +189,24 @@ const fn int_len(value: i64) -> u32 {
 fn int_text(value: i64, digits: &mut [u8; 20]) -> &[u8] {
     let mut position = digits.len();
     let mut remaining = value.unsigned_abs();
+    let mut put = |position: &mut usize, byte: u8| {
+        *position = position.saturating_sub(1);
+        if let Some(slot) = digits.get_mut(*position) {
+            *slot = byte;
+        }
+    };
     loop {
-        position -= 1;
         // The remainder is always below ten.
-        digits[position] = b'0' + (remaining % 10) as u8;
+        put(&mut position, b'0' + (remaining % 10) as u8);
         remaining /= 10;
         if remaining == 0 {
             break;
         }
     }
     if value < 0 {
-        position -= 1;
-        digits[position] = b'-';
+        put(&mut position, b'-');
     }
-    &digits[position..]
+    digits.get(position..).unwrap_or(&[])
 }
 
 /// Returns how one value renders as the right operand of String `+`, or `None` when it cannot.

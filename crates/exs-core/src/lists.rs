@@ -132,7 +132,10 @@ pub fn for_snapshot(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> 
         let count = crate::bytes::bytes_len(memory, object);
         let list = allocate_list(memory, vm, count)?;
         for index in 0..count {
-            let octet = crate::bytes::octets(memory, object)[index as usize];
+            let octet = crate::bytes::octets(memory, object)
+                .get(index as usize)
+                .copied()
+                .unwrap_or(0);
             push_unchecked(memory, list, ValueRef::small_int(i64::from(octet))?.raw());
         }
         return list_reference(list);

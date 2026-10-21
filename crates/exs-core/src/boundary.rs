@@ -79,13 +79,16 @@ fn obstacle(
     }
     let container = Container::of(memory, raw)?;
     let address = container.address();
-    if path[..depth].contains(&address) {
+    if path
+        .get(..depth)
+        .is_some_and(|path| path.contains(&address))
+    {
         return Some(Obstacle::Cycle);
     }
     if depth >= MAX_DEPTH {
         return None;
     }
-    path[depth] = address;
+    *path.get_mut(depth)? = address;
     (0..container.count(memory))
         .filter_map(|index| container.child(memory, index))
         .find_map(|child| obstacle(memory, child, path, depth + 1))

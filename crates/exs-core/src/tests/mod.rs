@@ -7,6 +7,7 @@ mod collector;
 mod errors;
 mod execution;
 mod float_parse;
+mod float_text;
 mod heap;
 mod lists;
 mod methods;

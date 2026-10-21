@@ -7,11 +7,11 @@
 
 use core::cmp::Ordering;
 
+use crate::big::Big;
+
 /// Significant decimal digits kept; any rounding decision of a binary64 value needs at most
 /// 767, and dropped digits are summarized in a sticky flag.
 const MAX_DIGITS: usize = 800;
-/// `u32` limbs of one big integer, enough for every intermediate value of the conversion.
-const LIMBS: usize = 170;
 /// Binary exponent of the guard bit of the smallest subnormal, `2^-1075`.
 const MIN_SCALE: i64 = 1075;
 
@@ -171,7 +171,7 @@ impl Decimal {
     /// 2^binary` and its binary64 neighbors are found by one division.
     fn slow_path(&self) -> f64 {
         let mut numerator = Big::default();
-        for digit in &self.digits[..self.count] {
+        for digit in self.digits.iter().take(self.count) {
             numerator.mul_small(10);
             numerator.add_small(u32::from(*digit));
         }
@@ -239,150 +239,4 @@ fn divide(numerator: &Big, denominator: &Big, shift: i64) -> (u64, bool) {
         }
     }
     (quotient, !remainder.is_zero())
-}
-
-/// A non-negative big integer of little-endian `u32` limbs.
-#[derive(Clone)]
-struct Big {
-    /// Limbs, least significant first.
-    limbs: [u32; LIMBS],
-    /// Number of limbs in use; higher limbs are zero.
-    len: usize,
-}
-
-impl Default for Big {
-    fn default() -> Self {
-        Self {
-            limbs: [0; LIMBS],
-            len: 0,
-        }
-    }
-}
-
-impl Big {
-    /// Returns the value `value`.
-    fn from_small(value: u32) -> Self {
-        let mut big = Self::default();
-        big.add_small(value);
-        big
-    }
-
-    /// Drops leading zero limbs from `len`.
-    fn trim(&mut self) {
-        while self.len > 0 && self.limbs[self.len - 1] == 0 {
-            self.len -= 1;
-        }
-    }
-
-    /// Multiplies by `factor`.
-    fn mul_small(&mut self, factor: u32) {
-        let mut carry = 0_u64;
-        for limb in &mut self.limbs[..self.len] {
-            let product = u64::from(*limb) * u64::from(factor) + carry;
-            *limb = product as u32;
-            carry = product >> 32;
-        }
-        if carry != 0 && self.len < LIMBS {
-            self.limbs[self.len] = carry as u32;
-            self.len += 1;
-        }
-    }
-
-    /// Adds `value`.
-    fn add_small(&mut self, value: u32) {
-        let mut carry = u64::from(value);
-        let mut index = 0;
-        while carry != 0 && index < LIMBS {
-            let sum = u64::from(self.limbs[index]) + carry;
-            self.limbs[index] = sum as u32;
-            carry = sum >> 32;
-            index += 1;
-        }
-        self.len = self.len.max(index);
-        self.trim();
-    }
-
-    /// Multiplies by `5^exponent`.
-    fn mul_pow5(&mut self, mut exponent: u64) {
-        // 5^13 is the largest power of five that fits a `u32`.
-        while exponent >= 13 {
-            self.mul_small(1_220_703_125);
-            exponent -= 13;
-        }
-        for _ in 0..exponent {
-            self.mul_small(5);
-        }
-    }
-
-    /// Shifts left by `bits`.
-    fn shl(&mut self, bits: u64) {
-        let limbs = (bits / 32) as usize;
-        let bits = (bits % 32) as u32;
-        if self.len == 0 {
-            return;
-        }
-        let len = (self.len + limbs + 1).min(LIMBS);
-        for index in (0..len).rev() {
-            let source = index.checked_sub(limbs);
-            let high = source.map_or(0, |source| self.limbs[source]);
-            let low = source
-                .and_then(|source| source.checked_sub(1))
-                .map_or(0, |source| self.limbs[source]);
-            self.limbs[index] = if bits == 0 {
-                high
-            } else {
-                (high << bits) | (low >> (32 - bits))
-            };
-        }
-        self.len = len;
-        self.trim();
-    }
-
-    /// Shifts right by one bit.
-    fn shr1(&mut self) {
-        for index in 0..self.len {
-            let high = self.limbs.get(index + 1).copied().unwrap_or(0);
-            self.limbs[index] = (self.limbs[index] >> 1) | (high << 31);
-        }
-        self.trim();
-    }
-
-    /// Returns the number of significant bits.
-    fn bit_len(&self) -> u32 {
-        match self.len {
-            0 => 0,
-            len => (len as u32) * 32 - self.limbs[len - 1].leading_zeros(),
-        }
-    }
-
-    /// Compares with `other`.
-    fn compare(&self, other: &Self) -> Ordering {
-        self.len.cmp(&other.len).then_with(|| {
-            self.limbs[..self.len]
-                .iter()
-                .rev()
-                .cmp(other.limbs[..other.len].iter().rev())
-        })
-    }
-
-    /// Subtracts `other`, which must not be larger.
-    fn sub(&mut self, other: &Self) {
-        let mut borrow = 0_i64;
-        for index in 0..self.len {
-            let right = other
-                .limbs
-                .get(index)
-                .copied()
-                .filter(|_| index < other.len);
-            let difference = i64::from(self.limbs[index]) - i64::from(right.unwrap_or(0)) - borrow;
-            self.limbs[index] = difference.rem_euclid(1 << 32) as u32;
-            borrow = i64::from(difference < 0);
-        }
-        self.trim();
-    }
-
-    /// Returns whether the value is zero.
-    fn is_zero(&self) -> bool {
-        self.len == 0
-    }
 }

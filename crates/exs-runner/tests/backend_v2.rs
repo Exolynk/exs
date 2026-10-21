@@ -1030,6 +1030,39 @@ fn matches_v1_beyond_the_inline_type_ids() {
     );
 }
 
+/// Renders Floats like v1, which formats them with Rust's `{}`.
+#[test]
+fn matches_v1_for_float_text() {
+    let source = r#"fn main(values) { let out = []; for value in values { out.push(f"{value}"); out.push("" + value); out.push(value.to_string()); } ret out; }"#;
+    let values = [
+        0.0,
+        -0.0,
+        0.1,
+        0.2,
+        0.3,
+        1.0,
+        -1.5,
+        1e15,
+        1e16,
+        1e21,
+        1e22,
+        1e-7,
+        5e-324,
+        f64::MAX,
+        f64::MIN_POSITIVE,
+        f64::EPSILON,
+        123_456.789,
+        1.0 / 3.0,
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        2.0_f64.powi(-1022),
+        9_007_199_254_740_993.0,
+    ];
+    let list = ExsValue::List(values.iter().copied().map(ExsValue::Float).collect());
+    compare(source, &[list]);
+}
+
 /// Runs `par` like v1: static and dynamic tasks, their results in source order, host calls
 /// that suspend single tasks, nested `par`, v1's Errors for invalid dynamic operands, and a
 /// fatal Error that ends every task.

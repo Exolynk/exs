@@ -142,7 +142,9 @@ impl Marker {
                 PageKind::Class => {
                     let class = run.detail as usize;
                     for index in 0..used_cells(memory, self.vm, page, class) {
-                        let cell = page + PAGE_HEADER_SIZE + index * SIZE_CLASSES[class];
+                        let cell = page
+                            + PAGE_HEADER_SIZE
+                            + index * crate::allocator::class_size(class).get();
                         if is_marked(memory, cell) {
                             self.trace(memory, cell);
                         }
@@ -313,8 +315,9 @@ fn sweep(memory: &mut impl Memory, vm: Vm) {
                 } else {
                     free.flush(memory, vm);
                     write_run(memory, page, run, live);
-                    live_bytes =
-                        live_bytes.saturating_add(live * SIZE_CLASSES[run.detail as usize]);
+                    live_bytes = live_bytes.saturating_add(
+                        live * crate::allocator::class_size(run.detail as usize).get(),
+                    );
                 }
             }
             PageKind::Large => {
@@ -347,7 +350,7 @@ fn sweep(memory: &mut impl Memory, vm: Vm) {
 /// Clears the marks of one class page's live cells and links its other cells into the free
 /// list. Returns the number of live cells; a page without any is left for the free runs.
 fn sweep_class_page(memory: &mut impl Memory, vm: Vm, page: u32, class: usize) -> u32 {
-    let size = SIZE_CLASSES[class];
+    let size = crate::allocator::class_size(class).get();
     let cell_at = |index: u32| page + PAGE_HEADER_SIZE + index * size;
     let cells = used_cells(memory, vm, page, class);
     let live = (0..cells)

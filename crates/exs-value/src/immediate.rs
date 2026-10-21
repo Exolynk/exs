@@ -49,7 +49,8 @@ impl ValueRef {
         if value < i32::MIN as i64 || value > i32::MAX as i64 {
             return None;
         }
-        Some(immediate(TYPE_INT, (value as i32).cast_unsigned()))
+        // The Int kind is nonzero, so this never fails, and unlike `immediate` it cannot panic.
+        Self::from_parts(type_kind(TYPE_INT), 0, (value as i32).cast_unsigned())
     }
 
     /// Decodes this reference when it is an immediate, or returns `None` for a heap value.
