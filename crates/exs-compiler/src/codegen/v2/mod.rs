@@ -6,19 +6,21 @@
 //! compile error, so a module either runs with v2 semantics or does not compile.
 
 mod collections;
+mod dispatch;
 mod entry;
 mod enums;
 mod errors;
 mod expressions;
 mod function;
+mod intrinsics;
 mod linker;
 mod methods;
 mod objects;
-mod protocols;
 mod reachability;
 mod statements;
 mod static_keys;
 mod type_table;
+mod units;
 mod untyped;
 mod wire_schema;
 

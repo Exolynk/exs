@@ -17,14 +17,15 @@ use wasm_encoder::{
 };
 use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 
+use super::dispatch::Dispatch;
 use super::entry::EntryLayout;
 use super::function::{Context, FunctionCompiler, FunctionInfo, error};
-use super::protocols::Protocols;
 use super::reachability::{
-    bytes_literals, changes_case, object_key_lists, reachable_functions, string_literals,
+    bytes_literals, changes_case, object_key_lists, reachable_units, string_literals,
 };
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
+use super::units::units;
 use crate::ast::{FunctionVisibility, Module};
 use crate::codegen::prune::{PruneHints, prune_unreachable};
 use crate::codegen::source_map::{SOURCE_MAP_SECTION, SourceMap};
@@ -147,7 +148,10 @@ pub(in crate::codegen) fn compile<'a>(
     let facts = template_facts(template).map_err(|message| error("E1001", span, message))?;
     let types = TypeRegistry::build(module, traits)?;
     let vm = facts.heap_base.next_multiple_of(8);
-    let functions = reachable_functions(module);
+    let dispatch = Dispatch::build(module, traits, &types);
+    let all_units = units(module)?;
+    let reached = reachable_units(&all_units, &dispatch);
+    let functions: Vec<_> = reached.iter().map(|unit| unit.declaration).collect();
     let statics = StaticStrings::build(
         &string_literals(&functions, TypeTable::field_names(&types)),
         &bytes_literals(&functions),
@@ -175,7 +179,6 @@ pub(in crate::codegen) fn compile<'a>(
         )
     })?;
     let source_map = SourceMap::collect(module);
-    let protocols = Protocols::build(module, traits, &types);
     // The case tables cost data and therefore fuel, so only programs that change the case of
     // Strings carry them.
     let case_tables = changes_case(&functions).then(|| {
@@ -195,12 +198,8 @@ pub(in crate::codegen) fn compile<'a>(
         type_base: facts.types,
     };
     let mut infos = HashMap::new();
-    // Like v1, a function's trace id is its position among the module's functions.
-    let function_ids: HashMap<&str, u32> = (0_u32..)
-        .zip(&module.functions)
-        .map(|(id, function)| (function.name.name.as_str(), id))
-        .collect();
-    for (index, function) in (base..).zip(&functions) {
+    for (index, unit) in (base..).zip(&reached) {
+        let function = unit.declaration;
         let mut parameters = Vec::with_capacity(function.parameters.len());
         for parameter in &function.parameters {
             if parameter.variadic {
@@ -213,13 +212,10 @@ pub(in crate::codegen) fn compile<'a>(
         }
         let return_contract = types.resolve(function.return_type.as_ref(), function.span)?;
         infos.insert(
-            function.name.name.clone(),
+            unit.key.clone(),
             FunctionInfo {
                 index,
-                function_id: function_ids
-                    .get(function.name.name.as_str())
-                    .copied()
-                    .unwrap_or_default(),
+                function_id: unit.function_id,
                 arity: parameters.len() as u32,
                 parameters,
                 return_contract,
@@ -243,15 +239,15 @@ pub(in crate::codegen) fn compile<'a>(
         positions_base,
         positions: RefCell::new(Vec::new()),
         static_arrays: RefCell::new(HashMap::new()),
-        protocols: &protocols,
+        dispatch: &dispatch,
     };
-    for function in &functions {
-        let arity = function.parameters.len();
+    for unit in &reached {
+        let arity = unit.declaration.parameters.len();
         let type_index = program.type_index(vec![VALUE_TYPE; arity], vec![VALUE_TYPE]);
         program.function_types.push(type_index);
         program
             .bodies
-            .push(FunctionCompiler::new(&context, function).compile()?);
+            .push(FunctionCompiler::new(&context, &unit.key, unit.declaration).compile()?);
     }
     let positions: Vec<u8> = context
         .positions
@@ -279,8 +275,9 @@ pub(in crate::codegen) fn compile<'a>(
     let mut next = float_new + 1;
     let start_type = program.type_index(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
     let mut entries = String::new();
-    for function in &functions {
-        if function.visibility != FunctionVisibility::Public {
+    for unit in &reached {
+        let function = unit.declaration;
+        if function.visibility != FunctionVisibility::Public || unit.key.contains("::") {
             continue;
         }
         let info = infos

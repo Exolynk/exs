@@ -1,8 +1,8 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done and phase 2 got its go; phase 3 is in progress (3a, 3b and 3c done). See
-sections 12 to 12o.
+linking) are done and phase 2 got its go; phase 3 is in progress (3a to 3d done). See
+sections 12 to 12p.
 
 ## 1. Goal
 
@@ -719,6 +719,32 @@ data costs every script.
   unchanged. It costs v1's `record_roundtrip_20` 240 fuel (ceiling 4,255,458 → 4,255,698).
 - Payload names of enums join the static Strings. The template's data is 14,662 bytes.
 - `runtime_values` on v2: 58 of 96, unchanged; the remaining failures need phases 3d to 3f.
+
+## 12p. Phase 3d results
+
+- **Implementation methods** compile as v2 functions keyed `Type::method`, with v1's trace
+  ids (functions first, then methods in declaration order) and v1's E0201 and E0224 checks.
+  Reachability follows calls, static calls and, like v1's dispatch, every implementation of
+  a called method name, of a used operator and, for formatted strings, of `ToString`.
+- **Dispatch** is v1's static chain: the receiver's (or left operand's) type tag is tested
+  against every implementing type in declaration order before the built-in behavior. Method
+  calls, `.to_string()`, `.debug()` and `.compare()` use it, as do `+ - * /`, `==`, `!=`,
+  `<`, `<=`, `>`, `>=` (a `Compare` result is tested by the core's `ordering_test` with v1's
+  Errors) and formatted-string parts (`ToString`). Static methods use v1's diagnostics. A
+  wrong argument count returns v1's "method received an incorrect number of arguments". The
+  protocol guards of 3a and 3b are gone; a fallback the backend cannot compile yet traps only
+  when implementations exist, else it stays a compile error.
+- **Prelude:** `Range`, `Duration`, `DateTime` and other prelude code compile like user code.
+  Its RFC 3339 parser intrinsic is lowered like v1: the core parses into four rooted slots and
+  the compiler builds the raw-field Object.
+- **Fuel:** `datetime_roundtrip_100` 5,597,206 → 3,457,701 (−38 %), `record_roundtrip_20`
+  4,255,698 → 2,672,439 (−37 %). `format_loop` rises 1,633,922 → 1,660,306: like v1, every
+  part now tests the prelude's `ToString` types, and the program's data starts a new 16 KiB
+  block. Pruning dispatch targets to types a program can construct is a later optimization.
+  The template's data is 15,110 bytes, 1.2 KiB below the block; the template diet is due.
+- Suites on v2: `runtime_values` 62 of 96, `protocols_and_nominal` 20 of 27, `fuel` 14 of 18,
+  all without differing results. The rest needs closures and variadics (3e), iterators (3f),
+  host operations (4, 5) and Error inputs (5).
 
 ## 13. Risks and open questions
 

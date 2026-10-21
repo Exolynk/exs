@@ -3,9 +3,11 @@
 use wasm_encoder::{BlockType, Instruction};
 
 use super::function::{FunctionCompiler, error, unsupported};
+use super::intrinsics::is_datetime_parser;
 use crate::ast::{BinaryOperator, Expression, FormattedStringPart, UnaryOperator};
 use crate::codegen::VALUE_TYPE;
 use crate::codegen::immediate::{self, IntOperation};
+use crate::codegen::trait_registry::TraitOperator;
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 use exs_abi::{TYPE_FLOAT, TYPE_STRING};
 use exs_value::layout::{KIND_SHIFT, type_kind};
@@ -258,7 +260,8 @@ impl<'a> FunctionCompiler<'a, '_> {
         }
     }
 
-    /// Calls the core library for one binary operator on two rooted operand locals.
+    /// Emits one binary operator on two rooted operand locals: the implementation of the left
+    /// operand's type like v1, else the built-in behavior.
     fn compile_slow_binary(
         &mut self,
         operator: BinaryOperator,
@@ -266,7 +269,22 @@ impl<'a> FunctionCompiler<'a, '_> {
         right: u32,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        self.guard_operator(operator, left);
+        match TraitOperator::from_binary(operator) {
+            Some(dispatched) => self.operator_chain(dispatched, left, right, span, |compiler| {
+                compiler.compile_builtin_binary(operator, left, right, span)
+            }),
+            None => self.compile_builtin_binary(operator, left, right, span),
+        }
+    }
+
+    /// Calls the core library for one built-in binary operator on two rooted operand locals.
+    fn compile_builtin_binary(
+        &mut self,
+        operator: BinaryOperator,
+        left: u32,
+        right: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
         let arithmetic = |code: i32| {
             move |compiler: &mut Self| -> Result<(), CompileDiagnostics<'a>> {
                 compiler.set_position(span)?;
@@ -371,6 +389,9 @@ impl<'a> FunctionCompiler<'a, '_> {
         arguments: &[Expression<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        if is_datetime_parser(callee) {
+            return self.compile_datetime_parse(arguments, span);
+        }
         if let Some(variant) = self.context.types.enum_variant(callee) {
             return self.compile_enum_variant(variant, arguments, span);
         }
@@ -429,8 +450,15 @@ impl<'a> FunctionCompiler<'a, '_> {
                 }
             }
             self.store(block + offset);
-            if matches!(part, FormattedStringPart::Expression(_)) {
-                self.guard_to_string(block + offset);
+            let context = self.context;
+            let targets = context.dispatch.to_string();
+            if matches!(part, FormattedStringPart::Expression(_)) && !targets.is_empty() {
+                let part = block + offset;
+                self.dispatch_chain(targets, part, &[], span, |compiler| {
+                    compiler.instruction(Instruction::LocalGet(part));
+                    Ok(())
+                })?;
+                self.store(part);
             }
         }
         self.push_vm();

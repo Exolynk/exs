@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use exs_layout::VmState;
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
+use super::dispatch::Dispatch;
 use super::errors::emit_push_trace;
-use super::protocols::Protocols;
 use crate::ast::FunctionDeclaration;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::{TypeContract, TypeRegistry};
@@ -68,14 +68,16 @@ pub(super) struct Context<'m> {
     /// Address of every deduplicated, 8-byte aligned array stored in `positions`, such as
     /// field orders and wire schema records.
     pub(super) static_arrays: RefCell<HashMap<Vec<u32>, u32>>,
-    /// Nominal types with standard-trait implementations the backend must not bypass.
-    pub(super) protocols: &'m Protocols,
+    /// The module's implementation methods and their dispatch.
+    pub(super) dispatch: &'m Dispatch,
 }
 
 /// Lowering state of one function body.
 pub(super) struct FunctionCompiler<'a, 'm> {
     /// Module-wide inputs.
     pub(super) context: &'m Context<'m>,
+    /// The function key, the name of a top-level function or `Type::method`.
+    pub(super) key: &'m str,
     /// The source declaration.
     pub(super) declaration: &'m FunctionDeclaration<'a>,
     /// Body instructions, emitted without local declarations.
@@ -100,7 +102,11 @@ pub(super) struct FunctionCompiler<'a, 'm> {
 
 impl<'a, 'm> FunctionCompiler<'a, 'm> {
     /// Prepares lowering of `declaration`.
-    pub(super) fn new(context: &'m Context<'m>, declaration: &'m FunctionDeclaration<'a>) -> Self {
+    pub(super) fn new(
+        context: &'m Context<'m>,
+        key: &'m str,
+        declaration: &'m FunctionDeclaration<'a>,
+    ) -> Self {
         let parameter_count = declaration.parameters.len() as u32;
         let mut scope = HashMap::new();
         let mut slots = HashMap::new();
@@ -110,6 +116,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         }
         Self {
             context,
+            key,
             declaration,
             function: Function::new([]),
             scopes: vec![scope],
@@ -304,7 +311,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         let contract = self
             .context
             .functions
-            .get(&self.declaration.name.name)
+            .get(self.key)
             .map(|info| info.return_contract.clone())
             .ok_or_else(|| error("E0999", span, "missing v2 function signature".to_owned()))?;
         self.check_contract(value, &contract, span)?;
@@ -340,7 +347,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         let parameters = self
             .context
             .functions
-            .get(&self.declaration.name.name)
+            .get(self.key)
             .map(|info| info.parameters.clone())
             .ok_or_else(|| {
                 error(
@@ -375,7 +382,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         let function_id = self
             .context
             .functions
-            .get(&self.declaration.name.name)
+            .get(self.key)
             .map_or(0, |info| info.function_id);
         emit_push_trace(
             &mut function,

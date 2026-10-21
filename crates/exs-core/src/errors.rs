@@ -272,6 +272,18 @@ pub fn method_not_found(memory: &mut impl Memory, vm: u32, receiver: u64) -> Opt
     )
 }
 
+/// Creates the ArityError of an implementation method called with the wrong number of
+/// arguments, like v1.
+pub fn nominal_arity_error(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option<u64> {
+    recoverable(
+        memory,
+        vm,
+        "ArityError",
+        "method received an incorrect number of arguments",
+        receiver,
+    )
+}
+
 /// Creates the ArityError of a built-in method called with the wrong number of arguments,
 /// with the `count` arguments in the rooted slots at `slots` as a List in its data, like v1.
 pub fn method_arity_error(

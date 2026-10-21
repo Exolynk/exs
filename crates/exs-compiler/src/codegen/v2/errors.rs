@@ -118,7 +118,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     pub(super) fn return_contract(&self) -> Option<&TypeContract> {
         self.context
             .functions
-            .get(&self.declaration.name.name)
+            .get(self.key)
             .map(|info| &info.return_contract)
     }
 

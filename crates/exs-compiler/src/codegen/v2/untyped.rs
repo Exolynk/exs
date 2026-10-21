@@ -106,15 +106,6 @@ impl<'a> FunctionCompiler<'a, '_> {
         let keys = literal_keys(properties);
         let count = u32::try_from(keys.len())
             .map_err(|_| error("E0212", span, "too many Object properties".to_owned()))?;
-        let keys_address = if keys.is_empty() {
-            0
-        } else {
-            self.context
-                .object_keys
-                .get(&keys)
-                .copied()
-                .ok_or_else(|| error("E0999", span, "missing v2 Object literal keys".to_owned()))?
-        };
         let block = self.consecutive_locals(count.max(1));
         for property in properties {
             let position = keys
@@ -124,6 +115,27 @@ impl<'a> FunctionCompiler<'a, '_> {
             self.compile_expression(&property.value)?;
             self.store(block + position);
         }
+        self.object_from_slots(&keys, block, span)
+    }
+
+    /// Creates an untyped Object of the static key sequence `keys` holding the values in the
+    /// consecutive rooted locals at `block`. Its shape is computed on first use and cached in
+    /// a global.
+    pub(super) fn object_from_slots(
+        &mut self,
+        keys: &[String],
+        block: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let count = keys.len() as u32;
+        let keys_address =
+            if keys.is_empty() {
+                0
+            } else {
+                self.context.object_keys.get(keys).copied().ok_or_else(|| {
+                    error("E0999", span, "missing v2 Object literal keys".to_owned())
+                })?
+            };
         let shape = self.new_global();
         self.instruction(Instruction::GlobalGet(shape));
         self.instruction(Instruction::I32Eqz);

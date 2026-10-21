@@ -2,44 +2,66 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::dispatch::{Dispatch, Target};
+use super::intrinsics::{DATETIME_KEYS, is_datetime_parser};
+use super::units::Unit;
 use crate::ast::{
     AssignmentTarget, Block, ElseBranch, Expression, FormattedStringPart, FunctionDeclaration,
-    FunctionVisibility, MatchArmBody, Module, ObjectProperty, Statement,
+    FunctionVisibility, MatchArmBody, ObjectProperty, Statement,
 };
+use crate::codegen::trait_registry::TraitOperator;
 
-/// Returns the public functions and every function they can call directly, in source order.
-pub(super) fn reachable_functions<'m, 'a>(
-    module: &'m Module<'a>,
-) -> Vec<&'m FunctionDeclaration<'a>> {
-    let by_name: HashMap<&str, &FunctionDeclaration<'a>> = module
-        .functions
-        .iter()
-        .map(|function| (function.name.name.as_str(), function))
-        .collect();
+/// Returns the public functions and every unit they can reach, in trace-id order.
+///
+/// Calls reach their function, static calls their method, and like v1's dispatch, method
+/// calls reach every implementation of the method name, operators their implementations and
+/// formatted strings every `ToString` implementation.
+pub(super) fn reachable_units<'u, 'm, 'a>(
+    units: &'u [Unit<'m, 'a>],
+    dispatch: &Dispatch,
+) -> Vec<&'u Unit<'m, 'a>> {
+    let by_key: HashMap<&str, &Unit<'m, 'a>> =
+        units.iter().map(|unit| (unit.key.as_str(), unit)).collect();
     let mut reached = HashSet::new();
-    let mut pending: Vec<&str> = module
-        .functions
+    let mut pending: Vec<String> = units
         .iter()
-        .filter(|function| function.visibility == FunctionVisibility::Public)
-        .map(|function| function.name.name.as_str())
+        .filter(|unit| {
+            unit.declaration.visibility == FunctionVisibility::Public && !unit.key.contains("::")
+        })
+        .map(|unit| unit.key.clone())
         .collect();
-    while let Some(name) = pending.pop() {
-        let Some(function) = by_name.get(name) else {
+    while let Some(key) = pending.pop() {
+        let Some(unit) = by_key.get(key.as_str()) else {
             continue;
         };
-        if !reached.insert(name) {
+        if !reached.insert(unit.key.as_str()) {
             continue;
         }
-        visit_block(&function.body, &mut |expression| {
-            if let Expression::Call { callee, .. } = expression {
-                pending.push(callee.name.as_str());
+        let targets = |targets: &[Target], pending: &mut Vec<String>| {
+            pending.extend(targets.iter().map(|target| target.key.clone()));
+        };
+        visit_block(&unit.declaration.body, &mut |expression| match expression {
+            Expression::Call { callee, .. } if !is_datetime_parser(&callee.name) => {
+                pending.push(callee.name.clone());
             }
+            Expression::StaticMethodCall {
+                type_name, method, ..
+            } => pending.push(format!("{}::{}", type_name.name, method.name)),
+            Expression::MethodCall { method, .. } => {
+                targets(dispatch.instance(&method.name), &mut pending);
+            }
+            Expression::Binary { operator, .. } => {
+                if let Some(operator) = TraitOperator::from_binary(*operator) {
+                    targets(dispatch.operator(operator), &mut pending);
+                }
+            }
+            Expression::FormattedString { .. } => targets(dispatch.to_string(), &mut pending),
+            _ => {}
         });
     }
-    module
-        .functions
+    units
         .iter()
-        .filter(|function| reached.contains(function.name.name.as_str()))
+        .filter(|unit| reached.contains(unit.key.as_str()))
         .collect()
 }
 
@@ -73,6 +95,11 @@ pub(super) fn string_literals<'t>(
                 }
             }
             Expression::Property { property, .. } => add(&property.name),
+            Expression::Call { callee, .. } if is_datetime_parser(&callee.name) => {
+                for key in DATETIME_KEYS {
+                    add(key);
+                }
+            }
             Expression::Object { properties, .. } => {
                 for property in properties {
                     add(&property.key);
@@ -132,11 +159,15 @@ pub(super) fn object_key_lists(functions: &[&FunctionDeclaration<'_>]) -> Vec<Ve
     let mut lists = Vec::new();
     for function in functions {
         visit_block(&function.body, &mut |expression| {
-            if let Expression::Object { properties, .. } = expression {
-                let keys = literal_keys(properties);
-                if !keys.is_empty() && !lists.contains(&keys) {
-                    lists.push(keys);
+            let keys = match expression {
+                Expression::Object { properties, .. } => literal_keys(properties),
+                Expression::Call { callee, .. } if is_datetime_parser(&callee.name) => {
+                    DATETIME_KEYS.iter().map(|key| (*key).to_owned()).collect()
                 }
+                _ => return,
+            };
+            if !keys.is_empty() && !lists.contains(&keys) {
+                lists.push(keys);
             }
         });
     }

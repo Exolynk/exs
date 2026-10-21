@@ -458,6 +458,39 @@ pub extern "C" fn __exs_core_wire_decode(vm: i32, decoded: i64, schema: i32) -> 
     ))
 }
 
+/// Applies the comparison `test` to the Ordering a `Compare` implementation returned.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_ordering_test(vm: i32, ordering: i64, test: i32) -> i64 {
+    value(exs_core::ordering_test(
+        &mut memory(),
+        address(vm),
+        ordering.cast_unsigned(),
+        test.cast_unsigned(),
+    ))
+}
+
+/// Creates the ArityError of an implementation method called with the wrong arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_nominal_arity_error(vm: i32, receiver: i64) -> i64 {
+    value(exs_core::nominal_arity_error(
+        &mut memory(),
+        address(vm),
+        receiver.cast_unsigned(),
+    ))
+}
+
+/// Parses `text` as strict RFC 3339 into the raw DateTime fields at the rooted `slots`,
+/// returning None, or returns the Error that rejects it.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_datetime_parse(vm: i32, text: i64, slots: i32) -> i64 {
+    value(exs_core::datetime_parse(
+        &mut memory(),
+        address(vm),
+        text.cast_unsigned(),
+        address(slots),
+    ))
+}
+
 /// Creates the MissingValue Error that `?` produces for None.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_missing_value(vm: i32) -> i64 {

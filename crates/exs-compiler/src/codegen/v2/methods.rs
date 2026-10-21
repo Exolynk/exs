@@ -107,18 +107,22 @@ impl<'a> FunctionCompiler<'a, '_> {
         arguments: &[Expression<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if crate::prelude::iterator_helper(&method.name).is_some() {
-            return Err(unsupported(span, "iterator helper methods"));
-        }
+        let context = self.context;
+        let targets = context.dispatch.instance(&method.name);
         let builtin = BuiltinMethod::from_name(&method.name);
-        if let Some(builtin) = builtin
-            && builtin.arity() == arguments.len()
-            && !is_supported(builtin)
+        // Receivers no implementation accepts fall back to built-in behavior the backend may
+        // not support yet; without implementations that is a compile error, with them a trap.
+        let unsupported_fallback = if crate::prelude::iterator_helper(&method.name).is_some() {
+            Some("iterator helper methods".to_owned())
+        } else {
+            builtin
+                .filter(|builtin| builtin.arity() == arguments.len() && !is_supported(*builtin))
+                .map(|_| format!("calls of the built-in `{}` method", method.name))
+        };
+        if let Some(what) = &unsupported_fallback
+            && targets.is_empty()
         {
-            return Err(unsupported(
-                span,
-                &format!("calls of the built-in `{}` method", method.name),
-            ));
+            return Err(unsupported(span, what));
         }
         self.compile_expression(receiver)?;
         let receiver = self.store_new();
@@ -129,11 +133,31 @@ impl<'a> FunctionCompiler<'a, '_> {
             self.compile_expression(argument)?;
             self.store(block + offset);
         }
-        self.guard_method(&method.name, receiver);
+        let arguments: Vec<u32> = (0..count).map(|offset| block + offset).collect();
+        self.dispatch_chain(targets, receiver, &arguments, span, |compiler| {
+            if unsupported_fallback.is_some() {
+                compiler.instruction(Instruction::Unreachable);
+                return Ok(());
+            }
+            compiler.builtin_method_call(builtin, receiver, block, count, span)
+        })
+    }
+
+    /// Calls the built-in method `builtin` of the receiver in `receiver` with the `count`
+    /// arguments in the consecutive locals at `block`, or creates v1's Error for a method
+    /// the receiver lacks or an argument count it does not take.
+    fn builtin_method_call(
+        &mut self,
+        builtin: Option<BuiltinMethod>,
+        receiver: u32,
+        block: u32,
+        count: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
         self.set_position(span)?;
         self.push_vm();
         match builtin {
-            Some(builtin) if builtin.arity() == arguments.len() => {
+            Some(builtin) if builtin.arity() == count as usize => {
                 self.instruction(Instruction::I32Const(builtin.id().cast_signed()));
                 self.instruction(Instruction::LocalGet(receiver));
                 for offset in 0..2 {
@@ -173,7 +197,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             if let Some(variant) = self.context.types.enum_variant(&key) {
                 return self.compile_enum_variant(variant, arguments, span);
             }
-            return Err(unsupported(span, "static method calls"));
+            return self.compile_user_static_call(type_name, method, &key, arguments, span);
         };
         if function.arity() != arguments.len() {
             return Err(error(
@@ -203,5 +227,74 @@ impl<'a> FunctionCompiler<'a, '_> {
             }
         }
         self.core_call("__exs_core_call_static", span)
+    }
+
+    /// Compiles a call of the static implementation method `key`, with v1's diagnostics for
+    /// unknown types, unknown methods, instance methods and argument counts.
+    fn compile_user_static_call(
+        &mut self,
+        type_name: &Identifier<'a>,
+        method: &Identifier<'a>,
+        key: &str,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if matches!(
+            type_name.name.as_str(),
+            "Bytes" | "Int" | "Float" | "Object" | "Math"
+        ) {
+            return Err(unsupported(span, "static method calls"));
+        }
+        if self.context.types.get(&type_name.name).is_none() {
+            return Err(error(
+                "E0216",
+                type_name.span,
+                format!("unknown type `{}`", type_name.name),
+            ));
+        }
+        let Some((index, arity)) = self
+            .context
+            .functions
+            .get(key)
+            .map(|info| (info.index, info.arity))
+        else {
+            return Err(error(
+                "E0225",
+                method.span,
+                format!(
+                    "type `{}` has no static method `{}`",
+                    type_name.name, method.name
+                ),
+            ));
+        };
+        if !self.context.dispatch.is_static(key) {
+            return Err(error(
+                "E0225",
+                method.span,
+                format!(
+                    "type `{}` method `{}` requires a receiver",
+                    type_name.name, method.name
+                ),
+            ));
+        }
+        if arity as usize != arguments.len() {
+            return Err(error(
+                "E0208",
+                span,
+                format!(
+                    "static method `{key}` expects {arity} arguments but received {}",
+                    arguments.len()
+                ),
+            ));
+        }
+        let mut locals = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            self.compile_expression(argument)?;
+            locals.push(self.store_new());
+        }
+        for local in locals {
+            self.instruction(Instruction::LocalGet(local));
+        }
+        self.direct_call(index, span)
     }
 }

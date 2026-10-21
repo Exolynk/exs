@@ -120,3 +120,48 @@ pub(crate) fn compare_method(
     let order = order(memory, left, right);
     ordering(memory, vm, order)
 }
+
+/// Applies the comparison `test` (0 `==`, 1 `!=`, 2 `<`, 3 `<=`, 4 `>`, 5 `>=`) to the
+/// Ordering a `Compare` implementation returned, like v1.
+///
+/// Returns the Bool, or a TypeError for a value that is no Ordering and for `Unordered`
+/// under an ordering test.
+pub fn ordering_test(memory: &mut impl Memory, vm: u32, ordering: u64, test: u32) -> Option<u64> {
+    let order = crate::enums::enum_object(memory, ordering)
+        .filter(|object| {
+            crate::enums::enum_type(memory, *object) == exs_abi::STANDARD_ORDERING_TYPE_ID
+        })
+        .and_then(|object| match crate::enums::variant(memory, object) {
+            0 => Some(Order::Less),
+            1 => Some(Order::Equal),
+            2 => Some(Order::Greater),
+            3 => Some(Order::Unordered),
+            _ => None,
+        });
+    let Some(order) = order else {
+        return crate::errors::recoverable(
+            memory,
+            vm,
+            "TypeError",
+            "Compare implementations must return an Ordering value",
+            ordering,
+        );
+    };
+    let result = match (order, test) {
+        (Order::Equal, 0)
+        | (Order::Unordered | Order::Less | Order::Greater, 1)
+        | (Order::Less, 2 | 3)
+        | (Order::Equal, 3 | 5)
+        | (Order::Greater, 4 | 5) => Ok(true),
+        (Order::Unordered | Order::Less | Order::Greater, 0)
+        | (Order::Equal, 1 | 2 | 4)
+        | (Order::Less, 4 | 5)
+        | (Order::Greater, 2 | 3) => Ok(false),
+        (Order::Unordered, 2..=5) => Err("ordering comparison requires comparable values"),
+        _ => Err("invalid Ordering value or comparison operator"),
+    };
+    match result {
+        Ok(result) => Some(exs_value::ValueRef::boolean(result).raw()),
+        Err(message) => crate::errors::recoverable(memory, vm, "TypeError", message, ordering),
+    }
+}

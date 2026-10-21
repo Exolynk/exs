@@ -392,28 +392,15 @@ fn matches_v1_for_formatted_strings() {
     }
 }
 
-/// Traps instead of silently bypassing operator and `ToString` implementations, which v2 does
-/// not dispatch yet.
+/// Dispatches operator and `ToString` implementations, which 3a and 3b guarded with traps.
 #[test]
-fn traps_on_undispatched_trait_implementations() {
+fn matches_v1_for_trait_implementations() {
     let programs = [
         "type Number { value: Int } impl Add for Number { fn add(self, other: Any) -> Any { ret Number { value: self.value + other.value }; } } fn main() { let one = Number { value: 1 }; ret one + one; }",
         "type Number { value: Int } impl ToString for Number { fn to_string(self) -> String { ret \"n\"; } } fn main() { ret f\"{Number { value: 1 }}\"; }",
     ];
     for program in programs {
-        let compiled = compile_with_backend(
-            SourceInput {
-                source_id: "test.exs",
-                text: program,
-            },
-            CompileOptions::default(),
-            Backend::V2,
-        )
-        .expect("v2 compiles the program");
-        let runner = ServerRunner::default();
-        let outcome =
-            block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
-        assert!(outcome.is_err(), "v2 did not trap on:\n{program}");
+        compare(program, &[]);
     }
 }
 
@@ -660,6 +647,53 @@ fn matches_v1_for_wire_decoding() {
         r#"fn main() { let e: Int = Error("K", "m", None); ret 1; }"#,
         "fn main() { let nested: List<List<Point>> = [[{ x: 1 }], []]; ret nested; }",
         "fn read() -> Int { let p: Point = { y: 1 }; ret 1; } fn main() { ret read(); }",
+    ];
+    for program in programs {
+        compare(&format!("{types} {program}"), &[]);
+    }
+}
+
+/// Dispatches implementation methods, static methods, operator traits and `ToString` like v1.
+#[test]
+fn matches_v1_for_implementations() {
+    let types = r#"
+        type Money { cents: Int }
+        type Version { major: Int, minor: Int }
+        type User { name: String }
+        enum Shape { Circle(radius: Int), Square(side: Int), }
+        trait Area { fn area(self) -> Int; fn double(self) -> Int { ret self.area() * 2; } }
+        impl Money {
+            fn new(cents: Int) -> Money { ret Money { cents: cents }; }
+            fn euros(self) -> Float { ret self.cents / 100; }
+            fn add_cents(self, cents: Int) -> Money { ret Money { cents: self.cents + cents }; }
+        }
+        impl Add for Money { fn add(self, other: Any) -> Any { ret Money { cents: self.cents + other.cents }; } }
+        impl Sub for Money { fn sub(self, other: Any) -> Any { ret Money { cents: self.cents - other.cents }; } }
+        impl Mul for Money { fn mul(self, other: Any) -> Any { ret Money { cents: self.cents * other }; } }
+        impl Div for Money { fn div(self, other: Any) -> Any { ret Money { cents: self.cents / other }; } }
+        impl Compare for Version {
+            fn compare(self, other: Any) -> Ordering {
+                if !(other is Version) { ret Ordering::Unordered; }
+                if self.major != other.major { ret self.major.compare(other.major); }
+                ret self.minor.compare(other.minor);
+            }
+        }
+        impl ToString for User { fn to_string(self) -> String { ret f"User({self.name})"; } }
+        impl Area for Shape {
+            fn area(self) -> Int { ret match self { Shape::Circle(radius) => radius * radius * 3, Shape::Square(side) => side * side, }; }
+        }
+        fn total(values: List) -> Int { let sum = 0; for value in values { sum = sum + value.area(); } ret sum; }
+        fn measure(value: Area) -> Int { ret value.double(); }
+    "#;
+    let programs = [
+        "fn main() { let m = Money::new(150); ret [m, m.euros(), m.add_cents(5).cents, (m + Money::new(50)).cents, (m - Money { cents: 50 }).cents, (m * 3).cents, (m / 2).cents, 1 + 2]; }",
+        "fn main() { let a = Version { major: 1, minor: 2 }; let b = Version { major: 2, minor: 0 }; ret [a < b, a <= b, a > b, a >= b, a == b, a != b, a == Version { major: 1, minor: 2 }, a.compare(b), b.compare(a), a == 1, a < 1]; }",
+        r#"fn main() { let user = User { name: "Ada" }; ret [f"hi {user}!", user.to_string(), f"{[user]}", user.debug(), "x" + 1]; }"#,
+        "fn main() { ret [Shape::Circle(2).area(), Shape::Square(3).double(), total([Shape::Circle(1), Shape::Square(2)]), measure(Shape::Square(4)), measure(5)]; }",
+        "fn main() { ret [Money::new(1).euros(2), Money::new(1).missing(), (1).euros()]; }",
+        "fn main() { let m = Money::new(1); ret [m.cents, m.clone() == m, m.keys()]; }",
+        "fn main() { ret [Range::until(1, 4), Range::step(0, 10, 3), Range::step(1, 2, 0), Duration::seconds(3)]; }",
+        r#"fn main() { let parsed = DateTime::parse_rfc3339("2024-02-29T22:05:07.12Z")?; ret [parsed, DateTime::parse_rfc3339("nope"), parsed.to_rfc3339()]; }"#,
     ];
     for program in programs {
         compare(&format!("{types} {program}"), &[]);
