@@ -153,6 +153,7 @@ impl Scalar {
     }
 
     /// Writes the rendered text at `position` and returns the address after it.
+    #[inline(always)]
     fn write(self, memory: &mut impl Memory, position: u32) -> u32 {
         match self {
             Self::Bool(flag) => {
@@ -211,6 +212,7 @@ fn int_text(value: i64, digits: &mut [u8; 20]) -> &[u8] {
 }
 
 /// Returns how one value renders as the right operand of String `+`, or `None` when it cannot.
+#[inline(always)]
 fn part(memory: &impl Memory, raw: u64) -> Option<Part> {
     if let Some(object) = string_object(raw) {
         return Some(Part::String(object));
@@ -228,6 +230,7 @@ fn part(memory: &impl Memory, raw: u64) -> Option<Part> {
 
 /// Returns how one value renders in a formatted string: like a `+` operand where possible,
 /// otherwise with its default text.
+#[inline(always)]
 fn default_part(memory: &impl Memory, raw: u64) -> Option<Part> {
     Some(part(memory, raw).unwrap_or(Part::Text(default_text(raw))))
 }
@@ -249,14 +252,31 @@ fn part_size(memory: &impl Memory, part: Part) -> (u32, u32) {
 ///
 /// The slots must be rooted. Returns `None` when memory is exhausted.
 pub fn format(memory: &mut impl Memory, vm: u32, slots: u32, count: u32) -> Option<u64> {
+    // Usually every part is a String or a scalar, which renders exactly like a `+` operand.
+    if let Some((len, chars)) = measure(memory, slots, count, part) {
+        return join(memory, vm, slots, count, len, chars, part);
+    }
+    let (len, chars) = measure(memory, slots, count, default_part)?;
+    join(memory, vm, slots, count, len, chars, default_part)
+}
+
+/// Returns the byte and character length of `slots[0..count]` rendered by `render`, or `None`
+/// when a part does not render or the text would not fit.
+#[inline(always)]
+fn measure<M: Memory>(
+    memory: &M,
+    slots: u32,
+    count: u32,
+    render: impl Fn(&M, u64) -> Option<Part>,
+) -> Option<(u32, u32)> {
     let (mut len, mut chars) = (0_u32, 0_u32);
     for index in 0..count {
-        let part = default_part(memory, memory.load_u64(slots + index * 8))?;
+        let part = render(memory, memory.load_u64(slots + index * 8))?;
         let (part_len, part_chars) = part_size(memory, part);
         len = len.checked_add(part_len)?;
         chars = chars.checked_add(part_chars)?;
     }
-    join(memory, vm, slots, count, len, chars, default_part)
+    Some((len, chars))
 }
 
 /// Message of the TypeError for a `+` operand a String cannot render.
@@ -330,6 +350,7 @@ pub fn concat(
 
 /// Joins the parts `slots[0..end]`, rendered by `render` and measured as `len` bytes and
 /// `chars` characters, into one String.
+#[inline(always)]
 fn join<M: Memory>(
     memory: &mut M,
     vm: u32,
@@ -337,7 +358,7 @@ fn join<M: Memory>(
     end: u32,
     len: u32,
     chars: u32,
-    render: fn(&M, u64) -> Option<Part>,
+    render: impl Fn(&M, u64) -> Option<Part>,
 ) -> Option<u64> {
     let object = allocate_string(memory, vm, len, chars)?;
     let mut position = object + DATA;
