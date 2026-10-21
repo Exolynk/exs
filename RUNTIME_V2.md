@@ -841,6 +841,67 @@ v1's resumable lowering follows it, and every v2 equivalence test also runs v1 w
 functions resumable and requires the same result. v2 therefore keeps precise suspendability,
 and its workaround for resumable parameter spans is gone.
 
+## 12t. Phase 4a results: frames, resumable functions and host calls
+
+- **Which units are resumable:** only those that can reach a suspend point, a host operation
+  directly or through calls, dispatch, binding calls of a resumable closure or `for` loops
+  over a resumable iterator (`resumable/analysis.rs`). All other code stays synchronous, so
+  `Host::call` in `main` makes `main` resumable but none of the functions it calls.
+- **Frames:** a frame is a heap `Frame` object: the step index in its header word, the
+  continuation state, the caller's address (traced by the collector), the caller's
+  destination slot and the durable slots. The VM state block's `TaskState` holds the active
+  frame, a ready host result and the completed value as a second GC root range, plus the
+  current, next and cancelled host-call ids. The core library creates, links and completes
+  frames (`frame_start`, `frame_call`, `frame_return`) and keeps their trace entries, so
+  Errors carry v1's traces through resumable calls.
+- **Step functions:** v2 reuses v1's continuation graph unchanged and emits one step function
+  per resumable unit, `(frame) -> status`, with v1's state machine (loop, blocks, `br_table`).
+  Most value operations rebuild their source expression over temporary bindings of the
+  operand slots and compile it with the synchronous lowering, so resumable code has exactly
+  the synchronous semantics (section 12s); calls of synchronous functions, methods and
+  operators run inline, calls of resumable units link a child frame and return to the
+  dispatcher. Temporaries are released after each operation and, since the frame keeps the
+  operands alive, are not rooted again.
+- **Run loop and protocol:** the generated run loop dispatches the active frame to its step
+  function until the task waits or completes, then encodes the result. A resumable entry
+  decodes its arguments like a synchronous one (including variadic entries and the ArityError
+  of excess arguments) into its root frame. The runner protocol is v1's: `__exs_start_*`,
+  `__exs_resume_host(call_id, address, length)` and `__exs_cancel`, with the host-call
+  imports of v1. A host call encodes its arguments as CBOR, a ready result continues at once,
+  a pending one suspends the task; v1's Errors for an invalid name, arguments or an argument
+  that cannot cross the boundary are values.
+- **Host time and streams:** `Host::now`, `Host::elapsed`, the DateTime time-zone operations
+  and `Host::stream` build their prelude values like v1; reachability now treats `HostStream`
+  as constructible by `Host::stream`, so `for` loops over streams reach `HostStream::next`.
+
+| Suite on v2 | after 3f | after 4a | remaining failures |
+|---|---:|---:|---|
+| `continuations` | 0 / 18 | 18 / 18 | |
+| `host_calls` | 11 / 31 | 27 / 31 | closures that suspend (3, phase 4b), `par` (1, phase 4c) |
+| `closures_parallel` | 7 / 17 | 8 / 17 | `par` (7), closures that suspend (2) |
+| `limits` | 9 / 11 | 11 / 11 | |
+| `fuel` | 16 / 18 | 18 / 18 | |
+| `runtime_values` | 87 / 96 | 95 / 96 | more than 65,534 nominal types |
+| `protocols_and_nominal` | 20 / 27 | 26 / 27 | enum input of an undeclared variant (section 12o) |
+| `contracts_and_errors` | 15 / 15 | 15 / 15 | |
+
+| Fuel | v1 | v2 |
+|---|---:|---:|
+| `async_int_loop_100` | 88,929 | 54,804 |
+| `async_empty_while_1000` | 204,743 | 163,506 |
+| `async_int_while_1000` | 367,762 | 356,600 |
+| `async_call_loop_100` | 93,547 | 41,197 |
+| `resumable_call_loop_100` | 164,417 | 40,097 |
+
+`backend_v2.rs` compares host calls that finish at once and that suspend, resumable child
+calls, methods, operators, `Compare` and `Iterator` implementations, variadic and entry
+parameters, `?`, formatted strings, `match`, and the Errors and traces of failed host calls
+and contract checks. One difference stays outside the tests: v1 does not accept an
+`Ordering` that a host returns as the result of a `Compare` implementation, v2 does, since it
+decodes host enums into the program's enum types (the host-enum gap of section 12o).
+Resumable loops still spend most of their fuel on slot traffic (`async_int_while_1000` is
+only 3 % below v1); phase 4d measures and reduces it.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.

@@ -68,6 +68,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         source: value,
                         destination: binding,
                         schema: self.types.wire_schema(&contract),
+                        contract,
                         span: *span,
                     });
                 } else {
@@ -365,6 +366,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 source: item,
                 destination: item,
                 schema: self.types.wire_schema(&contract),
+                contract,
                 span: binding.span,
             });
         }

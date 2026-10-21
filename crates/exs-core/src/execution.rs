@@ -42,11 +42,15 @@ pub fn init_execution(
     state.set_trace_base(memory, trace);
     state.set_trace_top(memory, trace);
     state.set_trace_limit(memory, trace - PAGE_HEADER_SIZE + pages_bytes(TRACE_PAGES)?);
+    // The task's references follow the root stack's range as the second scanned range.
+    let task = vm + vm_offset!(task.frame);
+    memory.store_u32(vm + vm_offset!(root_stack.task_roots.start), task);
+    memory.store_u32(vm + vm_offset!(root_stack.task_roots.end), task + 3 * 8);
     memory.store_u32(
         vm + vm_offset!(roots.ranges),
         vm + vm_offset!(root_stack.range),
     );
-    memory.store_u32(vm + vm_offset!(roots.range_count), 1);
+    memory.store_u32(vm + vm_offset!(roots.range_count), 2);
     memory.store_u32(vm + vm_offset!(boundary.initialized), 1);
     Some(())
 }

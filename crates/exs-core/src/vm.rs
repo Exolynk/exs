@@ -63,6 +63,11 @@ impl Vm {
     vm_field!(trace_top, set_trace_top, errors.trace_top);
     vm_field!(trace_limit, set_trace_limit, errors.trace_limit);
     vm_field!(source_position, set_source_position, errors.source_position);
+    vm_field!(
+        pending_call_site,
+        set_pending_call_site,
+        errors.pending_call_site
+    );
 
     /// Pushes one raw reference onto the root stack and returns its slot address, or `None`
     /// when the stack is full.

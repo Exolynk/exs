@@ -11,27 +11,27 @@ use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::FrameLayout;
-pub(super) struct ContinuationGraph<'source, 'function> {
+pub(in crate::codegen) struct ContinuationGraph<'source, 'function> {
     /// One continuation operation per generated state.
-    pub(super) operations: Vec<Operation<'source, 'function>>,
+    pub(in crate::codegen) operations: Vec<Operation<'source, 'function>>,
     /// Number of durable frame slots allocated by the graph builder.
-    pub(super) slot_count: u32,
+    pub(in crate::codegen) slot_count: u32,
 }
 
 /// Built-in comparison fallback that produces the final Bool without an `Ordering` value.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct ComparisonFallback {
+pub(in crate::codegen) struct ComparisonFallback {
     /// Comparison test code selected by the source operator.
-    pub(super) test: i32,
+    pub(in crate::codegen) test: i32,
     /// Frame slot receiving the resulting Bool or Error.
-    pub(super) destination: u32,
+    pub(in crate::codegen) destination: u32,
     /// State following the bypassed `OrderingTest` state.
-    pub(super) next: u32,
+    pub(in crate::codegen) next: u32,
 }
 
 /// One part appended to a formatted-string builder.
 #[derive(Debug, Clone, Copy)]
-pub(super) enum FormatPart<'function> {
+pub(in crate::codegen) enum FormatPart<'function> {
     /// A literal text fragment.
     Text(&'function str),
     /// A frame slot holding a rendered String or another `+`-compatible value.
@@ -39,7 +39,7 @@ pub(super) enum FormatPart<'function> {
 }
 
 /// One non-suspending operation or host-call boundary in a continuation graph.
-pub(super) enum Operation<'source, 'function> {
+pub(in crate::codegen) enum Operation<'source, 'function> {
     /// Constructs a scalar literal in a destination slot.
     Literal {
         expression: &'function Expression<'source>,
@@ -96,6 +96,8 @@ pub(super) enum Operation<'source, 'function> {
         destination: u32,
         /// Opaque compiler/runtime schema contract.
         schema: String,
+        /// The resolved contract the schema encodes, which runtime v2 decodes against.
+        contract: TypeContract,
         /// Source location for decoder diagnostics.
         span: SourceSpan<'source>,
     },
@@ -250,6 +252,8 @@ pub(super) enum Operation<'source, 'function> {
     /// Constructs an empty nominal Object with a compiler-resolved type tag.
     TypedObject {
         type_id: u32,
+        /// The literal's keys in source order, which fix its field order in runtime v2.
+        keys: Vec<String>,
         destination: u32,
         span: SourceSpan<'source>,
     },
@@ -511,13 +515,13 @@ pub(super) enum Operation<'source, 'function> {
 }
 
 /// One nominal prelude field constructed from a runner-owned time response object.
-pub(super) struct HostTimeField {
+pub(in crate::codegen) struct HostTimeField {
     /// Source-visible field key in the raw and nominal object.
-    pub(super) name: String,
+    pub(in crate::codegen) name: String,
     /// Contract enforced for the raw field value.
-    pub(super) contract: TypeContract,
+    pub(in crate::codegen) contract: TypeContract,
     /// Frame slot retaining the validated field value while the nominal object is assembled.
-    pub(super) slot: u32,
+    pub(in crate::codegen) slot: u32,
 }
 
 /// Builds a flat continuation graph for sequential source statements.
@@ -565,7 +569,7 @@ pub(super) struct LoopBuilderContext {
 
 impl<'source, 'function> ContinuationGraph<'source, 'function> {
     /// Lowers the sequential subset of one resumable function.
-    pub(super) fn build(
+    pub(in crate::codegen) fn build(
         declaration: &'function FunctionDeclaration<'source>,
         signature: &FunctionSignature,
         signatures: &'function HashMap<String, FunctionSignature>,
@@ -733,7 +737,9 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
     }
 }
 
-pub(super) fn operation_span<'source>(operation: &Operation<'source, '_>) -> SourceSpan<'source> {
+pub(in crate::codegen) fn operation_span<'source>(
+    operation: &Operation<'source, '_>,
+) -> SourceSpan<'source> {
     match operation {
         Operation::Literal { expression, .. } => expression_span(expression),
         Operation::String { span, .. }

@@ -78,6 +78,14 @@ struct Reader {
 }
 
 impl Reader {
+    /// Returns the next byte without consuming it.
+    fn peek(&self, memory: &impl Memory) -> Result<u8, CborError> {
+        if self.position >= self.end {
+            return Err(CborError::Malformed);
+        }
+        Ok(memory.load_u8(self.position))
+    }
+
     /// Reads one byte.
     fn byte(&mut self, memory: &impl Memory) -> Result<u8, CborError> {
         if self.position >= self.end {
@@ -306,10 +314,11 @@ fn decode_value(
         MAJOR_ARRAY => return decode_list(memory, vm, reader, initial & 0x1f, depth),
         MAJOR_MAP => return decode_object(memory, vm, reader, initial & 0x1f, depth),
         MAJOR_TAG => {
-            if reader.argument(memory, initial & 0x1f)? != ENUM_TAG {
-                return Err(CborError::Unsupported);
-            }
-            return decode_enum(memory, vm, reader, depth);
+            return match reader.argument(memory, initial & 0x1f)? {
+                ENUM_TAG => decode_enum(memory, vm, reader, depth),
+                ERROR_TAG => decode_error(memory, vm, reader, depth),
+                _ => Err(CborError::Unsupported),
+            };
         }
         _ => {}
     }
@@ -360,6 +369,148 @@ fn decode_list(
     }
     Vm(vm).pop_roots(memory, root);
     decoded
+}
+
+/// Decodes the one value encoded in the `length` bytes at `address`.
+pub(crate) fn decode_at(
+    memory: &mut impl Memory,
+    vm: u32,
+    address: u32,
+    length: u32,
+) -> Result<u64, CborError> {
+    let mut reader = Reader {
+        position: address,
+        end: address.checked_add(length).ok_or(CborError::Malformed)?,
+    };
+    let value = decode_value(memory, vm, &mut reader, 0)?;
+    if reader.position == reader.end {
+        Ok(value)
+    } else {
+        Err(CborError::Malformed)
+    }
+}
+
+/// Reads one unsigned integer item, or `None` for a null item.
+fn optional_unsigned(memory: &impl Memory, reader: &mut Reader) -> Result<Option<u64>, CborError> {
+    let initial = reader.byte(memory)?;
+    if initial == NULL {
+        return Ok(None);
+    }
+    if initial >> 5 != MAJOR_UNSIGNED {
+        return Err(CborError::Malformed);
+    }
+    reader.argument(memory, initial & 0x1f).map(Some)
+}
+
+/// Reads one map key, which must be the unsigned integer `expected`.
+fn error_key(memory: &impl Memory, reader: &mut Reader, expected: u64) -> Result<(), CborError> {
+    match optional_unsigned(memory, reader)? {
+        Some(key) if key == expected => Ok(()),
+        _ => Err(CborError::Malformed),
+    }
+}
+
+/// Decodes the seven-field map of a tagged Error: severity, kind, message, data, origin,
+/// trace entries and cause, like the runner's codec.
+fn decode_error(
+    memory: &mut impl Memory,
+    vm: u32,
+    reader: &mut Reader,
+    depth: u32,
+) -> Result<u64, CborError> {
+    if depth >= MAX_DEPTH {
+        return Err(CborError::Unsupported);
+    }
+    let initial = reader.byte(memory)?;
+    if initial >> 5 != MAJOR_MAP || reader.argument(memory, initial & 0x1f)? != 7 {
+        return Err(CborError::Malformed);
+    }
+    error_key(memory, reader, 0)?;
+    let fatal = match optional_unsigned(memory, reader)? {
+        Some(0) => false,
+        Some(1) => true,
+        _ => return Err(CborError::Malformed),
+    };
+    let state = Vm(vm);
+    let root = state.root_stack_end(memory);
+    let decoded = (|| {
+        let mut texts = [0_u64; 2];
+        for (key, text) in (1..).zip(&mut texts) {
+            error_key(memory, reader, key)?;
+            *text = decode_value(memory, vm, reader, depth + 1)?;
+            if string_object(*text).is_none() {
+                return Err(CborError::Malformed);
+            }
+            state
+                .push_root(memory, *text)
+                .ok_or(CborError::OutOfMemory)?;
+        }
+        error_key(memory, reader, 3)?;
+        let data = decode_value(memory, vm, reader, depth + 1)?;
+        state
+            .push_root(memory, data)
+            .ok_or(CborError::OutOfMemory)?;
+        error_key(memory, reader, 4)?;
+        let origin = optional_unsigned(memory, reader)?
+            .map(|origin| u32::try_from(origin).map_err(|_| CborError::Malformed))
+            .transpose()?
+            .unwrap_or(0);
+        error_key(memory, reader, 5)?;
+        let trace = decode_trace(memory, vm, reader)?;
+        if trace != 0 {
+            let reference =
+                ValueRef::from_parts(exs_value::layout::type_kind(exs_abi::TYPE_BYTES), 0, trace)
+                    .ok_or(CborError::Malformed)?;
+            state
+                .push_root(memory, reference.raw())
+                .ok_or(CborError::OutOfMemory)?;
+        }
+        error_key(memory, reader, 6)?;
+        let cause = if reader.peek(memory)? == NULL {
+            reader.byte(memory)?;
+            ValueRef::NONE.raw()
+        } else {
+            decode_value(memory, vm, reader, depth + 1)?
+        };
+        let parts = crate::errors::ErrorParts {
+            fatal,
+            kind: texts[0],
+            message: texts[1],
+            data,
+            origin,
+            trace: (0, 0),
+            cause,
+        };
+        crate::errors::error_from_parts(memory, vm, &parts, trace).ok_or(CborError::OutOfMemory)
+    })();
+    state.pop_roots(memory, root);
+    decoded
+}
+
+/// Decodes the trace entries of an Error into a new Bytes object, or returns 0 for none.
+fn decode_trace(memory: &mut impl Memory, vm: u32, reader: &mut Reader) -> Result<u32, CborError> {
+    let initial = reader.byte(memory)?;
+    if initial >> 5 != MAJOR_ARRAY {
+        return Err(CborError::Malformed);
+    }
+    let count = reader.count(memory, initial & 0x1f)?;
+    if count == 0 {
+        return Ok(0);
+    }
+    let len = count.checked_mul(8).ok_or(CborError::Malformed)?;
+    let raw = new_bytes(memory, vm, len, |_, _| {}).ok_or(CborError::OutOfMemory)?;
+    let object = raw as u32;
+    for index in 0..count {
+        let initial = reader.byte(memory)?;
+        if initial >> 5 != MAJOR_ARRAY || reader.argument(memory, initial & 0x1f)? != 2 {
+            return Err(CborError::Malformed);
+        }
+        let function = optional_unsigned(memory, reader)?.ok_or(CborError::Malformed)?;
+        let site = optional_unsigned(memory, reader)?.ok_or(CborError::Malformed)?;
+        let entry = (function & 0xffff_ffff) | (site & 0xffff_ffff) << 32;
+        memory.store_u64(object + DATA + index * 8, entry);
+    }
+    Ok(object)
 }
 
 /// Reads one text string item and returns the address and length of its bytes.
@@ -566,7 +717,7 @@ fn utf8_chars(memory: &impl Memory, start: u32, len: u32) -> Option<u32> {
 pub fn encode_result(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), CborError> {
     match encode(memory, vm, raw) {
         Err(CborError::Unsupported) => {
-            let error = crate::boundary::serialization_error(memory, vm, raw)
+            let error = crate::boundary::serialization_error(memory, vm, raw, true)
                 .ok_or(CborError::OutOfMemory)?;
             encode(memory, vm, error)
         }
@@ -574,8 +725,8 @@ pub fn encode_result(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), 
     }
 }
 
-/// Encodes `raw` as the result in two passes, measuring and then writing.
-fn encode(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), CborError> {
+/// Encodes `raw` into the result buffer in two passes, measuring and then writing.
+pub(crate) fn encode(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), CborError> {
     let mut measure = Sink {
         start: None,
         len: 0,

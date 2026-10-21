@@ -224,6 +224,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 destination,
                 schema,
                 span,
+                ..
             } => {
                 self.get_slot(*source, *span)?;
                 self.string(schema, *span)?;
@@ -525,6 +526,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 type_id,
                 destination,
                 span,
+                ..
             } => {
                 self.function
                     .instruction(&Instruction::I32Const(type_id.cast_signed()));

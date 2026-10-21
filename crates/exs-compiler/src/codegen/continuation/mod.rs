@@ -21,10 +21,12 @@ use crate::codegen::types::TypeRegistry;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics};
 
 use self::body::StepBody;
-use self::graph::ContinuationGraph;
 use self::step::StepCompiler;
 
 pub(super) use self::entry::{compile_cancel, compile_dispatch, compile_resume, compile_start};
+pub(in crate::codegen) use self::graph::{
+    ComparisonFallback, ContinuationGraph, FormatPart, HostTimeField, Operation, operation_span,
+};
 
 /// One lowered resumable function and the durable frame capacity it requires.
 pub(super) struct CompiledContinuation {
@@ -34,11 +36,11 @@ pub(super) struct CompiledContinuation {
 
 /// Compiler-known durable capacity for one suspendable frame.
 #[derive(Clone, Copy)]
-pub(super) struct FrameLayout {
+pub(in crate::codegen) struct FrameLayout {
     /// Compiler-assigned function identifier stored in the runtime frame.
-    pub(super) function_id: u32,
+    pub(in crate::codegen) function_id: u32,
     /// Number of durable slots allocated when this function is invoked.
-    pub(super) slot_count: u32,
+    pub(in crate::codegen) slot_count: u32,
 }
 
 /// Returns the exact durable-frame slot count of one resumable function.

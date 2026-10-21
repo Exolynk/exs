@@ -33,12 +33,13 @@ fn run(source: &str, backend: Backend, inputs: &[ExsValue]) -> (ExsValue, u64) {
         Ok(module) => module,
         Err(error) => panic!("{backend:?} compilation failed: {error}"),
     };
-    let runner = ServerRunner::new(
+    let mut runner = ServerRunner::new(
         64 << 20,
         1_000_000_000,
         Duration::from_secs(60),
         ProtectionLevel::Standard,
     );
+    register_hosts(&mut runner);
     match block_on(runner.execute_with_report(
         &compiled.wasm,
         "main",
@@ -48,6 +49,31 @@ fn run(source: &str, backend: Backend, inputs: &[ExsValue]) -> (ExsValue, u64) {
         Ok(report) => (report.value, report.fuel_consumed),
         Err(error) => panic!("{backend:?} execution failed: {error}"),
     }
+}
+
+/// Registers the host functions the programs call: `add` sums its Int arguments at once,
+/// `echo` returns its first argument after suspending the task.
+fn register_hosts(runner: &mut ServerRunner) {
+    let add = runner
+        .registry_mut()
+        .fn_sync_raw("add", |arguments: Vec<ExsValue>| {
+            ExsValue::Int(
+                arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        ExsValue::Int(value) => *value,
+                        _ => 0,
+                    })
+                    .sum(),
+            )
+        });
+    assert!(add.is_ok());
+    let echo = runner
+        .registry_mut()
+        .fn_async_raw("echo", |arguments: Vec<ExsValue>| async move {
+            arguments.into_iter().next().unwrap_or(ExsValue::None)
+        });
+    assert!(echo.is_ok());
 }
 
 /// An unused closure, which makes v1 lower every function of a program as resumable. As the
@@ -789,6 +815,40 @@ fn matches_v1_across_lowering_modes() {
     for program in programs {
         compare(program, &[]);
     }
+}
+
+/// Runs resumable functions like v1: host calls that finish at once or suspend the task,
+/// child frames of resumable functions, methods and iterators, and their Errors and traces.
+#[test]
+fn matches_v1_for_host_calls() {
+    let counter = "type Countdown { left: Int } impl Iterator for Countdown { fn next(self) -> IteratorStep | Error { if self.left == 0 { ret IteratorStep::Done; } self.left = self.left - 1; ret IteratorStep::Item(Host::call(\"echo\", self.left)); } }";
+    let programs = [
+        r#"fn main() { ret Host::call("add", 2, 3) + 1; }"#,
+        r#"fn main() { let a = Host::call("echo", 5); let b = Host::call("echo", a * 2); ret [a, b, Host::call("add", a, b)]; }"#,
+        r#"fn twice(value) { ret Host::call("echo", value) * 2; } fn main() { let total = 0; for index in 0..4 { total = total + twice(index); } ret total; }"#,
+        r#"fn sum(values...) { let total = 0; for value in values { total = total + Host::call("echo", value); } ret total; } fn main() { ret [sum(), sum(1, 2, 3)]; }"#,
+        r#"type P { x: Int } impl P { fn get(self) { ret Host::call("echo", self.x); } } impl Add for P { fn add(self, other: Any) -> Any { ret Host::call("echo", self.x) + other.x; } } fn main() { let p = P { x: 4 }; ret [p.get() + p.get(), p + p, p.x]; }"#,
+        r#"type V { x: Int } impl Compare for V { fn compare(self, other: Any) -> Ordering { if Host::call("echo", self.x) < other.x { ret Ordering::Less; } ret Ordering::Greater; } } fn main() { ret [V { x: 1 } < V { x: 2 }, V { x: 1 } >= V { x: 1 }, 1 < 2]; }"#,
+        r#"fn inner() -> Int { ret Host::call("echo", "x"); } fn main() { ret inner(); }"#,
+        r#"fn inner() -> Int | Error { ret Host::call("missing"); } fn main() { ret [inner(), 1]; }"#,
+        r#"fn main() { ret [Host::call(1), Host::call("echo", 1, 2)]; }"#,
+        r#"fn main() -> Int | Error { let value = Host::call("echo", None)?; ret value; }"#,
+        r#"enum C { A, B(Int), } fn main() { let c = C::B(Host::call("echo", 3)); ret match c { C::A => "a", C::B(v) => f"b{v} {Host::call("echo", [1, { k: 2 }])}", }; }"#,
+        r#"fn main() { let values = []; for value in Countdown { left: 3 } { values.push(value); } ret values; }"#,
+        r#"fn main() { let seen = []; let index = 0; while index < 3 { if Host::call("echo", index) == 1 { index = index + 1; continue; } seen.push(index); index = index + 1; } ret seen; }"#,
+        r#"fn main(limit: Int) { Host::call("echo", 1); ret limit; }"#,
+    ];
+    for program in programs {
+        compare(&format!("{counter} {program}"), &[]);
+    }
+    compare(
+        r#"fn main(limit: Int, rest...) { ret [Host::call("echo", limit), rest]; }"#,
+        &[ExsValue::Int(7), ExsValue::Int(8)],
+    );
+    compare(
+        r#"fn main(limit: Int) { ret Host::call("echo", limit); }"#,
+        &[ExsValue::Int(1), ExsValue::Int(2)],
+    );
 }
 
 /// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent

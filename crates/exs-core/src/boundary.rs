@@ -28,8 +28,14 @@ enum Obstacle {
     UnsupportedValue,
 }
 
-/// Creates v1's fatal SerializationError for the result `raw`, which the encoder rejected.
-pub(crate) fn serialization_error(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
+/// Creates v1's SerializationError, fatal for a result and recoverable for host-call
+/// arguments, for the value `raw` the encoder rejected.
+pub(crate) fn serialization_error(
+    memory: &mut impl Memory,
+    vm: u32,
+    raw: u64,
+    fatal: bool,
+) -> Option<u64> {
     let mut path = [0_u32; MAX_DEPTH];
     let message = match obstacle(memory, raw, &mut path, 0) {
         Some(Obstacle::Cycle) => {
@@ -41,12 +47,15 @@ pub(crate) fn serialization_error(memory: &mut impl Memory, vm: u32, raw: u64) -
     let error = new_error(
         memory,
         vm,
-        true,
+        fatal,
         "SerializationError",
         message,
         ValueRef::NONE.raw(),
     )?;
-    crate::errors::clear_origin_and_trace(memory, error as u32);
+    // Like v1, only the Error of a result has no origin and trace.
+    if fatal {
+        crate::errors::clear_origin_and_trace(memory, error as u32);
+    }
     Some(error)
 }
 

@@ -20,7 +20,7 @@ use super::collections::{u32_field, value_field};
 use super::function::{FunctionCompiler, error};
 use super::untyped::VALUE_SLOTS;
 use crate::ast::{Expression, Identifier, ObjectProperty};
-use crate::codegen::types::{NominalField, NominalKind};
+use crate::codegen::types::{NominalField, NominalKind, NominalType};
 use crate::codegen::{VALUE_TYPE, immediate};
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
@@ -107,7 +107,32 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.check_contract(self.scratch, &field.contract, span)?;
             }
         }
-        let count = u32::try_from(slots.len())
+        let keys: Vec<&str> = properties
+            .iter()
+            .map(|property| property.key.as_str())
+            .collect();
+        let object = self.allocate_typed_object(nominal, &keys, span)?;
+        for (index, slot) in (0_u64..).zip(&slots) {
+            self.push_address(object);
+            match slot {
+                Some(value) => self.instruction(Instruction::LocalGet(*value)),
+                None => immediate::push(&mut self.function, ValueRef::NONE),
+            }
+            self.instruction(Instruction::I64Store(value_field(SLOTS + index * 8)));
+        }
+        self.instruction(Instruction::LocalGet(object));
+        Ok(())
+    }
+
+    /// Allocates a typed Object of the nominal type `nominal`, built by a literal naming `keys`
+    /// in source order, and returns the rooted local holding it. Its slots are empty.
+    pub(super) fn allocate_typed_object(
+        &mut self,
+        nominal: &NominalType,
+        keys: &[&str],
+        span: SourceSpan<'a>,
+    ) -> Result<u32, CompileDiagnostics<'a>> {
+        let count = u32::try_from(nominal.fields.len())
             .map_err(|_| error("E0212", span, "too many fields for one nominal type".into()))?;
         let tag = object_tag(nominal.id)
             .ok_or_else(|| super::function::unsupported(span, "more than 65534 nominal types"))?;
@@ -123,7 +148,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I64Const(i64::from(tag) << 32));
         self.instruction(Instruction::I64Or);
         let object = self.store_new();
-        let order = self.field_order(properties, &nominal.fields);
+        let order = self.field_order(keys, &nominal.fields);
         let header = [(TYPE_ID, nominal.id), (SLOT_COUNT, count)]
             .into_iter()
             .chain(order.map(|order| (ORDER, order)));
@@ -132,33 +157,20 @@ impl<'a> FunctionCompiler<'a, '_> {
             self.instruction(Instruction::I32Const(value.cast_signed()));
             self.instruction(Instruction::I32Store(u32_field(offset)));
         }
-        for (index, slot) in (0_u64..).zip(&slots) {
-            self.push_address(object);
-            match slot {
-                Some(value) => self.instruction(Instruction::LocalGet(*value)),
-                None => immediate::push(&mut self.function, ValueRef::NONE),
-            }
-            self.instruction(Instruction::I64Store(value_field(SLOTS + index * 8)));
-        }
-        self.instruction(Instruction::LocalGet(object));
-        Ok(())
+        Ok(object)
     }
 
-    /// Returns the address of the static field-order array of a literal with `properties` of a
+    /// Returns the address of the static field-order array of a literal naming `keys` of a
     /// type declaring `fields`, or `None` when the literal keeps the declaration order.
-    fn field_order(
-        &self,
-        properties: &[ObjectProperty<'a>],
-        fields: &[NominalField],
-    ) -> Option<u32> {
+    fn field_order(&self, keys: &[&str], fields: &[NominalField]) -> Option<u32> {
         let position = |name: &str| fields.iter().position(|field| field.name == name);
-        let mut order: Vec<u32> = properties
+        let mut order: Vec<u32> = keys
             .iter()
-            .filter_map(|property| position(&property.key))
+            .filter_map(|key| position(key))
             .map(|index| index as u32)
             .collect();
         for (index, field) in (0_u32..).zip(fields) {
-            if !properties.iter().any(|property| property.key == field.name) {
+            if !keys.contains(&field.name.as_str()) {
                 order.push(index);
             }
         }

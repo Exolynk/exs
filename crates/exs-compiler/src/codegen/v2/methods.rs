@@ -150,7 +150,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     /// Calls the built-in method `builtin` of the receiver in `receiver` with the `count`
     /// arguments in the consecutive locals at `block`, or creates v1's Error for a method
     /// the receiver lacks or an argument count it does not take.
-    fn builtin_method_call(
+    pub(super) fn builtin_method_call(
         &mut self,
         builtin: Option<BuiltinMethod>,
         receiver: u32,

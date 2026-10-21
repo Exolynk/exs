@@ -1194,6 +1194,10 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         let object = self.temporary(span)?;
         self.operations.push(Operation::TypedObject {
             type_id: nominal.id,
+            keys: properties
+                .iter()
+                .map(|property| property.key.clone())
+                .collect(),
             destination: object,
             span,
         });

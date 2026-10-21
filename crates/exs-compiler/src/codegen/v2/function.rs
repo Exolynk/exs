@@ -113,6 +113,13 @@ pub(super) struct FunctionCompiler<'a, 'm> {
     pub(super) depth: u32,
     /// First of two consecutive rooted locals passed to two-operand core calls.
     pub(super) pair: Option<u32>,
+    /// Whether this compiles the step function of a resumable function, whose returns
+    /// complete its frame and which takes the frame's address as its only parameter.
+    pub(super) step: bool,
+    /// The highest local index plus one used so far, as temporaries are released.
+    high_water: u32,
+    /// The most root slots in use at once.
+    max_slots: u32,
 }
 
 impl<'a, 'm> FunctionCompiler<'a, 'm> {
@@ -153,7 +160,66 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
             loops: Vec::new(),
             depth: 0,
             pair: None,
+            step: false,
+            high_water: parameter_count + 3,
+            max_slots: parameter_count,
         }
+    }
+
+    /// Prepares the step function of the resumable `declaration`: its only parameter is the
+    /// `i32` address of the frame it runs.
+    pub(super) fn step(
+        context: &'m Context<'m>,
+        key: &'m str,
+        declaration: &'m FunctionDeclaration<'a>,
+    ) -> Self {
+        Self {
+            context,
+            key,
+            declaration,
+            captures: 0,
+            unobserved_ranges: Vec::new(),
+            function: Function::new([]),
+            scopes: vec![HashMap::new()],
+            slots: HashMap::new(),
+            parameter_count: 1,
+            next_local: 4,
+            scratch: 3,
+            loops: Vec::new(),
+            depth: 0,
+            pair: None,
+            step: true,
+            high_water: 4,
+            max_slots: 0,
+        }
+    }
+
+    /// Returns a mark of the temporaries allocated so far.
+    pub(super) const fn temporaries(&self) -> u32 {
+        self.next_local
+    }
+
+    /// Releases every local allocated after `mark`, so later code reuses their indices and
+    /// root slots. Their values must be dead.
+    pub(super) fn release_temporaries(&mut self, mark: u32) {
+        self.next_local = mark;
+        self.slots.retain(|local, _| *local < mark);
+        self.pair = None;
+    }
+
+    /// Finishes the step function: pushes the root frame of its temporaries before the body.
+    pub(super) fn finish_step(self) -> Function {
+        let i64_locals = self.high_water - self.parameter_count - 2;
+        let mut function = Function::new([(2, ValType::I32), (i64_locals, VALUE_TYPE)]);
+        emit_push_frame(
+            &mut function,
+            self.context.vm,
+            self.frame_local(),
+            self.max_slots,
+        );
+        let body = self.function.into_raw_body();
+        function.raw(body.get(1..).unwrap_or_default().iter().copied());
+        function
     }
 
     /// Returns the local holding the root-frame base address.
@@ -170,8 +236,10 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
     pub(super) fn value_local(&mut self) -> u32 {
         let local = self.next_local;
         self.next_local += 1;
+        self.high_water = self.high_water.max(self.next_local);
         let slot = self.slots.len() as u32;
         self.slots.insert(local, slot);
+        self.max_slots = self.max_slots.max(slot + 1);
         local
     }
 
@@ -179,6 +247,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
     pub(super) fn scalar_local(&mut self) -> u32 {
         let local = self.next_local;
         self.next_local += 1;
+        self.high_water = self.high_water.max(self.next_local);
         local
     }
 
@@ -339,13 +408,15 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
             .map(|info| info.return_contract.clone())
             .ok_or_else(|| error("E0999", span, "missing v2 function signature".to_owned()))?;
         self.check_contract(value, &contract, span)?;
-        self.pop_frame();
         self.instruction(Instruction::LocalGet(value));
-        self.instruction(Instruction::Return);
+        self.return_top();
         Ok(())
     }
 
     /// Restores the root and trace stacks to this function's entry state.
+    ///
+    /// A step function only pops its root frame: the trace entries of resumable frames live
+    /// as long as their frames.
     pub(super) fn pop_frame(&mut self) {
         self.instruction(Instruction::I32Const(0));
         self.instruction(Instruction::LocalGet(self.frame_local()));
@@ -353,6 +424,9 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
             self.context.vm,
             root_stack_end_offset(),
         )));
+        if self.step {
+            return;
+        }
         self.instruction(Instruction::I32Const(0));
         self.instruction(Instruction::LocalGet(self.trace_local()));
         self.instruction(Instruction::I32Store(vm_field(

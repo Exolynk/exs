@@ -19,12 +19,14 @@ pub const KIND_ITERATOR: u16 = 1 << 10;
 pub const KIND_CELL: u16 = 1 << 11;
 /// Runtime-internal kind of the reserved future boxed value shape.
 pub const KIND_FUTURE: u16 = 1 << 12;
+/// Runtime-internal kind of the frames of resumable functions in runtime v2.
+pub const KIND_FRAME: u16 = 1 << 13;
 
 // Every source-visible type bit must fit the kind field, and internal kinds must never satisfy a
 // source type contract.
 const _: () = assert!(TYPE_ANY <= u16::MAX as u32);
 const _: () = assert!(
-    (KIND_ITERATOR | KIND_CELL | KIND_FUTURE) as u32 & TYPE_ANY == 0,
+    (KIND_ITERATOR | KIND_CELL | KIND_FUTURE | KIND_FRAME) as u32 & TYPE_ANY == 0,
     "internal kinds overlap source type bits"
 );
 

@@ -61,6 +61,8 @@ pub struct RootStack {
     /// The live part `start..end` of the stack; `end` is the next free slot. `roots.ranges`
     /// points here, so the collector always scans exactly the pushed frames.
     pub range: RootRange,
+    /// The `ValueRef` fields of [`TaskState`], the second entry of the root range array.
+    pub task_roots: RootRange,
     /// Address just past the stack storage.
     pub limit: u32,
     /// Reserved, keeps the block 8-byte aligned.
@@ -150,6 +152,27 @@ pub struct VmState {
     pub program: ProgramState,
     /// Language Error context.
     pub errors: ErrorState,
+    /// The execution's task of resumable functions.
+    pub task: TaskState,
+}
+
+/// The task that runs the frames of resumable functions.
+///
+/// The first three fields are `ValueRef`s the collector scans as a root range.
+#[repr(C)]
+pub struct TaskState {
+    /// The active frame, a reference of kind `KIND_FRAME`, or 0.
+    pub frame: u64,
+    /// The host result the active frame consumes next, or 0.
+    pub ready: u64,
+    /// The result of the completed root frame, or 0.
+    pub completed: u64,
+    /// The id of the host call the task waits for or consumes, 0 for none.
+    pub host_call: u64,
+    /// The id of the next host call.
+    pub next_host_call: u64,
+    /// The id of a host call cancelled while pending, 0 for none.
+    pub cancelled_call: u64,
 }
 
 const _: () = assert!(core::mem::size_of::<VmState>().is_multiple_of(8));

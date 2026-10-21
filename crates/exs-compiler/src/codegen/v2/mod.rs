@@ -19,6 +19,7 @@ mod linker;
 mod methods;
 mod objects;
 mod reachability;
+mod resumable;
 mod statements;
 mod static_keys;
 mod type_table;

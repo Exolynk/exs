@@ -128,10 +128,24 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Returns the `ValueRef` on the stack from the function without a contract check.
+    ///
+    /// A step function completes its frame with the value instead and returns the dispatch
+    /// status.
     pub(super) fn return_top(&mut self) {
         self.instruction(Instruction::LocalSet(self.scratch));
         self.pop_frame();
-        self.instruction(Instruction::LocalGet(self.scratch));
+        if self.step {
+            self.push_vm();
+            self.instruction(Instruction::LocalGet(0));
+            self.instruction(Instruction::LocalGet(self.scratch));
+            if let Some(index) = self.context.core.get("__exs_core_frame_return").copied() {
+                self.instruction(Instruction::Call(index));
+            } else {
+                self.instruction(Instruction::Unreachable);
+            }
+        } else {
+            self.instruction(Instruction::LocalGet(self.scratch));
+        }
         self.instruction(Instruction::Return);
     }
 

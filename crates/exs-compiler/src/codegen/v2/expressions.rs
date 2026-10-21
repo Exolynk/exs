@@ -152,7 +152,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Pushes one Int literal, boxing it outside the `i32` range.
-    fn compile_integer(
+    pub(super) fn compile_integer(
         &mut self,
         value: i128,
         span: SourceSpan<'a>,
@@ -280,7 +280,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Calls the core library for one built-in binary operator on two rooted operand locals.
-    fn compile_builtin_binary(
+    pub(super) fn compile_builtin_binary(
         &mut self,
         operator: BinaryOperator,
         left: u32,
@@ -536,7 +536,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Pushes the static String of one literal.
-    fn push_string(
+    pub(super) fn push_string(
         &mut self,
         text: &str,
         span: SourceSpan<'a>,

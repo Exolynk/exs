@@ -8,7 +8,7 @@ use super::intrinsics::{DATETIME_KEYS, is_datetime_parser};
 use super::units::Unit;
 use crate::ast::{
     AssignmentTarget, Block, ElseBranch, Expression, FormattedStringPart, FunctionDeclaration,
-    FunctionVisibility, MatchArmBody, ObjectProperty, Statement,
+    FunctionVisibility, HostTimeOperation, MatchArmBody, ObjectProperty, Statement,
 };
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::TypeRegistry;
@@ -66,6 +66,12 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
                 }
                 Expression::TypedObject { type_name, .. } => {
                     if let Some(nominal) = types.get(&type_name.name) {
+                        constructible.insert(nominal.id);
+                    }
+                }
+                // Host streams are prelude Objects the host call creates.
+                Expression::HostStream { .. } => {
+                    if let Some(nominal) = types.get("HostStream") {
                         constructible.insert(nominal.id);
                     }
                 }
@@ -165,6 +171,19 @@ fn statement_contains_for(statement: &Statement<'_>) -> bool {
 /// `functions`, followed by `extra`.
 ///
 /// Formatted strings start from the empty String, so it is always included.
+/// Returns the runner function a Host time operation calls and the prelude type of its
+/// result, like v1.
+pub(super) const fn host_time_target(operation: HostTimeOperation) -> (&'static str, &'static str) {
+    match operation {
+        HostTimeOperation::Now => (exs_abi::HOST_NOW_HOST_NAME, "DateTime"),
+        HostTimeOperation::Elapsed => (exs_abi::HOST_ELAPSED_HOST_NAME, "Duration"),
+        HostTimeOperation::InTimezone => (exs_abi::HOST_DATETIME_IN_TIMEZONE_HOST_NAME, "DateTime"),
+        HostTimeOperation::FromComponents => {
+            (exs_abi::HOST_DATETIME_FROM_COMPONENTS_HOST_NAME, "DateTime")
+        }
+    }
+}
+
 pub(super) fn string_literals<'t>(
     functions: &[&FunctionDeclaration<'_>],
     extra: impl IntoIterator<Item = &'t str>,
@@ -201,6 +220,8 @@ pub(super) fn string_literals<'t>(
                     add(&property.key);
                 }
             }
+            Expression::HostStream { .. } => add(exs_abi::HOST_STREAM_OPEN_HOST_NAME),
+            Expression::HostTime { operation, .. } => add(host_time_target(*operation).0),
             _ => {}
         });
     }

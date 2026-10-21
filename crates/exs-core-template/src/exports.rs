@@ -586,6 +586,174 @@ pub extern "C" fn __exs_core_range_finish(range: i64, range_type: i32, cursor: i
     );
 }
 
+#[link(wasm_import_module = "exs")]
+unsafe extern "C" {
+    /// Starts one host call through the runner.
+    fn __exs_host_call_start(
+        call_id: i64,
+        name_pointer: i32,
+        name_length: i32,
+        request_pointer: i32,
+        request_length: i32,
+        source_position: i32,
+    ) -> i32;
+    /// Returns the byte length of one ready host response.
+    fn __exs_host_call_response_len(call_id: i64) -> i32;
+    /// Copies one ready host response into linear memory.
+    fn __exs_host_call_response_copy(call_id: i64, pointer: i32, length: i32) -> i32;
+}
+
+/// The runner's host-call imports.
+struct RunnerHost;
+
+impl exs_core::Host for RunnerHost {
+    fn start(
+        &mut self,
+        call_id: u64,
+        name: u32,
+        name_len: u32,
+        request: u32,
+        request_len: u32,
+        position: u32,
+    ) -> i32 {
+        // SAFETY: the runner provides the host-call imports for every module.
+        unsafe {
+            __exs_host_call_start(
+                call_id.cast_signed(),
+                name.cast_signed(),
+                name_len.cast_signed(),
+                request.cast_signed(),
+                request_len.cast_signed(),
+                position.cast_signed(),
+            )
+        }
+    }
+
+    fn response_len(&mut self, call_id: u64) -> i32 {
+        // SAFETY: the runner provides the host-call imports for every module.
+        unsafe { __exs_host_call_response_len(call_id.cast_signed()) }
+    }
+
+    fn response_copy(&mut self, call_id: u64, address: u32, len: u32) -> i32 {
+        // SAFETY: the runner provides the host-call imports for every module.
+        unsafe {
+            __exs_host_call_response_copy(
+                call_id.cast_signed(),
+                address.cast_signed(),
+                len.cast_signed(),
+            )
+        }
+    }
+}
+
+/// Starts the task with the root frame of step `step` of function `function_id`, with
+/// `slots` empty slots, and returns its address.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_frame_start(vm: i32, step: i32, function_id: i32, slots: i32) -> i32 {
+    match exs_core::frame_start(
+        &mut memory(),
+        address(vm),
+        step.cast_unsigned(),
+        function_id.cast_unsigned(),
+        slots.cast_unsigned(),
+    ) {
+        Some(frame) => frame.cast_signed(),
+        None => trap(),
+    }
+}
+
+/// Calls step `step` of function `function_id` from the active frame with a new frame of
+/// `slots` empty slots that returns into slot `destination`, and returns its address.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_frame_call(
+    vm: i32,
+    step: i32,
+    function_id: i32,
+    slots: i32,
+    destination: i32,
+) -> i32 {
+    match exs_core::frame_call(
+        &mut memory(),
+        address(vm),
+        step.cast_unsigned(),
+        function_id.cast_unsigned(),
+        slots.cast_unsigned(),
+        destination.cast_unsigned(),
+    ) {
+        Some(frame) => frame.cast_signed(),
+        None => trap(),
+    }
+}
+
+/// Completes the active frame at `frame` with `result` and returns the dispatch status.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_frame_return(vm: i32, frame: i32, result: i64) -> i32 {
+    exs_core::frame_return(
+        &mut memory(),
+        address(vm),
+        address(frame),
+        result.cast_unsigned(),
+    )
+}
+
+/// Takes the result of the completed root frame.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_take_completed(vm: i32) -> i64 {
+    exs_core::take_completed(&mut memory(), address(vm)).cast_signed()
+}
+
+/// Starts the host call of the function `name` with the List `arguments`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_host_call_start(vm: i32, name: i64, arguments: i64) -> i32 {
+    match exs_core::host_call_start(
+        &mut memory(),
+        &mut RunnerHost,
+        address(vm),
+        name.cast_unsigned(),
+        arguments.cast_unsigned(),
+    ) {
+        Some(status) => status,
+        None => trap(),
+    }
+}
+
+/// Takes the result of the current host call.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_host_call_take(vm: i32) -> i64 {
+    value(exs_core::host_call_take(
+        &mut memory(),
+        &mut RunnerHost,
+        address(vm),
+    ))
+}
+
+/// Delivers the runner's response at `pointer` to the waiting host call `call_id`; returns 1
+/// when the call was cancelled.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_host_call_resume(
+    vm: i32,
+    call_id: i64,
+    pointer: i32,
+    length: i32,
+) -> i32 {
+    match exs_core::host_call_resume(
+        &mut memory(),
+        address(vm),
+        call_id.cast_unsigned(),
+        address(pointer),
+        length.cast_unsigned(),
+    ) {
+        Some(status) => status,
+        None => trap(),
+    }
+}
+
+/// Cancels the task.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_task_cancel(vm: i32) {
+    exs_core::task_cancel(&mut memory(), address(vm));
+}
+
 /// Creates the MissingValue Error that `?` produces for None.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_missing_value(vm: i32) -> i64 {

@@ -7,6 +7,7 @@ use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, MODULE_METADATA_SECTION,
     RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, START_EXPORT_PREFIX,
 };
+use exs_abi::{CANCEL_EXPORT, RESUME_HOST_EXPORT};
 use exs_abi::{TYPE_BYTES, TYPE_STRING};
 use exs_layout::{GC_STATIC, ObjectKind, VmState};
 use exs_value::layout::type_kind;
@@ -22,10 +23,11 @@ use super::closures::{
 };
 use super::dispatch::Dispatch;
 use super::entry::EntryLayout;
-use super::function::{Context, FunctionCompiler, FunctionInfo, error};
+use super::function::{Context, FunctionCompiler, FunctionInfo, error, unsupported};
 use super::reachability::{
     bytes_literals, changes_case, object_key_lists, reachable_units, string_literals,
 };
+use super::resumable::{Resumable, StepEmitter, resumable_units};
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use super::units::{Unit, units};
@@ -157,7 +159,6 @@ pub(in crate::codegen) fn compile<'a>(
     let dispatch = Dispatch::build(module, traits, &types);
     let hir = HirModule::lower(module, traits);
     let lifted = lifted_functions(module, &hir);
-    drop(hir);
     let captured: HashSet<String> = lifted
         .iter()
         .flat_map(|closure| closure.captures.iter().cloned())
@@ -174,6 +175,15 @@ pub(in crate::codegen) fn compile<'a>(
     let all_units = units(module, &lifted)?;
     let declared = declared_types(module, &types);
     let reached = reachable_units(&all_units, &dispatch, &closure_keys, &types, &declared);
+    let reached_keys: HashSet<&str> = reached.iter().map(|unit| unit.key.as_str()).collect();
+    let resumable_keys = resumable_units(&hir, &dispatch, &reached_keys);
+    drop(hir);
+    if resumable_keys
+        .iter()
+        .any(|key| key.starts_with("$closure:"))
+    {
+        return Err(unsupported(span, "closures that suspend"));
+    }
     let functions: Vec<_> = reached.iter().map(|unit| unit.declaration).collect();
     let used = used_types(module, &types, &reached);
     let statics = StaticStrings::build(
@@ -248,6 +258,19 @@ pub(in crate::codegen) fn compile<'a>(
             },
         );
     }
+    let resumable = (!resumable_keys.is_empty())
+        .then(|| {
+            Resumable::build(
+                module,
+                traits,
+                &types,
+                &lifted,
+                &reached,
+                &resumable_keys,
+                |key| infos.get(key).map(|info| info.index),
+            )
+        })
+        .transpose()?;
     let reached_closures: Vec<&&Unit<'_, '_>> = reached
         .iter()
         .filter(|unit| unit.key.starts_with("$closure:"))
@@ -289,6 +312,19 @@ pub(in crate::codegen) fn compile<'a>(
         closure_dispatcher,
     };
     for unit in &reached {
+        if let Some(resumable) = &resumable
+            && resumable.steps.contains_key(&unit.key)
+        {
+            let type_index = program.type_index(vec![ValType::I32], vec![ValType::I32]);
+            program.function_types.push(type_index);
+            program.bodies.push(StepEmitter::compile(
+                &context,
+                resumable,
+                &unit.key,
+                unit.declaration,
+            )?);
+            continue;
+        }
         let arity = unit.captures.len() + unit.declaration.parameters.len();
         let type_index = program.type_index(vec![VALUE_TYPE; arity], vec![VALUE_TYPE]);
         program.function_types.push(type_index);
@@ -346,6 +382,20 @@ pub(in crate::codegen) fn compile<'a>(
             .push(closure_dispatcher_body(&layout, &cases, span)?);
         next += 1;
     }
+    // The run loop of a module with resumable units, which its entries and resume call.
+    let run = match &resumable {
+        Some(resumable) => {
+            let mut steps: Vec<_> = resumable.steps.values().copied().collect();
+            steps.sort_by_key(|step| step.step);
+            let indices: Vec<u32> = steps.iter().map(|step| step.index).collect();
+            let run_type = program.type_index(Vec::new(), vec![ValType::I32]);
+            program.function_types.push(run_type);
+            program.bodies.push(layout.run(&indices, span)?);
+            next += 1;
+            Some(next - 1)
+        }
+        None => None,
+    };
     let start_type = program.type_index(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
     let mut entries = String::new();
     for unit in &reached {
@@ -357,7 +407,17 @@ pub(in crate::codegen) fn compile<'a>(
             .get(&function.name.name)
             .ok_or_else(|| error("E0999", span, "missing v2 entry signature".to_owned()))?;
         program.function_types.push(start_type);
-        program.bodies.push(layout.start(info, function.span)?);
+        let step = resumable
+            .as_ref()
+            .and_then(|resumable| resumable.steps.get(&unit.key).copied());
+        match (step, run) {
+            (Some(step), Some(run)) => {
+                program
+                    .bodies
+                    .push(layout.resumable_start(info, step, run, function.span)?)
+            }
+            _ => program.bodies.push(layout.start(info, function.span)?),
+        }
         program
             .exports
             .push((format!("{START_EXPORT_PREFIX}{}", function.name.name), next));
@@ -384,6 +444,26 @@ pub(in crate::codegen) fn compile<'a>(
         program.bodies.push(body);
         program.exports.push((name.to_owned(), next));
         next += 1;
+    }
+    if let Some(run) = run {
+        let resume_type = program.type_index(
+            vec![ValType::I64, ValType::I32, ValType::I32],
+            vec![ValType::I32],
+        );
+        let cancel_type = program.type_index(Vec::new(), Vec::new());
+        for (name, type_index, body) in [
+            (
+                RESUME_HOST_EXPORT,
+                resume_type,
+                layout.resume_host(run, span)?,
+            ),
+            (CANCEL_EXPORT, cancel_type, layout.cancel(span)?),
+        ] {
+            program.function_types.push(type_index);
+            program.bodies.push(body);
+            program.exports.push((name.to_owned(), next));
+            next += 1;
+        }
     }
     let mut linker = Linker {
         program,

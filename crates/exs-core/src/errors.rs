@@ -40,6 +40,11 @@ pub fn error_object(raw: u64) -> Option<u32> {
     (raw >> KIND_SHIFT == u64::from(type_kind(TYPE_ERROR))).then_some(raw as u32)
 }
 
+/// Returns whether `raw` is a fatal Error.
+pub(crate) fn is_fatal(memory: &impl Memory, raw: u64) -> bool {
+    error_object(raw).is_some_and(|object| memory.load_u32(object + SEVERITY) == ERROR_FATAL)
+}
+
 /// The parts of one Error, as the CBOR encoder reads them.
 pub(crate) struct ErrorParts {
     /// Whether the Error is fatal.
@@ -125,6 +130,37 @@ fn error_from_strings(
     memory.store_u64(object + MESSAGE, message);
     memory.store_u64(object + DATA, data);
     memory.store_u64(object + CAUSE, ValueRef::NONE.raw());
+    ValueRef::from_parts(type_kind(TYPE_ERROR), 0, object).map(ValueRef::raw)
+}
+
+/// Creates one Error from all its parts, as the runner's codec carries them: `trace` is the
+/// address of a Bytes object of trace entries innermost first, or 0.
+///
+/// Every value and the trace must be rooted by the caller.
+pub(crate) fn error_from_parts(
+    memory: &mut impl Memory,
+    vm: u32,
+    parts: &ErrorParts,
+    trace: u32,
+) -> Option<u64> {
+    let object = allocate(
+        memory,
+        vm,
+        size_of::<ErrorObject>() as u32,
+        ObjectKind::Error,
+    )?;
+    let severity = if parts.fatal {
+        ERROR_FATAL
+    } else {
+        ERROR_RECOVERABLE
+    };
+    memory.store_u32(object + SEVERITY, severity);
+    memory.store_u32(object + ORIGIN, parts.origin);
+    memory.store_u32(object + TRACE, trace);
+    memory.store_u64(object + KIND, parts.kind);
+    memory.store_u64(object + MESSAGE, parts.message);
+    memory.store_u64(object + DATA, parts.data);
+    memory.store_u64(object + CAUSE, parts.cause);
     ValueRef::from_parts(type_kind(TYPE_ERROR), 0, object).map(ValueRef::raw)
 }
 

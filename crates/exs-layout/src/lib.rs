@@ -39,7 +39,7 @@ pub use size_class::{CLASS_COUNT, MAX_CLASS_SIZE, SIZE_CLASSES, class_for_size};
 pub use statics::StaticFunction;
 pub use trace::{TraceLayout, ValueSlots, trace_layout};
 pub use vm::{
-    BoundaryState, ErrorState, HeapState, ProgramState, RootRange, RootStack, RootState, TypeEntry,
-    VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState,
+    BoundaryState, ErrorState, HeapState, ProgramState, RootRange, RootStack, RootState, TaskState,
+    TypeEntry, VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState,
 };
 pub use wire::{WireContract, WireEnum, WireField, WireObject, WireVariant};

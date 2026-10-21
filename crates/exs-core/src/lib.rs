@@ -36,6 +36,7 @@ mod ranges;
 mod render;
 mod shapes;
 mod strings;
+mod tasks;
 mod typed;
 mod values;
 mod vm;
@@ -72,6 +73,10 @@ pub use objects::{object_lookup, object_with_shape};
 pub use ranges::{RANGE_DONE, RANGE_FALLBACK, range_begin, range_finish, range_step};
 pub use shapes::shape_for;
 pub use strings::{concat, format, string_object};
+pub use tasks::{
+    Host, frame_call, frame_return, frame_start, host_call_resume, host_call_start, host_call_take,
+    take_completed, task_cancel,
+};
 pub use values::{compare, compare_value, equal, ordering_test};
 pub use vm::{
     collection_count, set_case_tables, set_heap_flags, set_program_types, set_root_ranges,

@@ -212,6 +212,10 @@ impl Collector<'_> {
                 }
                 Expression::Variable(identifier) => self.variant(&identifier.name),
                 Expression::Call { callee, .. } => self.variant(&callee.name),
+                Expression::HostStream { .. } => self.name("HostStream"),
+                Expression::HostTime { operation, .. } => {
+                    self.name(super::reachability::host_time_target(*operation).1);
+                }
                 Expression::IsType {
                     type_annotation, ..
                 } => self.annotation(Some(type_annotation)),
