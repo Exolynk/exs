@@ -227,34 +227,44 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         self.instruction(Instruction::I32Const(self.context.vm.cast_signed()));
     }
 
+    /// Pushes 1 when the `ValueRef` in `local` satisfies `contract`, else 0, like v1.
+    ///
+    /// Nominal Object and enum types are tested through the type id in the reference's extra
+    /// bits. Like v1, `List<T>` element types are not checked.
+    pub(super) fn contract_test(
+        &mut self,
+        local: u32,
+        contract: &TypeContract,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.instruction(Instruction::LocalGet(local));
+        immediate::type_mask_test(&mut self.function, contract.builtin_mask);
+        for type_id in &contract.nominal_type_ids {
+            self.instruction(Instruction::LocalGet(local));
+            self.type_tag_test(*type_id, span)?;
+            self.instruction(Instruction::I32Or);
+        }
+        for identity in &contract.enum_type_ids {
+            let type_id = self.enum_type_id(identity, span)?;
+            self.instruction(Instruction::LocalGet(local));
+            self.type_tag_test(type_id, span)?;
+            self.instruction(Instruction::I32Or);
+        }
+        Ok(())
+    }
+
     /// Returns from the function with the declared-type TypeError unless the `ValueRef` in
     /// `local` satisfies `contract`, like v1.
-    ///
-    /// Nominal Object types are tested through the type id in the reference's extra bits.
     pub(super) fn check_contract(
         &mut self,
         local: u32,
         contract: &TypeContract,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if !contract.enum_type_ids.is_empty() || contract.list_item.is_some() {
-            return Err(unsupported(span, "enum and List element type contracts"));
-        }
         if contract.builtin_mask == exs_abi::TYPE_ANY {
             return Ok(());
         }
-        self.instruction(Instruction::LocalGet(local));
-        immediate::type_mask_test(&mut self.function, contract.builtin_mask);
-        for type_id in &contract.nominal_type_ids {
-            self.instruction(Instruction::LocalGet(local));
-            if !immediate::object_type_test(&mut self.function, *type_id) {
-                return Err(unsupported(
-                    span,
-                    "contracts of more than 65534 nominal types",
-                ));
-            }
-            self.instruction(Instruction::I32Or);
-        }
+        self.contract_test(local, contract, span)?;
         self.instruction(Instruction::I32Eqz);
         self.instruction(Instruction::If(BlockType::Empty));
         self.return_type_mismatch(local, span)?;

@@ -12,6 +12,7 @@ use exs_value::{Immediate, ValueRef};
 
 use crate::allocator::allocate;
 use crate::bytes::{bytes_len, bytes_object};
+use crate::enums::{enum_object, names};
 use crate::errors::recoverable;
 use crate::lists::{list_add, list_object};
 use crate::memory::Memory;
@@ -142,6 +143,13 @@ enum Part {
     Text(&'static str),
     /// The default rendering `Bytes(n)` of Bytes with `n` octets.
     Bytes(u32),
+    /// The default rendering `identity::Variant` of an enum, from these two Strings.
+    Enum {
+        /// The enum's identity String.
+        identity: u32,
+        /// The variant-name String.
+        name: u32,
+    },
 }
 
 /// A scalar value that renders as text.
@@ -250,11 +258,19 @@ fn part(memory: &impl Memory, raw: u64) -> Option<Part> {
 /// Returns how one value renders in a formatted string: like a `+` operand where possible,
 /// otherwise with its default text.
 #[inline(always)]
-fn default_part(memory: &impl Memory, raw: u64) -> Option<Part> {
+fn default_part(memory: &impl Memory, vm: u32, raw: u64) -> Option<Part> {
+    if let Some(part) = part(memory, raw) {
+        return Some(part);
+    }
     if let Some(object) = bytes_object(raw) {
         return Some(Part::Bytes(bytes_len(memory, object)));
     }
-    Some(part(memory, raw).unwrap_or(Part::Text(default_text(raw))))
+    if let Some((identity, name)) =
+        enum_object(memory, raw).and_then(|object| names(memory, vm, object))
+    {
+        return Some(Part::Enum { identity, name });
+    }
+    Some(Part::Text(default_text(raw)))
 }
 
 /// Returns the byte and character length of one part.
@@ -270,6 +286,10 @@ fn part_size(memory: &impl Memory, part: Part) -> (u32, u32) {
             let len = 7 + int_len(i64::from(len));
             (len, len)
         }
+        Part::Enum { identity, name } => (
+            byte_len(memory, identity) + 2 + byte_len(memory, name),
+            char_count(memory, identity) + 2 + char_count(memory, name),
+        ),
     }
 }
 
@@ -282,8 +302,9 @@ pub fn format(memory: &mut impl Memory, vm: u32, slots: u32, count: u32) -> Opti
     if let Some((len, chars)) = measure(memory, slots, count, part) {
         return join(memory, vm, slots, count, len, chars, part);
     }
-    let (len, chars) = measure(memory, slots, count, default_part)?;
-    join(memory, vm, slots, count, len, chars, default_part)
+    let render = |memory: &_, raw| default_part(memory, vm, raw);
+    let (len, chars) = measure(memory, slots, count, render)?;
+    join(memory, vm, slots, count, len, chars, render)
 }
 
 /// Returns the byte and character length of `slots[0..count]` rendered by `render`, or `None`
@@ -398,6 +419,16 @@ fn join<M: Memory>(
             }
             Part::Scalar(scalar) => position = scalar.write(memory, position),
             Part::Text(text) => position = write_bytes(memory, position, text.as_bytes()),
+            Part::Enum { identity, name } => {
+                for (index, text) in [identity, name].into_iter().enumerate() {
+                    if index > 0 {
+                        position = write_bytes(memory, position, b"::");
+                    }
+                    let text_len = byte_len(memory, text);
+                    memory.copy(position, text + DATA, text_len);
+                    position += text_len;
+                }
+            }
             Part::Bytes(len) => {
                 let mut digits = [0_u8; 20];
                 position = write_bytes(memory, position, b"Bytes(");

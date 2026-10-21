@@ -651,6 +651,34 @@ data costs every script.
   such programs pay about one more data block (a minimal script: 20,085 → 40,275 fuel).
 - `runtime_values` on v2: 43 of 96, still without a single differing result.
 
+## 12m. Phase 3c-1 results
+
+- **Enums** are `EnumObject`s (type id, variant index, payload slots) whose references carry
+  the enum's type tag like typed Objects. The type table's `TypeEntry` gained the enum's
+  identity String; for enums `field_count` and `field_names` hold the variants in declaration
+  order. Unit variants, payload constructors (as calls and static calls) check their payload
+  contracts in source order like v1, then call one core function.
+- **`match`** validates its arms with v1's `MatchArms` in source order. A variant arm tests
+  the reference's tag inline and, only on a hit, the variant index; bindings read payload
+  slots after a field-count guard, which binds v1's MatchError when the value lacks the field.
+  Unmatched values return the MatchError at the `match`'s position.
+- **Contracts and `is`** test built-in kinds by mask and nominal and enum types by tag. Like
+  v1, `List<T>` only checks the List, not its elements; this alone made most runner tests
+  compile on v2.
+- **Ordering:** `compare` returns `std::Ordering` values (type 0), and `<`, `<=`, `>`, `>=`
+  on values without an order return v1's TypeError with `Ordering::Unordered` as its data
+  instead of trapping. Enums render as `identity::Variant`, clone with their payloads, and
+  travel as CBOR tag 60005 in both directions. Inputs of identities or variants the program
+  does not declare trap as unsupported until host enums arrive (phase 5).
+- **Fuel:** unchanged within ±21 for scalar loops. The extra enum case of rendering costs about
+  4 fuel per formatted String (format_loop 1,629,943 → 1,633,922) and about 30 per Object
+  operand of `+` (concat_100_objects 581,404 → 584,585). The template's data is 14,542 bytes.
+- `runtime_values` on v2: 57 of 96 (was 43). One newly compiling test exposes a difference
+  from phase 2c: v1 lists the fields of a typed Object in assignment order
+  (`P { z: 3, x: 1 }` has keys `z, x`), while v2 always uses declaration order, in `keys`,
+  `entries` and CBOR. The other new failures are known traps: user `impl` and trait dispatch
+  (3d), iterating non-Lists, Error inputs, and Range bounds outside `i32`.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.

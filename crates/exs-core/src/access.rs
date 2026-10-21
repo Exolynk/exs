@@ -72,6 +72,8 @@ enum KeyOwner {
     Untyped(u32),
     /// The extra keys of the typed Object at this address.
     Extra(u32),
+    /// An enum, an Object without keys.
+    Enum,
 }
 
 /// Classifies an Object receiver for the key `name`, or returns `None` for other receivers.
@@ -81,6 +83,9 @@ fn key_owner(memory: &impl Memory, vm: u32, receiver: u64, name: u64) -> Option<
             Some(slot) => KeyOwner::Field(slot),
             None => KeyOwner::Extra(object),
         });
+    }
+    if crate::enums::enum_object(memory, receiver).is_some() {
+        return Some(KeyOwner::Enum);
     }
     untyped_object(memory, receiver).map(KeyOwner::Untyped)
 }
@@ -115,6 +120,7 @@ pub fn index_get(memory: &mut impl Memory, vm: u32, receiver: u64, index: u64) -
             value => value,
         },
         KeyOwner::Untyped(object) => object_get(memory, object, name),
+        KeyOwner::Enum => ValueRef::NONE.raw(),
         KeyOwner::Extra(typed) => match extra(memory, typed) {
             0 => ValueRef::NONE.raw(),
             keys => object_get(memory, keys, name),
@@ -166,6 +172,8 @@ pub fn index_set(
             return Some(value);
         }
         KeyOwner::Untyped(object) => object,
+        // v1 stores keys on enums that only Object methods can see again; v2 refuses that.
+        KeyOwner::Enum => return None,
         KeyOwner::Extra(typed) => match extra(memory, typed) {
             0 => {
                 let created = empty_object(memory, vm, 0)?;

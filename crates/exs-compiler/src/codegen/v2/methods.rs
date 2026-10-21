@@ -55,6 +55,7 @@ const fn is_supported(method: BuiltinMethod) -> bool {
             | BuiltinMethod::Data
             | BuiltinMethod::Cause
             | BuiltinMethod::Clone
+            | BuiltinMethod::Compare
             | BuiltinMethod::Slice
             | BuiltinMethod::Contains
             | BuiltinMethod::StartsWith
@@ -168,6 +169,10 @@ impl<'a> FunctionCompiler<'a, '_> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let Some(function) = StaticFunction::from_path(&type_name.name, &method.name) else {
+            let key = format!("{}::{}", type_name.name, method.name);
+            if let Some(variant) = self.context.types.enum_variant(&key) {
+                return self.compile_enum_variant(variant, arguments, span);
+            }
             return Err(unsupported(span, "static method calls"));
         };
         if function.arity() != arguments.len() {

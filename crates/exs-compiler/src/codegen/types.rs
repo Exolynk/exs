@@ -272,6 +272,8 @@ pub(super) struct EnumVariant {
     pub(super) type_identity: String,
     /// Source-visible variant name.
     pub(super) name: String,
+    /// Position of the variant in its enum declaration.
+    pub(super) index: u32,
     /// Ordered payload contracts.
     pub(super) fields: Vec<TypeContract>,
     /// Source-visible payload names aligned with `fields`.
@@ -588,6 +590,11 @@ impl TypeRegistry {
         self.types.values()
     }
 
+    /// Returns every enum variant in no particular order.
+    pub(super) fn enum_variants(&self) -> impl Iterator<Item = &EnumVariant> {
+        self.enum_variants.values()
+    }
+
     /// Resolves one canonical enum constructor name.
     pub(super) fn enum_variant(&self, name: &str) -> Option<&EnumVariant> {
         self.enum_variants.get(name).or_else(|| {
@@ -630,7 +637,7 @@ impl TypeRegistry {
                 ))
             })?;
         let type_identity = enum_identity(declaration);
-        for variant in &declaration.variants {
+        for (index, variant) in (0_u32..).zip(&declaration.variants) {
             let fields = variant
                 .fields
                 .iter()
@@ -647,6 +654,7 @@ impl TypeRegistry {
                     type_id,
                     type_identity: type_identity.clone(),
                     name: variant.name.name.clone(),
+                    index,
                     fields,
                     field_names,
                 },
@@ -658,13 +666,14 @@ impl TypeRegistry {
     /// Registers every compiler-owned standard enum constructor.
     fn register_standard_enums(&mut self) {
         for descriptor in standard::enums() {
-            for variant in descriptor.variants {
+            for (index, variant) in (0_u32..).zip(descriptor.variants) {
                 self.enum_variants.insert(
                     format!("{}::{variant}", descriptor.name),
                     EnumVariant {
                         type_id: STANDARD_ORDERING_TYPE_ID,
                         type_identity: STANDARD_ORDERING_TYPE_IDENTITY.to_owned(),
                         name: (*variant).to_owned(),
+                        index,
                         fields: Vec::new(),
                         field_names: Vec::new(),
                     },

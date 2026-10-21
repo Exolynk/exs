@@ -127,10 +127,12 @@ pub struct ProgramState {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TypeEntry {
-    /// Number of declared fields, 0 for enums.
+    /// Number of declared fields of an Object type, or of variants of an enum.
     pub field_count: u32,
-    /// Address of `field_count` raw `ValueRef`s of static field-name Strings.
+    /// Address of `field_count` raw `ValueRef`s of static field-name or variant-name Strings.
     pub field_names: u32,
+    /// Raw `ValueRef` of the static identity String of an enum, 0 for Object types.
+    pub identity: u64,
 }
 
 /// The block of execution state at a linker-assigned address.

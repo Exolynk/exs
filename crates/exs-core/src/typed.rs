@@ -66,6 +66,7 @@ pub(crate) fn type_entry(memory: &impl Memory, vm: u32, type_id: u32) -> Option<
     Some(TypeEntry {
         field_count: memory.load_u32(entry + offset_of!(TypeEntry, field_count) as u32),
         field_names: memory.load_u32(entry + offset_of!(TypeEntry, field_names) as u32),
+        identity: memory.load_u64(entry + offset_of!(TypeEntry, identity) as u32),
     })
 }
 

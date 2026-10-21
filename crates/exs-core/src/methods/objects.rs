@@ -28,6 +28,8 @@ enum Receiver {
     Typed(u32),
     /// An untyped Object at this address.
     Untyped(u32),
+    /// An enum, an Object without keys.
+    Enum,
 }
 
 /// Classifies an Object receiver.
@@ -35,11 +37,13 @@ fn object(memory: &impl Memory, raw: u64) -> Option<Receiver> {
     typed_object(memory, raw)
         .map(Receiver::Typed)
         .or_else(|| untyped_object(memory, raw).map(Receiver::Untyped))
+        .or_else(|| crate::enums::enum_object(memory, raw).map(|_| Receiver::Enum))
 }
 
 /// Returns the number of entries of `receiver`.
 fn entry_count(memory: &impl Memory, vm: u32, receiver: Receiver) -> u32 {
     match receiver {
+        Receiver::Enum => 0,
         Receiver::Untyped(object) => key_count(memory, shape(memory, object)),
         Receiver::Typed(object) => {
             let declared = declared_count(memory, vm, object);
@@ -64,6 +68,7 @@ fn declared_count(memory: &impl Memory, vm: u32, object: u32) -> u32 {
 /// Returns the key and value of entry `index` of `receiver`.
 fn entry(memory: &impl Memory, vm: u32, receiver: Receiver, index: u32) -> (u64, u64) {
     match receiver {
+        Receiver::Enum => (0, 0),
         Receiver::Untyped(object) => (
             key(memory, shape(memory, object), index),
             memory.load_u64(value_address(memory, object, index)),
@@ -172,6 +177,7 @@ pub(crate) fn delete(memory: &mut impl Memory, vm: u32, raw: u64, name_raw: u64)
         raw,
         "delete requires an Object receiver"
     )) {
+        Receiver::Enum => None,
         Receiver::Untyped(object) => object_remove(memory, vm, object, name)?,
         Receiver::Typed(object) => {
             match crate::typed::field_address(memory, vm, object, name_raw) {
@@ -193,6 +199,7 @@ pub(crate) fn delete(memory: &mut impl Memory, vm: u32, raw: u64, name_raw: u64)
 /// Removes every entry of an Object receiver.
 pub(crate) fn clear(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<()> {
     match object(memory, raw)? {
+        Receiver::Enum => Some(()),
         Receiver::Untyped(object) => object_clear(memory, vm, object),
         Receiver::Typed(object) => {
             let declared = slot_count(memory, object);

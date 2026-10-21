@@ -222,6 +222,7 @@ pub fn call_builtin(
         BuiltinMethod::Replace => strings::replace(memory, vm, receiver, first, second),
         BuiltinMethod::Split => strings::split(memory, vm, receiver, first),
         BuiltinMethod::Clone => deep_clone(memory, vm, receiver),
+        BuiltinMethod::Compare => crate::values::compare_method(memory, vm, receiver, first),
         BuiltinMethod::ToList => bytes::to_list(memory, vm, receiver),
         BuiltinMethod::Concat => bytes::concat(memory, vm, receiver, first),
         BuiltinMethod::DecodeUtf8 => bytes::decode_utf8(memory, vm, receiver),

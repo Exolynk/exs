@@ -195,9 +195,10 @@ pub extern "C" fn __exs_core_negate(vm: i32, operand: i64) -> i64 {
     ))
 }
 
-/// Compares two numeric values with `<` (0), `<=` (1), `>` (2) or `>=` (3).
+/// Compares two values with `<` (0), `<=` (1), `>` (2) or `>=` (3) and returns the Bool, or
+/// the TypeError for values without an order.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_compare(operator: i32, left: i64, right: i64) -> i32 {
+pub extern "C" fn __exs_core_compare_value(vm: i32, operator: i32, left: i64, right: i64) -> i64 {
     let operator = match operator {
         0 => Ordering::Less,
         1 => Ordering::LessOrEqual,
@@ -205,15 +206,52 @@ pub extern "C" fn __exs_core_compare(operator: i32, left: i64, right: i64) -> i3
         3 => Ordering::GreaterOrEqual,
         _ => trap(),
     };
-    match exs_core::compare(
-        &memory(),
+    value(exs_core::compare_value(
+        &mut memory(),
+        address(vm),
         operator,
         left.cast_unsigned(),
         right.cast_unsigned(),
-    ) {
-        Ok(result) => i32::from(result),
-        Err(_) => trap(),
-    }
+    ))
+}
+
+/// Creates an enum of `type_id` and `variant` holding the `count` rooted values at `slots`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_enum_new(
+    vm: i32,
+    type_id: i32,
+    variant: i32,
+    slots: i32,
+    count: i32,
+) -> i64 {
+    value(exs_core::enum_new(
+        &mut memory(),
+        address(vm),
+        type_id.cast_unsigned(),
+        variant.cast_unsigned(),
+        address(slots),
+        count.cast_unsigned(),
+    ))
+}
+
+/// Creates the MatchError for a payload field the matched enum `matched` lacks.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_enum_missing_field(vm: i32, matched: i64) -> i64 {
+    value(exs_core::missing_field(
+        &mut memory(),
+        address(vm),
+        matched.cast_unsigned(),
+    ))
+}
+
+/// Creates the MatchError of a `match` whose arms accept none of `matched`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_match_error(vm: i32, matched: i64) -> i64 {
+    value(exs_core::match_error(
+        &mut memory(),
+        address(vm),
+        matched.cast_unsigned(),
+    ))
 }
 
 /// Returns 1 when two values are equal by the language's equality.

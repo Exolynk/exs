@@ -20,6 +20,7 @@ mod allocator;
 mod bytes;
 mod cbor;
 mod collector;
+mod enums;
 mod errors;
 mod execution;
 mod lists;
@@ -43,6 +44,7 @@ pub use allocator::{allocate, init_heap};
 pub use bytes::bytes_object;
 pub use cbor::{CborError, arity_error, decode_inputs, encode_result};
 pub use collector::collect;
+pub use enums::{enum_new, match_error, missing_field};
 pub use errors::{
     condition_error, error_new, error_object, method_arity_error, method_not_found, missing_value,
     not_error, type_mismatch, wire_mismatch,
@@ -62,7 +64,7 @@ pub use numbers::{
 pub use objects::{object_lookup, object_with_shape};
 pub use shapes::shape_for;
 pub use strings::{concat, format, string_object};
-pub use values::{compare, equal};
+pub use values::{compare, compare_value, equal};
 pub use vm::{
     collection_count, set_case_tables, set_heap_flags, set_program_types, set_root_ranges,
 };

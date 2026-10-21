@@ -562,3 +562,66 @@ fn matches_v1_for_case_mapping() {
     let with = run("fn main() { ret \"Hi\".to_lowercase(); }", Backend::V2, &[]).1;
     println!("v2 fuel without case tables {without}, with {with}");
 }
+
+/// Constructs, matches, tests, renders and orders enums like v1, including their Errors.
+#[test]
+fn matches_v1_for_enums() {
+    let color =
+        "enum Color { Rgb(red: Int, green: Int, blue: Int), Gray(level: Int), Transparent, }";
+    let programs = [
+        "fn main() { ret [Color::Rgb(1, 2, 3), Color::Transparent, Color::Gray(7)]; }",
+        "fn main() { let color = Color::Rgb(1, 2, 3); ret [color == Color::Rgb(1, 2, 3), color == Color::Rgb(1, 2, 4), Color::Transparent == Color::Transparent, color.clone(), f\"{color} {Color::Transparent}\", color.to_string()]; }",
+        "fn name(color: Color) -> String { ret match color { Color::Rgb(r, g, b) => f\"{r}-{g}-{b}\", Color::Gray(level) => f\"gray {level}\", Color::Transparent => \"none\", }; } fn main() { ret [name(Color::Rgb(1, 2, 3)), name(Color::Gray(4)), name(Color::Transparent)]; }",
+        "fn main() { let total = 0; for color in [Color::Gray(2), Color::Transparent, Color::Gray(5)] { total = total + match color { Color::Gray(level) => level, _ => 100, }; } ret total; }",
+        "fn kind(value) { ret match value { Color::Transparent => 0, Color::Gray(level) => { let x = level; }, Color::Rgb(r, g, b) => r + g + b, }; } fn main() { ret [kind(Color::Transparent), kind(Color::Gray(1)), kind(Color::Rgb(1, 2, 3))]; }",
+        "fn kind(value) -> Int { ret match value { Color::Transparent => 0, Color::Gray(level) => level, Color::Rgb(r, g, b) => r, }; } fn main() { ret kind(1); }",
+        "fn kind(value) { ret match value { Color::Transparent => 0, Color::Gray(level) => level, Color::Rgb(r, g, b) => r, }; } fn main() { ret [kind(\"x\")]; }",
+        "fn main() { let c = Color::Gray(1); ret [c is Color, 1 is Color, c is Int, c is Int | Color, Color::Transparent is Color, None is Color]; }",
+        "fn main() { ret Color::Gray(\"x\"); }",
+        "fn check(value: Color) -> Int { ret 1; } fn main() { ret [check(Color::Transparent), check(1)]; }",
+        "fn main() { let o = Color::Gray(1).compare(Color::Gray(2)); ret [o, (1).compare(2), (2).compare(1), \"b\".compare(\"a\"), (1).compare(1.0), [1].compare([2]), f\"{(1).compare(2)}\"]; }",
+        "fn main() { ret [match (1).compare(2) { Ordering::Less => \"lt\", Ordering::Equal => \"eq\", Ordering::Greater => \"gt\", Ordering::Unordered => \"un\", }, std::Ordering::Less == Ordering::Less]; }",
+        "fn main() { ret [1 < \"a\", [1] <= [1], [1] < [2], 0.0 / 0.0 > 1]; }",
+        "fn main() { let ordering = Ordering::Greater; ret [ordering, ordering is Ordering, Ordering::Unordered]; }",
+    ];
+    for program in programs {
+        compare(&format!("{color} {program}"), &[]);
+    }
+    let input = ExsValue::Enum {
+        type_id: "test.exs::Color".to_owned(),
+        variant: "Rgb".to_owned(),
+        fields: vec![ExsValue::Int(1), ExsValue::Int(2), ExsValue::Int(3)],
+    };
+    compare(
+        &format!(
+            "{color} fn main(value: Color) {{ ret [value, match value {{ Color::Rgb(r, g, b) => r + g + b, _ => 0, }}]; }}"
+        ),
+        &[input],
+    );
+}
+
+/// Checks `List<T>` contracts like v1, which only tests the List itself.
+#[test]
+fn matches_v1_for_list_contracts() {
+    let programs = [
+        "fn first(items: List<Int>) -> Int { ret items[0]; } fn main() { ret [first([1, 2]), first([\"a\"])]; }",
+        "fn wrap(value) -> List<String> { ret [value]; } fn main() { ret [wrap(1), wrap(\"a\")]; }",
+        "fn main() { ret [[1] is List<Int>, [\"a\"] is List<Int>, 1 is List<Int>]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
+/// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
+/// before host enums arrive.
+#[test]
+#[should_panic(expected = "V2 execution failed")]
+fn rejects_enum_inputs_of_unknown_identities() {
+    let input = ExsValue::Enum {
+        type_id: "host::Status".to_owned(),
+        variant: "Ready".to_owned(),
+        fields: vec![],
+    };
+    run("fn main(value) { ret value; }", Backend::V2, &[input]);
+}

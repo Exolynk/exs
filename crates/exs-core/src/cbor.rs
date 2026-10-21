@@ -2,12 +2,14 @@
 //!
 //! The runner passes the entry arguments as one CBOR array and expects one CBOR value back.
 //! This version handles None, Bool, Int, Float, String, Bytes, List and untyped Object values both
-//! ways, encodes typed Objects as maps of their declared fields followed by their extra keys
-//! and Errors as the codec's tagged seven-field map; other values are reported as unsupported.
+//! ways, enums of the program's types both ways as the codec's tagged arrays, encodes typed
+//! Objects as maps of their declared fields followed by their extra keys and Errors as the
+//! codec's tagged seven-field map; other values are reported as unsupported.
 
 use exs_value::{Immediate, ValueRef};
 
 use crate::bytes::{bytes_len, bytes_object, new_bytes};
+use crate::enums::{allocate_enum, enum_object, field_address as enum_field, field_count, names};
 use crate::errors::{error_object, error_parts, new_error};
 use crate::execution::{input, reserve_result};
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, push_unchecked};
@@ -52,6 +54,8 @@ const MAJOR_MAP: u8 = 5;
 const MAJOR_TAG: u8 = 6;
 /// CBOR tag of an ExS Error, as the runner's codec defines it.
 const ERROR_TAG: u64 = 60_001;
+/// CBOR tag of an ExS enum, as the runner's codec defines it.
+const ENUM_TAG: u64 = 60_005;
 /// CBOR major type of simple values and floats.
 const MAJOR_SIMPLE: u8 = 7;
 /// Encoded CBOR `false`.
@@ -255,6 +259,12 @@ fn decode_value(
     match initial >> 5 {
         MAJOR_ARRAY => return decode_list(memory, vm, reader, initial & 0x1f, depth),
         MAJOR_MAP => return decode_object(memory, vm, reader, initial & 0x1f, depth),
+        MAJOR_TAG => {
+            if reader.argument(memory, initial & 0x1f)? != ENUM_TAG {
+                return Err(CborError::Unsupported);
+            }
+            return decode_enum(memory, vm, reader, depth);
+        }
         _ => {}
     }
     Ok(match reader.scalar(memory, initial)? {
@@ -304,6 +314,83 @@ fn decode_list(
     }
     Vm(vm).pop_roots(memory, root);
     decoded
+}
+
+/// Reads one text string item and returns the address and length of its bytes.
+fn text_item(memory: &impl Memory, reader: &mut Reader) -> Result<(u32, u32), CborError> {
+    let initial = reader.byte(memory)?;
+    match reader.scalar(memory, initial)? {
+        Scalar::Text { start, len, .. } => Ok((start, len)),
+        _ => Err(CborError::Malformed),
+    }
+}
+
+/// Decodes a tagged `[identity, variant, fields]` enum of a type the program declares.
+///
+/// Enums of identities or variants the program does not know cannot be represented yet.
+fn decode_enum(
+    memory: &mut impl Memory,
+    vm: u32,
+    reader: &mut Reader,
+    depth: u32,
+) -> Result<u64, CborError> {
+    if depth >= MAX_DEPTH {
+        return Err(CborError::Unsupported);
+    }
+    let initial = reader.byte(memory)?;
+    if initial >> 5 != MAJOR_ARRAY || reader.argument(memory, initial & 0x1f)? != 3 {
+        return Err(CborError::Malformed);
+    }
+    let identity = text_item(memory, reader)?;
+    let variant = text_item(memory, reader)?;
+    let (type_id, index) =
+        resolve_enum(memory, vm, identity, variant).ok_or(CborError::Unsupported)?;
+    let initial = reader.byte(memory)?;
+    if initial >> 5 != MAJOR_ARRAY {
+        return Err(CborError::Malformed);
+    }
+    let count = reader.count(memory, initial & 0x1f)?;
+    let raw = allocate_enum(memory, vm, type_id, index, count).ok_or(CborError::OutOfMemory)?;
+    let root = Vm(vm)
+        .push_root(memory, raw)
+        .ok_or(CborError::OutOfMemory)?;
+    let mut decoded = Ok(raw);
+    for field in 0..count {
+        match decode_value(memory, vm, reader, depth + 1) {
+            Ok(value) => memory.store_u64(enum_field(raw as u32, field), value),
+            Err(error) => {
+                decoded = Err(error);
+                break;
+            }
+        }
+    }
+    Vm(vm).pop_roots(memory, root);
+    decoded
+}
+
+/// Finds the enum type whose identity and the variant whose name equal the text at the
+/// `(address, length)` ranges, returning the type id and variant index.
+fn resolve_enum(
+    memory: &impl Memory,
+    vm: u32,
+    identity: (u32, u32),
+    variant: (u32, u32),
+) -> Option<(u32, u32)> {
+    let same = |object: u32, text: (u32, u32)| {
+        crate::strings::text(memory, object).as_bytes() == memory.bytes(text.0, text.1)
+    };
+    let count = Vm(vm).program_type_count(memory);
+    (0..count).find_map(|type_id| {
+        let entry = type_entry(memory, vm, type_id)?;
+        let name = string_object(entry.identity)?;
+        if !same(name, identity) {
+            return None;
+        }
+        (0..entry.field_count).find_map(|index| {
+            let candidate = string_object(memory.load_u64(entry.field_names + index * 8))?;
+            same(candidate, variant).then_some((type_id, index))
+        })
+    })
 }
 
 /// Decodes the entries of one map with additional information `info` into a new untyped
@@ -506,6 +593,9 @@ impl Sink {
         if let Some(object) = error_object(raw) {
             return self.error(memory, vm, object, depth);
         }
+        if let Some(object) = enum_object(memory, raw) {
+            return self.enumeration(memory, vm, object, depth);
+        }
         if let Some(object) = untyped_object(memory, raw) {
             if depth >= MAX_DEPTH {
                 return Err(CborError::Unsupported);
@@ -608,6 +698,31 @@ impl Sink {
         }
         if extra != 0 {
             self.entries(memory, vm, extra, depth)?;
+        }
+        Ok(())
+    }
+
+    /// Appends the enum at `object` as the codec's tagged `[identity, variant, fields]` array.
+    fn enumeration(
+        &mut self,
+        memory: &mut impl Memory,
+        vm: u32,
+        object: u32,
+        depth: u32,
+    ) -> Result<(), CborError> {
+        if depth >= MAX_DEPTH {
+            return Err(CborError::Unsupported);
+        }
+        let (identity, name) = names(memory, vm, object).ok_or(CborError::Unsupported)?;
+        self.head(memory, MAJOR_TAG, ENUM_TAG)?;
+        self.head(memory, MAJOR_ARRAY, 3)?;
+        self.string(memory, identity)?;
+        self.string(memory, name)?;
+        let count = field_count(memory, object);
+        self.head(memory, MAJOR_ARRAY, u64::from(count))?;
+        for index in 0..count {
+            let value = memory.load_u64(enum_field(object, index));
+            self.value(memory, vm, value, depth + 1)?;
         }
         Ok(())
     }

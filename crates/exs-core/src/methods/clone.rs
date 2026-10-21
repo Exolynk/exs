@@ -4,6 +4,9 @@
 //! A hash table from source to copy lives in a List rooted on the root stack, so every copy is
 //! reachable while its contents are cloned.
 
+use crate::enums::{
+    allocate_enum, enum_object, enum_type, field_address as enum_field, field_count, variant,
+};
 use crate::errors::{copy_error, error_object, error_value_fields};
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, set_len};
 use crate::memory::Memory;
@@ -152,6 +155,26 @@ impl Cloner {
             if keys != 0 {
                 let extra_copy = self.value(memory, vm, object_reference(keys)?)?;
                 set_extra(memory, copy_object, extra_copy as u32);
+            }
+            return Some(copy);
+        }
+        if let Some(object) = enum_object(memory, source) {
+            if let Some(copy) = self.existing(memory, source) {
+                return Some(copy);
+            }
+            let count = field_count(memory, object);
+            let copy = allocate_enum(
+                memory,
+                vm,
+                enum_type(memory, object),
+                variant(memory, object),
+                count,
+            )?;
+            self.register(memory, vm, source, copy)?;
+            for index in 0..count {
+                let item = memory.load_u64(enum_field(object, index));
+                let item = self.value(memory, vm, item)?;
+                memory.store_u64(enum_field(copy as u32, index), item);
             }
             return Some(copy);
         }

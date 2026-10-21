@@ -43,8 +43,8 @@ impl<'a> FunctionCompiler<'a, '_> {
             }
             Expression::None(_) => immediate::push(&mut self.function, exs_value::ValueRef::NONE),
             Expression::Variable(identifier) => {
-                if self.context.types.enum_variant(&identifier.name).is_some() {
-                    return Err(unsupported(identifier.span, "enum values"));
+                if let Some(variant) = self.context.types.enum_variant(&identifier.name) {
+                    return self.compile_unit_variant(variant, identifier.span);
                 }
                 let local = self.lookup(&identifier.name).ok_or_else(|| {
                     error(
@@ -86,6 +86,12 @@ impl<'a> FunctionCompiler<'a, '_> {
                 }
             }
             Expression::Propagate { value, span } => self.compile_propagate(value, *span)?,
+            Expression::IsType {
+                value,
+                type_annotation,
+                span,
+            } => self.compile_is_type(value, type_annotation, *span)?,
+            Expression::Match { value, arms, span } => self.compile_match(value, arms, *span)?,
             Expression::Binary {
                 operator,
                 left,
@@ -273,12 +279,12 @@ impl<'a> FunctionCompiler<'a, '_> {
         };
         let comparison = |code: i32| {
             move |compiler: &mut Self| -> Result<(), CompileDiagnostics<'a>> {
+                compiler.set_position(span)?;
+                compiler.push_vm();
                 compiler.instruction(Instruction::I32Const(code));
                 compiler.instruction(Instruction::LocalGet(left));
                 compiler.instruction(Instruction::LocalGet(right));
-                compiler.core_call("__exs_core_compare", span)?;
-                immediate::bool_from_condition(&mut compiler.function);
-                Ok(())
+                compiler.core_call("__exs_core_compare_value", span)
             }
         };
         match operator {
@@ -365,6 +371,9 @@ impl<'a> FunctionCompiler<'a, '_> {
         arguments: &[Expression<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        if let Some(variant) = self.context.types.enum_variant(callee) {
+            return self.compile_enum_variant(variant, arguments, span);
+        }
         if self.lookup(callee).is_some() {
             return Err(unsupported(span, "calls of local bindings"));
         }
@@ -667,8 +676,6 @@ const FLOAT_VALUE: u64 = core::mem::offset_of!(exs_layout::FloatObject, value) a
 fn unsupported_expression(expression: &Expression<'_>) -> &'static str {
     match expression {
         Expression::Bytes(..) => "Bytes literals",
-        Expression::IsType { .. } => "`is` type tests",
-        Expression::Match { .. } => "`match` expressions",
         Expression::Closure { .. } => "closures",
         Expression::ParallelStatic { .. } | Expression::ParallelDynamic { .. } => {
             "parallel expressions"
