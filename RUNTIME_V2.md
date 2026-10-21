@@ -925,6 +925,50 @@ only 3 % below v1); phase 4d measures and reduces it.
 the eager helpers, Cells shared across suspensions, variadic closures, ArityErrors and
 contract failures inside closures.
 
+## 12v. Phase 4c results: `par`, the scheduler and cancellation
+
+- **Tasks:** every task is a heap `Task` object linked into the live tasks; runnable tasks
+  wait in a first-in, first-out run queue. The running task keeps its frame, host call, ready
+  host result and quantum in the VM's `TaskState`, whose references (frame, results, running
+  task, queue, live tasks) are one GC root range, and saves them into its object when it
+  stops. The core library schedules (`task_suspend`, `task_checkpoint`, `task_spawn`,
+  `parallel_wait`); the runner's task permits are taken for every `par` child and released
+  when it completes or the execution ends.
+- **`par`:** the parent creates its result List, starts one child task per closure with the
+  closure's Cells in the root frame and waits; each child stores its result at its index and
+  the last one wakes the parent. A dynamic `par` first returns v1's Errors for an operand
+  that is no List, an element that is no closure and a closure that takes arguments. Every
+  closure `par` starts runs as frames: the closures a static `par` lists, and every closure
+  of a program with a dynamic `par`. A fatal Error in any task ends every task and completes
+  the execution with it.
+- **Host calls:** a pending host call suspends only its task; other runnable tasks run
+  meanwhile and the runner polls every pending call, as with v1. A response for a call no
+  task waits for any more reports the cancellation.
+- **Traces:** frames record their trace entries, and switching tasks rebuilds the trace stack
+  from the running task's frames and those of the tasks it was started from. A child's root
+  frame has no entry, like v1's.
+- **Interleaving (approved semantic change):** a task switches at suspension points and at
+  scheduler checkpoints of resumable code, the back edges of loops and child calls, after
+  v1's quantum of 64. Synchronous code runs without interruption, while v1 makes every
+  function of a program with a closure resumable. Results of `par` stay in source order;
+  side effects of parallel tasks on shared state may interleave differently from v1.
+
+| Suite on v2 | after 4b | after 4c | remaining failures |
+|---|---:|---:|---|
+| `host_calls` | 29 / 31 | 31 / 31 | |
+| `closures_parallel` | 9 / 17 | 16 / 17 | a 2 MiB memory limit, which v2's initial memory exceeds (see below) |
+| `continuations`, `limits`, `fuel`, `contracts_and_errors` | all | all | |
+
+`reuses_parallel_child_frames_within_a_constrained_memory_budget` runs 20,000 `par` blocks
+under a 2 MiB memory limit. v2 fails before the program starts: the template's 1 MiB Rust
+stack, the 1 MiB root stack and the trace and heap pages exceed the limit. This is a memory
+layout question outside phase 4.
+
+`backend_v2.rs` compares static and dynamic `par` with host calls that suspend single tasks,
+nested `par`, `par` inside closures and loops of 300 `par` blocks, recoverable Errors of
+single tasks, their traces, v1's Errors for invalid dynamic operands, and fatal Errors that
+end every task.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.

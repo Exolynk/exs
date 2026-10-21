@@ -46,6 +46,8 @@ pub enum ObjectKind {
     Error = 13,
     /// The durable state of one resumable function invocation.
     Frame = 14,
+    /// One task of a resumable execution: a root task or a `par` child.
+    Task = 15,
 }
 
 impl ObjectKind {
@@ -68,6 +70,7 @@ impl ObjectKind {
             12 => Self::Closure,
             13 => Self::Error,
             14 => Self::Frame,
+            15 => Self::Task,
             _ => return None,
         })
     }

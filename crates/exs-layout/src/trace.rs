@@ -5,7 +5,7 @@ use core::mem::{offset_of, size_of};
 use crate::header::ObjectKind;
 use crate::objects::{
     BufferObject, CellObject, ClosureObject, EnumObject, ErrorObject, FrameObject, ListObject,
-    ObjectObject, ShapeObject, TypedObject,
+    ObjectObject, ShapeObject, TaskObject, TypedObject,
 };
 
 /// The `ValueRef` fields of one object kind.
@@ -71,6 +71,18 @@ const ERROR_VALUES: &[u32] = &[
 const ERROR_ADDRESSES: &[u32] = &[offset(offset_of!(ErrorObject, trace))];
 /// Address fields of Frames.
 const FRAME_ADDRESSES: &[u32] = &[offset(offset_of!(FrameObject, caller))];
+/// `ValueRef` fields of Tasks.
+const TASK_VALUES: &[u32] = &[
+    offset(offset_of!(TaskObject, ready)),
+    offset(offset_of!(TaskObject, group)),
+];
+/// Address fields of Tasks.
+const TASK_ADDRESSES: &[u32] = &[
+    offset(offset_of!(TaskObject, frame)),
+    offset(offset_of!(TaskObject, queue)),
+    offset(offset_of!(TaskObject, link)),
+    offset(offset_of!(TaskObject, parent)),
+];
 
 /// Returns where objects of `kind` store references.
 #[must_use]
@@ -139,6 +151,10 @@ pub const fn trace_layout(kind: ObjectKind) -> TraceLayout {
                 first: offset(size_of::<FrameObject>()),
             },
             addresses: FRAME_ADDRESSES,
+        },
+        ObjectKind::Task => TraceLayout {
+            values: ValueSlots::Fixed(TASK_VALUES),
+            addresses: TASK_ADDRESSES,
         },
     }
 }

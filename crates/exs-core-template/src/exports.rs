@@ -644,6 +644,18 @@ impl exs_core::Host for RunnerHost {
             )
         }
     }
+
+    fn acquire(&mut self) -> bool {
+        // SAFETY: the runner provides this import for every module.
+        unsafe { __runner_task_acquire() == 0 }
+    }
+
+    fn release(&mut self) {
+        // SAFETY: the runner provides this import for every module.
+        if unsafe { __runner_task_release() } != 0 {
+            trap();
+        }
+    }
 }
 
 /// Starts the task with the root frame of step `step` of function `function_id`, with
@@ -688,12 +700,16 @@ pub extern "C" fn __exs_core_frame_call(
 /// Completes the active frame at `frame` with `result` and returns the dispatch status.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_frame_return(vm: i32, frame: i32, result: i64) -> i32 {
-    exs_core::frame_return(
+    match exs_core::frame_return(
         &mut memory(),
+        &mut RunnerHost,
         address(vm),
         address(frame),
         result.cast_unsigned(),
-    )
+    ) {
+        Some(status) => status,
+        None => trap(),
+    }
 }
 
 /// Takes the result of the completed root frame.
@@ -748,10 +764,81 @@ pub extern "C" fn __exs_core_host_call_resume(
     }
 }
 
-/// Cancels the task.
+/// Cancels the execution and releases the permits of its `par` children.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_task_cancel(vm: i32) {
-    exs_core::task_cancel(&mut memory(), address(vm));
+    exs_core::task_cancel(&mut memory(), &mut RunnerHost, address(vm));
+}
+
+/// Suspends the running task for its pending host call and returns the dispatch status.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_task_suspend(vm: i32) -> i32 {
+    match exs_core::task_suspend(&mut memory(), address(vm)) {
+        Some(status) => status,
+        None => trap(),
+    }
+}
+
+/// Handles the running task's used-up quantum; returns 1 when it yielded.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_task_checkpoint(vm: i32) -> i32 {
+    match exs_core::task_checkpoint(&mut memory(), address(vm)) {
+        Some(yielded) => yielded,
+        None => trap(),
+    }
+}
+
+/// Creates the result List of a `par` expression with `count` tasks.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_parallel_new(vm: i32, count: i32) -> i64 {
+    value(exs_core::parallel_new(
+        &mut memory(),
+        address(vm),
+        count.cast_unsigned(),
+    ))
+}
+
+/// Starts the `par` child `index` of the result List `group` with a root frame of step
+/// `step` and `slots` empty slots, and returns the frame's address.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_task_spawn(
+    vm: i32,
+    group: i64,
+    index: i32,
+    step: i32,
+    slots: i32,
+) -> i32 {
+    match exs_core::task_spawn(
+        &mut memory(),
+        &mut RunnerHost,
+        address(vm),
+        group.cast_unsigned(),
+        index.cast_unsigned(),
+        step.cast_unsigned(),
+        slots.cast_unsigned(),
+    ) {
+        Some(frame) => frame.cast_signed(),
+        None => trap(),
+    }
+}
+
+/// Waits for the running task's `par` children and returns the dispatch status.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_parallel_wait(vm: i32) -> i32 {
+    match exs_core::parallel_wait(&mut memory(), address(vm)) {
+        Some(status) => status,
+        None => trap(),
+    }
+}
+
+/// Creates v1's TypeError for a `par` operand that is no List.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_parallel_list_error(vm: i32, operand: i64) -> i64 {
+    value(exs_core::parallel_list_error(
+        &mut memory(),
+        address(vm),
+        operand.cast_unsigned(),
+    ))
 }
 
 /// Creates the MissingValue Error that `?` produces for None.

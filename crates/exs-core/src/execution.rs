@@ -45,7 +45,10 @@ pub fn init_execution(
     // The task's references follow the root stack's range as the second scanned range.
     let task = vm + vm_offset!(task.frame);
     memory.store_u32(vm + vm_offset!(root_stack.task_roots.start), task);
-    memory.store_u32(vm + vm_offset!(root_stack.task_roots.end), task + 3 * 8);
+    memory.store_u32(
+        vm + vm_offset!(root_stack.task_roots.end),
+        task + exs_layout::TASK_ROOT_COUNT * 8,
+    );
     memory.store_u32(
         vm + vm_offset!(roots.ranges),
         vm + vm_offset!(root_stack.range),

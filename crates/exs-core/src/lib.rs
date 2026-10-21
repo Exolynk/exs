@@ -49,7 +49,7 @@ pub use access::{index_get, index_set, property_get, property_set};
 pub use allocator::{allocate, init_heap};
 pub use bytes::bytes_object;
 pub use cbor::{CborError, arity_error, decode_inputs, decode_variadic_inputs, encode_result};
-pub use closures::{cell_new, closure_arity_error, closure_new, not_callable};
+pub use closures::{cell_new, closure_arity_error, closure_new, not_callable, parallel_list_error};
 pub use collector::collect;
 pub use datetime::{DATETIME_FIELDS, datetime_parse};
 pub use enums::{enum_new, match_error, missing_field};
@@ -75,7 +75,8 @@ pub use shapes::shape_for;
 pub use strings::{concat, format, string_object};
 pub use tasks::{
     Host, frame_call, frame_return, frame_start, host_call_resume, host_call_start, host_call_take,
-    take_completed, task_cancel,
+    parallel_new, parallel_wait, take_completed, task_cancel, task_checkpoint, task_spawn,
+    task_suspend,
 };
 pub use values::{compare, compare_value, equal, ordering_test};
 pub use vm::{

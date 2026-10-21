@@ -12,9 +12,10 @@ mod entry;
 mod flow;
 mod host;
 mod layouts;
+mod parallel;
 mod step;
 mod values;
 
-pub(super) use analysis::resumable_units;
+pub(super) use analysis::{parallel_units, resumable_units};
 pub(super) use layouts::{ClosureStep, Resumable};
 pub(super) use step::StepEmitter;

@@ -27,7 +27,7 @@ use super::function::{Context, FunctionCompiler, FunctionInfo, error};
 use super::reachability::{
     bytes_literals, changes_case, object_key_lists, reachable_units, string_literals,
 };
-use super::resumable::{ClosureStep, Resumable, StepEmitter, resumable_units};
+use super::resumable::{ClosureStep, Resumable, StepEmitter, parallel_units, resumable_units};
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use super::units::{Unit, units};
@@ -176,7 +176,8 @@ pub(in crate::codegen) fn compile<'a>(
     let declared = declared_types(module, &types);
     let reached = reachable_units(&all_units, &dispatch, &closure_keys, &types, &declared);
     let reached_keys: HashSet<&str> = reached.iter().map(|unit| unit.key.as_str()).collect();
-    let resumable_keys = resumable_units(&hir, &dispatch, &reached_keys);
+    let parallel = parallel_units(&reached, &closure_keys);
+    let resumable_keys = resumable_units(&hir, &dispatch, &reached_keys, &parallel);
     drop(hir);
     let functions: Vec<_> = reached.iter().map(|unit| unit.declaration).collect();
     let used = used_types(module, &types, &reached);
@@ -283,6 +284,7 @@ pub(in crate::codegen) fn compile<'a>(
         })
         .collect();
     if let Some(resumable) = &mut resumable {
+        resumable.parallel = !parallel.is_empty();
         for (unit, index) in reached_closures.iter().zip(0_u32..) {
             let (Some(step), Some(info)) = (resumable.steps.get(&unit.key), infos.get(&unit.key))
             else {

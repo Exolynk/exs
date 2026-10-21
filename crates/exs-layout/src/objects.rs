@@ -159,7 +159,7 @@ pub const ERROR_RECOVERABLE: u32 = 0;
 /// Header word of a fatal Error.
 pub const ERROR_FATAL: u32 = 1;
 
-/// Durable state of one resumable invocation; `header.word` is the function id. Slots follow.
+/// Durable state of one resumable invocation; `header.word` is the step index. Slots follow.
 #[repr(C)]
 pub struct FrameObject {
     /// Common header.
@@ -172,6 +172,44 @@ pub struct FrameObject {
     pub destination: u32,
     /// Number of durable slots.
     pub slot_count: u32,
+    /// The frame's Error-trace entry, the function id and call site, or [`FRAME_UNTRACED`]
+    /// when the frame is not traced, like the root frame of a `par` task.
+    pub trace: u64,
+}
+
+/// The [`FrameObject::trace`] of a frame without a trace entry, which no entry equals.
+pub const FRAME_UNTRACED: u64 = u64::MAX;
+
+/// One task of a resumable execution; `header.word` is its [`TaskObject::state`] code.
+///
+/// The running task's frame, host call, ready result and quantum live in the VM's task state
+/// and are saved here when it stops running.
+#[repr(C)]
+pub struct TaskObject {
+    /// Common header.
+    pub header: ObjectHeader,
+    /// Address of the task's active Frame.
+    pub frame: u32,
+    /// Address of the next task in the run queue, or 0.
+    pub queue: u32,
+    /// Address of the next live task, or 0.
+    pub link: u32,
+    /// Address of the task that waits for this `par` child, or 0 for the root task.
+    pub parent: u32,
+    /// The host result the task consumes next, or 0.
+    pub ready: u64,
+    /// The parent's result List this `par` child completes, or 0.
+    pub group: u64,
+    /// The id of the host call the task waits for or consumes, 0 for none.
+    pub host_call: u64,
+    /// Index of this child's result in `group`.
+    pub index: u32,
+    /// Number of this task's `par` children that have not completed.
+    pub waiting: u32,
+    /// Remaining scheduler checkpoints before the task yields to runnable siblings.
+    pub quantum: u32,
+    /// Reserved, keeps the size a multiple of 8.
+    pub reserved: u32,
 }
 
 /// A free cell of a size-class page, linked into its class's free list.
@@ -206,5 +244,6 @@ assert_aligned!(
     ClosureObject,
     ErrorObject,
     FrameObject,
+    TaskObject,
     FreeCell,
 );

@@ -873,6 +873,34 @@ fn matches_v1_for_suspending_closures() {
     }
 }
 
+/// Runs `par` like v1: static and dynamic tasks, their results in source order, host calls
+/// that suspend single tasks, nested `par`, v1's Errors for invalid dynamic operands, and a
+/// fatal Error that ends every task.
+#[test]
+fn matches_v1_for_parallel_tasks() {
+    let programs = [
+        "fn main() { ret par { 6 * 7; 20 + 1; }; }",
+        r#"fn main() { ret par { Host::call("echo", 1); Host::call("add", 2, 3); Host::call("echo", "x"); }; }"#,
+        r#"fn main() { let base = 10; let tasks = [() => { ret Host::call("echo", base); }, () => { ret base + 1; }]; ret [par(tasks), par([]), base]; }"#,
+        r#"fn main() { let log = []; let result = par { log.push(Host::call("echo", 1)); log.push(2); }; log.push(3); ret [result, log]; }"#,
+        r#"fn inner(value) { ret par { Host::call("echo", value); value * 2; }; } fn main() { ret par { inner(1); inner(Host::call("echo", 5)); }; }"#,
+        r#"fn main() { ret par { Error("K", "m", None); 42; }; }"#,
+        r#"fn helper() { ret Error("K", "m", None); } fn main() { let parts = par { helper(); 1; }; ret [parts, Error("A", "b", None), helper()]; }"#,
+        r#"fn helper() { Host::call("echo", 1); ret Error("K", "m", None); } fn main() { let parts = par { helper(); 1; }; ret [parts, Error("A", "b", None), helper()]; }"#,
+        "fn wrong() -> Int { ret \"invalid\"; } fn main() { ret par { wrong(); 1; }; }",
+        r#"fn wrong() -> Int { ret Host::call("echo", "invalid"); } fn main() { ret par { Host::call("echo", 1); wrong(); }; }"#,
+        "fn main() { ret par(1); }",
+        "fn main() { ret par([1]); }",
+        "fn main() { ret par([(value) => { ret value; }]); }",
+        "fn main() { ret par([(rest...) => { ret rest; }]); }",
+        r#"fn main() -> Int { let total = 0; let count = 0; while count < 300 { let parts = par { count; Host::call("echo", 1); }; total = total + parts[0] + parts[1]; count = count + 1; } ret total; }"#,
+        r#"fn main() { let f = () => { ret par { Host::call("echo", 1); 2; }; }; ret [f(), par { f(); }]; }"#,
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
 /// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
 /// before host enums arrive.
 #[test]

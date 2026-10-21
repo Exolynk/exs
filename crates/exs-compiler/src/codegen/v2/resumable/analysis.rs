@@ -5,9 +5,13 @@
 //! suspend point: a host operation or a parallel expression, directly or through calls,
 //! dispatch, closure calls of a resumable closure, or `for` loops over a resumable iterator.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::ast::Expression;
+use crate::codegen::v2::closures::closure_span_key;
 use crate::codegen::v2::dispatch::Dispatch;
+use crate::codegen::v2::reachability::visit_block;
+use crate::codegen::v2::units::Unit;
 use crate::hir::HirModule;
 
 /// The call edges and suspend points of one unit.
@@ -24,11 +28,57 @@ struct Node {
     iterates: bool,
 }
 
-/// Returns the keys of the units among `reached` that run as resumable frames.
+/// Returns the units among `reached` that `par` makes resumable: the units with a `par`
+/// expression, which wait for their children, and the closures `par` starts as tasks, which
+/// run as frames. `closures` maps closure spans to their keys.
+///
+/// A static `par` starts the closures it lists; a dynamic `par` may start any closure.
+pub(in crate::codegen::v2) fn parallel_units(
+    reached: &[&Unit<'_, '_>],
+    closures: &HashMap<(String, u32, u32), String>,
+) -> HashSet<String> {
+    let mut units = HashSet::new();
+    let mut dynamic = false;
+    for unit in reached {
+        visit_block(&unit.declaration.body, &mut |expression| match expression {
+            Expression::ParallelStatic { tasks, .. } => {
+                units.insert(unit.key.clone());
+                for task in tasks {
+                    match task {
+                        Expression::Closure { span, .. } => {
+                            if let Some(key) = closures.get(&closure_span_key(*span)) {
+                                units.insert(key.clone());
+                            }
+                        }
+                        _ => dynamic = true,
+                    }
+                }
+            }
+            Expression::ParallelDynamic { .. } => {
+                units.insert(unit.key.clone());
+                dynamic = true;
+            }
+            _ => {}
+        });
+    }
+    if dynamic {
+        units.extend(
+            reached
+                .iter()
+                .filter(|unit| unit.key.starts_with("$closure:"))
+                .map(|unit| unit.key.clone()),
+        );
+    }
+    units
+}
+
+/// Returns the keys of the units among `reached` that run as resumable frames, starting from
+/// the units that suspend through host operations and the `parallel` units.
 pub(in crate::codegen::v2) fn resumable_units(
     hir: &HirModule<'_>,
     dispatch: &Dispatch,
     reached: &HashSet<&str>,
+    parallel: &HashSet<String>,
 ) -> HashSet<String> {
     let functions = hir.functions().map(|(key, function)| Node {
         key: key.to_owned(),
@@ -58,7 +108,7 @@ pub(in crate::codegen::v2) fn resumable_units(
         .collect();
     let mut resumable: HashSet<String> = nodes
         .iter()
-        .filter(|node| node.suspends)
+        .filter(|node| node.suspends || parallel.contains(&node.key))
         .map(|node| node.key.clone())
         .collect();
     loop {

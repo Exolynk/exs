@@ -2,15 +2,15 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{BuiltinMethod, TYPE_LIST};
-use exs_layout::{BufferObject, EnumObject, ListObject};
+use exs_abi::{BuiltinMethod, STATUS_READY, TYPE_LIST};
+use exs_layout::{BufferObject, EnumObject, ListObject, TaskState, VmState};
 use exs_value::ValueRef;
 use wasm_encoder::{BlockType, Instruction, ValType};
 
 use super::step::StepEmitter;
 use crate::codegen::continuation::Operation;
 use crate::codegen::v2::collections::{u32_field, value_field};
-use crate::codegen::v2::function::error;
+use crate::codegen::v2::function::{error, vm_field};
 use crate::codegen::{VALUE_TYPE, immediate};
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
@@ -52,7 +52,16 @@ impl<'a> StepEmitter<'a, '_> {
                 self.ready(*when_false, *span)?;
                 self.instruction(Instruction::End);
             }
-            Operation::Goto { target, span, .. } => self.ready(*target, *span)?,
+            Operation::Goto {
+                target,
+                checkpoint,
+                span,
+            } => {
+                if *checkpoint && self.resumable.parallel {
+                    self.checkpoint(*target, *span)?;
+                }
+                self.ready(*target, *span)?;
+            }
             Operation::FormatValue {
                 builder,
                 value,
@@ -120,6 +129,39 @@ impl<'a> StepEmitter<'a, '_> {
             _ => return Ok(false),
         }
         Ok(true)
+    }
+
+    /// Counts down the running task's quantum at a loop's back edge; once it is used up and
+    /// another task is runnable, the task yields and continues at `target` when it runs again.
+    fn checkpoint(
+        &mut self,
+        target: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let quantum = vm_field(
+            self.compiler.context.vm,
+            (offset_of!(VmState, task) + offset_of!(TaskState, quantum)) as u32,
+        );
+        let remaining = self.compiler.scalar_local();
+        self.instruction(Instruction::I32Const(0));
+        self.instruction(Instruction::I32Const(0));
+        self.instruction(Instruction::I64Load(quantum));
+        self.instruction(Instruction::I64Const(1));
+        self.instruction(Instruction::I64Sub);
+        self.instruction(Instruction::LocalTee(remaining));
+        self.instruction(Instruction::I64Store(quantum));
+        self.instruction(Instruction::LocalGet(remaining));
+        self.instruction(Instruction::I64Eqz);
+        self.instruction(Instruction::If(BlockType::Empty));
+        self.store_state(target);
+        self.compiler.push_vm();
+        self.compiler
+            .core_call("__exs_core_task_checkpoint", span)?;
+        self.instruction(Instruction::If(BlockType::Empty));
+        self.leave(STATUS_READY);
+        self.instruction(Instruction::End);
+        self.instruction(Instruction::End);
+        Ok(())
     }
 
     /// Stores the snapshot `for` iterates of the value in durable slot `iterable`, like

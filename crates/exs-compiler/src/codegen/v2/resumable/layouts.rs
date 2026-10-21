@@ -56,6 +56,8 @@ pub(in crate::codegen::v2) struct Resumable<'l, 'a> {
     pub(in crate::codegen::v2) lifted: &'l [LiftedFunction<'a>],
     /// The closures that may suspend, by their dense closure index.
     pub(in crate::codegen::v2) closures: HashMap<u32, ClosureStep>,
+    /// Whether the module has `par` expressions, so tasks yield at scheduler checkpoints.
+    pub(in crate::codegen::v2) parallel: bool,
 }
 
 impl<'l, 'a> Resumable<'l, 'a> {
@@ -125,6 +127,7 @@ impl<'l, 'a> Resumable<'l, 'a> {
             frame_layouts,
             lifted,
             closures: HashMap::new(),
+            parallel: false,
         })
     }
 

@@ -158,21 +158,32 @@ pub struct VmState {
 
 /// The task that runs the frames of resumable functions.
 ///
-/// The first three fields are `ValueRef`s the collector scans as a root range.
+/// The first seven fields are references the collector scans as a root range.
 #[repr(C)]
 pub struct TaskState {
-    /// The active frame, a reference of kind `KIND_FRAME`, or 0.
+    /// The running task's active frame, a reference of kind `KIND_FRAME`, or 0.
     pub frame: u64,
-    /// The host result the active frame consumes next, or 0.
+    /// The host result the running task consumes next, or 0.
     pub ready: u64,
-    /// The result of the completed root frame, or 0.
+    /// The result of the completed root task, or 0.
     pub completed: u64,
-    /// The id of the host call the task waits for or consumes, 0 for none.
+    /// The running task, a reference of kind `KIND_FRAME`, or 0 while every task waits.
+    pub current: u64,
+    /// The first task of the run queue, or 0.
+    pub queue_head: u64,
+    /// The last task of the run queue, or 0.
+    pub queue_tail: u64,
+    /// The first live task, or 0.
+    pub tasks: u64,
+    /// The id of the host call the running task waits for or consumes, 0 for none.
     pub host_call: u64,
     /// The id of the next host call.
     pub next_host_call: u64,
-    /// The id of a host call cancelled while pending, 0 for none.
-    pub cancelled_call: u64,
+    /// The running task's remaining scheduler checkpoints.
+    pub quantum: u64,
 }
+
+/// Number of leading [`TaskState`] fields the collector scans as roots.
+pub const TASK_ROOT_COUNT: u32 = 7;
 
 const _: () = assert!(core::mem::size_of::<VmState>().is_multiple_of(8));

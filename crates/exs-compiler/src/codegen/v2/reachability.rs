@@ -333,7 +333,7 @@ fn visit_statement_targets<'e, 'a>(
 }
 
 /// Calls `visit` for every expression inside `block`, outer expressions first.
-fn visit_block<'e, 'a>(block: &'e Block<'a>, visit: &mut dyn FnMut(&'e Expression<'a>)) {
+pub(super) fn visit_block<'e, 'a>(block: &'e Block<'a>, visit: &mut dyn FnMut(&'e Expression<'a>)) {
     for statement in &block.statements {
         visit_statement(statement, visit);
     }

@@ -1,7 +1,7 @@
 //! Host calls of resumable code: a call either finishes at once or suspends the task until
 //! the runner resumes it, and the results of stream and time calls become prelude values.
 
-use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY, STATUS_PENDING, TYPE_ERROR, TYPE_OBJECT};
+use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY, TYPE_ERROR, TYPE_OBJECT};
 use exs_value::ValueRef;
 use wasm_encoder::{BlockType, Instruction};
 
@@ -59,9 +59,26 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
                 destination,
                 span,
             } => self.host_time(next, *value, *type_id, fields, *destination, *span),
-            Operation::ParallelStart { span, .. }
-            | Operation::ParallelDynamicStart { span, .. }
-            | Operation::ParallelTake { span, .. } => Err(unsupported(*span, "parallel tasks")),
+            Operation::ParallelStart {
+                tasks,
+                destination,
+                span,
+            } => self.parallel_start(next, tasks, *destination, *span),
+            Operation::ParallelDynamicStart {
+                functions,
+                destination,
+                span,
+            } => self.parallel_dynamic_start(next, *functions, *destination, *span),
+            Operation::ParallelTake {
+                group,
+                destination,
+                span,
+            } => {
+                // The group is the result List its children filled.
+                self.get_slot(*group);
+                self.set_slot(*destination);
+                self.ready(next, *span)
+            }
             Operation::Assert { span, .. } => Err(unsupported(*span, "resumable assertions")),
             _ => Err(error(
                 "E0999",
@@ -105,8 +122,12 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
         self.instruction(Instruction::I64Const(i64::from(HOST_CALL_PENDING)));
         self.instruction(Instruction::I64Eq);
         self.instruction(Instruction::If(BlockType::Empty));
+        // The task waits; another runnable task may run meanwhile.
         self.store_state(next);
-        self.leave(STATUS_PENDING);
+        self.compiler.push_vm();
+        self.compiler.core_call("__exs_core_task_suspend", span)?;
+        self.compiler.pop_frame();
+        self.instruction(Instruction::Return);
         self.instruction(Instruction::End);
         // Like v1, a fatal runner failure traps.
         self.instruction(Instruction::Unreachable);

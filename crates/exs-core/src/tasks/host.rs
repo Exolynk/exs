@@ -30,6 +30,12 @@ pub trait Host {
 
     /// Copies the ready response of `call_id` into the `len` bytes at `address`, returning 0.
     fn response_copy(&mut self, call_id: u64, address: u32, len: u32) -> i32;
+
+    /// Acquires the runner's permit for one more task, returning `false` when it refuses.
+    fn acquire(&mut self) -> bool;
+
+    /// Releases the permit of one task.
+    fn release(&mut self);
 }
 
 /// Starts the host call of the function named `name` with the List `arguments`, like v1.
@@ -115,8 +121,9 @@ pub fn host_call_take(memory: &mut impl Memory, host: &mut impl Host, vm: u32) -
     Some(value)
 }
 
-/// Delivers the runner's response of `length` bytes at `address` to the host call
-/// `call_id`, which the task waits for. Returns 0, or 1 when the call was cancelled.
+/// Delivers the runner's response of `length` bytes at `address` to the task waiting for the
+/// host call `call_id`, which becomes runnable. Returns 0, or 1 when no task waits for the
+/// call because it was cancelled.
 pub fn host_call_resume(
     memory: &mut impl Memory,
     vm: u32,
@@ -124,31 +131,16 @@ pub fn host_call_resume(
     address: u32,
     length: u32,
 ) -> Option<i32> {
-    if call_id != 0 && load(memory, vm, Field::CancelledCall) == call_id {
+    if call_id == 0 || !super::scheduler::waits_for(memory, vm, call_id) {
         return Some(1);
     }
-    if load(memory, vm, Field::HostCall) != call_id {
-        return None;
-    }
     let value = decode_at(memory, vm, address, length).ok()?;
-    store(memory, vm, Field::Ready, value);
-    Some(0)
+    let delivered = super::scheduler::deliver(memory, vm, call_id, value)?;
+    Some(i32::from(!delivered))
 }
 
-/// Cancels the task: a pending host call is remembered as cancelled and no frame stays active.
-pub fn task_cancel(memory: &mut impl Memory, vm: u32) {
-    let pending = load(memory, vm, Field::HostCall);
-    if pending != 0 {
-        store(memory, vm, Field::CancelledCall, pending);
-    }
-    for field in [
-        Field::Frame,
-        Field::Ready,
-        Field::Completed,
-        Field::HostCall,
-    ] {
-        store(memory, vm, field, 0);
-    }
-    let state = crate::vm::Vm(vm);
-    state.set_trace_top(memory, state.trace_base(memory));
+/// Cancels the execution: every task ends, the permits of `par` children are released and
+/// their pending host calls are abandoned.
+pub fn task_cancel(memory: &mut impl Memory, host: &mut impl Host, vm: u32) {
+    super::scheduler::end_tasks(memory, host, vm);
 }

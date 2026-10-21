@@ -104,3 +104,14 @@ pub fn closure_arity_error(memory: &mut impl Memory, vm: u32) -> Option<u64> {
 pub fn not_callable(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     recoverable(memory, vm, "TypeError", "value is not callable", value)
 }
+
+/// Creates v1's TypeError for a `par` operand `value` that is no List.
+pub fn parallel_list_error(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
+    recoverable(
+        memory,
+        vm,
+        "TypeError",
+        "par expects a List of zero-argument closures",
+        value,
+    )
+}

@@ -31,15 +31,15 @@ pub use header::{
 };
 pub use objects::{
     BigIntObject, BufferObject, BytesObject, CellObject, ClosureObject, ERROR_FATAL,
-    ERROR_RECOVERABLE, EnumObject, ErrorObject, FloatObject, FrameObject, FreeCell, ListObject,
-    ObjectObject, ShapeObject, StringObject, TypedObject,
+    ERROR_RECOVERABLE, EnumObject, ErrorObject, FRAME_UNTRACED, FloatObject, FrameObject, FreeCell,
+    ListObject, ObjectObject, ShapeObject, StringObject, TaskObject, TypedObject,
 };
 pub use page::{PAGE_HEADER_SIZE, PAGE_SIZE, PageHeader, PageKind};
 pub use size_class::{CLASS_COUNT, MAX_CLASS_SIZE, SIZE_CLASSES, class_for_size};
 pub use statics::StaticFunction;
 pub use trace::{TraceLayout, ValueSlots, trace_layout};
 pub use vm::{
-    BoundaryState, ErrorState, HeapState, ProgramState, RootRange, RootStack, RootState, TaskState,
-    TypeEntry, VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState,
+    BoundaryState, ErrorState, HeapState, ProgramState, RootRange, RootStack, RootState,
+    TASK_ROOT_COUNT, TaskState, TypeEntry, VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState,
 };
 pub use wire::{WireContract, WireEnum, WireField, WireObject, WireVariant};
