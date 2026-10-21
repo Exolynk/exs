@@ -3,7 +3,7 @@
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
 linking) are done and phase 2 got its go; phase 3 is done except programs with more than
 65,534 nominal types (section 12r); phase 4 is done except one test under a 2 MiB memory
-limit (section 12w). See sections 12 to 12w.
+limit (section 12w); phase 5 is done (section 12x). See sections 12 to 12x.
 
 ## 1. Goal
 
@@ -197,7 +197,7 @@ Each phase ends with measurement and an explicit go / no-go.
 | 2 | v2 backend for Int/Float/Bool/None, Strings, Lists, untyped and typed Objects, sync functions, `?`, Errors | prototype beats v1 clearly on property, String and literal micro benchmarks; go / no-go |
 | 3 | All built-in methods as stateless helpers over the layout; enums and `match`; closures and cells; iterators; formatted strings | all non-async runtime-value tests green on v2 |
 | 4 | Async: frames as heap objects, scheduler state in memory, host calls, parallel groups, cancellation | done, see sections 12t to 12w |
-| 5 | Host boundary v2 for the Wasmtime runner | runner tests green, boundary cost measured |
+| 5 | Host boundary v2 for the Wasmtime runner | done, see section 12x |
 | 6 | Browser runner and `exs-guest` on the new boundary (or CBOR fallback) | all crates green |
 | 7 | Switch the default to v2, delete v1 code and `exs-runtime` | one backend left |
 
@@ -218,6 +218,12 @@ Each phase ends with measurement and an explicit go / no-go.
 - **Initial memory.** v2 needs more than 2 MiB before a program runs: the template's 1 MiB
   Rust stack, a 1 MiB root stack and the trace and heap pages (section 12v). Smaller stacks
   or growing them on demand are a memory layout change.
+- **Input adoption.** Adopting an image builds every Object key as a new String and walks
+  the shape transitions per entry, so 200 small records still cost about 8,000 fuel each
+  (section 12x). Interning keys the program knows statically is the lever.
+- **CBOR in the core library.** The template no longer links the CBOR codec; the core keeps
+  it for the browser runner and `exs-guest` (phase 6), but its decoder does not create host
+  enums yet.
 - **Resumable loop overhead.** A loop in a resumable function loads and stores frame slots
   for every operation, so `async_int_while_1000` is only 3 % below v1 (section 12w); keeping
   values of one state machine in locals between suspension points is the lever.
@@ -1013,6 +1019,62 @@ Phase 4's exit criterion, the continuation, host-call, closure and parallel and 
 green on v2, holds except for the memory-limit test. No compared program differs from v1,
 except the documented ones: the interleaving of parallel tasks on shared state (approved) and
 a host-decoded `Ordering` as a `Compare` result (section 12t).
+
+## 12x. Phase 5 results: the direct host boundary
+
+- **Results and host-call arguments (5a, 5b):** a v2 module stores its result as a value in
+  the VM state block and exports it (`__exs_result_value`) with its VM address (`__exs_vm`);
+  host calls pass the argument List as a value through the new import
+  `__exs_host_call_start_value`. The runner reads both from the module's memory by running
+  the core library's encoder natively on `SliceMemory`, a bounds-checked, read-only view:
+  reads outside the memory return 0, nesting is bounded, the output has a byte budget and
+  panics are contained, so a corrupted heap only yields an ABI error. The walk emits the
+  codec's CBOR on the runner side, which is decoded with the usual limits; the guest encodes
+  nothing. Values that cannot cross the boundary keep v1's behavior: a fatal
+  SerializationError for results, created by the runner, and a recoverable one for host-call
+  arguments, created by the core after the runner reports `HOST_CALL_UNSUPPORTED`.
+- **Inputs and host responses (5c):** the runner writes them as images in the new
+  `exs_layout::image` record format and applies its CBOR limits to the size of the equivalent
+  CBOR, so both boundaries accept the same values. The core adopts an image in one walk:
+  Strings and Bytes are copied as they are, without parsing or UTF-8 validation, and every
+  offset is checked against the image.
+- **Host enums (5d):** an enum of an identity or a variant the program does not declare is an
+  enum with the variant `HOST_ENUM_VARIANT` and its identity and variant name in two slots
+  after the payload; it is typed as the declared enum of its identity, if any. Like v1 it
+  crosses the boundary unchanged, renders with its names, fails every match arm, passes
+  contracts of its identity and is rejected by wire decoding. `protocols_and_nominal` is now
+  27 of 27.
+- **Selection:** the runner uses the direct boundary for modules that export
+  `__exs_result_value` instead of a metadata entry, and CBOR for v1 modules. The template no
+  longer links the CBOR codec; the core library keeps it for phase 6.
+
+Boundary-heavy programs with 200 records of five fields (strings, a List, a Float and a
+nested Object), fuel and median execution time of 21 runs, before (d9bac74) and after phase
+5 (`reports_boundary_fuel_and_time`):
+
+| Scenario | v1 | v2 before | v2 after | time v1 | time v2 before | time v2 after |
+|---|---:|---:|---:|---:|---:|---:|
+| records as input and result | 3,859,366 | 3,153,097 | 1,610,362 | 1.58 ms | 1.16 ms | 0.78 ms |
+| records as input only | 2,342,137 | 2,370,266 | 1,629,274 | 1.00 ms | 0.81 ms | 0.67 ms |
+| records through a host call | 7,659,629 | 6,283,027 | 3,197,454 | 2.84 ms | 2.14 ms | 1.44 ms |
+
+The fuel suite on v2: `record_roundtrip_20` 2,675,666 → 2,063,550 (v1 4,255,698),
+`concat_100_objects` 459,640 → 347,544, `datetime_roundtrip_100` 3,459,928 → 3,367,733.
+`format_loop_1000` rose from 1,791,328 to 1,807,477: dropping the CBOR codec changed how the
+template's formatting code is inlined, and restoring its exports in an experiment brought it
+back to 1,790,477, so the boundary itself does not cause it. Encoding work moved to the
+runner is not metered as fuel; the execution times above include it.
+
+| Suite on v2 | after 4d | after 5d |
+|---|---:|---:|
+| `protocols_and_nominal` | 26 / 27 | 27 / 27 |
+| `contracts_and_errors`, `host_calls`, `continuations`, `limits`, `fuel`, `public_functions`, `registry` | all | all |
+| `runtime_values` | 95 / 96 | 95 / 96 (more than 65,534 nominal types) |
+| `closures_parallel` | 16 / 17 | 16 / 17 (2 MiB memory limit) |
+
+`backend_v2.rs` compares results, inputs and host-call values of every kind with v1,
+including Errors with origins, traces and causes, values that cannot cross the boundary,
+variadic entries, excess arguments and host enums in every operation listed above.
 
 ## 13. Risks and open questions
 

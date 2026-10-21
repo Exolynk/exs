@@ -958,6 +958,53 @@ fn matches_v1_for_boundary_inputs() {
     compare("fn main(a, b, c, d) { ret [a, b, c, d]; }", &rest);
 }
 
+/// Prints the fuel and median execution time of both backends for programs dominated by the
+/// host boundary: large inputs, results and host-call values.
+#[test]
+fn reports_boundary_fuel_and_time() {
+    let record = |index: i64| {
+        ExsValue::Object(vec![
+            ("id".to_owned(), ExsValue::Int(index)),
+            (
+                "name".to_owned(),
+                ExsValue::String(format!("Record ü {index}")),
+            ),
+            (
+                "tags".to_owned(),
+                ExsValue::List(vec![
+                    ExsValue::String("alpha".to_owned()),
+                    ExsValue::String("beta".to_owned()),
+                ]),
+            ),
+            ("score".to_owned(), ExsValue::Float(0.5 * index as f64)),
+            (
+                "nested".to_owned(),
+                ExsValue::Object(vec![("flag".to_owned(), ExsValue::Bool(index % 2 == 0))]),
+            ),
+        ])
+    };
+    let records = [ExsValue::List((0..200).map(record).collect())];
+    let scenarios = [
+        ("echo_records_200", "fn main(records) { ret records; }"),
+        (
+            "count_records_200",
+            "fn main(records) { let total = 0; for record in records { total = total + record.id; } ret total; }",
+        ),
+        (
+            "host_echo_records_200",
+            r#"fn main(records) { ret Host::call("echo", records); }"#,
+        ),
+    ];
+    for (name, source) in scenarios {
+        compare(source, &records);
+        let (v1_fuel, v1_time) = measure(source, Backend::V1, &records, 21);
+        let (v2_fuel, v2_time) = measure(source, Backend::V2, &records, 21);
+        println!(
+            "boundary {name}: fuel v1 {v1_fuel} v2 {v2_fuel}, time v1 {v1_time:?} v2 {v2_time:?}"
+        );
+    }
+}
+
 /// Runs `par` like v1: static and dynamic tasks, their results in source order, host calls
 /// that suspend single tasks, nested `par`, v1's Errors for invalid dynamic operands, and a
 /// fatal Error that ends every task.
