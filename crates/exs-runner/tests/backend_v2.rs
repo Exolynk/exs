@@ -1063,6 +1063,23 @@ fn matches_v1_for_float_text() {
     compare(source, &[list]);
 }
 
+/// Keeps v1's evaluation order and values where generated code avoids copies and frame
+/// traffic: operands a later operand reassigns, and constants used across suspensions.
+#[test]
+fn matches_v1_for_operand_and_constant_reuse() {
+    let programs = [
+        "fn main() { let x = [1]; let y = x + match 1 { _ => { x = [10]; }, }; ret [x, y]; }",
+        "fn main() { let x = \"a\"; let y = x + \"b\" + match 1 { _ => { x = \"z\"; }, } + x; ret [x, y]; }",
+        "fn main() { let x = 3; let y = x < match 1 { _ => { x = 10; }, }; ret [x, y]; }",
+        "fn main() { let x = 5; let f = () => { x = x + 1; ret x; }; ret [x + f(), x]; }",
+        r#"fn main() { let total = 0; let i = 0; while i < 3 { total = total + Host::call("echo", i) * 2 + 7; total = total + "a".length(); i = i + 1; } ret [total, None, true, "s"]; }"#,
+        r#"fn main() { let names = []; for i in 0..3 { Host::call("echo", 1); names.push("n" + i); names.push(None); names.push(false); } ret names; }"#,
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
 /// Runs `par` like v1: static and dynamic tasks, their results in source order, host calls
 /// that suspend single tasks, nested `par`, v1's Errors for invalid dynamic operands, and a
 /// fatal Error that ends every task.

@@ -7,6 +7,7 @@ use super::function::{FunctionCompiler, error, unsupported};
 use super::intrinsics::is_datetime_parser;
 use crate::ast::{BinaryOperator, Expression, FormattedStringPart, UnaryOperator};
 use crate::codegen::VALUE_TYPE;
+use crate::codegen::function::contains_statements;
 use crate::codegen::immediate::{self, IntOperation};
 use crate::codegen::trait_registry::TraitOperator;
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
@@ -204,17 +205,36 @@ impl<'a> FunctionCompiler<'a, '_> {
             operands.reverse();
             spans.reverse();
             let mut values = Vec::with_capacity(operands.len());
-            for operand in operands {
-                self.compile_expression(operand)?;
-                values.push(self.store_new());
+            for (index, operand) in operands.iter().enumerate() {
+                let later = operands.get(index + 1..).unwrap_or_default();
+                let stable = !later.iter().any(|later| contains_statements(later));
+                values.push(self.operand(operand, stable)?);
             }
             return self.add_values(&values, &spans, span);
         }
-        self.compile_expression(left)?;
-        let left = self.store_new();
-        self.compile_expression(right)?;
-        let right = self.store_new();
+        let left = self.operand(left, !contains_statements(right))?;
+        let right = self.operand(right, true)?;
         self.int_or_slow_binary(operator, left, right, span)
+    }
+
+    /// Evaluates one operand and returns the rooted local holding its value: the binding's own
+    /// local for a plain binding when the following operands run no statements that could
+    /// reassign it (`stable`), else a new local.
+    fn operand(
+        &mut self,
+        operand: &Expression<'a>,
+        stable: bool,
+    ) -> Result<u32, CompileDiagnostics<'a>> {
+        if stable
+            && let Expression::Variable(identifier) = operand
+            && self.context.types.enum_variant(&identifier.name).is_none()
+            && !self.is_cell(&identifier.name)
+            && let Some(local) = self.lookup(&identifier.name)
+        {
+            return Ok(local);
+        }
+        self.compile_expression(operand)?;
+        Ok(self.store_new())
     }
 
     /// Emits `operator` with an inline path for two immediate Ints, then one for two Floats,

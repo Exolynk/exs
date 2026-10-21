@@ -7,7 +7,7 @@
 //! after the operation. The step function returns to the dispatcher only at suspension points,
 //! child calls and completion.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use core::mem::{offset_of, size_of};
 
@@ -15,6 +15,7 @@ use exs_abi::{STATUS_READY, TYPE_ERROR};
 use exs_layout::FrameObject;
 use wasm_encoder::{BlockType, Function, Instruction};
 
+use super::constants::{constant, constant_slots};
 use super::layouts::{Resumable, StepInfo};
 use crate::ast::FunctionDeclaration;
 use crate::codegen::continuation::{ContinuationGraph, Operation, operation_span};
@@ -44,6 +45,11 @@ pub(in crate::codegen::v2) struct StepEmitter<'a, 'm> {
     current: u32,
     /// The `Iterator::next` dispatch states of `for` loops, which follow their native step.
     pub(super) iterator_next_states: HashSet<u32>,
+    /// The raw value of every slot that only holds one constant.
+    constants: HashMap<u32, u64>,
+    /// Whether the operation ended by falling through to the following state, whose branch
+    /// was left out.
+    falls_through: bool,
 }
 
 impl<'a, 'm> StepEmitter<'a, 'm> {
@@ -84,6 +90,8 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
                 .filter(|(_, operation)| matches!(operation, Operation::NativeIterNext { .. }))
                 .map(|(next, _)| next)
                 .collect(),
+            constants: constant_slots(&graph.operations, context.strings),
+            falls_through: false,
         };
         emitter.dispatch(&graph.operations, declaration.span)?;
         emitter.compiler.instruction(Instruction::Unreachable);
@@ -123,7 +131,9 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
             let mark = self.compiler.temporaries();
             self.operation(state, operation)?;
             self.compiler.release_temporaries(mark);
-            self.instruction(Instruction::Unreachable);
+            if !core::mem::take(&mut self.falls_through) {
+                self.instruction(Instruction::Unreachable);
+            }
         }
         self.instruction(Instruction::End);
         Ok(())
@@ -136,6 +146,10 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
 
     /// Emits one instruction.
     pub(super) fn instruction(&mut self, instruction: Instruction<'_>) {
+        // A branch to the following state may only be left out when nothing follows it.
+        if core::mem::take(&mut self.falls_through) {
+            self.compiler.instruction(Instruction::Br(0));
+        }
         self.compiler.instruction(instruction);
     }
 
@@ -162,7 +176,12 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
                 "invalid continuation state transition".to_owned(),
             )
         })?;
-        self.instruction(Instruction::Br(label));
+        if label == 0 && next == self.current + 1 {
+            // The operation's block ends right before the following state.
+            self.falls_through = true;
+        } else {
+            self.instruction(Instruction::Br(label));
+        }
         Ok(())
     }
 
@@ -180,8 +199,12 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
         self.instruction(Instruction::Return);
     }
 
-    /// Pushes the value of durable slot `slot`.
+    /// Pushes the value of durable slot `slot`, or its constant.
     pub(super) fn get_slot(&mut self, slot: u32) {
+        if let Some(raw) = self.constants.get(&slot).copied() {
+            self.instruction(Instruction::I64Const(raw.cast_signed()));
+            return;
+        }
         self.instruction(Instruction::LocalGet(0));
         self.instruction(Instruction::I64Load(value_field(
             SLOTS + u64::from(slot) * 8,
@@ -325,6 +348,12 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         let next = state + 1;
         let span = operation_span(operation);
+        // A constant's readers use it directly, so storing it is unnecessary.
+        if constant(operation, self.compiler.context.strings)
+            .is_some_and(|(slot, _)| self.constants.contains_key(&slot))
+        {
+            return self.ready(next, span);
+        }
         if self.value_operation(operation)? {
             return self.ready(next, span);
         }

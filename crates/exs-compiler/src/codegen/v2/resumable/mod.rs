@@ -8,6 +8,7 @@
 mod analysis;
 mod calls;
 mod closures;
+mod constants;
 mod entry;
 mod flow;
 mod host;
