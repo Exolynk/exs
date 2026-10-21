@@ -22,9 +22,9 @@ use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 /// Byte offset of the value of a Cell.
 const CELL_VALUE: u64 = offset_of!(CellObject, value) as u64;
 /// Byte offset of the closure index in a closure's header word.
-const CLOSURE_INDEX: u64 = 4;
+pub(super) const CLOSURE_INDEX: u64 = 4;
 /// Byte offset of the first capture slot of a closure.
-const CAPTURES: u64 = size_of::<ClosureObject>() as u64;
+pub(super) const CAPTURES: u64 = size_of::<ClosureObject>() as u64;
 
 /// Returns the key identifying a closure expression by its source span.
 pub(super) fn closure_span_key(span: SourceSpan<'_>) -> (String, u32, u32) {
@@ -68,6 +68,9 @@ pub(super) struct DispatchCase {
     pub(super) arity: u32,
     /// Whether a trailing parameter collects the remaining arguments.
     pub(super) variadic: bool,
+    /// Whether the closure may suspend, so it runs as frames and never through the
+    /// dispatcher.
+    pub(super) suspends: bool,
 }
 
 impl<'a> FunctionCompiler<'a, '_> {
@@ -310,6 +313,10 @@ pub(super) fn closure_dispatcher<'a>(
     function.instruction(&Instruction::BrTable(targets.into(), total));
     for case in cases {
         function.instruction(&Instruction::End);
+        if case.suspends {
+            function.instruction(&Instruction::Unreachable);
+            continue;
+        }
         function.instruction(&Instruction::LocalGet(count));
         function.instruction(&Instruction::I32Const(case.arity.cast_signed()));
         function.instruction(&if case.variadic {

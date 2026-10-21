@@ -7,6 +7,7 @@
 
 mod analysis;
 mod calls;
+mod closures;
 mod entry;
 mod flow;
 mod host;
@@ -15,5 +16,5 @@ mod step;
 mod values;
 
 pub(super) use analysis::resumable_units;
-pub(super) use layouts::Resumable;
+pub(super) use layouts::{ClosureStep, Resumable};
 pub(super) use step::StepEmitter;

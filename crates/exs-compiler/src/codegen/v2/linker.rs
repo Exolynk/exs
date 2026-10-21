@@ -23,11 +23,11 @@ use super::closures::{
 };
 use super::dispatch::Dispatch;
 use super::entry::EntryLayout;
-use super::function::{Context, FunctionCompiler, FunctionInfo, error, unsupported};
+use super::function::{Context, FunctionCompiler, FunctionInfo, error};
 use super::reachability::{
     bytes_literals, changes_case, object_key_lists, reachable_units, string_literals,
 };
-use super::resumable::{Resumable, StepEmitter, resumable_units};
+use super::resumable::{ClosureStep, Resumable, StepEmitter, resumable_units};
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use super::units::{Unit, units};
@@ -178,12 +178,6 @@ pub(in crate::codegen) fn compile<'a>(
     let reached_keys: HashSet<&str> = reached.iter().map(|unit| unit.key.as_str()).collect();
     let resumable_keys = resumable_units(&hir, &dispatch, &reached_keys);
     drop(hir);
-    if resumable_keys
-        .iter()
-        .any(|key| key.starts_with("$closure:"))
-    {
-        return Err(unsupported(span, "closures that suspend"));
-    }
     let functions: Vec<_> = reached.iter().map(|unit| unit.declaration).collect();
     let used = used_types(module, &types, &reached);
     let statics = StaticStrings::build(
@@ -258,7 +252,7 @@ pub(in crate::codegen) fn compile<'a>(
             },
         );
     }
-    let resumable = (!resumable_keys.is_empty())
+    let mut resumable = (!resumable_keys.is_empty())
         .then(|| {
             Resumable::build(
                 module,
@@ -288,6 +282,21 @@ pub(in crate::codegen) fn compile<'a>(
             )
         })
         .collect();
+    if let Some(resumable) = &mut resumable {
+        for (unit, index) in reached_closures.iter().zip(0_u32..) {
+            let (Some(step), Some(info)) = (resumable.steps.get(&unit.key), infos.get(&unit.key))
+            else {
+                continue;
+            };
+            let closure = ClosureStep {
+                step: *step,
+                captures: info.captures,
+                arity: info.arity,
+                variadic: info.variadic.is_some(),
+            };
+            resumable.closures.insert(index, closure);
+        }
+    }
     let int_new = base + functions.len() as u32;
     let float_new = int_new + 1;
     let closure_dispatcher = (!reached_closures.is_empty()).then_some(float_new + 1);
@@ -368,6 +377,7 @@ pub(in crate::codegen) fn compile<'a>(
                         captures: info.captures,
                         arity: info.arity,
                         variadic: info.variadic.is_some(),
+                        suspends: resumable_keys.contains(&unit.key),
                     })
                     .ok_or_else(|| error("E0999", span, "missing v2 closure".to_owned()))
             })

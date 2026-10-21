@@ -27,6 +27,19 @@ pub(in crate::codegen::v2) struct StepInfo {
     pub(in crate::codegen::v2) index: u32,
 }
 
+/// A closure that may suspend, as a resumable closure call starts its frames.
+#[derive(Clone, Copy)]
+pub(in crate::codegen::v2) struct ClosureStep {
+    /// The step of its lifted function.
+    pub(in crate::codegen::v2) step: StepInfo,
+    /// Number of captured Cells, its first frame slots.
+    pub(in crate::codegen::v2) captures: u32,
+    /// Number of fixed parameters.
+    pub(in crate::codegen::v2) arity: u32,
+    /// Whether a trailing parameter collects the remaining arguments.
+    pub(in crate::codegen::v2) variadic: bool,
+}
+
 /// The resumable units of a module and the context their graphs are built in.
 pub(in crate::codegen::v2) struct Resumable<'l, 'a> {
     /// Every resumable unit by key.
@@ -41,6 +54,8 @@ pub(in crate::codegen::v2) struct Resumable<'l, 'a> {
     pub(in crate::codegen::v2) frame_layouts: HashMap<String, FrameLayout>,
     /// The functions lifted from closures.
     pub(in crate::codegen::v2) lifted: &'l [LiftedFunction<'a>],
+    /// The closures that may suspend, by their dense closure index.
+    pub(in crate::codegen::v2) closures: HashMap<u32, ClosureStep>,
 }
 
 impl<'l, 'a> Resumable<'l, 'a> {
@@ -109,6 +124,7 @@ impl<'l, 'a> Resumable<'l, 'a> {
             methods,
             frame_layouts,
             lifted,
+            closures: HashMap::new(),
         })
     }
 

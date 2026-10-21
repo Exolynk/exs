@@ -851,6 +851,28 @@ fn matches_v1_for_host_calls() {
     );
 }
 
+/// Runs closures that suspend like v1: as child frames with their captured Cells, through
+/// binding calls, the prelude's eager helpers and nested closures, with v1's ArityErrors.
+#[test]
+fn matches_v1_for_suspending_closures() {
+    let programs = [
+        r#"fn main() { let f = (x) => { ret Host::call("echo", x) + 1; }; ret [f(1), f(2)]; }"#,
+        r#"fn main() { let count = 0; let bump = () => { count = count + Host::call("echo", 2); ret count; }; bump(); bump(); ret [count, bump()]; }"#,
+        r#"fn main() { let f = (first, rest...) => { ret [Host::call("echo", first), rest]; }; ret [f(1), f(1, 2, 3)]; }"#,
+        r#"fn main() { let f = (x) => { ret Host::call("echo", x); }; ret [f(), f(1, 2), f(3)]; }"#,
+        r#"fn main() { let base = 10; ret [1, 2, 3].map((x) => { ret Host::call("echo", x) + base; }); }"#,
+        r#"fn main() { let fs = [(x) => { ret x * 2; }, (x) => { ret Host::call("echo", x) * 3; }]; let out = []; for f in fs { out.push(f(4)); } ret out; }"#,
+        r#"fn make(n) { ret () => { ret Host::call("echo", n); }; } fn main() { let a = make(1); let b = make(2); let five = 5; ret [b(), a(), five()]; }"#,
+        r#"fn apply(f, x) { ret f(x); } fn main() { let outer = (x) => { let inner = (y) => { ret Host::call("echo", y) + x; }; ret apply(inner, x * 10); }; ret apply(outer, 2); }"#,
+        r#"fn main() -> Int { let f = (x) => { ret Host::call("echo", "s"); }; let value: Int = f(1); ret value; }"#,
+        r#"fn double(values) { ret values.map((x) => { ret x * 2; }); } fn main() { let f = () => { ret Host::call("echo", 1); }; ret [double([1, 2]), f(), [3].filter((x) => { ret x > 1; })]; }"#,
+        r#"fn check(value: Int) -> Int { ret value; } fn main() { let f = (x) => { ret check(Host::call("echo", x)); }; ret [f(1), f("s")]; }"#,
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
 /// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
 /// before host enums arrive.
 #[test]

@@ -251,6 +251,25 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
         destination: u32,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        let child = self.link_child(next, callee, destination, span)?;
+        for (slot, argument) in (0_u32..).zip(arguments) {
+            self.child_slot(child, slot, |emitter| emitter.get_slot(*argument));
+        }
+        self.leave(STATUS_READY);
+        Ok(())
+    }
+
+    /// Links a frame of the resumable unit `callee` as the child of this frame, which
+    /// continues at `next` with the child's result in `destination`, and returns the `i64`
+    /// local holding the child's address. The caller fills its slots and leaves with
+    /// `STATUS_READY`.
+    pub(super) fn link_child(
+        &mut self,
+        next: u32,
+        callee: StepInfo,
+        destination: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<u32, CompileDiagnostics<'a>> {
         self.store_state(next);
         self.compiler.set_call_site(span)?;
         self.compiler.push_vm();
@@ -266,14 +285,18 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
         let child = self.compiler.scalar_local();
         self.instruction(Instruction::I64ExtendI32U);
         self.instruction(Instruction::LocalSet(child));
-        for (slot, argument) in (0_u64..).zip(arguments) {
-            self.instruction(Instruction::LocalGet(child));
-            self.instruction(Instruction::I32WrapI64);
-            self.get_slot(*argument);
-            self.instruction(Instruction::I64Store(value_field(SLOTS + slot * 8)));
-        }
-        self.leave(STATUS_READY);
-        Ok(())
+        Ok(child)
+    }
+
+    /// Stores the value `value` pushes into slot `slot` of the frame whose address is in the
+    /// `i64` local `child`.
+    pub(super) fn child_slot(&mut self, child: u32, slot: u32, value: impl FnOnce(&mut Self)) {
+        self.instruction(Instruction::LocalGet(child));
+        self.instruction(Instruction::I32WrapI64);
+        value(self);
+        self.instruction(Instruction::I64Store(value_field(
+            SLOTS + u64::from(slot) * 8,
+        )));
     }
 
     /// Returns the step of the unit with the trace id `function_id`, if it is resumable.

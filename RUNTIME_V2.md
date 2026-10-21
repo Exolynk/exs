@@ -902,6 +902,29 @@ decodes host enums into the program's enum types (the host-enum gap of section 1
 Resumable loops still spend most of their fuel on slot traffic (`async_int_while_1000` is
 only 3 % below v1); phase 4d measures and reduces it.
 
+## 12u. Phase 4b results: closures that suspend
+
+- A lifted closure that may suspend compiles to a step function like any resumable unit; its
+  frame holds the captured Cells first, then the fixed parameters and the List of a variadic
+  tail, like v1's closure frames. The synchronous dispatcher keeps a case for it that is
+  never taken.
+- A binding call in resumable code selects the closure's dense index with one `br_table`: a
+  closure that may suspend links a child frame with its Cells and arguments (or stores v1's
+  ArityError), every other value takes the synchronous closure call with its Errors for
+  values that are no closures.
+- Resumable methods take variadic arguments as a packed List and report v1's ArityError
+  for other argument counts. When a closure may suspend, the prelude's eager helpers
+  (`map`, `filter` and the others) are resumable and run as child frames.
+
+| Suite on v2 | after 4a | after 4b | remaining failures |
+|---|---:|---:|---|
+| `host_calls` | 27 / 31 | 29 / 31 | `par` (phase 4c) |
+| `closures_parallel` | 8 / 17 | 9 / 17 | `par` (phase 4c) |
+
+`backend_v2.rs` compares closures that suspend through bindings, Lists, nested closures and
+the eager helpers, Cells shared across suspensions, variadic closures, ArityErrors and
+contract failures inside closures.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.

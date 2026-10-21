@@ -1,15 +1,17 @@
 //! Calls in resumable code: direct calls of synchronous functions run inline, calls of
 //! resumable units link a child frame and return to the dispatcher.
 
-use exs_abi::BuiltinMethod;
+use exs_abi::{BuiltinMethod, STATUS_READY};
 use wasm_encoder::{BlockType, Instruction};
 
+use super::layouts::StepInfo;
 use super::step::StepEmitter;
 use crate::ast::{BinaryOperator, Expression, Identifier};
 use crate::codegen::continuation::{ComparisonFallback, Operation};
 use crate::codegen::function::InstanceMethod;
 use crate::codegen::trait_registry::TraitOperator;
-use crate::codegen::v2::function::{error, unsupported};
+use crate::codegen::v2::closures::accepts;
+use crate::codegen::v2::function::error;
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
 /// Returns the source operator `operator` dispatches.
@@ -82,27 +84,7 @@ impl<'a> StepEmitter<'a, '_> {
                 arguments,
                 destination,
                 span,
-            } => {
-                let slots: Vec<u32> = core::iter::once(*closure)
-                    .chain(arguments.iter().copied())
-                    .collect();
-                self.synthesize(&slots, *span, |mut operands| {
-                    let callee = match operands.remove(0) {
-                        Expression::Variable(identifier) => identifier,
-                        _ => Identifier {
-                            name: "$0".to_owned(),
-                            span: *span,
-                        },
-                    };
-                    Expression::Call {
-                        callee,
-                        arguments: operands,
-                        span: *span,
-                    }
-                })?;
-                self.set_slot(*destination);
-                self.ready(next, *span)?;
-            }
+            } => self.closure_call(next, *closure, arguments, *destination, *span)?,
             Operation::Operator {
                 operator,
                 left,
@@ -235,10 +217,15 @@ impl<'a> StepEmitter<'a, '_> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         if let Some(callee) = self.resumable.steps.get(key).copied() {
-            let slots: Vec<u32> = core::iter::once(receiver)
-                .chain(arguments.iter().copied())
-                .collect();
-            return self.child_call(destination.next, callee, &slots, destination.slot, span);
+            return self.resumable_method(
+                key,
+                callee,
+                receiver,
+                receiver_local,
+                arguments,
+                destination,
+                span,
+            );
         }
         self.compiler
             .call_method(key, receiver_local, locals, span)?;
@@ -262,7 +249,10 @@ impl<'a> StepEmitter<'a, '_> {
         if self.iterator_next_states.contains(&self.current_state()) {
             return self.iterator_next(receiver, destination, span);
         }
-        if !self.any_resumable(targets) {
+        let helper = crate::prelude::iterator_helper(method);
+        let helper_resumable =
+            helper.is_some_and(|helper| self.resumable.steps.contains_key(helper));
+        if !self.any_resumable(targets) && !helper_resumable {
             let slots: Vec<u32> = core::iter::once(receiver)
                 .chain(arguments.iter().copied())
                 .collect();
@@ -307,23 +297,72 @@ impl<'a> StepEmitter<'a, '_> {
             self.instruction(Instruction::End);
         }
         // Like v1, the prelude's eager iterator helpers come before built-in methods.
-        if let Some(helper) = crate::prelude::iterator_helper(method) {
-            if self.resumable.steps.contains_key(helper) {
-                return Err(unsupported(span, "resumable closures"));
-            }
-            self.compiler
-                .call_method(helper, receiver_local, &locals, span)?;
-        } else {
-            self.compiler.builtin_method_call(
-                BuiltinMethod::from_name(method),
+        if let Some(helper) = helper {
+            return self.method_target(
+                helper,
+                receiver,
                 receiver_local,
-                block,
-                count,
+                arguments,
+                &locals,
+                destination,
                 span,
-            )?;
+            );
         }
+        self.compiler.builtin_method_call(
+            BuiltinMethod::from_name(method),
+            receiver_local,
+            block,
+            count,
+            span,
+        )?;
         self.set_slot(destination.slot);
         self.ready(destination.next, span)
+    }
+
+    /// Calls the resumable method `key` with the receiver in durable slot `receiver` and the
+    /// durable `arguments` as a child frame, packing variadic arguments, or stores v1's
+    /// ArityError when it takes a different number of arguments.
+    #[allow(clippy::too_many_arguments)] // Durable slots and their loaded receiver.
+    fn resumable_method(
+        &mut self,
+        key: &str,
+        callee: StepInfo,
+        receiver: u32,
+        receiver_local: u32,
+        arguments: &[u32],
+        destination: Destination,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let (arity, variadic) = self
+            .compiler
+            .context
+            .functions
+            .get(key)
+            .map(|info| (info.arity, info.variadic.is_some()))
+            .ok_or_else(|| error("E0999", span, format!("missing v2 method `{key}`")))?;
+        if !accepts(arity, variadic, arguments.len() + 1) {
+            self.compiler.set_position(span)?;
+            self.compiler.push_vm();
+            self.instruction(Instruction::LocalGet(receiver_local));
+            self.compiler
+                .core_call("__exs_core_nominal_arity_error", span)?;
+            self.set_slot(destination.slot);
+            return self.ready(destination.next, span);
+        }
+        let fixed = arity.saturating_sub(1) as usize;
+        let rest = self.rest_list(&arguments[fixed.min(arguments.len())..], variadic, span)?;
+        let child = self.link_child(destination.next, callee, destination.slot, span)?;
+        self.child_slot(child, 0, |emitter| emitter.get_slot(receiver));
+        for (slot, argument) in (1_u32..).zip(&arguments[..fixed]) {
+            self.child_slot(child, slot, |emitter| emitter.get_slot(*argument));
+        }
+        if let Some(rest) = rest {
+            self.child_slot(child, arity, |emitter| {
+                emitter.instruction(Instruction::LocalGet(rest));
+            });
+        }
+        self.leave(STATUS_READY);
+        Ok(())
     }
 
     /// Advances the Object in durable slot `receiver` of a `for` loop through the
