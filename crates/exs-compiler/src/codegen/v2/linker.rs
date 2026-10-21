@@ -34,7 +34,6 @@ use crate::ast::{FunctionVisibility, Module};
 use crate::codegen::linker::lifted_functions;
 use crate::codegen::prune::{PruneHints, prune_unreachable};
 use crate::codegen::source_map::{SOURCE_MAP_SECTION, SourceMap};
-use crate::codegen::suspension::Suspendability;
 use crate::codegen::trait_registry::TraitRegistry;
 use crate::codegen::types::TypeRegistry;
 use crate::codegen::{VALUE_TYPE, module_span};
@@ -158,12 +157,6 @@ pub(in crate::codegen) fn compile<'a>(
     let dispatch = Dispatch::build(module, traits, &types);
     let hir = HirModule::lower(module, traits);
     let lifted = lifted_functions(module, &hir);
-    // v1 reports some origins differently in resumable functions, so v2 needs its analysis.
-    let mut suspendability = Suspendability::analyze(&hir);
-    if hir.closures().next().is_some() {
-        suspendability.include_all(hir.functions().map(|(key, _)| key));
-    }
-    let suspendable = suspendability.functions().clone();
     drop(hir);
     let captured: HashSet<String> = lifted
         .iter()
@@ -294,7 +287,6 @@ pub(in crate::codegen) fn compile<'a>(
         captured: &captured,
         closures: &closures,
         closure_dispatcher,
-        suspendable: &suspendable,
     };
     for unit in &reached {
         let arity = unit.captures.len() + unit.declaration.parameters.len();

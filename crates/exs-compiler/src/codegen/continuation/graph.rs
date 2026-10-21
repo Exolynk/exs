@@ -432,6 +432,8 @@ pub(super) enum Operation<'source, 'function> {
     /// Validates frame-backed parameter slots against their function contracts.
     ValidateParameters {
         contracts: Vec<TypeContract>,
+        /// Source span of each parameter, which a failed check reports like synchronous code.
+        spans: Vec<SourceSpan<'source>>,
         offset: u32,
         span: SourceSpan<'source>,
     },
@@ -654,6 +656,11 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
                 .take(signature.arity)
                 .cloned()
                 .collect(),
+            spans: declaration
+                .parameters
+                .iter()
+                .map(|parameter| parameter.name.span)
+                .collect(),
             offset: u32::try_from(capture_count).map_err(|_| {
                 diagnostics(CompileDiagnostic::new(
                     "E0212",
@@ -694,7 +701,10 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
                 .push(Operation::ValidateVariadicParameter {
                     slot,
                     contract,
-                    span: declaration.span,
+                    span: declaration
+                        .parameters
+                        .last()
+                        .map_or(declaration.span, |parameter| parameter.name.span),
                 });
         }
         for parameter in cell_parameters {

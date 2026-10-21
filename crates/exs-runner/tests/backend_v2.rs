@@ -50,9 +50,22 @@ fn run(source: &str, backend: Backend, inputs: &[ExsValue]) -> (ExsValue, u64) {
     }
 }
 
+/// An unused closure, which makes v1 lower every function of a program as resumable. As the
+/// last method of an existing type it shifts no function, type or source position id.
+const RESUMABLE_PROBE: &str =
+    " impl Range { fn resumable_probe() { let probe = () => { ret 1; }; } }";
+
 /// Runs `source` with both backends, asserts equal results and returns both fuel values.
+///
+/// v1 is also run with every function lowered as resumable, which must not change the result:
+/// synchronous and resumable lowering share one semantics.
 fn compare(source: &str, inputs: &[ExsValue]) -> (u64, u64) {
     let (v1, v1_fuel) = run(source, Backend::V1, inputs);
+    // A program with a closure is resumable already, and the probe would shift closure ids.
+    if !source.contains("=>") {
+        let (resumable, _) = run(&format!("{source}{RESUMABLE_PROBE}"), Backend::V1, inputs);
+        assert_eq!(resumable, v1, "v1 lowering modes disagree on:\n{source}");
+    }
     let (v2, v2_fuel) = run(source, Backend::V2, inputs);
     assert_eq!(v2, v1, "backends disagree on:\n{source}");
     (v1_fuel, v2_fuel)
@@ -755,6 +768,26 @@ fn matches_v1_for_iterators() {
     ];
     for program in programs {
         compare(&format!("{counter} {program}"), &[]);
+    }
+}
+
+/// Gives v1's synchronous and resumable lowering one semantics, which `compare` checks for
+/// every program: static-call and comparison Errors are values, and checks report the spans
+/// of synchronous code.
+#[test]
+fn matches_v1_across_lowering_modes() {
+    let programs = [
+        r#"fn main() { ret [Int::parse("x"), Float::parse("y"), Object::from_entries(1), Math::sin("a"), 1]; }"#,
+        r#"fn main() { ret [1 < "a", [1] < [2], 1]; }"#,
+        "type V { x: Int } impl Compare for V { fn compare(self, other: Any) -> Ordering { ret Ordering::Unordered; } } fn main() { ret [V { x: 1 } < V { x: 2 }, V { x: 1 } == V { x: 1 }, 1]; }",
+        "fn main() -> Int { if None { ret 2; } ret 3; }",
+        "fn main() { ret [true && 2]; }",
+        "fn take(a: Int, b: String) { ret a; } fn main() { ret [take(1, 2), take(\"x\", \"y\")]; }",
+        "enum E { A(value: Int), } fn main() { ret E::A(\"x\"); }",
+        "fn main() { let n: Int = \"x\"; ret n; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
     }
 }
 

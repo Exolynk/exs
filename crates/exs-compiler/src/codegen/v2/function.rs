@@ -81,9 +81,6 @@ pub(super) struct Context<'m> {
     pub(super) closures: &'m HashMap<(String, u32, u32), ClosureInfo>,
     /// Index of the generated closure dispatcher, when the program creates closures.
     pub(super) closure_dispatcher: Option<u32>,
-    /// Keys of the functions v1 lowers as resumable, whose parameter checks it reports at
-    /// the declaration rather than the parameter.
-    pub(super) suspendable: &'m HashSet<String>,
 }
 
 /// Lowering state of one function body.
@@ -384,18 +381,14 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
                 )
             })?;
         let first = self.captures;
-        // v1 reports parameter checks of resumable functions at the declaration.
-        let resumable = self.context.suspendable.contains(self.key);
-        let declaration = self.declaration.span;
-        let span_of = |span| if resumable { declaration } else { span };
         for ((local, contract), parameter) in
             (first..).zip(&parameters).zip(&self.declaration.parameters)
         {
-            self.check_contract(local, contract, span_of(parameter.name.span))?;
+            self.check_contract(local, contract, parameter.name.span)?;
         }
         if let (Some(contract), Some(parameter)) = (&variadic, self.declaration.parameters.last()) {
             let local = first + parameters.len() as u32;
-            self.check_variadic(local, contract, span_of(parameter.name.span))?;
+            self.check_variadic(local, contract, parameter.name.span)?;
         }
         self.wrap_captured_parameters(first)?;
         self.compile_block(&self.declaration.body)?;

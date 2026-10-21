@@ -200,6 +200,21 @@ Each phase ends with measurement and an explicit go / no-go.
 | 6 | Browser runner and `exs-guest` on the new boundary (or CBOR fallback) | all crates green |
 | 7 | Switch the default to v2, delete v1 code and `exs-runtime` | one backend left |
 
+### Later work outside the phases
+
+- **Template diet.** The template's initialized data (about 15.4 KB after phase 3) leaves a
+  program less than 1 KB of static data before its span starts a second 16 KiB block, which
+  costs 16,384 fuel on every execution (sections 12j, 12q and 12r; `for_range` and
+  `format_loop` already pay it). The template's data is mostly about 400 small panic
+  locations and panic or formatting texts, plus `core::fmt`'s float table `CACHED_POW10`
+  (1.3 KB), a libm square-root table and the Unicode whitespace table. Levers: panic-free
+  indexing (`get` instead of `[]`, no `unwrap`), an own float formatter like the table-free
+  `Float::parse`, replacing the small tables, and moving the uninitialized VM state block out
+  of the initialized span (a memory layout change). Goal: typical programs stay in one block
+  with margin. To be planned and approved separately.
+- **More than 65,534 nominal types.** Inline type-tag tests need a heap type-id fallback
+  (section 12r).
+
 ## 12. Phase 0 results
 
 Measured with `examples/fuel-baseline/compare.nu` (median of 7 runs) and a per-function fuel
@@ -813,6 +828,18 @@ data costs every script.
 No test produces a value that differs from v1. Phase 3's exit criterion, every non-async
 runtime-value test green, holds except for programs with more than 65,534 nominal types,
 which need a heap type-id fallback for every inline tag test.
+
+## 12s. One semantics for v1's lowering modes (before phase 4)
+
+v1 lowers a function as resumable when it may suspend, has a `for` loop or calls a binding,
+and every function once the program has any closure. Its resumable lowering differed from the
+synchronous one: an Error of a static call (`Int::parse`, `Float::parse`, `Object::from_entries`,
+`Math::*`) or of a built-in comparison returned from the function instead of being a value; a
+`Compare` result was tested before its Error check; and parameter, condition, enum payload and
+`let` decoding checks reported other spans. Synchronous semantics is now canonical (approved):
+v1's resumable lowering follows it, and every v2 equivalence test also runs v1 with all
+functions resumable and requires the same result. v2 therefore keeps precise suspendability,
+and its workaround for resumable parameter spans is gone.
 
 ## 13. Risks and open questions
 

@@ -154,14 +154,13 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
         let Some(target) = targets.get(index) else {
             self.load_operand(left, self.value_local, loaded, span)?;
             self.load_operand(right, self.operand_local, loaded, span)?;
-            // Built-in comparisons produce the final Bool directly and skip the OrderingTest
-            // state, matching that state's error completion.
+            // Built-in comparisons produce the final Bool or TypeError value directly and
+            // skip the OrderingTest state, like synchronous lowering.
             if let Some(comparison) = comparison {
                 self.function
                     .instruction(&Instruction::I32Const(comparison.test));
                 self.call_runtime("__exs_rt_compare_test", span)?;
                 self.set_slot(comparison.destination, span)?;
-                self.complete_if_error(comparison.destination, span)?;
                 return self.ready(comparison.next, span);
             }
             self.call_runtime(operator.runtime_export(), span)?;

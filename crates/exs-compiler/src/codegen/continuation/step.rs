@@ -185,7 +185,6 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 }
                 self.call_runtime(export, *span)?;
                 self.set_slot(*destination, *span)?;
-                self.complete_if_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
             Operation::Integer {
@@ -418,11 +417,13 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                 destination,
                 span,
             } => {
+                // Like synchronous lowering, an Error from `compare` returns and the test's
+                // own TypeError is a value.
+                self.complete_if_error(*value, *span)?;
                 self.get_slot(*value, *span)?;
                 self.function.instruction(&Instruction::I32Const(*test));
                 self.call_runtime("__exs_rt_ordering_test", *span)?;
                 self.set_slot(*destination, *span)?;
-                self.complete_if_error(*destination, *span)?;
                 self.ready(next, *span)?;
             }
             Operation::List {
@@ -820,10 +821,11 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
             )?,
             Operation::ValidateParameters {
                 contracts,
+                spans,
                 offset,
                 span,
             } => {
-                for (slot, contract) in contracts.iter().enumerate() {
+                for ((slot, contract), parameter_span) in contracts.iter().enumerate().zip(spans) {
                     let slot = u32::try_from(slot).map_err(|_| {
                         diagnostics(CompileDiagnostic::new(
                             "E0212",
@@ -838,7 +840,7 @@ impl<'source, 'context> StepCompiler<'source, 'context> {
                             "too many continuation parameter slots",
                         ))
                     })?;
-                    self.validate_slot_or_complete(slot, contract, *span)?;
+                    self.validate_slot_or_complete(slot, contract, *parameter_span)?;
                 }
                 self.ready(next, *span)?;
             }

@@ -545,10 +545,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     {
                         let field =
                             self.lower_operand(argument, runs_statements(&arguments[index + 1..]))?;
+                        // Like synchronous lowering, payload checks report the call.
                         self.operations.push(Operation::ValidateSlot {
                             slot: field,
                             contract: contract.clone(),
-                            span: expression_span(argument),
+                            span: *span,
                         });
                         fields.push(field);
                     }
@@ -696,10 +697,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     {
                         let field =
                             self.lower_operand(argument, runs_statements(&arguments[index + 1..]))?;
+                        // Like synchronous lowering, payload checks report the call.
                         self.operations.push(Operation::ValidateSlot {
                             slot: field,
                             contract: contract.clone(),
-                            span: expression_span(argument),
+                            span: *span,
                         });
                         fields.push(field);
                     }
@@ -1079,14 +1081,16 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         })?;
 
         let right_start = self.operations.len();
+        let right_span = expression_span(right);
         let right = self.lower_expression(right)?;
         let right_checked = self.temporary(span)?;
+        // Like synchronous lowering, a non-Bool right operand reports itself.
         let right_branch = self.push(Operation::Branch {
             condition: right,
             checked: right_checked,
             when_true: 0,
             when_false: 0,
-            span,
+            span: right_span,
         })?;
         let right_true = self.operations.len();
         self.operations.push(Operation::Boolean {

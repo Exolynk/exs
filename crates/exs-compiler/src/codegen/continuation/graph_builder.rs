@@ -9,7 +9,8 @@ use crate::codegen::standard::is_unshared_range;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::graph::{
-    BindingSlot, ComparisonFallback, GraphBuilder, LoopBuilderContext, Operation, operation_span,
+    BindingSlot, ComparisonFallback, GraphBuilder, LoopBuilderContext, Operation, expression_span,
+    operation_span,
 };
 use crate::codegen::trait_registry::TraitOperator;
 
@@ -45,7 +46,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 name,
                 type_annotation,
                 value,
-                ..
+                span,
             } => {
                 if self
                     .scopes
@@ -62,11 +63,12 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let binding = self.temporary(name.span)?;
                 if let Some(annotation) = type_annotation {
                     let contract = self.types.resolve(Some(annotation), name.span)?;
+                    // Like synchronous lowering, decoding reports the statement.
                     self.operations.push(Operation::WireDecode {
                         source: value,
                         destination: binding,
                         schema: self.types.wire_schema(&contract),
-                        span: name.span,
+                        span: *span,
                     });
                 } else {
                     self.operations.push(Operation::Copy {
@@ -193,14 +195,16 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         else_branch: Option<&'function crate::ast::ElseBranch<'source>>,
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
+        let condition_span = expression_span(condition);
         let condition = self.lower_expression(condition)?;
         let checked = self.temporary(span)?;
+        // Like synchronous lowering, a non-Bool condition reports itself.
         let branch = self.push(Operation::Branch {
             condition,
             checked,
             when_true: 0,
             when_false: 0,
-            span,
+            span: condition_span,
         })?;
         let then_start = self.operations.len();
         self.lower_block(then_block)?;
@@ -229,14 +233,16 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         span: SourceSpan<'source>,
     ) -> Result<(), CompileDiagnostics<'source>> {
         let condition_start = self.operations.len();
+        let condition_span = expression_span(condition);
         let condition = self.lower_expression(condition)?;
         let checked = self.temporary(span)?;
+        // Like synchronous lowering, a non-Bool condition reports itself.
         let branch = self.push(Operation::Branch {
             condition,
             checked,
             when_true: 0,
             when_false: 0,
-            span,
+            span: condition_span,
         })?;
         let body_start = self.operations.len();
         self.loops.push(LoopBuilderContext {
