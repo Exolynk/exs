@@ -184,7 +184,8 @@ pub(in crate::codegen) fn compile<'a>(
     });
     let positions_base = case_tables
         .as_ref()
-        .map_or(static_keys.end(), |(base, bytes)| base + bytes.len() as u32);
+        .map_or(static_keys.end(), |(base, bytes)| base + bytes.len() as u32)
+        .next_multiple_of(8);
     let base = facts.imported_functions + facts.defined_functions;
     let mut program = Program {
         types: Vec::new(),
@@ -241,7 +242,7 @@ pub(in crate::codegen) fn compile<'a>(
         source_map: &source_map,
         positions_base,
         positions: RefCell::new(Vec::new()),
-        field_orders: RefCell::new(HashMap::new()),
+        static_arrays: RefCell::new(HashMap::new()),
         protocols: &protocols,
     };
     for function in &functions {

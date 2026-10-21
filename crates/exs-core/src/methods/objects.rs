@@ -109,6 +109,19 @@ fn lookup(memory: &impl Memory, vm: u32, receiver: Receiver, name: u32) -> Optio
         .map(|(_, value)| value)
 }
 
+/// Returns the value of the own key whose text is `key` of the Object `raw`, or `None` when
+/// `raw` is no Object or lacks the key.
+pub(crate) fn field_value(memory: &impl Memory, vm: u32, raw: u64, key: &[u8]) -> Option<u64> {
+    let receiver = object(memory, raw)?;
+    (0..entry_count(memory, vm, receiver))
+        .map(|index| entry(memory, vm, receiver, index))
+        .find(|(name, _)| {
+            string_object(*name)
+                .is_some_and(|name| crate::strings::text(memory, name).as_bytes() == key)
+        })
+        .map(|(_, value)| value)
+}
+
 /// Reads the String key of an Object method, or creates its TypeError.
 fn key_argument(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<u32, Option<u64>> {
     string_object(raw).ok_or_else(|| type_error(memory, vm, KEY_NOT_STRING, raw))

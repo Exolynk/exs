@@ -21,16 +21,18 @@ pub(super) struct TypeTable {
 }
 
 impl TypeTable {
-    /// Returns the field names of every nominal Object type and the identities and variant
-    /// names of every enum, which must all be static Strings.
+    /// Returns the field names of every nominal Object type and the identities, variant names
+    /// and payload names of every enum, which must all be static Strings.
     pub(super) fn field_names(types: &TypeRegistry) -> impl Iterator<Item = &str> {
         let fields = types
             .nominal_types()
             .filter(|nominal| nominal.kind == NominalKind::Object)
             .flat_map(|nominal| nominal.fields.iter().map(|field| field.name.as_str()));
-        let enums = types
-            .enum_variants()
-            .flat_map(|variant| [variant.type_identity.as_str(), variant.name.as_str()]);
+        let enums = types.enum_variants().flat_map(|variant| {
+            [variant.type_identity.as_str(), variant.name.as_str()]
+                .into_iter()
+                .chain(variant.field_names.iter().map(String::as_str))
+        });
         fields.chain(enums)
     }
 

@@ -446,6 +446,18 @@ pub extern "C" fn __exs_core_wire_mismatch(vm: i32, mismatch: i64) -> i64 {
     ))
 }
 
+/// Decodes the rooted `decoded` against the static wire schema at `schema`, returning the
+/// decoded value or the Error that rejects it.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_wire_decode(vm: i32, decoded: i64, schema: i32) -> i64 {
+    value(exs_core::wire_decode(
+        &mut memory(),
+        address(vm),
+        decoded.cast_unsigned(),
+        address(schema),
+    ))
+}
+
 /// Creates the MissingValue Error that `?` produces for None.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_missing_value(vm: i32) -> i64 {

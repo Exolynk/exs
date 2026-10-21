@@ -58,7 +58,7 @@ const SYNC_CALL_LOOP_1000_FUEL: u64 = 292_614;
 /// Fuel ceiling for parsing and formatting 100 RFC 3339 DateTimes.
 const DATETIME_ROUNDTRIP_100_FUEL: u64 = 5_597_206;
 /// Fuel ceiling for the Exolynk-style round trip of 20 records.
-const RECORD_ROUNDTRIP_20_FUEL: u64 = 4_255_458;
+const RECORD_ROUNDTRIP_20_FUEL: u64 = 4_255_698;
 
 /// Compiles and executes one scenario with a Winch runner and returns its execution report.
 fn execute_report(scenario: &Scenario) -> ExecutionReport {

@@ -165,15 +165,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         if order.iter().copied().eq(0..order.len() as u32) {
             return None;
         }
-        let mut orders = self.context.field_orders.borrow_mut();
-        if let Some(address) = orders.get(&order) {
-            return Some(*address);
-        }
-        let mut positions = self.context.positions.borrow_mut();
-        let address = self.context.positions_base + positions.len() as u32 * 4;
-        positions.extend(&order);
-        orders.insert(order, address);
-        Some(address)
+        Some(self.static_array(order))
     }
 
     /// Returns the inline tag and slot offset of every nominal Object type declaring

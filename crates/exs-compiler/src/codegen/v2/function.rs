@@ -59,13 +59,15 @@ pub(super) struct Context<'m> {
     pub(super) next_global: Cell<u32>,
     /// Source position ids of the module, shared with runtime v1.
     pub(super) source_map: &'m SourceMap<'m>,
-    /// Address of the static `u32` arrays of `+` chain positions and field orders.
+    /// Address of the 8-byte aligned static `u32` arrays of `+` chain positions, field orders
+    /// and wire schemas.
     pub(super) positions_base: u32,
-    /// The source positions of every `+` chain and the slot indices of every typed Object
-    /// field order, back to back.
+    /// The source positions of every `+` chain, the slot indices of every typed Object field
+    /// order and the records of every wire schema, back to back.
     pub(super) positions: RefCell<Vec<u32>>,
-    /// Address of the array of every typed Object field order stored in `positions`.
-    pub(super) field_orders: RefCell<HashMap<Vec<u32>, u32>>,
+    /// Address of every deduplicated, 8-byte aligned array stored in `positions`, such as
+    /// field orders and wire schema records.
+    pub(super) static_arrays: RefCell<HashMap<Vec<u32>, u32>>,
     /// Nominal types with standard-trait implementations the backend must not bypass.
     pub(super) protocols: &'m Protocols,
 }
@@ -223,6 +225,23 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         let index = self.context.next_global.get();
         self.context.next_global.set(index + 1);
         index
+    }
+
+    /// Returns the address of a static copy of `words`, 8-byte aligned and shared by every
+    /// array with the same words.
+    pub(super) fn static_array(&self, words: Vec<u32>) -> u32 {
+        let mut arrays = self.context.static_arrays.borrow_mut();
+        if let Some(address) = arrays.get(&words) {
+            return *address;
+        }
+        let mut positions = self.context.positions.borrow_mut();
+        if positions.len() % 2 == 1 {
+            positions.push(0);
+        }
+        let address = self.context.positions_base + positions.len() as u32 * 4;
+        positions.extend(&words);
+        arrays.insert(words, address);
+        address
     }
 
     /// Pushes the VM state block address as an `i32`.

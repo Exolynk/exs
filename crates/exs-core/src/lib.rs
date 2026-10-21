@@ -35,6 +35,7 @@ mod strings;
 mod typed;
 mod values;
 mod vm;
+mod wire;
 
 #[cfg(test)]
 mod tests;
@@ -68,3 +69,4 @@ pub use values::{compare, compare_value, equal};
 pub use vm::{
     collection_count, set_case_tables, set_heap_flags, set_program_types, set_root_ranges,
 };
+pub use wire::wire_decode;

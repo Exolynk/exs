@@ -629,6 +629,43 @@ fn matches_v1_for_typed_object_field_order() {
     }
 }
 
+/// Decodes annotated `let` and `for` bindings like v1's wire decoding.
+#[test]
+fn matches_v1_for_wire_decoding() {
+    let types =
+        "type Point { x: Int, y: Int | None } enum Color { Gray(level: Int), Transparent, }";
+    let programs = [
+        "fn main() { let c: Color = Color::Gray(1); let t: Color = Color::Transparent; ret [c, t]; }",
+        "fn main() { let p: Point = { y: 2, x: 1, extra: 3 }; ret [p, p is Point, p.keys()]; }",
+        "fn main() { let p: Point = Point { y: 2, x: 1 }; ret p.keys(); }",
+        r#"fn main() { let xs: List<Int> = [1, "a"]; ret xs; }"#,
+        "fn main() { let xs: List<Point> = [{ x: 1 }]; ret [xs[0] is Point, xs]; }",
+        r#"fn main() { let c: Color = { "$variant": "Gray", level: 3 }; ret [c, c is Color]; }"#,
+        r#"fn main() { let c: Color = { "$variant": "Gray", "$values": [4] }; ret c; }"#,
+        r#"fn main() { let c: Color = { "$variant": "Transparent" }; ret c; }"#,
+        r#"fn main() { let c: Color = { "$variant": 1 }; ret c; }"#,
+        "fn main() { let o: Ordering = (1).compare(2); ret o; }",
+        r#"fn main() { let total = 0; for x: Int in [1, "a"] { total = total + 1; } ret total; }"#,
+        "fn main() { let total = 0; for p: Point in [{ x: 1 }, { x: 2, y: 3 }] { total = total + p.x; } ret total; }",
+        "fn main() { let total = 0; for x: Int in 0..3 { total = total + x; } ret total; }",
+        "fn main() { let total = 0; for x: String in 0..3 { total = total + 1; } ret total; }",
+        "fn main() { let a: Int | Point = { x: 1 }; ret [a, a is Point]; }",
+        "fn main() { let l = [1]; let m: List<Int> = l; ret [m == l, m]; }",
+        r#"fn main() { let p: Point = { y: "s" }; ret p; }"#,
+        r#"fn main() { let n: Int = "x"; ret n; }"#,
+        "fn main() { let c: Color = 5; ret c; }",
+        r#"fn main() { let c: Color | Int = { "$variant": "Nope" }; ret c; }"#,
+        "fn main() { let p: Point = Color::Gray(1); ret p; }",
+        r#"fn main() { let e: List<Int> = [1, Error("K", "m", None)]; ret 1; }"#,
+        r#"fn main() { let e: Int = Error("K", "m", None); ret 1; }"#,
+        "fn main() { let nested: List<List<Point>> = [[{ x: 1 }], []]; ret nested; }",
+        "fn read() -> Int { let p: Point = { y: 1 }; ret 1; } fn main() { ret read(); }",
+    ];
+    for program in programs {
+        compare(&format!("{types} {program}"), &[]);
+    }
+}
+
 /// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
 /// before host enums arrive.
 #[test]

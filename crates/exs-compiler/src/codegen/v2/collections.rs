@@ -9,6 +9,7 @@ use exs_layout::{BufferObject, ListObject};
 use exs_value::layout::{EXTRA_SHIFT, SMALL_INT_TAG, tag, type_kind};
 use wasm_encoder::{BlockType, Instruction, MemArg};
 
+use super::errors::ForBinding;
 use super::function::{FunctionCompiler, error};
 use crate::ast::{Block, Expression};
 use crate::codegen::VALUE_TYPE;
@@ -162,7 +163,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     /// Bytes and Objects, which iterate through Iterators, trap for now.
     pub(super) fn compile_list_for(
         &mut self,
-        binding: &str,
+        binding: ForBinding<'a, '_>,
         iterable: &Expression<'a>,
         body: &Block<'a>,
         span: SourceSpan<'a>,
@@ -180,7 +181,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::LocalSet(position));
         let item = self.value_local();
         self.scopes
-            .push(HashMap::from([(binding.to_owned(), item)]));
+            .push(HashMap::from([(binding.identifier.name.clone(), item)]));
         self.instruction(Instruction::Block(BlockType::Empty));
         let break_depth = self.depth;
         self.instruction(Instruction::Loop(BlockType::Empty));
@@ -200,6 +201,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I32Add);
         self.instruction(Instruction::I64Load(value_field(SLOTS)));
         self.store(item);
+        self.check_for_binding(item, binding)?;
         self.instruction(Instruction::LocalGet(position));
         self.instruction(Instruction::I64Const(1));
         self.instruction(Instruction::I64Add);

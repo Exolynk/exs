@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use wasm_encoder::{BlockType, Instruction};
 
+use super::errors::ForBinding;
 use super::expressions::expression_span;
 use super::function::{FunctionCompiler, unsupported};
 use crate::ast::{AssignmentTarget, Block, ElseBranch, Expression, Statement};
@@ -134,13 +135,20 @@ impl<'a> FunctionCompiler<'a, '_> {
                 body,
                 span,
             } => {
-                if type_annotation.is_some() {
-                    return Err(unsupported(*span, "typed for-loop bindings"));
-                }
+                let contract = match type_annotation {
+                    Some(annotation) => {
+                        Some(self.context.types.resolve(Some(annotation), binding.span)?)
+                    }
+                    None => None,
+                };
+                let binding = ForBinding {
+                    identifier: binding,
+                    contract: contract.as_ref(),
+                };
                 if is_unshared_range(iterable) {
-                    self.compile_range_for(&binding.name, iterable, body, *span)?;
+                    self.compile_range_for(binding, iterable, body, *span)?;
                 } else {
-                    self.compile_list_for(&binding.name, iterable, body, *span)?;
+                    self.compile_list_for(binding, iterable, body, *span)?;
                 }
             }
             Statement::Break { span } | Statement::Continue { span } => {
@@ -168,7 +176,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     /// inclusive Range yields its end last. Bounds outside the `i32` range trap for now.
     fn compile_range_for(
         &mut self,
-        binding: &str,
+        binding: ForBinding<'a, '_>,
         iterable: &Expression<'a>,
         body: &Block<'a>,
         span: SourceSpan<'a>,
@@ -220,7 +228,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::LocalSet(done));
         let item = self.value_local();
         self.scopes
-            .push(HashMap::from([(binding.to_owned(), item)]));
+            .push(HashMap::from([(binding.identifier.name.clone(), item)]));
         self.instruction(Instruction::Block(BlockType::Empty));
         let break_depth = self.depth;
         self.instruction(Instruction::Loop(BlockType::Empty));
@@ -250,6 +258,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::BrIf(self.depth - break_depth));
         immediate::push_small_int(&mut self.function, cursor);
         self.store(item);
+        self.check_for_binding(item, binding)?;
         self.instruction(Instruction::LocalGet(cursor));
         self.instruction(Instruction::LocalGet(last));
         self.instruction(Instruction::I64Eq);

@@ -22,6 +22,7 @@ mod size_class;
 mod statics;
 mod trace;
 mod vm;
+mod wire;
 
 pub use case_mapping::{CASE_TABLES, CASE_TABLES_UNICODE_VERSION, CaseTables};
 pub use header::{
@@ -41,3 +42,4 @@ pub use vm::{
     BoundaryState, ErrorState, HeapState, ProgramState, RootRange, RootStack, RootState, TypeEntry,
     VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState,
 };
+pub use wire::{WireContract, WireEnum, WireField, WireObject, WireVariant};

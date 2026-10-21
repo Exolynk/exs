@@ -20,5 +20,6 @@ mod statements;
 mod static_keys;
 mod type_table;
 mod untyped;
+mod wire_schema;
 
 pub(super) use linker::compile;

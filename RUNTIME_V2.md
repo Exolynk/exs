@@ -1,8 +1,8 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done and phase 2 got its go; phase 3 is in progress (3a and 3b done). See
-sections 12 to 12l.
+linking) are done and phase 2 got its go; phase 3 is in progress (3a, 3b and 3c done). See
+sections 12 to 12o.
 
 ## 1. Goal
 
@@ -695,6 +695,30 @@ data costs every script.
   allocator's zeroing charges per typed Object: the typed literal benchmark rises by 2,896
   (839,084 → 841,980). A reordered literal adds one `i32` store.
 - `runtime_values` on v2: 58 of 96, with no differing results.
+- Nothing needs a heap order after all: v1 never converts runner inputs to typed Objects
+  (a typed parameter rejects an Object input), and wire decoding (12o) builds declaration
+  order.
+
+## 12o. Phase 3c-2 results
+
+- **Wire decoding** of annotated `let` and `for` bindings follows v1's decoder exactly:
+  Errors pass and return, `List<T>` builds a new List of decoded elements, an Object of the
+  first nominal Object alternative passes while any other Object becomes one of its declared
+  fields (missing ones None, extra keys dropped), an Object tagged `$variant` becomes that
+  enum with its payload by name or from `$values`, and every other value is checked by mask,
+  with v1's WireDecodeError carrying the innermost rejected value.
+- **Schemas** are static record trees (`exs_layout::WireContract`, `WireObject`, `WireEnum`,
+  `WireVariant`, `WireField`) built during code generation and shared by content among the
+  static `u32` arrays, which are now 8-byte aligned. The core's `wire_decode` walks them.
+  Contracts of built-in types keep the inline mask test, so plain annotated bindings cost
+  nothing more. Annotations of recursive types are reported as unsupported (v1 overflows its
+  stack building their schema string).
+- **v1 fix (approved):** v1 rejected enum values for their own enum contract
+  (`let c: Color = Color::Gray(1)`, `let o: Ordering = a.compare(b)`), because a real enum
+  has no `$variant` key. Both backends now accept an enum of one of the contract's enum types
+  unchanged. It costs v1's `record_roundtrip_20` 240 fuel (ceiling 4,255,458 → 4,255,698).
+- Payload names of enums join the static Strings. The template's data is 14,662 bytes.
+- `runtime_values` on v2: 58 of 96, unchanged; the remaining failures need phases 3d to 3f.
 
 ## 13. Risks and open questions
 

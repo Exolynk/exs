@@ -275,8 +275,15 @@ fn decode_list(value: ValueRef, item_contract: &Contract) -> ValueRef {
     result
 }
 
-/// Selects and decodes one host Object as an enum, when it carries a known `$variant` tag.
+/// Accepts an enum value of one of the schemas' types unchanged, or selects and decodes one
+/// host Object as an enum, when it carries a known `$variant` tag.
 fn decode_enum(value: ValueRef, schemas: &[EnumSchema]) -> Option<ValueRef> {
+    if !schemas.is_empty()
+        && matches!(runtime::value(value), Value::Object(object) if object.enum_data.is_some()
+            && schemas.iter().any(|schema| object.type_id == Some(schema.type_id)))
+    {
+        return Some(value);
+    }
     let variant = object_field(value, "$variant")?;
     let Value::String(variant) = runtime::value(variant) else {
         return Some(runtime::recoverable_error(

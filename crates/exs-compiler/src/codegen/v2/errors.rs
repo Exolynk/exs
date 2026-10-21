@@ -14,7 +14,8 @@ use wasm_encoder::{BlockType, Function, Instruction, MemArg};
 
 use super::collections::u32_field;
 use super::function::{FunctionCompiler, error, vm_field};
-use crate::ast::Expression;
+use super::wire_schema::needs_decode;
+use crate::ast::{Expression, Identifier};
 use crate::codegen::immediate;
 use crate::codegen::types::{TypeContract, permits_error};
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
@@ -280,23 +281,26 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.core_call("__exs_core_error_new", span)
     }
 
-    /// Checks a `let` binding's value against a built-in `contract` like v1's wire decoding:
-    /// an Error returns from the function and a value of another type returns a
-    /// WireDecodeError.
+    /// Decodes an annotated binding's value in `local` against `contract` like v1's wire
+    /// decoding: an Error returns from the function, a value of another type returns a
+    /// WireDecodeError, and Lists, Objects and enums may be converted.
+    ///
+    /// Contracts of built-in types only test the value's type flags inline.
     pub(super) fn check_binding(
         &mut self,
         local: u32,
         contract: &TypeContract,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if !contract.nominal_type_ids.is_empty()
-            || !contract.enum_type_ids.is_empty()
-            || contract.list_item.is_some()
-        {
-            return Err(super::function::unsupported(
-                span,
-                "let annotations with nominal, enum and List element types",
-            ));
+        if needs_decode(contract) {
+            let schema = self.wire_schema(contract, span)?;
+            self.set_position(span)?;
+            self.push_vm();
+            self.instruction(Instruction::LocalGet(local));
+            self.instruction(Instruction::I32Const(schema.cast_signed()));
+            self.core_call("__exs_core_wire_decode", span)?;
+            self.store(local);
+            return self.return_if_error(local, span);
         }
         self.return_if_error(local, span)?;
         self.instruction(Instruction::LocalGet(local));
@@ -312,4 +316,26 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::End);
         Ok(())
     }
+
+    /// Decodes the item in `local` of a `for` loop with an annotated `binding` like v1, at the
+    /// binding's position.
+    pub(super) fn check_for_binding(
+        &mut self,
+        local: u32,
+        binding: ForBinding<'a, '_>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        match binding.contract {
+            Some(contract) => self.check_binding(local, contract, binding.identifier.span),
+            None => Ok(()),
+        }
+    }
+}
+
+/// The binding of a `for` loop and its resolved annotation, if any.
+#[derive(Clone, Copy)]
+pub(super) struct ForBinding<'a, 'c> {
+    /// The bound name.
+    pub(super) identifier: &'c Identifier<'a>,
+    /// The resolved contract of its annotation.
+    pub(super) contract: Option<&'c TypeContract>,
 }
