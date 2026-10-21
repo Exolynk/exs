@@ -1,6 +1,7 @@
 //! The non-moving mark-and-sweep collector.
 //!
-//! Marking starts from every `ValueRef` slot in the VM's root ranges and follows each object
+//! Marking starts from every `ValueRef` slot in the VM's root ranges and the root shape of
+//! untyped Objects, and follows each object
 //! kind's [`exs_layout::trace_layout`]. Objects outside the heap, such as static literal
 //! Strings, and objects with [`GC_STATIC`] are never marked. Sweeping walks every page run once:
 //! it rebuilds the size-class free lists, returns empty class pages and unmarked large objects
@@ -99,8 +100,12 @@ impl Marker {
         }
     }
 
-    /// Marks every object referenced from the VM's root ranges.
+    /// Marks every object referenced from the VM's root ranges and the shape tree.
     fn mark_roots(&mut self, memory: &mut impl Memory) {
+        let root_shape = self.vm.root_shape(memory);
+        if root_shape != 0 {
+            self.mark_address(memory, root_shape);
+        }
         let ranges = self.vm.root_ranges(memory);
         let count = self.vm.root_range_count(memory);
         let range_size = size_of::<RootRange>() as u32;

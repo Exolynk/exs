@@ -57,6 +57,7 @@ impl Vm {
         set_program_type_count,
         program.type_count
     );
+    vm_field!(root_shape, set_root_shape, program.root_shape);
 
     /// Pushes one raw reference onto the root stack and returns its slot address, or `None`
     /// when the stack is full.

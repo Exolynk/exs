@@ -331,3 +331,34 @@ pub extern "C" fn __exs_core_property_set(vm: i32, receiver: i64, name: i64, val
         trap();
     }
 }
+
+/// Returns the shape of the `count` distinct static key Strings at `keys`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_shape_for(vm: i32, keys: i32, count: i32) -> i32 {
+    match exs_core::shape_for(&mut memory(), address(vm), address(keys), address(count)) {
+        Some(shape) => shape.cast_signed(),
+        None => trap(),
+    }
+}
+
+/// Creates an untyped Object of `shape` from `count` values in the root slots at `slots`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_object_with_shape(vm: i32, shape: i32, slots: i32, count: i32) -> i64 {
+    match exs_core::object_with_shape(
+        &mut memory(),
+        address(vm),
+        address(shape),
+        address(slots),
+        address(count),
+    ) {
+        Some(object) => object.cast_signed(),
+        None => trap(),
+    }
+}
+
+/// Returns `shape << 32 | position` of the key named by `name` in an untyped Object, or -1.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_object_lookup(receiver: i64, name: i64) -> i64 {
+    exs_core::object_lookup(&memory(), receiver.cast_unsigned(), name.cast_unsigned())
+        .map_or(-1, u64::cast_signed)
+}

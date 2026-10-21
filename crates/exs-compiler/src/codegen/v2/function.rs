@@ -6,6 +6,7 @@
 //! such as loop counters own no slot. The frame is pushed on entry by bumping the root stack in
 //! the VM state block and popped before every return.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use exs_layout::VmState;
@@ -44,6 +45,10 @@ pub(super) struct Context<'m> {
     pub(super) vm: u32,
     /// Resolved source types.
     pub(super) types: &'m TypeRegistry,
+    /// Address of the static key array of every Object literal key sequence.
+    pub(super) object_keys: &'m HashMap<Vec<String>, u32>,
+    /// Index of the next mutable `i32` global, appended after the template's globals.
+    pub(super) next_global: Cell<u32>,
 }
 
 /// Lowering state of one function body.
@@ -186,6 +191,13 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         })?;
         self.instruction(Instruction::Call(index));
         Ok(())
+    }
+
+    /// Allocates one mutable `i32` global initialized to 0, such as an inline-cache entry.
+    pub(super) fn new_global(&self) -> u32 {
+        let index = self.context.next_global.get();
+        self.context.next_global.set(index + 1);
+        index
     }
 
     /// Pushes the VM state block address as an `i32`.

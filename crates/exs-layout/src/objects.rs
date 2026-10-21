@@ -81,14 +81,21 @@ pub struct ObjectObject {
 }
 
 /// An ordered key list shared by untyped Objects; `header.word` is the key count.
+///
+/// Shapes form a tree from the empty root shape: every child extends its parent by one key.
+/// The children of one shape are linked through `first_child` and `next_sibling`.
 #[repr(C)]
 pub struct ShapeObject {
     /// Common header.
     pub header: ObjectHeader,
     /// Address of the shape this one extends by its last key, or 0 for the empty shape.
     pub parent: u32,
-    /// Address of the Buffer holding the key Strings in order.
+    /// Address of the Buffer holding the key Strings in order, 0 for the empty shape.
     pub keys: u32,
+    /// Address of the first shape extending this one, or 0.
+    pub first_child: u32,
+    /// Address of the next shape extending the same parent, or 0.
+    pub next_sibling: u32,
 }
 
 /// A value of one enum variant; `header.word` is the enum type id. Payload slots follow.

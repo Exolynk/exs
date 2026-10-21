@@ -55,6 +55,8 @@ const OBJECT_ADDRESSES: &[u32] = &[
 const SHAPE_ADDRESSES: &[u32] = &[
     offset(offset_of!(ShapeObject, parent)),
     offset(offset_of!(ShapeObject, keys)),
+    offset(offset_of!(ShapeObject, first_child)),
+    offset(offset_of!(ShapeObject, next_sibling)),
 ];
 /// `ValueRef` fields of Cells.
 const CELL_VALUES: &[u32] = &[offset(offset_of!(CellObject, value))];

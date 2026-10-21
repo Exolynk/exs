@@ -1,5 +1,6 @@
 //! Linking of a v2 module: the core template plus the compiled program.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use exs_abi::TYPE_STRING;
@@ -12,13 +13,14 @@ use exs_value::layout::type_kind;
 use wasm_encoder::reencode::{self, Reencode};
 use wasm_encoder::{
     CodeSection, ConstExpr, CustomSection, DataSection, ExportKind, ExportSection, Function,
-    FunctionSection, Module as WasmModule, TypeSection, ValType,
+    FunctionSection, GlobalSection, GlobalType, Module as WasmModule, TypeSection, ValType,
 };
 use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 
 use super::entry::EntryLayout;
 use super::function::{Context, FunctionCompiler, FunctionInfo, error};
-use super::reachability::{reachable_functions, string_literals};
+use super::reachability::{object_key_lists, reachable_functions, string_literals};
+use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use crate::ast::{FunctionVisibility, Module};
 use crate::codegen::prune::{PruneHints, prune_unreachable};
@@ -39,6 +41,8 @@ struct TemplateFacts {
     exports: HashMap<String, u32>,
     /// Address just past the template's static data and stack.
     heap_base: u32,
+    /// Number of globals in the template.
+    globals: u32,
 }
 
 /// Reads the template's sizes, exports and heap base.
@@ -50,6 +54,7 @@ fn template_facts(template: &[u8]) -> Result<TemplateFacts, String> {
         defined_functions: 0,
         exports: HashMap::new(),
         heap_base: 0,
+        globals: 0,
     };
     let mut globals = Vec::new();
     let mut heap_base_global = None;
@@ -94,6 +99,7 @@ fn template_facts(template: &[u8]) -> Result<TemplateFacts, String> {
             _ => {}
         }
     }
+    facts.globals = globals.len() as u32;
     facts.heap_base = heap_base_global
         .and_then(|index| globals.get(index).copied().flatten())
         .ok_or_else(|| "the v2 core template exports no constant `__heap_base`".to_owned())?;
@@ -151,7 +157,19 @@ pub(in crate::codegen) fn compile<'a>(
     })?;
     let type_table = TypeTable::build(&types, &statics.references, statics.end())
         .ok_or_else(|| error("E0210", span, "too many types for linear memory".to_owned()))?;
-    let heap_start = type_table.end();
+    let static_keys = StaticKeys::build(
+        object_key_lists(&functions),
+        &statics.references,
+        type_table.end(),
+    )
+    .ok_or_else(|| {
+        error(
+            "E0210",
+            span,
+            "too many Object literals for linear memory".to_owned(),
+        )
+    })?;
+    let heap_start = static_keys.end();
     let base = facts.imported_functions + facts.defined_functions;
     let mut program = Program {
         types: Vec::new(),
@@ -193,6 +211,8 @@ pub(in crate::codegen) fn compile<'a>(
         strings: &statics.references,
         vm,
         types: &types,
+        object_keys: &static_keys.addresses,
+        next_global: Cell::new(facts.globals),
     };
     for function in &functions {
         let arity = function.parameters.len();
@@ -261,7 +281,9 @@ pub(in crate::codegen) fn compile<'a>(
         segments: vec![
             (statics.base, statics.bytes),
             (type_table.base, type_table.bytes),
+            (static_keys.base, static_keys.bytes),
         ],
+        globals: context.next_global.get() - facts.globals,
     };
     let mut wasm = WasmModule::new();
     reencode::utils::parse_core_module(&mut linker, &mut wasm, Parser::new(0), template).map_err(
@@ -331,8 +353,11 @@ impl StaticStrings {
 struct Linker {
     /// The compiled program.
     program: Program,
-    /// Address and bytes of every static data segment: the String objects and the type table.
+    /// Address and bytes of every static data segment: the String objects, the type table and
+    /// the Object literal keys.
     segments: Vec<(u32, Vec<u8>)>,
+    /// Number of mutable `i32` globals the program appends, all initialized to 0.
+    globals: u32,
 }
 
 impl Reencode for Linker {
@@ -372,6 +397,25 @@ impl Reencode for Linker {
         reencode::utils::parse_export_section(self, exports, section)?;
         for (name, index) in &self.program.exports {
             exports.export(name, ExportKind::Func, *index);
+        }
+        Ok(())
+    }
+
+    fn parse_global_section(
+        &mut self,
+        globals: &mut GlobalSection,
+        section: wasmparser::GlobalSectionReader<'_>,
+    ) -> Result<(), reencode::Error<Self::Error>> {
+        reencode::utils::parse_global_section(self, globals, section)?;
+        for _ in 0..self.globals {
+            globals.global(
+                GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &ConstExpr::i32_const(0),
+            );
         }
         Ok(())
     }

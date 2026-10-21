@@ -94,6 +94,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 span,
             } => self.compile_call(&callee.name, arguments, *span)?,
             Expression::List { elements, span } => self.compile_list(elements, *span)?,
+            Expression::Object { properties, span } => self.compile_object(properties, *span)?,
             Expression::TypedObject {
                 type_name,
                 properties,

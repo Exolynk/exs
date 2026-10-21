@@ -249,3 +249,75 @@ fn reports_collection_fuel() {
         println!("v2 fuel {name}: v1 {v1} v2 {v2}");
     }
 }
+
+/// Returns an Object value of `entries`.
+fn object(entries: &[(&str, ExsValue)]) -> ExsValue {
+    ExsValue::Object(
+        entries
+            .iter()
+            .map(|(key, value)| ((*key).into(), value.clone()))
+            .collect(),
+    )
+}
+
+/// Builds, reads, writes and extends untyped Objects like v1.
+#[test]
+fn matches_v1_for_untyped_objects() {
+    let programs = [
+        "fn main() { ret {}; }",
+        "fn main() { ret { name: \"Ada\", age: 36, tags: [1, 2] }; }",
+        "fn main() { ret { a: 1, b: 2, a: 3 }; }",
+        "fn main() { let item = { a: 1 }; item.b = item.a + 1; item[\"c\"] = item.b * 2; item.a = 0; ret [item, item.missing, item[\"b\"]]; }",
+        "fn main() { let items = [{ x: 1, y: 2 }, { y: 3, x: 4 }, { x: 5 }]; let total = 0; for item in items { total = total + item.x; if item.y != None { total = total + item.y; } } ret total; }",
+        "type Point { x: Int, y: Int } fn main() { let items = [Point { x: 1, y: 2 }, { y: 10 }, { z: 0, y: 20 }]; let total = 0; for item in items { total = total + item.y; } ret total; }",
+        "type Point { x: Int, y: Int } fn main() { let point = Point { x: 1, y: 2 }; point.label = \"p\"; point[\"z\"] = point.x; ret [point, point.label]; }",
+        "fn main() { let item = { a: 1 }; let other = { a: 1 }; ret [item == item, item == other]; }",
+        "fn main() { let item = {}; let index = 0; while index < 20 { item[\"k\" + index] = index; index = index + 1; } ret item; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+    let input = object(&[
+        ("name", ExsValue::String("Ada".into())),
+        (
+            "items",
+            ExsValue::List(vec![object(&[("x", ExsValue::Int(1))]), object(&[])]),
+        ),
+    ]);
+    compare(
+        "fn main(input) { input.count = 2; input.items[0].x = input.items[0].x + 1; ret input; }",
+        &[input],
+    );
+}
+
+/// Keeps untyped Objects and shapes alive across collections triggered by many allocations.
+#[test]
+fn matches_v1_for_untyped_objects_while_collecting() {
+    let source = "fn main(limit: Int) -> Int { let items = []; let index = 0; let countdown = 0; let last = { value: 0 }; while index < limit { last = { value: index, previous: last, label: \"n\" + index }; if countdown == 0 { items = items + [last]; countdown = 500; } countdown = countdown - 1; index = index + 1; } let total = 0; for item in items { total = total + item.value + item.previous.value; } ret total; }";
+    compare(source, &[ExsValue::Int(20_000)]);
+}
+
+/// Prints the fuel of both backends for untyped Object workloads.
+#[test]
+fn reports_untyped_object_fuel() {
+    let property = "fn main(limit: Int) -> Int { let point = { x: 1, y: 2 }; let total = 0; let index = 0; while index < limit { total = total + point.x + point.y; point.x = index; index = index + 1; } ret total; }";
+    let literals = "fn main(limit: Int) -> Int { let total = 0; let index = 0; while index < limit { let point = { x: index, y: 1, label: \"p\" }; total = total + point.y; index = index + 1; } ret total; }";
+    let concat = "fn main(items) -> String { let output = \"\"; for item in items { output = output + item.name + \";\"; } ret output; }";
+    for (name, source) in [("object_property", property), ("object_literals", literals)] {
+        let (v1, v2) = compare(source, &[ExsValue::Int(1000)]);
+        println!("v2 fuel {name}: v1 {v1} v2 {v2}");
+    }
+    for count in [10, 100] {
+        let items = (0..count)
+            .map(|index| {
+                object(&[
+                    ("id", ExsValue::Int(index)),
+                    ("name", ExsValue::String(format!("name {index}"))),
+                    ("active", ExsValue::Bool(index % 2 == 0)),
+                ])
+            })
+            .collect();
+        let (v1, v2) = compare(concat, &[ExsValue::List(items)]);
+        println!("v2 fuel concat_{count}_objects: v1 {v1} v2 {v2}");
+    }
+}

@@ -9,7 +9,7 @@
 //!
 //! It provides the heap (a size-class page allocator and a non-moving mark-and-sweep
 //! collector), execution start-up with the root stack and runner buffers, numeric values and
-//! operations, Strings, Lists, typed Objects, and the CBOR conversion of runner inputs and
+//! operations, Strings, Lists, typed and untyped Objects with shapes, and the CBOR conversion of runner inputs and
 //! results.
 
 #[cfg(test)]
@@ -23,7 +23,9 @@ mod execution;
 mod lists;
 mod memory;
 mod numbers;
+mod objects;
 mod pages;
+mod shapes;
 mod strings;
 mod typed;
 mod values;
@@ -46,6 +48,8 @@ pub use numbers::{
     Arithmetic, Number, NumericError, Ordering, arithmetic, divide, float_value, int_value, negate,
     number,
 };
+pub use objects::{object_lookup, object_with_shape};
+pub use shapes::shape_for;
 pub use strings::{StringError, concat, string_object};
 pub use values::{compare, equal};
 pub use vm::{collection_count, set_heap_flags, set_program_types, set_root_ranges};

@@ -13,6 +13,8 @@ mod linker;
 mod objects;
 mod reachability;
 mod statements;
+mod static_keys;
 mod type_table;
+mod untyped;
 
 pub(super) use linker::compile;

@@ -1,144 +1,15 @@
 //! List, access and typed Object tests on an initialized execution.
 
-use core::mem::offset_of;
-use std::vec::Vec;
-
 use exs_abi::ExsValue;
-use exs_layout::{ObjectKind, TypeEntry, VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState};
+use exs_layout::VM_FLAG_COLLECT_EVERY_ALLOCATION;
 use exs_value::ValueRef;
-use exs_value::layout::object_type_extra;
 
-use super::heap::{VM, VecMemory};
+use super::execution::Execution;
+use super::heap::VM;
 use crate::{
-    AccessError, Memory, allocate, concat, decode_inputs, encode_result, index_get, index_set,
-    init_execution, list_copy, list_new, list_object, property_get, property_set, reserve_input,
-    result, set_heap_flags, set_program_types,
+    AccessError, Memory, concat, decode_inputs, encode_result, index_get, index_set, list_copy,
+    list_object, property_get, property_set, reserve_input, set_heap_flags,
 };
-
-/// Address of the program's type table in these tests.
-const TYPES: u32 = 2048;
-/// Address of the field-name slots of type 0.
-const FIELD_NAMES: u32 = 2304;
-
-/// One initialized execution whose values are rooted on the root stack.
-struct Execution {
-    /// The backing memory.
-    memory: VecMemory,
-}
-
-impl Execution {
-    /// Initializes a fresh execution.
-    fn new() -> Self {
-        let mut memory = VecMemory::new(256);
-        init_execution(&mut memory, VM, exs_layout::PAGE_SIZE, 1).expect("memory has room");
-        Self { memory }
-    }
-
-    /// Returns the address of the root stack's next free slot.
-    fn stack_end(&self) -> u32 {
-        self.memory
-            .load_u32(VM + offset_of!(VmState, root_stack.range.end) as u32)
-    }
-
-    /// Roots `values` in consecutive new root-stack slots and returns the first slot address.
-    fn root(&mut self, values: &[u64]) -> u32 {
-        let first = self.stack_end();
-        for (index, value) in (0_u32..).zip(values) {
-            self.memory.store_u64(first + index * 8, *value);
-        }
-        self.memory.store_u32(
-            VM + offset_of!(VmState, root_stack.range.end) as u32,
-            first + values.len() as u32 * 8,
-        );
-        first
-    }
-
-    /// Returns a small Int reference.
-    fn int(value: i64) -> u64 {
-        ValueRef::small_int(value).expect("small Int").raw()
-    }
-
-    /// Creates and roots a List of `values`.
-    fn list(&mut self, values: &[u64]) -> u64 {
-        let slots = self.root(values);
-        let list = list_new(&mut self.memory, VM, slots, values.len() as u32).expect("room");
-        self.root(&[list]);
-        list
-    }
-
-    /// Returns the elements of one List.
-    fn elements(&self, raw: u64) -> Vec<u64> {
-        let list = list_object(raw).expect("a List");
-        let len = self.memory.load_u32(list + 8);
-        let items = self.memory.load_u32(list + 12);
-        (0..len)
-            .map(|index| self.memory.load_u64(items + 8 + index * 8))
-            .collect()
-    }
-
-    /// Creates and roots a String of `text`.
-    fn string(&mut self, text: &str) -> u64 {
-        let object = allocate(
-            &mut self.memory,
-            VM,
-            16 + text.len() as u32,
-            ObjectKind::String,
-        )
-        .expect("room");
-        self.memory
-            .store_u32(object + 4, text.chars().count() as u32);
-        self.memory.store_u32(object + 8, text.len() as u32);
-        for (offset, byte) in (0_u32..).zip(text.bytes()) {
-            self.memory.store_u8(object + 16 + offset, byte);
-        }
-        let raw = crate::strings::string_reference(object).expect("nonzero kind");
-        self.root(&[raw]);
-        raw
-    }
-
-    /// Declares type 0 with the field names `fields` and returns a typed Object of it holding
-    /// `values`.
-    fn typed_object(&mut self, fields: &[&str], values: &[u64]) -> u64 {
-        for (index, field) in (0_u32..).zip(fields) {
-            let name = self.string(field);
-            self.memory.store_u64(FIELD_NAMES + index * 8, name);
-        }
-        self.memory.store_u32(
-            TYPES + offset_of!(TypeEntry, field_count) as u32,
-            fields.len() as u32,
-        );
-        self.memory.store_u32(
-            TYPES + offset_of!(TypeEntry, field_names) as u32,
-            FIELD_NAMES,
-        );
-        set_program_types(&mut self.memory, VM, TYPES, 1);
-        let size = 16 + values.len() as u32 * 8;
-        let object = allocate(&mut self.memory, VM, size, ObjectKind::TypedObject).expect("room");
-        self.memory.store_u32(object + 8, values.len() as u32);
-        for (index, value) in (0_u32..).zip(values) {
-            self.memory.store_u64(object + 16 + index * 8, *value);
-        }
-        let raw = ValueRef::from_parts(
-            exs_abi::TYPE_OBJECT as u16,
-            object_type_extra(Some(0)),
-            object,
-        )
-        .expect("nonzero kind")
-        .raw();
-        self.root(&[raw]);
-        raw
-    }
-
-    /// Encodes `raw` as the result and decodes it with the runner's codec.
-    fn encoded(&mut self, raw: u64) -> ExsValue {
-        encode_result(&mut self.memory, VM, raw).expect("encodable");
-        let (address, length) = result(&self.memory, VM);
-        let bytes: Vec<u8> = (0..length)
-            .map(|offset| self.memory.load_u8(address + offset))
-            .collect();
-        ExsValue::from_cbor(&bytes).expect("valid CBOR")
-    }
-}
 
 /// Builds Lists, adds Lists and values like v1 and copies Lists for iteration.
 #[test]
@@ -218,9 +89,11 @@ fn accesses_list_elements_and_fields() {
     assert_eq!(property_get(memory, VM, point, z), Ok(ValueRef::NONE.raw()));
     assert_eq!(property_set(memory, VM, point, y, two), Ok(()));
     assert_eq!(index_get(memory, VM, point, y), Ok(two));
+    assert_eq!(property_set(memory, VM, point, z, two), Ok(()));
+    assert_eq!(property_get(memory, VM, point, z), Ok(two));
     assert_eq!(
-        property_set(memory, VM, point, z, two),
-        Err(AccessError::UnsupportedKey)
+        property_get(memory, VM, point, one),
+        Err(AccessError::InvalidKey)
     );
     assert_eq!(
         property_get(memory, VM, list, x),

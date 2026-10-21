@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     AssignmentTarget, Block, ElseBranch, Expression, FormattedStringPart, FunctionDeclaration,
-    FunctionVisibility, MatchArmBody, Module, Statement,
+    FunctionVisibility, MatchArmBody, Module, ObjectProperty, Statement,
 };
 
 /// Returns the public functions and every function they can call directly, in source order.
@@ -73,6 +73,11 @@ pub(super) fn string_literals<'t>(
                 }
             }
             Expression::Property { property, .. } => add(&property.name),
+            Expression::Object { properties, .. } => {
+                for property in properties {
+                    add(&property.key);
+                }
+            }
             _ => {}
         });
     }
@@ -80,6 +85,33 @@ pub(super) fn string_literals<'t>(
         add(text);
     }
     literals
+}
+
+/// Returns the distinct keys of one Object literal in order of first appearance.
+pub(super) fn literal_keys(properties: &[ObjectProperty<'_>]) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::with_capacity(properties.len());
+    for property in properties {
+        if !keys.contains(&property.key) {
+            keys.push(property.key.clone());
+        }
+    }
+    keys
+}
+
+/// Returns every distinct key sequence of the Object literals of `functions`.
+pub(super) fn object_key_lists(functions: &[&FunctionDeclaration<'_>]) -> Vec<Vec<String>> {
+    let mut lists = Vec::new();
+    for function in functions {
+        visit_block(&function.body, &mut |expression| {
+            if let Expression::Object { properties, .. } = expression {
+                let keys = literal_keys(properties);
+                if !keys.is_empty() && !lists.contains(&keys) {
+                    lists.push(keys);
+                }
+            }
+        });
+    }
+    lists
 }
 
 /// Calls `visit` for every assignment target inside `block`.

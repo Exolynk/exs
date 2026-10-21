@@ -14,6 +14,8 @@ use crate::vm::Vm;
 const TYPE_ID: u32 = 4;
 /// Byte offset of [`TypedObject::slot_count`].
 const SLOT_COUNT: u32 = offset_of!(TypedObject, slot_count) as u32;
+/// Byte offset of [`TypedObject::extra`].
+const EXTRA: u32 = offset_of!(TypedObject, extra) as u32;
 /// Byte offset of the first field slot.
 const SLOTS: u32 = size_of::<TypedObject>() as u32;
 
@@ -35,6 +37,17 @@ pub(crate) fn type_id(memory: &impl Memory, object: u32) -> u32 {
 /// Returns the number of field slots of the typed Object at `object`.
 pub(crate) fn slot_count(memory: &impl Memory, object: u32) -> u32 {
     memory.load_u32(object + SLOT_COUNT)
+}
+
+/// Returns the untyped Object holding the undeclared keys of the typed Object at `object`, or
+/// 0 when it has none.
+pub(crate) fn extra(memory: &impl Memory, object: u32) -> u32 {
+    memory.load_u32(object + EXTRA)
+}
+
+/// Sets the untyped Object holding the undeclared keys of the typed Object at `object`.
+pub(crate) fn set_extra(memory: &mut impl Memory, object: u32, extra: u32) {
+    memory.store_u32(object + EXTRA, extra);
 }
 
 /// Returns the address of field slot `index` of the typed Object at `object`.

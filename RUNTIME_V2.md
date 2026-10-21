@@ -1,7 +1,7 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Phases 0, 0.5, 1, 2a, 2b and 2c-1 are done; see sections 12 to
-12d.
+Status: **approved design**. Phases 0, 0.5, 1, 2a, 2b, 2c-1 and 2c-2 are done; see sections
+12 to 12e.
 
 ## 1. Goal
 
@@ -391,12 +391,49 @@ rendering into the destination directly are possible follow-ups.
 missing fields, so its CBOR map uses that order; v2 always uses declaration order. Both agree
 whenever a literal names its fields in declaration order.
 
+## 12e. Phase 2c-2 results
+
+- **Shapes** form a tree from the VM's empty root shape (`VmState::program.root_shape`); each
+  child extends its parent by one key, and the children of a shape are linked through
+  `first_child`/`next_sibling`. Every shape holds its full key Buffer. The collector treats the
+  root shape as a root, so shapes and their keys are never collected.
+- **Untyped Objects** are a shape plus a value Buffer that doubles when a key is added.
+  Literals evaluate their values left to right into consecutive root slots; a repeated key
+  keeps the position of its first occurrence and the value of its last, like v1. Each literal
+  site computes its shape once from a static key array and caches it in a Wasm global.
+- **Inline caches:** every property access site owns two mutable `i32` globals, the last seen
+  shape and the key's value position. After the typed-Object tag chain, an untyped receiver of
+  the cached shape reads or writes its slot directly; otherwise `__exs_core_object_lookup`
+  refills the cache and the core does the access. Writes only use the cache for existing keys;
+  adding a key always goes through the core.
+- **Typed Objects** keep keys their type does not declare in an untyped extra Object; they
+  read after the declared fields and encode after them, like v1.
+- **CBOR** decodes maps into untyped Objects (text keys only, repeated keys rejected) and
+  encodes untyped Objects as maps in key order.
+
+| | v1 fuel | v2 fuel | change |
+|---|---:|---:|---:|
+| property read and write, 1000 iterations | 731,720 | 478,150 | −35 % |
+| Object literal per row, 1000 iterations | 1,167,940 | 887,774 | −24 % |
+| `concat_10_objects` | 136,378 | 352,451 | +158 % |
+| `concat_100_objects` | 664,705 | 860,076 | +29 % |
+
+The Object scenarios with runner input lose because of a fixed start-up cost, not per Object:
+decoding an empty List argument already costs about 147,000 fuel in v2 against 70,000 in v1,
+while every further Object costs less in v2 (about 3,800 against 4,600). The allocator links
+all cells of a fresh class page into the free list at once, e.g. 4,080 cells for the 16-byte
+class, so every size class a script touches first costs a full page of linking. Linking
+lazily in small chunks removes most of this cost and is the next allocator change.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.
   The precise root frames exist, but every inline allocation site and every helper that
   allocates must keep that discipline. Mitigation: a debug mode that collects on every
   allocation, run against the full test suite.
+- **Shape growth:** shapes are never collected, so keys computed from data create shapes for
+  the rest of the execution. This is bounded by the execution, but a script that builds Objects
+  with many distinct dynamic keys keeps all of their shapes.
 - **Fragmentation** of the non-moving heap for long-running tasks; measured in phase 2.
 - **Wall-clock vs fuel:** Winch generates slower machine code than Cranelift; whether
   production should switch compilers is a separate decision informed by phase 0 numbers.

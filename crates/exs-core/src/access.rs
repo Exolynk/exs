@@ -5,7 +5,9 @@ use exs_value::{Immediate, ValueRef};
 use crate::lists::{item_address, len, list_object};
 use crate::memory::Memory;
 use crate::numbers::{Number, number, reference};
-use crate::typed::{field_address, typed_object};
+use crate::objects::{empty_object, object_get, object_set, untyped_object};
+use crate::strings::string_object;
+use crate::typed::{extra, field_address, set_extra, typed_object};
 
 /// Why an index or property access produced no value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,8 +18,10 @@ pub enum AccessError {
     InvalidIndex,
     /// A List index is outside the List's bounds.
     OutOfBounds,
-    /// The receiver cannot store this key yet.
-    UnsupportedKey,
+    /// An Object key is not a String.
+    InvalidKey,
+    /// The heap could not hold a new key.
+    OutOfMemory,
 }
 
 /// Returns the slot address of List element `index`, checking the index like the language.
@@ -36,7 +40,7 @@ fn list_slot(memory: &impl Memory, list: u32, index: u64) -> Result<u32, AccessE
     }
 }
 
-/// Evaluates `receiver[index]` for Lists and typed Objects.
+/// Evaluates `receiver[index]` for Lists and Objects.
 ///
 /// # Errors
 ///
@@ -53,7 +57,7 @@ pub fn index_get(
     property_get(memory, vm, receiver, index)
 }
 
-/// Evaluates `receiver[index] = value` for Lists and typed Objects.
+/// Evaluates `receiver[index] = value` for Lists and Objects.
 ///
 /// # Errors
 ///
@@ -73,28 +77,49 @@ pub fn index_set(
     property_set(memory, vm, receiver, index, value)
 }
 
-/// Reads the property named by the String `name`; a field the type does not declare is None.
+/// Reads the property named by the String `name`; a key the Object lacks reads as None.
+///
+/// Typed Objects look up their declared fields first and then their extra keys.
 ///
 /// # Errors
 ///
-/// Returns [`AccessError::NotAccessible`] when the receiver is no Object.
+/// Returns [`AccessError::NotAccessible`] when the receiver is no Object and
+/// [`AccessError::InvalidKey`] when `name` is no String.
 pub fn property_get(
     memory: &impl Memory,
     vm: u32,
     receiver: u64,
     name: u64,
 ) -> Result<u64, AccessError> {
-    let object = typed_object(memory, receiver).ok_or(AccessError::NotAccessible)?;
-    Ok(field_address(memory, vm, object, name)
-        .map_or(ValueRef::NONE.raw(), |slot| memory.load_u64(slot)))
+    let text = string_object(name);
+    if let Some(object) = typed_object(memory, receiver) {
+        let text = text.ok_or(AccessError::InvalidKey)?;
+        if let Some(slot) = field_address(memory, vm, object, name) {
+            return Ok(memory.load_u64(slot));
+        }
+        return Ok(match extra(memory, object) {
+            0 => ValueRef::NONE.raw(),
+            extra => object_get(memory, extra, text),
+        });
+    }
+    let object = untyped_object(memory, receiver).ok_or(AccessError::NotAccessible)?;
+    Ok(object_get(
+        memory,
+        object,
+        text.ok_or(AccessError::InvalidKey)?,
+    ))
 }
 
-/// Writes the property named by the String `name`.
+/// Writes the property named by the String `name`, adding the key when the Object lacks it.
+///
+/// Typed Objects keep keys their type does not declare in an untyped extra Object. The
+/// receiver, `name` and `value` must be rooted, because adding a key may allocate.
 ///
 /// # Errors
 ///
-/// Returns [`AccessError::NotAccessible`] when the receiver is no Object and
-/// [`AccessError::UnsupportedKey`] for keys its type does not declare.
+/// Returns [`AccessError::NotAccessible`] when the receiver is no Object,
+/// [`AccessError::InvalidKey`] when `name` is no String and [`AccessError::OutOfMemory`] when
+/// a new key does not fit.
 pub fn property_set(
     memory: &mut impl Memory,
     vm: u32,
@@ -102,8 +127,24 @@ pub fn property_set(
     name: u64,
     value: u64,
 ) -> Result<(), AccessError> {
-    let object = typed_object(memory, receiver).ok_or(AccessError::NotAccessible)?;
-    let slot = field_address(memory, vm, object, name).ok_or(AccessError::UnsupportedKey)?;
-    memory.store_u64(slot, value);
-    Ok(())
+    if string_object(name).is_none() {
+        return Err(AccessError::InvalidKey);
+    }
+    let object = if let Some(object) = typed_object(memory, receiver) {
+        if let Some(slot) = field_address(memory, vm, object, name) {
+            memory.store_u64(slot, value);
+            return Ok(());
+        }
+        match extra(memory, object) {
+            0 => {
+                let created = empty_object(memory, vm, 0).ok_or(AccessError::OutOfMemory)?;
+                set_extra(memory, object, created);
+                created
+            }
+            extra => extra,
+        }
+    } else {
+        untyped_object(memory, receiver).ok_or(AccessError::NotAccessible)?
+    };
+    object_set(memory, vm, object, name, value).ok_or(AccessError::OutOfMemory)
 }

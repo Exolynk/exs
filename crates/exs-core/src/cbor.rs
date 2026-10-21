@@ -1,8 +1,9 @@
 //! CBOR encoding of runner inputs and results.
 //!
 //! The runner passes the entry arguments as one CBOR array and expects one CBOR value back.
-//! This version handles None, Bool, Int, Float, String and List values both ways and encodes
-//! typed Objects as maps of their declared fields; other values are reported as unsupported.
+//! This version handles None, Bool, Int, Float, String, List and untyped Object values both
+//! ways and encodes typed Objects as maps of their declared fields followed by their extra
+//! keys; other values are reported as unsupported.
 
 use exs_value::{Immediate, ValueRef};
 
@@ -10,8 +11,12 @@ use crate::execution::{input, reserve_result};
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, push_unchecked};
 use crate::memory::Memory;
 use crate::numbers::{Number, float_value, int_value, number, reference};
+use crate::objects::{
+    empty_object, find_value, object_reference, object_set, shape, untyped_object, value_address,
+};
+use crate::shapes::{key, key_count};
 use crate::strings::{DATA, byte_len, copy_string, string_object};
-use crate::typed::{slot_address, slot_count, type_entry, type_id, typed_object};
+use crate::typed::{extra, slot_address, slot_count, type_entry, type_id, typed_object};
 use crate::vm::Vm;
 
 /// Deepest nesting of Lists and Objects the codec converts; deeper values, including cyclic
@@ -202,8 +207,10 @@ fn decode_value(
     depth: u32,
 ) -> Result<u64, CborError> {
     let initial = reader.byte(memory)?;
-    if initial >> 5 == MAJOR_ARRAY {
-        return decode_list(memory, vm, reader, initial & 0x1f, depth);
+    match initial >> 5 {
+        MAJOR_ARRAY => return decode_list(memory, vm, reader, initial & 0x1f, depth),
+        MAJOR_MAP => return decode_object(memory, vm, reader, initial & 0x1f, depth),
+        _ => {}
     }
     Ok(match reader.scalar(memory, initial)? {
         Scalar::Immediate(value) => value.raw(),
@@ -248,6 +255,69 @@ fn decode_list(
     }
     Vm(vm).pop_roots(memory, root);
     decoded
+}
+
+/// Decodes the entries of one map with additional information `info` into a new untyped
+/// Object, rejecting keys other than text and repeated keys.
+fn decode_object(
+    memory: &mut impl Memory,
+    vm: u32,
+    reader: &mut Reader,
+    info: u8,
+    depth: u32,
+) -> Result<u64, CborError> {
+    if depth >= MAX_DEPTH {
+        return Err(CborError::Unsupported);
+    }
+    // Every entry takes at least two bytes.
+    let count = reader.count(memory, info)?;
+    let object = empty_object(memory, vm, count / 2 + 1).ok_or(CborError::OutOfMemory)?;
+    let raw = object_reference(object).ok_or(CborError::OutOfMemory)?;
+    let root = Vm(vm)
+        .push_root(memory, raw)
+        .ok_or(CborError::OutOfMemory)?;
+    let mut decoded = Ok(raw);
+    for _ in 0..count {
+        if let Err(error) = decode_entry(memory, vm, reader, object, depth) {
+            decoded = Err(error);
+            break;
+        }
+    }
+    Vm(vm).pop_roots(memory, root);
+    decoded
+}
+
+/// Decodes one map entry into the rooted untyped Object at `object`.
+fn decode_entry(
+    memory: &mut impl Memory,
+    vm: u32,
+    reader: &mut Reader,
+    object: u32,
+    depth: u32,
+) -> Result<(), CborError> {
+    let initial = reader.byte(memory)?;
+    if initial >> 5 != MAJOR_TEXT {
+        return Err(CborError::Unsupported);
+    }
+    let Scalar::Text { start, len, chars } = reader.scalar(memory, initial)? else {
+        return Err(CborError::Malformed);
+    };
+    let name = copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?;
+    let state = Vm(vm);
+    let root = state
+        .push_root(memory, name)
+        .ok_or(CborError::OutOfMemory)?;
+    let result = decode_value(memory, vm, reader, depth + 1).and_then(|value| {
+        if find_value(memory, object, name as u32).is_some() {
+            return Err(CborError::Malformed);
+        }
+        state
+            .push_root(memory, value)
+            .ok_or(CborError::OutOfMemory)?;
+        object_set(memory, vm, object, name, value).ok_or(CborError::OutOfMemory)
+    });
+    state.pop_roots(memory, root);
+    result
 }
 
 /// Converts one IEEE 754 binary16 value to binary64.
@@ -376,6 +446,14 @@ impl Sink {
         if let Some(object) = typed_object(memory, raw) {
             return self.typed_object(memory, vm, object, depth);
         }
+        if let Some(object) = untyped_object(memory, raw) {
+            if depth >= MAX_DEPTH {
+                return Err(CborError::Unsupported);
+            }
+            let count = key_count(memory, shape(memory, object));
+            self.head(memory, MAJOR_MAP, u64::from(count))?;
+            return self.entries(memory, vm, object, depth);
+        }
         let mut bytes = [0_u8; 9];
         let length = match reference(raw).and_then(ValueRef::immediate) {
             Some(Immediate::None) => {
@@ -442,12 +520,44 @@ impl Sink {
         let entry = type_entry(memory, vm, type_id(memory, object))
             .filter(|entry| entry.field_count <= slot_count(memory, object))
             .ok_or(CborError::Unsupported)?;
-        self.head(memory, MAJOR_MAP, u64::from(entry.field_count))?;
+        let extra = extra(memory, object);
+        let extra_count = if extra == 0 {
+            0
+        } else {
+            key_count(memory, shape(memory, extra))
+        };
+        let count = entry.field_count.checked_add(extra_count);
+        self.head(
+            memory,
+            MAJOR_MAP,
+            u64::from(count.ok_or(CborError::Unsupported)?),
+        )?;
         for index in 0..entry.field_count {
             let name = memory.load_u64(entry.field_names + index * 8);
             let name = string_object(name).ok_or(CborError::Unsupported)?;
             self.string(memory, name)?;
             let value = memory.load_u64(slot_address(object, index));
+            self.value(memory, vm, value, depth + 1)?;
+        }
+        if extra != 0 {
+            self.entries(memory, vm, extra, depth)?;
+        }
+        Ok(())
+    }
+
+    /// Appends the keys and values of the untyped Object at `object` in key order.
+    fn entries(
+        &mut self,
+        memory: &mut impl Memory,
+        vm: u32,
+        object: u32,
+        depth: u32,
+    ) -> Result<(), CborError> {
+        let shape = shape(memory, object);
+        for index in 0..key_count(memory, shape) {
+            let name = string_object(key(memory, shape, index)).ok_or(CborError::Unsupported)?;
+            self.string(memory, name)?;
+            let value = memory.load_u64(value_address(memory, object, index));
             self.value(memory, vm, value, depth + 1)?;
         }
         Ok(())

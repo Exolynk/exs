@@ -89,6 +89,12 @@ pub struct ProgramState {
     pub types: u32,
     /// Number of entries in `types`.
     pub type_count: u32,
+    /// Address of the empty root shape of untyped Objects, 0 before the first Object.
+    ///
+    /// The collector treats it as a root, so shapes are never collected.
+    pub root_shape: u32,
+    /// Reserved, keeps the block 8-byte aligned.
+    pub reserved: u32,
 }
 
 /// Static metadata of one nominal type.

@@ -2,8 +2,8 @@
 //!
 //! A typed Object keeps its declared fields in slots in declaration order and carries its type
 //! id in its reference's extra bits. Property access tests the receiver's tag against every
-//! type declaring the property and reads that type's slot inline; any other receiver goes
-//! through the core library.
+//! type declaring the property and reads that type's slot inline, then tries the site's inline
+//! cache for untyped Objects; any other receiver goes through the core library.
 
 use core::mem::size_of;
 
@@ -14,6 +14,7 @@ use wasm_encoder::{BlockType, Instruction};
 
 use super::collections::{u32_field, value_field};
 use super::function::{FunctionCompiler, error};
+use super::untyped::VALUE_SLOTS;
 use crate::ast::{Expression, Identifier, ObjectProperty};
 use crate::codegen::types::NominalKind;
 use crate::codegen::{VALUE_TYPE, immediate};
@@ -163,13 +164,18 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.compile_expression(receiver)?;
         let object = self.store_new();
         let name = self.static_string_value(property, span)?;
+        let cache = self.new_inline_cache();
         self.instruction(Instruction::Block(BlockType::Result(VALUE_TYPE)));
         self.instruction(Instruction::Block(BlockType::Empty));
         self.property_dispatch(object, property, 1, |compiler, offset| {
             compiler.push_address(object);
             compiler.instruction(Instruction::I64Load(value_field(offset)));
         });
+        self.cached_slot_or_branch(object, cache, 0);
+        self.instruction(Instruction::I64Load(value_field(VALUE_SLOTS)));
+        self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
+        self.fill_inline_cache(object, name, cache, span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(object));
         self.instruction(Instruction::I64Const(name.cast_signed()));
@@ -191,6 +197,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         let name = self.static_string_value(property, span)?;
         self.compile_expression(value)?;
         let value = self.store_new();
+        let cache = self.new_inline_cache();
         self.instruction(Instruction::Block(BlockType::Empty));
         self.instruction(Instruction::Block(BlockType::Empty));
         self.property_dispatch(object, property, 1, |compiler, offset| {
@@ -198,7 +205,12 @@ impl<'a> FunctionCompiler<'a, '_> {
             compiler.instruction(Instruction::LocalGet(value));
             compiler.instruction(Instruction::I64Store(value_field(offset)));
         });
+        self.cached_slot_or_branch(object, cache, 0);
+        self.instruction(Instruction::LocalGet(value));
+        self.instruction(Instruction::I64Store(value_field(VALUE_SLOTS)));
+        self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
+        self.fill_inline_cache(object, name, cache, span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(object));
         self.instruction(Instruction::I64Const(name.cast_signed()));
