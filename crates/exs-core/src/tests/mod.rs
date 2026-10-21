@@ -7,6 +7,7 @@ mod errors;
 mod execution;
 mod heap;
 mod lists;
+mod methods;
 mod numbers;
 mod objects;
 mod strings;

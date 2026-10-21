@@ -11,6 +11,7 @@ mod errors;
 mod expressions;
 mod function;
 mod linker;
+mod methods;
 mod objects;
 mod protocols;
 mod reachability;

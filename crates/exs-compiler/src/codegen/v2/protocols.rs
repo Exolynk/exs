@@ -1,9 +1,9 @@
 //! Guards for standard-trait implementations the v2 backend does not dispatch yet.
 //!
-//! v1 dispatches operators and formatted-string parts to nominal `Add`, `Compare`, `ToString`
-//! and related implementations before its built-in behavior. Until v2 compiles implementation
-//! methods, it traps on exactly those receivers instead of silently applying the built-in
-//! behavior.
+//! v1 dispatches operators, method calls and formatted-string parts to nominal
+//! implementations (`Add`, `Compare`, `ToString`, any instance method) before its built-in
+//! behavior. Until v2 compiles implementation methods, it traps on exactly those receivers
+//! instead of silently applying the built-in behavior.
 
 use std::collections::HashMap;
 
@@ -23,6 +23,8 @@ pub(super) struct Protocols {
     operators: HashMap<TraitOperator, Vec<u32>>,
     /// Types implementing `ToString`, which formatted strings call.
     to_string: Vec<u32>,
+    /// Types implementing each instance method name, which method calls dispatch to first.
+    methods: HashMap<String, Vec<u32>>,
 }
 
 impl Protocols {
@@ -35,14 +37,9 @@ impl Protocols {
     ) -> Self {
         let mut protocols = Self::default();
         for implementation in &module.implementations {
-            let (Some(trait_name), Some(nominal)) = (
-                &implementation.trait_name,
-                types.get(&implementation.type_name.name),
-            ) else {
+            let Some(nominal) = types.get(&implementation.type_name.name) else {
                 continue;
             };
-            let trait_name =
-                standard::canonical_trait_name(&trait_name.name).unwrap_or(&trait_name.name);
             for method in &implementation.methods {
                 let is_instance = method
                     .parameters
@@ -51,6 +48,16 @@ impl Protocols {
                 if !is_instance {
                     continue;
                 }
+                protocols
+                    .methods
+                    .entry(method.name.name.clone())
+                    .or_default()
+                    .push(nominal.id);
+                let Some(trait_name) = &implementation.trait_name else {
+                    continue;
+                };
+                let trait_name =
+                    standard::canonical_trait_name(&trait_name.name).unwrap_or(&trait_name.name);
                 for operator in traits.operators_for(trait_name, &method.name.name) {
                     protocols
                         .operators
@@ -88,6 +95,14 @@ impl FunctionCompiler<'_, '_> {
         let context = self.context;
         if let Some(type_ids) = context.protocols.operators.get(&operator) {
             self.guard_types(left, type_ids);
+        }
+    }
+
+    /// Traps when the method-call receiver in `local` has an implementation of `method`.
+    pub(super) fn guard_method(&mut self, method: &str, local: u32) {
+        let context = self.context;
+        if let Some(type_ids) = context.protocols.methods.get(method) {
+            self.guard_types(local, type_ids);
         }
     }
 

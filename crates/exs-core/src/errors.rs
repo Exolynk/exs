@@ -260,3 +260,32 @@ pub(crate) fn not_iterable(memory: &mut impl Memory, vm: u32, value: u64) -> Opt
         value,
     )
 }
+
+/// Creates the MethodNotFound Error of a method name no built-in or implementation provides.
+pub fn method_not_found(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option<u64> {
+    recoverable(
+        memory,
+        vm,
+        "MethodNotFound",
+        "receiver does not support this method",
+        receiver,
+    )
+}
+
+/// Creates the ArityError of a built-in method called with the wrong number of arguments,
+/// with the `count` arguments in the rooted slots at `slots` as a List in its data, like v1.
+pub fn method_arity_error(
+    memory: &mut impl Memory,
+    vm: u32,
+    slots: u32,
+    count: u32,
+    expected: u32,
+) -> Option<u64> {
+    let arguments = crate::lists::list_new(memory, vm, slots, count)?;
+    let message = match expected {
+        0 => "method expects no arguments",
+        1 => "method expects exactly one argument",
+        _ => "method expects exactly two arguments",
+    };
+    recoverable(memory, vm, "ArityError", message, arguments)
+}

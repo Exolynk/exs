@@ -15,6 +15,7 @@ mod header;
 mod objects;
 mod page;
 mod size_class;
+mod statics;
 mod trace;
 mod vm;
 
@@ -29,6 +30,7 @@ pub use objects::{
 };
 pub use page::{PAGE_HEADER_SIZE, PAGE_SIZE, PageHeader, PageKind};
 pub use size_class::{CLASS_COUNT, MAX_CLASS_SIZE, SIZE_CLASSES, class_for_size};
+pub use statics::StaticFunction;
 pub use trace::{TraceLayout, ValueSlots, trace_layout};
 pub use vm::{
     BoundaryState, ErrorState, HeapState, ProgramState, RootRange, RootStack, RootState, TypeEntry,

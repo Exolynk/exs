@@ -416,3 +416,42 @@ fn traps_on_undispatched_trait_implementations() {
         assert!(outcome.is_err(), "v2 did not trap on:\n{program}");
     }
 }
+
+/// Evaluates built-in numeric, value and Error methods like v1, including their Errors.
+#[test]
+fn matches_v1_for_builtin_methods() {
+    let programs = [
+        "fn main() { ret [(7).add(5), (7).sub(5), (7).mul(5), (7).div(2), \"a\".add(1), [1].add(2)]; }",
+        "fn main() { ret [(-7).div_euclid(2), (-7).rem_euclid(2), (7).div_euclid(0), true.div_euclid(1), (-9223372036854775807 - 1).div_euclid(-1)]; }",
+        "fn main() { ret [(-3).abs(), (-2.5).abs(), (-9223372036854775807 - 1).abs(), \"x\".abs(), true.abs()]; }",
+        "fn main() { let value = 2.5; ret [value.floor(), value.ceil(), value.round(), (-2.5).round(), value.trunc(), value.fract(), 2.0.sqrt(), (2).sqrt()]; }",
+        "fn main() { ret [(-4).signum(), (0).signum(), (4).is_even(), (3).is_odd(), 4.0.is_even()]; }",
+        "fn main() { ret [(12).gcd(-18), (0).gcd(0), (4).lcm(6), (0).lcm(5), (3037000500).lcm(3037000501), (-9223372036854775807 - 1).gcd(0), (2).gcd(1.0)]; }",
+        "fn main() { ret [(2).pow(10), (2).pow(-1), (2).pow(1.5), (2).pow(63), 2.0.pow(0.5), 2.0.pow(2), \"x\".pow(2)]; }",
+        "fn main() { ret [(3).min(5), (3).max(5), 3.0.min(5.0), 3.0.max(5), (1).min(true), None.max(1)]; }",
+        "fn main() { ret [(5).clamp(1, 3), (5).clamp(3, 1), (5).clamp(1.0, 3), 2.5.clamp(1.0, 2.0), 2.5.clamp(2.0, 1.0), \"x\".clamp(1, 2)]; }",
+        "fn main() { ret [(3).to_float(), 3.9.to_int(), (-3.9).to_int(), (1.0 / 0.0).to_int(), 1e300.to_int(), (3).to_int(), 3.0.to_float()]; }",
+        "fn main() { let nan = 0.0 / 0.0; ret [nan.is_nan(), (1.0 / 0.0).is_infinite(), 1.0.is_finite(), (1).is_nan()]; }",
+        "fn main() { ret [(1).to_string(), 2.5.debug(), None.to_string(), [1].to_string(), { a: 1 }.debug(), true.to_string(), \"s\".to_string()]; }",
+        "type Point { x: Int } fn main() { let point = Point { x: 1 }; point.extra = 2; ret [\"äb\".length(), [1, 2].length(), { a: 1, b: 2 }.length(), point.length(), \"\".is_empty(), [].is_empty(), (1).length()]; }",
+        "fn main() { let error = Error(\"K\", \"m\", [1]); ret [error.kind(), error.message(), error.data(), error.cause(), (1).kind()]; }",
+        "fn main() { ret [(1).unknown(), (1).abs(2), (1).pow(), (1).clamp(1)]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
+/// Evaluates `Int::parse`, `Float::parse` and the `Math` functions like v1.
+#[test]
+fn matches_v1_for_static_builtins() {
+    let programs = [
+        "fn main() { ret [Int::parse(\"-42\"), Int::parse(\"+7\"), Int::parse(\"4.2\"), Int::parse(\"99999999999999999999\"), Int::parse(1)]; }",
+        "fn main() { ret [Float::parse(\"2.5\"), Float::parse(\"1e3\"), Float::parse(\"inf\"), Float::parse(\"x\"), Float::parse(None)]; }",
+        "fn main() { ret [Math::pi(), Math::tau(), Math::e(), Math::sin(1.0), Math::cos(1.0), Math::tan(1.0), Math::asin(0.5), Math::acos(0.5), Math::atan(1.0)]; }",
+        "fn main() { ret [Math::exp(1.0), Math::ln(2.0), Math::log2(8.0), Math::log10(1000.0), Math::atan2(1.0, 2.0), Math::hypot(3.0, 4.0), Math::sin(1), Math::atan2(1, 2.0), Math::hypot(1.0, 2)]; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}

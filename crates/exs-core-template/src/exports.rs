@@ -445,3 +445,74 @@ pub extern "C" fn __exs_core_format(vm: i32, slots: i32, count: i32) -> i64 {
         address(count),
     ))
 }
+
+/// Calls the built-in method with `exs_core::BuiltinMethod` index `method`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_call_builtin(
+    vm: i32,
+    method: i32,
+    receiver: i64,
+    first: i64,
+    second: i64,
+) -> i64 {
+    let Some(method) = u32::try_from(method)
+        .ok()
+        .and_then(exs_core::BuiltinMethod::from_id)
+    else {
+        trap();
+    };
+    value(exs_core::call_builtin(
+        &mut memory(),
+        address(vm),
+        method,
+        receiver.cast_unsigned(),
+        first.cast_unsigned(),
+        second.cast_unsigned(),
+    ))
+}
+
+/// Calls the static function with `exs_core::StaticFunction` index `function`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_call_static(vm: i32, function: i32, first: i64, second: i64) -> i64 {
+    let Some(function) = u32::try_from(function)
+        .ok()
+        .and_then(exs_core::StaticFunction::from_id)
+    else {
+        trap();
+    };
+    value(exs_core::call_static(
+        &mut memory(),
+        address(vm),
+        function,
+        first.cast_unsigned(),
+        second.cast_unsigned(),
+    ))
+}
+
+/// Creates the MethodNotFound Error for `receiver`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_method_not_found(vm: i32, receiver: i64) -> i64 {
+    value(exs_core::method_not_found(
+        &mut memory(),
+        address(vm),
+        receiver.cast_unsigned(),
+    ))
+}
+
+/// Creates the ArityError of a built-in method that expects `expected` arguments but received
+/// the `count` values in the root slots at `slots`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_method_arity_error(
+    vm: i32,
+    slots: i32,
+    count: i32,
+    expected: i32,
+) -> i64 {
+    value(exs_core::method_arity_error(
+        &mut memory(),
+        address(vm),
+        address(slots),
+        address(count),
+        address(expected),
+    ))
+}

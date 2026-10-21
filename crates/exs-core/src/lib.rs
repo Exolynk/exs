@@ -23,6 +23,7 @@ mod errors;
 mod execution;
 mod lists;
 mod memory;
+mod methods;
 mod numbers;
 mod objects;
 mod pages;
@@ -41,15 +42,17 @@ pub use allocator::{allocate, init_heap};
 pub use cbor::{CborError, arity_error, decode_inputs, encode_result};
 pub use collector::collect;
 pub use errors::{
-    condition_error, error_new, error_object, missing_value, not_error, type_mismatch,
-    wire_mismatch,
+    condition_error, error_new, error_object, method_arity_error, method_not_found, missing_value,
+    not_error, type_mismatch, wire_mismatch,
 };
 pub use execution::{init_execution, reserve_input, result};
-pub use exs_layout::ObjectKind;
+pub use exs_abi::BuiltinMethod;
+pub use exs_layout::{ObjectKind, StaticFunction};
 pub use lists::{for_snapshot, list_add, list_copy, list_new, list_object};
 #[cfg(target_arch = "wasm32")]
 pub use memory::LinearMemory;
 pub use memory::Memory;
+pub use methods::{call_builtin, call_static};
 pub use numbers::{
     Arithmetic, Number, NumericError, Ordering, arithmetic, divide, float_value, int_value, negate,
     number,

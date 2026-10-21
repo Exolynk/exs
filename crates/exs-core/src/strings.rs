@@ -37,6 +37,11 @@ pub(crate) fn byte_len(memory: &impl Memory, object: u32) -> u32 {
     memory.load_u32(object + LEN)
 }
 
+/// Borrows the text of the String at `object`, which is always valid UTF-8.
+pub(crate) fn text(memory: &impl Memory, object: u32) -> &str {
+    core::str::from_utf8(memory.bytes(object + DATA, byte_len(memory, object))).unwrap_or_default()
+}
+
 /// Returns the character count of the String at `object`.
 pub(crate) fn char_count(memory: &impl Memory, object: u32) -> u32 {
     memory.load_u32(object + CHARS)

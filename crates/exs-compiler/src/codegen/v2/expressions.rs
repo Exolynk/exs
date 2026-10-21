@@ -108,6 +108,18 @@ impl<'a> FunctionCompiler<'a, '_> {
                 index,
                 span,
             } => self.compile_index_get(receiver, index, *span)?,
+            Expression::MethodCall {
+                receiver,
+                method,
+                arguments,
+                span,
+            } => self.compile_method_call(receiver, method, arguments, *span)?,
+            Expression::StaticMethodCall {
+                type_name,
+                method,
+                arguments,
+                span,
+            } => self.compile_static_call(type_name, method, arguments, *span)?,
             Expression::Property {
                 receiver,
                 property,

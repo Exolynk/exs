@@ -29,6 +29,8 @@ pub trait Memory {
     fn size(&self) -> u64;
     /// Grows the memory by `pages` 64 KiB pages and returns whether it succeeded.
     fn grow(&mut self, pages: u32) -> bool;
+    /// Borrows `length` bytes starting at `address`.
+    fn bytes(&self, address: u32, length: u32) -> &[u8];
 }
 
 /// The linear memory of the running Wasm module, accessed through plain loads and stores.
@@ -117,5 +119,11 @@ impl Memory for LinearMemory {
 
     fn grow(&mut self, pages: u32) -> bool {
         core::arch::wasm32::memory_grow(0, pages as usize) != usize::MAX
+    }
+
+    fn bytes(&self, address: u32, length: u32) -> &[u8] {
+        // SAFETY: as in `load_u8`; the range lies inside one heap object, which no write
+        // changes while the slice is borrowed, because writes need `&mut self`.
+        unsafe { core::slice::from_raw_parts(address as usize as *const u8, length as usize) }
     }
 }

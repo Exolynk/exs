@@ -1,0 +1,162 @@
+//! Lowering of method calls on built-in values and of static built-in functions.
+//!
+//! A method call evaluates its receiver and arguments, then calls the core library's built-in
+//! method by its `exs_abi::BuiltinMethod` index. Like v1, a name no built-in provides is a
+//! MethodNotFound Error and a built-in called with another number of arguments is an
+//! ArityError; both are decided at compile time from the static method name.
+
+use exs_abi::BuiltinMethod;
+use exs_layout::StaticFunction;
+use exs_value::ValueRef;
+use wasm_encoder::Instruction;
+
+use super::function::{FunctionCompiler, error, unsupported};
+use crate::ast::{Expression, Identifier};
+use crate::codegen::immediate;
+use crate::diagnostic::{CompileDiagnostics, SourceSpan};
+
+/// Returns whether the v2 core library implements `method`.
+const fn is_supported(method: BuiltinMethod) -> bool {
+    matches!(
+        method,
+        BuiltinMethod::Add
+            | BuiltinMethod::Sub
+            | BuiltinMethod::Mul
+            | BuiltinMethod::Div
+            | BuiltinMethod::DivEuclid
+            | BuiltinMethod::RemEuclid
+            | BuiltinMethod::ToString
+            | BuiltinMethod::Debug
+            | BuiltinMethod::Abs
+            | BuiltinMethod::Floor
+            | BuiltinMethod::Ceil
+            | BuiltinMethod::Round
+            | BuiltinMethod::Trunc
+            | BuiltinMethod::Fract
+            | BuiltinMethod::Signum
+            | BuiltinMethod::IsEven
+            | BuiltinMethod::IsOdd
+            | BuiltinMethod::Gcd
+            | BuiltinMethod::Lcm
+            | BuiltinMethod::Pow
+            | BuiltinMethod::Min
+            | BuiltinMethod::Max
+            | BuiltinMethod::Clamp
+            | BuiltinMethod::ToFloat
+            | BuiltinMethod::ToInt
+            | BuiltinMethod::IsNan
+            | BuiltinMethod::IsFinite
+            | BuiltinMethod::IsInfinite
+            | BuiltinMethod::Sqrt
+            | BuiltinMethod::Length
+            | BuiltinMethod::IsEmpty
+            | BuiltinMethod::Kind
+            | BuiltinMethod::Message
+            | BuiltinMethod::Data
+            | BuiltinMethod::Cause
+    )
+}
+
+impl<'a> FunctionCompiler<'a, '_> {
+    /// Compiles `receiver.method(arguments)`.
+    pub(super) fn compile_method_call(
+        &mut self,
+        receiver: &Expression<'a>,
+        method: &Identifier<'a>,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if crate::prelude::iterator_helper(&method.name).is_some() {
+            return Err(unsupported(span, "iterator helper methods"));
+        }
+        let builtin = BuiltinMethod::from_name(&method.name);
+        if let Some(builtin) = builtin
+            && builtin.arity() == arguments.len()
+            && !is_supported(builtin)
+        {
+            return Err(unsupported(
+                span,
+                &format!("calls of the built-in `{}` method", method.name),
+            ));
+        }
+        self.compile_expression(receiver)?;
+        let receiver = self.store_new();
+        let count = u32::try_from(arguments.len())
+            .map_err(|_| error("E0212", span, "too many method arguments".to_owned()))?;
+        let block = self.consecutive_locals(count.max(1));
+        for (offset, argument) in (0..count).zip(arguments) {
+            self.compile_expression(argument)?;
+            self.store(block + offset);
+        }
+        self.guard_method(&method.name, receiver);
+        self.set_position(span)?;
+        self.push_vm();
+        match builtin {
+            Some(builtin) if builtin.arity() == arguments.len() => {
+                self.instruction(Instruction::I32Const(builtin.id().cast_signed()));
+                self.instruction(Instruction::LocalGet(receiver));
+                for offset in 0..2 {
+                    if offset < count {
+                        self.instruction(Instruction::LocalGet(block + offset));
+                    } else {
+                        immediate::push(&mut self.function, ValueRef::NONE);
+                    }
+                }
+                self.core_call("__exs_core_call_builtin", span)
+            }
+            Some(builtin) => {
+                self.push_slot_address(block);
+                self.instruction(Instruction::I32Const(count.cast_signed()));
+                self.instruction(Instruction::I32Const(
+                    u32::try_from(builtin.arity()).unwrap_or(2).cast_signed(),
+                ));
+                self.core_call("__exs_core_method_arity_error", span)
+            }
+            None => {
+                self.instruction(Instruction::LocalGet(receiver));
+                self.core_call("__exs_core_method_not_found", span)
+            }
+        }
+    }
+
+    /// Compiles `type_name::method(arguments)` for the static functions of built-in types.
+    pub(super) fn compile_static_call(
+        &mut self,
+        type_name: &Identifier<'a>,
+        method: &Identifier<'a>,
+        arguments: &[Expression<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let Some(function) = StaticFunction::from_path(&type_name.name, &method.name) else {
+            return Err(unsupported(span, "static method calls"));
+        };
+        if function.arity() != arguments.len() {
+            return Err(error(
+                "E0208",
+                span,
+                format!(
+                    "static method `{}::{}` expects {} arguments but received {}",
+                    type_name.name,
+                    method.name,
+                    function.arity(),
+                    arguments.len()
+                ),
+            ));
+        }
+        let mut locals = Vec::with_capacity(2);
+        for argument in arguments {
+            self.compile_expression(argument)?;
+            locals.push(self.store_new());
+        }
+        self.set_position(span)?;
+        self.push_vm();
+        self.instruction(Instruction::I32Const(function.id().cast_signed()));
+        for index in 0..2 {
+            match locals.get(index) {
+                Some(local) => self.instruction(Instruction::LocalGet(*local)),
+                None => immediate::push(&mut self.function, ValueRef::NONE),
+            }
+        }
+        self.core_call("__exs_core_call_static", span)
+    }
+}

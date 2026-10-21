@@ -101,6 +101,11 @@ impl Memory for VecMemory {
         self.bytes.len() as u64
     }
 
+    fn bytes(&self, address: u32, length: u32) -> &[u8] {
+        let start = address as usize;
+        &self.bytes[start..start + length as usize]
+    }
+
     fn grow(&mut self, pages: u32) -> bool {
         let current = (self.bytes.len() / PAGE_SIZE as usize) as u32;
         if current + pages > self.max_pages {
