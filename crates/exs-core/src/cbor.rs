@@ -9,7 +9,7 @@
 use exs_value::{Immediate, ValueRef};
 
 use crate::bytes::{bytes_len, bytes_object, new_bytes};
-use crate::enums::{allocate_enum, enum_object, field_address as enum_field, field_count, names};
+use crate::enums::{allocate_enum, enum_object, field_address as enum_field, names, payload_count};
 use crate::errors::{error_object, error_parts, new_error};
 use crate::execution::{input, reserve_result};
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, push_unchecked};
@@ -1002,7 +1002,7 @@ impl<O> Encoder<O> {
         self.head(memory, MAJOR_ARRAY, 3)?;
         self.string(memory, identity)?;
         self.string(memory, name)?;
-        let count = field_count(memory, object);
+        let count = payload_count(memory, object);
         self.head(memory, MAJOR_ARRAY, u64::from(count))?;
         for index in 0..count {
             let value = memory.load_u64(enum_field(object, index));

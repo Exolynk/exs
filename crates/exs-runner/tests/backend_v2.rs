@@ -1067,15 +1067,40 @@ fn reports_resumable_fuel_and_time() {
     }
 }
 
-/// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
-/// before host enums arrive.
+/// Represents host enums, enums of identities or variants the program does not declare, like
+/// v1: they cross the boundary unchanged, render with their names, fail every match arm and
+/// pass contracts of the declared enum of their identity.
 #[test]
-#[should_panic(expected = "V2 execution failed")]
-fn rejects_enum_inputs_of_unknown_identities() {
-    let input = ExsValue::Enum {
+fn matches_v1_for_host_enums() {
+    let foreign = ExsValue::Enum {
         type_id: "host::Status".to_owned(),
         variant: "Ready".to_owned(),
-        fields: vec![],
+        fields: vec![ExsValue::Int(1), ExsValue::String("x".to_owned())],
     };
-    run("fn main(value) { ret value; }", Backend::V2, &[input]);
+    let unknown_variant = ExsValue::Enum {
+        type_id: "test.exs::Color".to_owned(),
+        variant: "Green".to_owned(),
+        fields: Vec::new(),
+    };
+    let declarations = "enum Color { Red, Blue(value: Int), }";
+    let programs = [
+        "fn main(value) { ret value; }",
+        "fn main(value) { ret [value, [value], { v: value }]; }",
+        r#"fn main(value) { ret [f"{value}", "" + value, value == value, value != None]; }"#,
+        "fn main(value) { ret [value.debug(), value.to_string(), value.clone(), value.keys()]; }",
+        "fn main(value) { ret match value { Color::Red => 1, Color::Blue(v) => v, }; }",
+        "fn main(value) -> Int | Error { ret match value { Color::Red => 1, Color::Blue(v) => v, }; }",
+        "fn main(value) { ret [value is Color, value is Ordering, value is Object]; }",
+        "fn main(value: Color) { ret 1; }",
+        "fn main(value) { let c: Color = value; ret c; }",
+        r#"fn main(value) { ret Host::call("echo", value); }"#,
+    ];
+    for program in programs {
+        for value in [&foreign, &unknown_variant] {
+            compare(
+                &format!("{declarations} {program}"),
+                std::slice::from_ref(value),
+            );
+        }
+    }
 }

@@ -126,7 +126,9 @@ fn decode_enum(
     contract: u32,
     depth: u32,
 ) -> Option<Option<u64>> {
+    // Like v1, a host enum only passes when its variant is declared, which it never is.
     if let Some(object) = enum_object(memory, raw)
+        && crate::enums::variant(memory, object) != exs_layout::HOST_ENUM_VARIANT
         && enum_schema(memory, contract, enum_type(memory, object)).is_some()
     {
         return Some(Some(raw));

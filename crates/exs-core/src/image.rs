@@ -14,7 +14,7 @@ use exs_value::ValueRef;
 
 use crate::bytes::new_bytes;
 use crate::cbor::{CborError, resolve_enum};
-use crate::enums::{allocate_enum, field_address as enum_field};
+use crate::enums::{allocate_enum, field_address as enum_field, host_enum};
 use crate::errors::{ErrorParts, error_from_parts, new_error};
 use crate::execution::input;
 use crate::lists::{allocate_list, list_reference, push_unchecked};
@@ -358,12 +358,26 @@ fn adopt_enum(
     )?;
     let identity = image.text(memory, memory.load_u32(words))?;
     let variant = image.text(memory, memory.load_u32(words + 4))?;
-    let (type_id, index) =
-        resolve_enum(memory, vm, identity, variant).ok_or(CborError::Unsupported)?;
-    let raw = allocate_enum(memory, vm, type_id, index, count).ok_or(CborError::OutOfMemory)?;
-    let root = Vm(vm)
-        .push_root(memory, raw)
-        .ok_or(CborError::OutOfMemory)?;
+    let state = Vm(vm);
+    let mark = state.root_stack_end(memory);
+    let raw = match resolve_enum(memory, vm, identity, variant) {
+        Some((type_id, index)) => allocate_enum(memory, vm, type_id, index, count),
+        None => {
+            // A host enum keeps its identity and variant name.
+            let mut names = [0_u64; 2];
+            for (name, (start, len)) in names.iter_mut().zip([identity, variant]) {
+                let chars = memory.load_u32(start - 8);
+                *name = copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?;
+                state
+                    .push_root(memory, *name)
+                    .ok_or(CborError::OutOfMemory)?;
+            }
+            host_enum(memory, vm, names[0], names[1], count)
+        }
+    }
+    .ok_or(CborError::OutOfMemory)?;
+    state.pop_roots(memory, mark);
+    let root = state.push_root(memory, raw).ok_or(CborError::OutOfMemory)?;
     let mut adopted = Ok(raw);
     for field in 0..count {
         let offset = memory.load_u32(words + (field + 2) * 4);

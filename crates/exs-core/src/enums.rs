@@ -6,7 +6,7 @@
 use core::mem::{offset_of, size_of};
 
 use exs_abi::{STANDARD_ORDERING_TYPE_ID, TYPE_OBJECT};
-use exs_layout::{EnumObject, ObjectKind};
+use exs_layout::{EnumObject, HOST_ENUM_VARIANT, ObjectKind};
 use exs_value::ValueRef;
 use exs_value::layout::{KIND_SHIFT, object_type_extra, type_kind};
 
@@ -43,9 +43,56 @@ pub(crate) fn variant(memory: &impl Memory, object: u32) -> u32 {
     memory.load_u32(object + VARIANT)
 }
 
-/// Returns the number of payload fields of the enum at `object`.
+/// Returns the number of slots of the enum at `object`: its payload fields, and for a host
+/// enum also its two name slots.
 pub(crate) fn field_count(memory: &impl Memory, object: u32) -> u32 {
     memory.load_u32(object + FIELD_COUNT)
+}
+
+/// Returns the number of payload fields of the enum at `object`.
+pub(crate) fn payload_count(memory: &impl Memory, object: u32) -> u32 {
+    let count = field_count(memory, object);
+    if variant(memory, object) == HOST_ENUM_VARIANT {
+        count.saturating_sub(2)
+    } else {
+        count
+    }
+}
+
+/// Type id of host enums whose identity the program does not declare, which no declared type
+/// has, as programs are limited to fewer inline type ids.
+const FOREIGN_ENUM_TYPE_ID: u32 = exs_value::layout::MAX_INLINE_TYPE_ID;
+
+/// Creates a host enum with the rooted `identity` and `name` Strings and `count` empty
+/// payload fields: a value of a variant or an identity the program does not declare.
+pub(crate) fn host_enum(
+    memory: &mut impl Memory,
+    vm: u32,
+    identity: u64,
+    name: u64,
+    count: u32,
+) -> Option<u64> {
+    let identity_object = string_object(identity)?;
+    let type_id = (0..crate::vm::Vm(vm).program_type_count(memory))
+        .find(|type_id| {
+            type_entry(memory, vm, *type_id)
+                .and_then(|entry| string_object(entry.identity))
+                .is_some_and(|declared| {
+                    crate::strings::text(memory, declared)
+                        == crate::strings::text(memory, identity_object)
+                })
+        })
+        .unwrap_or(FOREIGN_ENUM_TYPE_ID);
+    let raw = allocate_enum(
+        memory,
+        vm,
+        type_id,
+        HOST_ENUM_VARIANT,
+        count.checked_add(2)?,
+    )?;
+    memory.store_u64(field_address(raw as u32, count), identity);
+    memory.store_u64(field_address(raw as u32, count + 1), name);
+    Some(raw)
 }
 
 /// Returns the address of payload field `index` of the enum at `object`.
@@ -86,10 +133,16 @@ pub fn enum_new(
 }
 
 /// Returns the identity String and the variant-name String of the enum at `object`, as the
-/// program's type table names them.
+/// program's type table or, for a host enum, its name slots name them.
 pub(crate) fn names(memory: &impl Memory, vm: u32, object: u32) -> Option<(u32, u32)> {
-    let entry = type_entry(memory, vm, enum_type(memory, object))?;
     let index = variant(memory, object);
+    if index == HOST_ENUM_VARIANT {
+        let count = payload_count(memory, object);
+        let identity = string_object(memory.load_u64(field_address(object, count)))?;
+        let name = string_object(memory.load_u64(field_address(object, count + 1)))?;
+        return Some((identity, name));
+    }
+    let entry = type_entry(memory, vm, enum_type(memory, object))?;
     if index >= entry.field_count {
         return None;
     }

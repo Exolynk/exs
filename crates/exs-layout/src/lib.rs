@@ -33,7 +33,8 @@ pub use header::{
 pub use objects::{
     BigIntObject, BufferObject, BytesObject, CellObject, ClosureObject, ERROR_FATAL,
     ERROR_RECOVERABLE, EnumObject, ErrorObject, FRAME_UNTRACED, FloatObject, FrameObject, FreeCell,
-    ListObject, ObjectObject, ShapeObject, StringObject, TaskObject, TypedObject,
+    HOST_ENUM_VARIANT, ListObject, ObjectObject, ShapeObject, StringObject, TaskObject,
+    TypedObject,
 };
 pub use page::{PAGE_HEADER_SIZE, PAGE_SIZE, PageHeader, PageKind};
 pub use size_class::{CLASS_COUNT, MAX_CLASS_SIZE, SIZE_CLASSES, class_for_size};

@@ -104,6 +104,11 @@ pub struct ShapeObject {
 }
 
 /// A value of one enum variant; `header.word` is the enum type id. Payload slots follow.
+///
+/// A host enum, a value of an identity or a variant the program does not declare, has the
+/// variant [`HOST_ENUM_VARIANT`] and two more slots after its payload: its identity and its
+/// variant name as Strings. Its type id is that of the declared enum of the same identity, if
+/// any, so contracts accept it by identity like v1.
 #[repr(C)]
 pub struct EnumObject {
     /// Common header.
@@ -176,6 +181,9 @@ pub struct FrameObject {
     /// when the frame is not traced, like the root frame of a `par` task.
     pub trace: u64,
 }
+
+/// The [`EnumObject::variant`] of a host enum, which no declared variant has.
+pub const HOST_ENUM_VARIANT: u32 = u32::MAX;
 
 /// The [`FrameObject::trace`] of a frame without a trace entry, which no entry equals.
 pub const FRAME_UNTRACED: u64 = u64::MAX;
