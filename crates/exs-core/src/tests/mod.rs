@@ -2,6 +2,7 @@
 
 mod allocator;
 mod boundary;
+mod case_mapping;
 mod collector;
 mod errors;
 mod execution;

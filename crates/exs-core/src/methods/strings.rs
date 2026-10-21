@@ -3,6 +3,7 @@
 //! Indices count characters. Texts are read through short borrows of memory that end before
 //! anything is allocated; Strings never move, so offsets stay valid.
 
+use exs_layout::CaseTables;
 use exs_value::ValueRef;
 
 use crate::errors::recoverable;
@@ -401,6 +402,109 @@ pub(crate) fn replace(
             let piece_len = (end - start) as u32;
             memory.copy(position, object + DATA + start as u32, piece_len);
             position += piece_len;
+        }
+    })
+}
+
+/// Returns the case tables of the program, which the compiler includes whenever it changes
+/// the case of Strings.
+fn case_tables(memory: &impl Memory, vm: u32) -> Option<CaseTables<'_>> {
+    let address = Vm(vm).case_tables(memory);
+    if address == 0 {
+        return None;
+    }
+    let header = memory.bytes(address, 28);
+    let end = <[u8; 4]>::try_from(header.get(24..28)?).ok()?;
+    Some(CaseTables::new(
+        memory.bytes(address, u32::from_le_bytes(end)),
+    ))
+}
+
+/// Applies the final-sigma test of `str::to_lowercase` to characters in `characters`: skip
+/// Case_Ignorable ones, then report whether the first other one is Cased.
+fn ignorable_then_cased(
+    tables: &CaseTables<'_>,
+    mut characters: impl Iterator<Item = char>,
+) -> bool {
+    characters
+        .find(|c| !tables.is_case_ignorable(*c))
+        .is_some_and(|c| tables.is_cased(c))
+}
+
+/// Writes the case mapping of the character at byte `offset` of `value` into `out` and
+/// returns its length, like `str::to_lowercase` and `str::to_uppercase`.
+fn map_at(
+    tables: &CaseTables<'_>,
+    value: &str,
+    offset: usize,
+    c: char,
+    upper: bool,
+    out: &mut [char; 3],
+) -> usize {
+    if upper {
+        return tables.uppercase(c, out);
+    }
+    if c == 'Σ' {
+        let before = value.get(..offset).unwrap_or_default().chars().rev();
+        let after = value.get(offset + 2..).unwrap_or_default().chars();
+        let final_form =
+            ignorable_then_cased(tables, before) && !ignorable_then_cased(tables, after);
+        out[0] = if final_form { 'ς' } else { 'σ' };
+        return 1;
+    }
+    tables.lowercase(c, out)
+}
+
+/// Evaluates `to_lowercase` or `to_uppercase` with full Unicode case mapping.
+pub(crate) fn change_case(memory: &mut impl Memory, vm: u32, raw: u64, upper: bool) -> Option<u64> {
+    let message = if upper {
+        "to_uppercase requires a String receiver"
+    } else {
+        "to_lowercase requires a String receiver"
+    };
+    let object = check!(string_receiver(memory, vm, raw, message));
+    let tables = case_tables(memory, vm)?;
+    let value = text(memory, object);
+    let (mut len, mut chars) = (0_u32, 0_u32);
+    let mut out = ['\0'; 3];
+    for (offset, c) in value.char_indices() {
+        let count = map_at(&tables, value, offset, c, upper, &mut out);
+        for mapped in out.iter().take(count) {
+            len = len.checked_add(mapped.len_utf8() as u32)?;
+            chars += 1;
+        }
+    }
+    copy_string_object(memory, vm, len, chars, |memory, mut position| {
+        let mut offset = 0;
+        loop {
+            // Each character is read and mapped through short borrows before it is written.
+            let mut encoded = [0_u8; 12];
+            let mut written = 0;
+            let next = {
+                let Some(tables) = case_tables(memory, vm) else {
+                    return;
+                };
+                let value = text(memory, object);
+                let Some(c) = value.get(offset..).and_then(|rest| rest.chars().next()) else {
+                    return;
+                };
+                let mut out = ['\0'; 3];
+                let count = map_at(&tables, value, offset, c, upper, &mut out);
+                for mapped in out.iter().take(count) {
+                    let mut buffer = [0_u8; 4];
+                    let bytes = mapped.encode_utf8(&mut buffer).as_bytes();
+                    if let Some(target) = encoded.get_mut(written..written + bytes.len()) {
+                        target.copy_from_slice(bytes);
+                    }
+                    written += bytes.len();
+                }
+                offset + c.len_utf8()
+            };
+            for (index, byte) in (0_u32..).zip(encoded.iter().take(written)) {
+                memory.store_u8(position + index, *byte);
+            }
+            position += written as u32;
+            offset = next;
         }
     })
 }

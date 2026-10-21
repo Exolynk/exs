@@ -1,8 +1,8 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done and phase 2 got its go; phase 3 is in progress (3a, 3b-1 and 3b-2a done). See
-sections 12 to 12k.
+linking) are done and phase 2 got its go; phase 3 is in progress (3a and 3b done). See
+sections 12 to 12l.
 
 ## 1. Goal
 
@@ -627,6 +627,30 @@ data costs every script.
   leading blockers are now `List<T>` and enum contracts (3c), static methods of nominal types
   and closures.
 
+## 12l. Phase 3b-2b results
+
+- **Bytes** are static objects for literals and String-layout heap objects otherwise. They
+  compare by octets, render as `Bytes(n)`, index to Ints, travel as CBOR byte strings in both
+  directions and support v1's methods (`slice`, `concat`, `contains`, `starts_with`,
+  `ends_with`, `repeat`, `to_hex`, `to_base64`, `decode_utf8`, `length`, `is_empty`) and
+  constructors (`Bytes::from_list`, `from_utf8`, `from_hex`, `from_base64`, and
+  `encode_utf8` on Strings). `to_list` is a prelude Iterator helper in v1 and follows with
+  phase 3f.
+- **Data accounting, refined:** Wasmtime charges initialized memory as the span from the
+  lowest to the highest initialized byte, in 16 KiB blocks, not the bytes of the segments. The
+  template's data, the VM state block and a program's static data (String literals, type
+  table, Object keys, positions) lie back to back and share one span. The template's data is
+  14,422 bytes, so programs with more than about 2 KiB of static data start a second block.
+- **Case mapping** (`to_lowercase`, `to_uppercase`) uses compact varint tables of 3,412 bytes
+  in `exs-layout`, generated from the toolchain's standard library (Unicode 17.0) by
+  `cargo test -p exs-layout -- --ignored generates_case_tables`. They map every code point and
+  apply the final-sigma rule exactly like `str::to_lowercase`; tests compare all code points,
+  the derived Case_Ignorable and Cased properties and random sigma texts against `std`, and
+  fail when the toolchain's Unicode version changes. The compiler adds the tables to a
+  program's static data only when a reachable function calls `to_lowercase` or `to_uppercase`;
+  such programs pay about one more data block (a minimal script: 20,085 → 40,275 fuel).
+- `runtime_values` on v2: 43 of 96, still without a single differing result.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.
@@ -636,8 +660,10 @@ data costs every script.
 - **Shape growth:** shapes are never collected, so keys computed from data create shapes for
   the rest of the execution. This is bounded by the execution, but a script that builds Objects
   with many distinct dynamic keys keeps all of their shapes.
-- **Template data budget:** fuel grows by 16,384 per started 16 KiB of template data on every
-  execution, so the core library must keep large tables out of its data (section 12j).
+- **Template data budget:** fuel grows by 16,384 per started 16 KiB of initialized memory span
+  on every execution, and template and program data share that span (sections 12j and 12l).
+  A planned template diet (panic-free indexing, fewer panic locations) would give programs
+  more room for literals.
 - **Fragmentation** of the non-moving heap for long-running tasks; measured in phase 2.
 - **Wall-clock vs fuel:** Winch generates slower machine code than Cranelift; whether
   production should switch compilers is a separate decision informed by phase 0 numbers.

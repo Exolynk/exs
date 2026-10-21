@@ -92,6 +92,8 @@ const fn is_supported(method: BuiltinMethod) -> bool {
             | BuiltinMethod::EncodeUtf8
             | BuiltinMethod::ToHex
             | BuiltinMethod::ToBase64
+            | BuiltinMethod::ToLowercase
+            | BuiltinMethod::ToUppercase
     )
 }
 

@@ -58,6 +58,7 @@ impl Vm {
         program.type_count
     );
     vm_field!(root_shape, set_root_shape, program.root_shape);
+    vm_field!(case_tables, set_case_tables, program.case_tables);
     vm_field!(trace_base, set_trace_base, errors.trace_base);
     vm_field!(trace_top, set_trace_top, errors.trace_top);
     vm_field!(trace_limit, set_trace_limit, errors.trace_limit);
@@ -136,6 +137,13 @@ pub fn set_program_types(memory: &mut impl Memory, vm: u32, types: u32, count: u
     let vm = Vm(vm);
     vm.set_program_types(memory, types);
     vm.set_program_type_count(memory, count);
+}
+
+/// Points the VM state block at `vm` to the program's copy of the case tables.
+///
+/// Generated code writes this field directly; this is the same update for Rust callers.
+pub fn set_case_tables(memory: &mut impl Memory, vm: u32, address: u32) {
+    Vm(vm).set_case_tables(memory, address);
 }
 
 /// Returns the number of collections the VM state block at `vm` has completed.

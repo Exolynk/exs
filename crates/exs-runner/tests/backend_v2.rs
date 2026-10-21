@@ -544,3 +544,21 @@ fn matches_v1_for_bytes() {
         &[ExsValue::Bytes(vec![1, 2, 250])],
     );
 }
+
+/// Changes the case of Strings like v1, including final sigma and multi-character mappings.
+#[test]
+fn matches_v1_for_case_mapping() {
+    let programs = [
+        r#"fn main() { ret ["Hello Wörld".to_lowercase(), "Hello Wörld".to_uppercase(), "straße ﬁ ŉ".to_uppercase(), "İ".to_lowercase(), "ΟΔΟΣ ΣΑΣ".to_lowercase(), "Α'Σ.".to_lowercase(), "".to_uppercase(), 1.to_lowercase()]; }"#,
+        r#"fn main() { let text = "ΣΑΣ"; ret [text.to_lowercase().to_uppercase(), text.to_lowercase().length()]; }"#,
+    ];
+    for program in programs {
+        compare(
+            &program.replace("1.to_lowercase()", "(1).to_lowercase()"),
+            &[],
+        );
+    }
+    let without = run("fn main() { ret \"Hi\".trim(); }", Backend::V2, &[]).1;
+    let with = run("fn main() { ret \"Hi\".to_lowercase(); }", Backend::V2, &[]).1;
+    println!("v2 fuel without case tables {without}, with {with}");
+}

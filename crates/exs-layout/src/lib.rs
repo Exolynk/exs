@@ -11,6 +11,10 @@
 //! Addresses are `u32` offsets into linear memory. A heap object is always 8-byte aligned and
 //! starts with an [`ObjectHeader`].
 
+mod case_mapping;
+#[cfg(test)]
+mod case_mapping_tests;
+mod case_tables;
 mod header;
 mod objects;
 mod page;
@@ -19,6 +23,7 @@ mod statics;
 mod trace;
 mod vm;
 
+pub use case_mapping::{CASE_TABLES, CASE_TABLES_UNICODE_VERSION, CaseTables};
 pub use header::{
     GC_MARK, GC_STATIC, HEADER_CLASS_OFFSET, HEADER_GC_OFFSET, HEADER_KIND_OFFSET, HEADER_SIZE,
     HEADER_WORD_OFFSET, OBJECT_ALIGN, ObjectHeader, ObjectKind,

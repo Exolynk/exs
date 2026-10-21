@@ -227,6 +227,8 @@ pub fn call_builtin(
         BuiltinMethod::DecodeUtf8 => bytes::decode_utf8(memory, vm, receiver),
         BuiltinMethod::EncodeUtf8 => bytes::from_utf8(memory, vm, receiver),
         BuiltinMethod::ToHex => bytes::to_hex(memory, vm, receiver),
+        BuiltinMethod::ToLowercase => strings::change_case(memory, vm, receiver, false),
+        BuiltinMethod::ToUppercase => strings::change_case(memory, vm, receiver, true),
         BuiltinMethod::ToBase64 => bytes::to_base64(memory, vm, receiver),
         _ => None,
     }

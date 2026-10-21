@@ -87,6 +87,20 @@ pub(super) fn string_literals<'t>(
     literals
 }
 
+/// Returns whether `functions` call `to_lowercase` or `to_uppercase`, which need the case
+/// tables.
+pub(super) fn changes_case(functions: &[&FunctionDeclaration<'_>]) -> bool {
+    let mut found = false;
+    for function in functions {
+        visit_block(&function.body, &mut |expression| {
+            if let Expression::MethodCall { method, .. } = expression {
+                found |= matches!(method.name.as_str(), "to_lowercase" | "to_uppercase");
+            }
+        });
+    }
+    found
+}
+
 /// Returns every distinct Bytes literal of `functions`.
 pub(super) fn bytes_literals(functions: &[&FunctionDeclaration<'_>]) -> Vec<String> {
     let mut literals: Vec<String> = Vec::new();

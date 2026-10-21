@@ -20,7 +20,9 @@ use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 use super::entry::EntryLayout;
 use super::function::{Context, FunctionCompiler, FunctionInfo, error};
 use super::protocols::Protocols;
-use super::reachability::{bytes_literals, object_key_lists, reachable_functions, string_literals};
+use super::reachability::{
+    bytes_literals, changes_case, object_key_lists, reachable_functions, string_literals,
+};
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use crate::ast::{FunctionVisibility, Module};
@@ -174,7 +176,15 @@ pub(in crate::codegen) fn compile<'a>(
     })?;
     let source_map = SourceMap::collect(module);
     let protocols = Protocols::build(module, traits, &types);
-    let positions_base = static_keys.end();
+    // The case tables cost data and therefore fuel, so only programs that change the case of
+    // Strings carry them.
+    let case_tables = changes_case(&functions).then(|| {
+        let base = static_keys.end().next_multiple_of(8);
+        (base, exs_layout::CASE_TABLES.to_vec())
+    });
+    let positions_base = case_tables
+        .as_ref()
+        .map_or(static_keys.end(), |(base, bytes)| base + bytes.len() as u32);
     let base = facts.imported_functions + facts.defined_functions;
     let mut program = Program {
         types: Vec::new(),
@@ -253,6 +263,7 @@ pub(in crate::codegen) fn compile<'a>(
         vm,
         heap_start,
         types: (type_table.base, type_table.count),
+        case_tables: case_tables.as_ref().map_or(0, |(base, _)| *base),
     };
     let int_type = program.type_index(vec![VALUE_TYPE], vec![VALUE_TYPE]);
     program.function_types.push(int_type);
@@ -308,6 +319,7 @@ pub(in crate::codegen) fn compile<'a>(
             (statics.base, statics.bytes),
             (type_table.base, type_table.bytes),
             (static_keys.base, static_keys.bytes),
+            case_tables.unwrap_or_default(),
             (positions_base, positions),
         ],
         globals: context.next_global.get() - facts.globals,

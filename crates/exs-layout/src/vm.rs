@@ -119,8 +119,8 @@ pub struct ProgramState {
     ///
     /// The collector treats it as a root, so shapes are never collected.
     pub root_shape: u32,
-    /// Reserved, keeps the block 8-byte aligned.
-    pub reserved: u32,
+    /// Address of the program's copy of `CASE_TABLES`, 0 when it changes no case.
+    pub case_tables: u32,
 }
 
 /// Static metadata of one nominal type.

@@ -29,6 +29,8 @@ pub(super) struct EntryLayout<'m> {
     pub(super) heap_start: u32,
     /// Address and entry count of the static type table.
     pub(super) types: (u32, u32),
+    /// Address of the program's case tables, 0 when it changes no case.
+    pub(super) case_tables: u32,
 }
 
 impl EntryLayout<'_> {
@@ -116,6 +118,7 @@ impl EntryLayout<'_> {
         for (offset, value) in [
             (offset_of!(VmState, program.types), types),
             (offset_of!(VmState, program.type_count), count),
+            (offset_of!(VmState, program.case_tables), self.case_tables),
         ] {
             function.instruction(&Instruction::I32Const(0));
             function.instruction(&Instruction::I32Const(value.cast_signed()));
