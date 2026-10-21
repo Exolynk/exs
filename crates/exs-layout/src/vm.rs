@@ -88,6 +88,8 @@ pub struct BoundaryState {
     pub initialized: u32,
     /// Reserved, keeps the block 8-byte aligned.
     pub reserved: u32,
+    /// The completed entry's result, which the runner reads from memory.
+    pub result_value: u64,
 }
 
 /// Language Error context: the trace of active source functions and the current position.

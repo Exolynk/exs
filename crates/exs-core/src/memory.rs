@@ -127,3 +127,77 @@ impl Memory for LinearMemory {
         unsafe { core::slice::from_raw_parts(address as usize as *const u8, length as usize) }
     }
 }
+
+/// A read-only view of a module's memory for code outside the module, such as the runner.
+///
+/// Every read is bounds-checked: reads outside the view return 0 and [`Memory::bytes`] an
+/// empty slice. Writes are ignored and the view never grows, so walks over memory the module
+/// controls cannot touch anything else.
+pub struct SliceMemory<'a> {
+    /// The viewed bytes.
+    data: &'a [u8],
+}
+
+impl<'a> SliceMemory<'a> {
+    /// Returns a view of `data`.
+    #[must_use]
+    pub const fn new(data: &'a [u8]) -> Self {
+        Self { data }
+    }
+
+    /// Returns the `N` bytes at `address`, or zeros when they lie outside the view.
+    fn array<const N: usize>(&self, address: u32) -> [u8; N] {
+        let start = address as usize;
+        start
+            .checked_add(N)
+            .and_then(|end| self.data.get(start..end))
+            .and_then(|bytes| bytes.try_into().ok())
+            .unwrap_or([0; N])
+    }
+}
+
+impl Memory for SliceMemory<'_> {
+    fn load_u8(&self, address: u32) -> u8 {
+        self.array::<1>(address)[0]
+    }
+
+    fn load_u16(&self, address: u32) -> u16 {
+        u16::from_le_bytes(self.array(address))
+    }
+
+    fn load_u32(&self, address: u32) -> u32 {
+        u32::from_le_bytes(self.array(address))
+    }
+
+    fn load_u64(&self, address: u32) -> u64 {
+        u64::from_le_bytes(self.array(address))
+    }
+
+    fn store_u8(&mut self, _address: u32, _value: u8) {}
+
+    fn store_u16(&mut self, _address: u32, _value: u16) {}
+
+    fn store_u32(&mut self, _address: u32, _value: u32) {}
+
+    fn store_u64(&mut self, _address: u32, _value: u64) {}
+
+    fn fill(&mut self, _address: u32, _length: u32, _value: u8) {}
+
+    fn copy(&mut self, _destination: u32, _source: u32, _length: u32) {}
+
+    fn size(&self) -> u64 {
+        self.data.len() as u64
+    }
+
+    fn grow(&mut self, _pages: u32) -> bool {
+        false
+    }
+
+    fn bytes(&self, address: u32, length: u32) -> &[u8] {
+        let start = address as usize;
+        start
+            .checked_add(length as usize)
+            .and_then(|end| self.data.get(start..end))
+            .unwrap_or(&[])
+    }
+}

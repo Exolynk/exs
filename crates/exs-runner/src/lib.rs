@@ -35,6 +35,8 @@ mod compiler;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod deadline;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod direct;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_abi;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_function;
@@ -242,7 +244,11 @@ impl ServerRunner {
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
-                    let result = result(&mut store, &instance, &self.limits)?;
+                    let result = if direct::is_direct(&mut store, &instance) {
+                        direct::result(&mut store, &instance, &self.limits)?
+                    } else {
+                        result(&mut store, &instance, &self.limits)?
+                    };
                     let execution_time = run_started_at.elapsed();
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));

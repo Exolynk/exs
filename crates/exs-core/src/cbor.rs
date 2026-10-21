@@ -727,30 +727,84 @@ pub fn encode_result(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), 
 
 /// Encodes `raw` into the result buffer in two passes, measuring and then writing.
 pub(crate) fn encode(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), CborError> {
-    let mut measure = Sink {
+    let mut measure = Encoder(Buffer {
         start: None,
         len: 0,
-    };
+    });
     measure.value(memory, vm, raw, 0)?;
-    let address = reserve_result(memory, vm, measure.len).ok_or(CborError::OutOfMemory)?;
-    let mut write = Sink {
+    let address = reserve_result(memory, vm, measure.0.len).ok_or(CborError::OutOfMemory)?;
+    let mut write = Encoder(Buffer {
         start: Some(address),
         len: 0,
-    };
+    });
     write.value(memory, vm, raw, 0)
 }
 
-/// Destination of an encoding pass: it only measures, or it writes into reserved bytes.
-struct Sink {
+/// Encodes `raw`, a value in `memory` of the VM at `vm`, into `output`.
+///
+/// The runner reads results and host-call arguments of runtime v2 modules this way, on a copy
+/// of their memory: every read stays inside `memory`, nesting is bounded and `output` bounds
+/// the bytes, so even a corrupted heap cannot make the walk unbounded.
+///
+/// # Errors
+///
+/// Returns why the value could not be encoded; `Unsupported` for a value that cannot cross
+/// the boundary.
+pub fn encode_value<M: Memory>(
+    memory: &mut M,
+    vm: u32,
+    raw: u64,
+    output: &mut impl CborOutput<M>,
+) -> Result<(), CborError> {
+    Encoder(output).value(memory, vm, raw, 0)
+}
+
+/// Destination of the encoder's bytes.
+pub trait CborOutput<M: Memory> {
+    /// Appends `bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the output cannot take more bytes.
+    fn bytes(&mut self, memory: &mut M, bytes: &[u8]) -> Result<(), CborError>;
+
+    /// Appends the `len` bytes at `source` in `memory`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the output cannot take more bytes or the range is invalid.
+    fn copy(&mut self, memory: &mut M, source: u32, len: u32) -> Result<(), CborError>;
+}
+
+impl<M: Memory, O: CborOutput<M>> CborOutput<M> for &mut O {
+    fn bytes(&mut self, memory: &mut M, bytes: &[u8]) -> Result<(), CborError> {
+        (**self).bytes(memory, bytes)
+    }
+
+    fn copy(&mut self, memory: &mut M, source: u32, len: u32) -> Result<(), CborError> {
+        (**self).copy(memory, source, len)
+    }
+}
+
+/// The result buffer as an encoding destination: it only measures, or it writes into reserved
+/// bytes.
+struct Buffer {
     /// Address of the first output byte, or `None` while measuring.
     start: Option<u32>,
     /// Bytes produced so far.
     len: u32,
 }
 
-impl Sink {
-    /// Appends `bytes`.
-    fn bytes(&mut self, memory: &mut impl Memory, bytes: &[u8]) -> Result<(), CborError> {
+impl Buffer {
+    /// Accounts for `count` more output bytes.
+    fn advance(&mut self, count: u32) -> Result<(), CborError> {
+        self.len = self.len.checked_add(count).ok_or(CborError::OutOfMemory)?;
+        Ok(())
+    }
+}
+
+impl<M: Memory> CborOutput<M> for Buffer {
+    fn bytes(&mut self, memory: &mut M, bytes: &[u8]) -> Result<(), CborError> {
         if let Some(start) = self.start {
             for (offset, byte) in (self.len..).zip(bytes) {
                 memory.store_u8(start + offset, *byte);
@@ -759,42 +813,46 @@ impl Sink {
         self.advance(bytes.len() as u32)
     }
 
-    /// Accounts for `count` more output bytes.
-    fn advance(&mut self, count: u32) -> Result<(), CborError> {
-        self.len = self.len.checked_add(count).ok_or(CborError::OutOfMemory)?;
-        Ok(())
+    fn copy(&mut self, memory: &mut M, source: u32, len: u32) -> Result<(), CborError> {
+        if let Some(start) = self.start {
+            memory.copy(start + self.len, source, len);
+        }
+        self.advance(len)
     }
+}
 
+/// The CBOR encoder writing into one output.
+struct Encoder<O>(O);
+
+impl<O> Encoder<O> {
     /// Appends the shortest head of `major` with `argument`.
-    fn head(
-        &mut self,
-        memory: &mut impl Memory,
-        major: u8,
-        argument: u64,
-    ) -> Result<(), CborError> {
+    fn head<M: Memory>(&mut self, memory: &mut M, major: u8, argument: u64) -> Result<(), CborError>
+    where
+        O: CborOutput<M>,
+    {
         let mut bytes = [0_u8; 9];
         let length = encode_head(&mut bytes, major, argument) as usize;
-        self.bytes(memory, &bytes[..length])
+        self.0.bytes(memory, &bytes[..length])
     }
 
     /// Appends the encoding of one value at nesting depth `depth`.
-    fn value(
+    fn value<M: Memory>(
         &mut self,
-        memory: &mut impl Memory,
+        memory: &mut M,
         vm: u32,
         raw: u64,
         depth: u32,
-    ) -> Result<(), CborError> {
+    ) -> Result<(), CborError>
+    where
+        O: CborOutput<M>,
+    {
         if let Some(object) = string_object(raw) {
             return self.string(memory, object);
         }
         if let Some(object) = bytes_object(raw) {
             let len = bytes_len(memory, object);
             self.head(memory, MAJOR_BYTES, u64::from(len))?;
-            if let Some(start) = self.start {
-                memory.copy(start + self.len, object + DATA, len);
-            }
-            return self.advance(len);
+            return self.0.copy(memory, object + DATA, len);
         }
         if let Some(list) = list_object(raw) {
             return self.list(memory, vm, list, depth);
@@ -835,27 +893,30 @@ impl Sink {
                 }
             },
         };
-        self.bytes(memory, &bytes[..length as usize])
+        self.0.bytes(memory, &bytes[..length as usize])
     }
 
     /// Appends the String at `object` as a text string.
-    fn string(&mut self, memory: &mut impl Memory, object: u32) -> Result<(), CborError> {
+    fn string<M: Memory>(&mut self, memory: &mut M, object: u32) -> Result<(), CborError>
+    where
+        O: CborOutput<M>,
+    {
         let len = byte_len(memory, object);
         self.head(memory, MAJOR_TEXT, u64::from(len))?;
-        if let Some(start) = self.start {
-            memory.copy(start + self.len, object + DATA, len);
-        }
-        self.advance(len)
+        self.0.copy(memory, object + DATA, len)
     }
 
     /// Appends the List at `list` as an array.
-    fn list(
+    fn list<M: Memory>(
         &mut self,
-        memory: &mut impl Memory,
+        memory: &mut M,
         vm: u32,
         list: u32,
         depth: u32,
-    ) -> Result<(), CborError> {
+    ) -> Result<(), CborError>
+    where
+        O: CborOutput<M>,
+    {
         if depth >= MAX_DEPTH {
             return Err(CborError::Unsupported);
         }
@@ -869,13 +930,16 @@ impl Sink {
     }
 
     /// Appends the typed Object at `object` as a map of its declared fields in entry order.
-    fn typed_object(
+    fn typed_object<M: Memory>(
         &mut self,
-        memory: &mut impl Memory,
+        memory: &mut M,
         vm: u32,
         object: u32,
         depth: u32,
-    ) -> Result<(), CborError> {
+    ) -> Result<(), CborError>
+    where
+        O: CborOutput<M>,
+    {
         if depth >= MAX_DEPTH {
             return Err(CborError::Unsupported);
         }
@@ -916,13 +980,16 @@ impl Sink {
     }
 
     /// Appends the enum at `object` as the codec's tagged `[identity, variant, fields]` array.
-    fn enumeration(
+    fn enumeration<M: Memory>(
         &mut self,
-        memory: &mut impl Memory,
+        memory: &mut M,
         vm: u32,
         object: u32,
         depth: u32,
-    ) -> Result<(), CborError> {
+    ) -> Result<(), CborError>
+    where
+        O: CborOutput<M>,
+    {
         if depth >= MAX_DEPTH {
             return Err(CborError::Unsupported);
         }
@@ -941,13 +1008,16 @@ impl Sink {
     }
 
     /// Appends the Error at `object` as the tagged seven-field map of the runner's codec.
-    fn error(
+    fn error<M: Memory>(
         &mut self,
-        memory: &mut impl Memory,
+        memory: &mut M,
         vm: u32,
         object: u32,
         depth: u32,
-    ) -> Result<(), CborError> {
+    ) -> Result<(), CborError>
+    where
+        O: CborOutput<M>,
+    {
         if depth >= MAX_DEPTH {
             return Err(CborError::Unsupported);
         }
@@ -964,7 +1034,7 @@ impl Sink {
         self.value(memory, vm, parts.data, depth + 1)?;
         self.head(memory, MAJOR_UNSIGNED, 4)?;
         if parts.origin == 0 {
-            self.bytes(memory, &[NULL])?;
+            self.0.bytes(memory, &[NULL])?;
         } else {
             self.head(memory, MAJOR_UNSIGNED, u64::from(parts.origin))?;
         }
@@ -979,20 +1049,23 @@ impl Sink {
         }
         self.head(memory, MAJOR_UNSIGNED, 6)?;
         if parts.cause == ValueRef::NONE.raw() {
-            self.bytes(memory, &[NULL])
+            self.0.bytes(memory, &[NULL])
         } else {
             self.value(memory, vm, parts.cause, depth + 1)
         }
     }
 
     /// Appends the keys and values of the untyped Object at `object` in key order.
-    fn entries(
+    fn entries<M: Memory>(
         &mut self,
-        memory: &mut impl Memory,
+        memory: &mut M,
         vm: u32,
         object: u32,
         depth: u32,
-    ) -> Result<(), CborError> {
+    ) -> Result<(), CborError>
+    where
+        O: CborOutput<M>,
+    {
         let shape = shape(memory, object);
         for index in 0..key_count(memory, shape) {
             let name = string_object(key(memory, shape, index)).ok_or(CborError::Unsupported)?;

@@ -21,7 +21,7 @@ const FRAME_SLOTS: u64 = core::mem::size_of::<exs_layout::FrameObject>() as u64;
 impl EntryLayout<'_> {
     /// Returns the `() -> i32` run loop: it runs the active frame's step function while the
     /// task is ready and returns `STATUS_PENDING` when it waits for the runner. On completion
-    /// it encodes the result, releases the task and returns `STATUS_COMPLETE`.
+    /// it stores the result, releases the task and returns `STATUS_COMPLETE`.
     ///
     /// `steps` holds the Wasm index of every step function by dense step index.
     pub(in crate::codegen::v2) fn run<'a>(
@@ -80,9 +80,7 @@ impl EntryLayout<'_> {
         function.instruction(&Instruction::Call(
             self.core("__exs_core_take_completed", span)?,
         ));
-        function.instruction(&Instruction::Call(
-            self.core("__exs_core_encode_result", span)?,
-        ));
+        Self::store_result(&mut function);
         function.instruction(&Instruction::Call(
             self.core("__exs_core_task_release", span)?,
         ));
@@ -134,9 +132,7 @@ impl EntryLayout<'_> {
             function.instruction(&Instruction::Call(
                 self.core("__exs_core_arity_error", span)?,
             ));
-            function.instruction(&Instruction::Call(
-                self.core("__exs_core_encode_result", span)?,
-            ));
+            Self::store_result(&mut function);
             self.pop_root_frame(&mut function, rooted);
             function.instruction(&Instruction::Call(
                 self.core("__exs_core_task_release", span)?,

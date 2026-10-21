@@ -50,7 +50,7 @@ impl EntryLayout<'_> {
     }
 
     /// Returns `__exs_start_<name>(input, length) -> status`, which decodes the arguments,
-    /// calls the function and encodes its result.
+    /// calls the function and stores its result.
     ///
     /// The input was already stored in the VM buffer by `__exs_input_alloc`; excess arguments
     /// produce the fatal ArityError as the result.
@@ -97,16 +97,14 @@ impl EntryLayout<'_> {
     }
 
     /// Ends a start function after the entry's result is on the stack above the VM address:
-    /// encodes the result, pops the frame at `frame` and releases the task.
+    /// stores the result for the runner, pops the frame at `frame` and releases the task.
     fn finish_start<'a>(
         &self,
         mut function: Function,
         frame: u32,
         span: SourceSpan<'a>,
     ) -> Result<Function, CompileDiagnostics<'a>> {
-        function.instruction(&Instruction::Call(
-            self.core("__exs_core_encode_result", span)?,
-        ));
+        Self::store_result(&mut function);
         function.instruction(&Instruction::I32Const(0));
         function.instruction(&Instruction::LocalGet(frame));
         function.instruction(&Instruction::I32Store(vm_field(
@@ -151,6 +149,36 @@ impl EntryLayout<'_> {
         self.finish_start(function, frame, span)
     }
 
+    /// Stores the result on the stack above the VM address in the VM state block, where the
+    /// runner reads it.
+    pub(super) fn store_result(function: &mut Function) {
+        function.instruction(&Instruction::I64Store(MemArg {
+            offset: offset_of!(VmState, boundary.result_value) as u64,
+            align: 3,
+            memory_index: 0,
+        }));
+    }
+
+    /// Returns `__exs_result_value() -> i64`, the completed result.
+    pub(super) fn result_value(&self) -> Function {
+        let mut function = Function::new([]);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I64Load(vm_field(
+            self.vm,
+            offset_of!(VmState, boundary.result_value) as u32,
+        )));
+        function.instruction(&Instruction::End);
+        function
+    }
+
+    /// Returns `__exs_vm() -> i32`, the address of the VM state block.
+    pub(super) fn vm_address(&self) -> Function {
+        let mut function = Function::new([]);
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::End);
+        function
+    }
+
     /// Returns `__exs_input_alloc(length) -> address`, which initializes the VM on first use.
     pub(super) fn input_alloc<'a>(
         &self,
@@ -177,19 +205,6 @@ impl EntryLayout<'_> {
         function.instruction(&Instruction::Call(
             self.core("__exs_core_reserve_input", span)?,
         ));
-        function.instruction(&Instruction::End);
-        Ok(function)
-    }
-
-    /// Returns a `() -> i32` export that forwards to the core function `core` with the VM.
-    pub(super) fn vm_accessor<'a>(
-        &self,
-        core: &str,
-        span: SourceSpan<'a>,
-    ) -> Result<Function, CompileDiagnostics<'a>> {
-        let mut function = Function::new([]);
-        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
-        function.instruction(&Instruction::Call(self.core(core, span)?));
         function.instruction(&Instruction::End);
         Ok(function)
     }

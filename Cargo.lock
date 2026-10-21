@@ -894,6 +894,7 @@ version = "0.1.0"
 dependencies = [
  "exs-abi",
  "exs-compiler",
+ "exs-core",
  "exs-runtime",
  "exs-value",
  "jiff",

@@ -873,6 +873,25 @@ fn matches_v1_for_suspending_closures() {
     }
 }
 
+/// Reads results of every kind from module memory like v1 encodes them, and reports results
+/// that cannot cross the boundary as v1's fatal SerializationError.
+#[test]
+fn matches_v1_for_boundary_results() {
+    let programs = [
+        r#"fn main() { ret [None, true, -7, 3000000000, 1.25, "äö𝄞", b"hi", { a: [1, { b: 2 }] }]; }"#,
+        "type P { x: Int, y: Any } fn main() { let p = P { y: 2, x: 1 }; p.extra = 3; ret p; }",
+        "enum E { A, B(value: Int), } fn main() { ret [E::A, E::B(2), Ordering::Less]; }",
+        r#"fn main() { ret Error("K", "m", [1, Error("C", "d", None)]); }"#,
+        "fn main() { ret () => { ret 1; }; }",
+        "fn main() { ret [1, { f: (x) => { ret x; } }]; }",
+        "fn main() { let list = [1]; list.push(list); ret list; }",
+        "fn main() { let o = { a: 1 }; o.self = o; ret o; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
 /// Runs `par` like v1: static and dynamic tasks, their results in source order, host calls
 /// that suspend single tasks, nested `par`, v1's Errors for invalid dynamic operands, and a
 /// fatal Error that ends every task.

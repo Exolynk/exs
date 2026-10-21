@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, MODULE_METADATA_SECTION,
-    RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, START_EXPORT_PREFIX,
+    RESULT_VALUE_EXPORT, START_EXPORT_PREFIX, VM_EXPORT,
 };
 use exs_abi::{CANCEL_EXPORT, RESUME_HOST_EXPORT};
 use exs_abi::{TYPE_BYTES, TYPE_STRING};
@@ -441,15 +441,11 @@ pub(in crate::codegen) fn compile<'a>(
     for (name, type_index, body) in [
         (ABI_VERSION_EXPORT, version_type, EntryLayout::abi_version()),
         (INPUT_ALLOC_EXPORT, allocate_type, layout.input_alloc(span)?),
+        (VM_EXPORT, version_type, layout.vm_address()),
         (
-            RESULT_POINTER_EXPORT,
-            version_type,
-            layout.vm_accessor("__exs_core_result_ptr", span)?,
-        ),
-        (
-            RESULT_LENGTH_EXPORT,
-            version_type,
-            layout.vm_accessor("__exs_core_result_len", span)?,
+            RESULT_VALUE_EXPORT,
+            program.type_index(Vec::new(), vec![VALUE_TYPE]),
+            layout.result_value(),
         ),
     ] {
         program.function_types.push(type_index);

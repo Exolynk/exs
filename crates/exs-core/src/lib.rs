@@ -47,8 +47,12 @@ mod tests;
 
 pub use access::{index_get, index_set, property_get, property_set};
 pub use allocator::{allocate, init_heap};
+pub use boundary::serialization_message;
 pub use bytes::bytes_object;
-pub use cbor::{CborError, arity_error, decode_inputs, decode_variadic_inputs, encode_result};
+pub use cbor::{
+    CborError, CborOutput, arity_error, decode_inputs, decode_variadic_inputs, encode_result,
+    encode_value,
+};
 pub use closures::{cell_new, closure_arity_error, closure_new, not_callable, parallel_list_error};
 pub use collector::collect;
 pub use datetime::{DATETIME_FIELDS, datetime_parse};
@@ -63,7 +67,7 @@ pub use exs_layout::{ObjectKind, StaticFunction};
 pub use lists::{for_snapshot, list_add, list_copy, list_new, list_object};
 #[cfg(target_arch = "wasm32")]
 pub use memory::LinearMemory;
-pub use memory::Memory;
+pub use memory::{Memory, SliceMemory};
 pub use methods::{call_builtin, call_static};
 pub use numbers::{
     Arithmetic, Number, NumericError, Ordering, arithmetic, divide, float_value, int_value, negate,

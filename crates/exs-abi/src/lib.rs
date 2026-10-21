@@ -181,6 +181,11 @@ pub const INPUT_ALLOC_EXPORT: &str = "__exs_input_alloc";
 pub const RESULT_POINTER_EXPORT: &str = "__exs_result_ptr";
 /// The export returning the byte length of the completed CBOR result.
 pub const RESULT_LENGTH_EXPORT: &str = "__exs_result_len";
+/// The export of a runtime v2 module returning the completed result as a raw `ValueRef`,
+/// which the runner reads from memory instead of a CBOR result.
+pub const RESULT_VALUE_EXPORT: &str = "__exs_result_value";
+/// The export of a runtime v2 module returning the address of its VM state block.
+pub const VM_EXPORT: &str = "__exs_vm";
 /// The module name containing runner-provided Host ABI imports.
 pub const HOST_IMPORT_MODULE: &str = "exs";
 /// The language-neutral module name containing runner resource-metering imports.

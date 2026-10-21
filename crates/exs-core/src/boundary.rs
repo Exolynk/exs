@@ -36,14 +36,7 @@ pub(crate) fn serialization_error(
     raw: u64,
     fatal: bool,
 ) -> Option<u64> {
-    let mut path = [0_u32; MAX_DEPTH];
-    let message = match obstacle(memory, raw, &mut path, 0) {
-        Some(Obstacle::Cycle) => {
-            "value graph contains a cycle and cannot cross the runner boundary"
-        }
-        Some(Obstacle::UnsupportedValue) => "value type cannot cross the runner boundary",
-        None => "value cannot be encoded for the runner boundary",
-    };
+    let message = serialization_message(memory, raw);
     let error = new_error(
         memory,
         vm,
@@ -57,6 +50,20 @@ pub(crate) fn serialization_error(
         crate::errors::clear_origin_and_trace(memory, error as u32);
     }
     Some(error)
+}
+
+/// Returns the message of v1's SerializationError for the value `raw` the encoder rejected,
+/// naming its first obstacle in depth-first order.
+#[must_use]
+pub fn serialization_message(memory: &impl Memory, raw: u64) -> &'static str {
+    let mut path = [0_u32; MAX_DEPTH];
+    match obstacle(memory, raw, &mut path, 0) {
+        Some(Obstacle::Cycle) => {
+            "value graph contains a cycle and cannot cross the runner boundary"
+        }
+        Some(Obstacle::UnsupportedValue) => "value type cannot cross the runner boundary",
+        None => "value cannot be encoded for the runner boundary",
+    }
 }
 
 /// Returns the first obstacle of `raw` in depth-first order, with `path` holding the
