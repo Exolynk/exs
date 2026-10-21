@@ -7,7 +7,7 @@ use exs_value::ValueRef;
 use super::execution::Execution;
 use super::heap::VM;
 use crate::{
-    Memory, concat, decode_inputs, index_get, index_set, list_copy, list_object, property_get,
+    Memory, concat, image_inputs, index_get, index_set, list_copy, list_object, property_get,
     property_set, reserve_input, set_heap_flags,
 };
 
@@ -129,7 +129,7 @@ fn converts_lists_and_typed_objects() {
         ExsValue::List(std::vec![]),
     ]);
     let input = ExsValue::List(std::vec![nested.clone()])
-        .to_cbor()
+        .to_image_with_limits(exs_abi::CborLimits::unrestricted())
         .expect("encodable");
     let mut execution = Execution::new();
     let address =
@@ -138,7 +138,7 @@ fn converts_lists_and_typed_objects() {
         execution.memory.store_u8(address + offset, *byte);
     }
     let slots = execution.root(&[0]);
-    assert_eq!(decode_inputs(&mut execution.memory, VM, slots, 1), Ok(1));
+    assert_eq!(image_inputs(&mut execution.memory, VM, slots, 1), Ok(1));
     let decoded = execution.memory.load_u64(slots);
     assert_eq!(execution.encoded(decoded), nested);
     let point = execution.typed_object(&["x", "label"], &[Execution::int(3), decoded]);
@@ -149,16 +149,16 @@ fn converts_lists_and_typed_objects() {
             ("label".into(), nested),
         ])
     );
-    // A List containing itself becomes v1's fatal SerializationError.
+    // A List containing itself cannot cross; the runner reports v1's SerializationError.
     let cyclic = execution.list(&[0]);
     let slot = list_object(cyclic).map(|list| execution.memory.load_u32(list + 12) + 8);
     execution.memory.store_u64(slot.expect("a List"), cyclic);
-    let ExsValue::Error(error) = execution.encoded(cyclic) else {
-        panic!("a cyclic result encodes as an Error");
-    };
-    assert_eq!(error.kind, "SerializationError");
     assert_eq!(
-        error.message,
+        super::walk::walked(&execution.memory, VM, cyclic),
+        Err(crate::WalkError::Unsupported)
+    );
+    assert_eq!(
+        crate::serialization_message(&execution.memory, cyclic),
         "value graph contains a cycle and cannot cross the runner boundary"
     );
 }

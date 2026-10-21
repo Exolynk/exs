@@ -195,3 +195,29 @@ pub fn match_error(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
         raw,
     )
 }
+
+/// Finds the enum type whose identity and the variant whose name equal the text at the
+/// `(address, length)` ranges, returning the type id and variant index.
+pub(crate) fn resolve_enum(
+    memory: &impl Memory,
+    vm: u32,
+    identity: (u32, u32),
+    variant: (u32, u32),
+) -> Option<(u32, u32)> {
+    let same = |object: u32, text: (u32, u32)| {
+        crate::strings::text(memory, object).as_bytes() == memory.bytes(text.0, text.1)
+    };
+    let count = crate::vm::Vm(vm).program_type_count(memory);
+    (0..count).find_map(|index| {
+        let entry = crate::typed::type_entry_at(memory, vm, index)?;
+        let type_id = entry.type_id;
+        let name = string_object(entry.identity)?;
+        if !same(name, identity) {
+            return None;
+        }
+        (0..entry.field_count).find_map(|index| {
+            let candidate = string_object(memory.load_u64(entry.field_names + index * 8))?;
+            same(candidate, variant).then_some((type_id, index))
+        })
+    })
+}

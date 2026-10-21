@@ -14,3 +14,4 @@ mod methods;
 mod numbers;
 mod objects;
 mod strings;
+mod walk;

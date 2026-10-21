@@ -78,16 +78,8 @@ pub struct BoundaryState {
     pub input_len: u32,
     /// Byte capacity of the input storage.
     pub input_capacity: u32,
-    /// Address of the encoded result, 0 before the first result.
-    pub result: u32,
-    /// Byte length of the current result.
-    pub result_len: u32,
-    /// Byte capacity of the result storage.
-    pub result_capacity: u32,
     /// Nonzero once the heap and root stack are initialized.
     pub initialized: u32,
-    /// Reserved, keeps the block 8-byte aligned.
-    pub reserved: u32,
     /// The completed entry's result, which the runner reads from memory.
     pub result_value: u64,
 }

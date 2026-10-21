@@ -90,32 +90,11 @@ pub fn reserve_input(memory: &mut impl Memory, vm: u32, length: u32) -> Option<u
     Some(address)
 }
 
-/// Returns storage for a result of `length` bytes, reusing earlier storage.
-pub(crate) fn reserve_result(memory: &mut impl Memory, vm: u32, length: u32) -> Option<u32> {
-    let address = reserve(
-        memory,
-        vm,
-        vm_offset!(boundary.result),
-        vm_offset!(boundary.result_capacity),
-        length,
-    )?;
-    memory.store_u32(vm + vm_offset!(boundary.result_len), length);
-    Some(address)
-}
-
 /// Returns the address and length of the current input.
 pub(crate) fn input(memory: &impl Memory, vm: u32) -> (u32, u32) {
     (
         memory.load_u32(vm + vm_offset!(boundary.input)),
         memory.load_u32(vm + vm_offset!(boundary.input_len)),
-    )
-}
-
-/// Returns the address and length of the current result.
-pub fn result(memory: &impl Memory, vm: u32) -> (u32, u32) {
-    (
-        memory.load_u32(vm + vm_offset!(boundary.result)),
-        memory.load_u32(vm + vm_offset!(boundary.result_len)),
     )
 }
 

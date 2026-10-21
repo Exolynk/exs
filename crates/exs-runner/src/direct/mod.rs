@@ -6,4 +6,4 @@
 
 mod reader;
 
-pub(crate) use reader::{ReadError, encode, is_direct, result};
+pub(crate) use reader::{is_direct, limit_kind, read, result};

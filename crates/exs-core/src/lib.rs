@@ -9,7 +9,7 @@
 //!
 //! It provides the heap (a size-class page allocator and a non-moving mark-and-sweep
 //! collector), execution start-up with the root stack and runner buffers, numeric values and
-//! operations, language Errors with traces, Strings, Lists, typed and untyped Objects with shapes, and the CBOR conversion of runner inputs and
+//! operations, language Errors with traces, Strings, Lists, typed and untyped Objects with shapes, the adoption of runner inputs as images and the walk of results for the runner, and
 //! results.
 
 #[cfg(test)]
@@ -20,7 +20,6 @@ mod allocator;
 mod big;
 mod boundary;
 mod bytes;
-mod cbor;
 mod closures;
 mod collector;
 mod datetime;
@@ -43,6 +42,7 @@ mod tasks;
 mod typed;
 mod values;
 mod vm;
+mod walk;
 mod wire;
 
 #[cfg(test)]
@@ -50,12 +50,8 @@ mod tests;
 
 pub use access::{index_get, index_set, property_get, property_set};
 pub use allocator::{allocate, init_heap};
-pub use boundary::serialization_message;
+pub use boundary::{BoundaryError, serialization_message};
 pub use bytes::bytes_object;
-pub use cbor::{
-    CborError, CborOutput, arity_error, decode_at, decode_inputs, decode_variadic_inputs,
-    encode_result, encode_value,
-};
 pub use closures::{cell_new, closure_arity_error, closure_new, not_callable, parallel_list_error};
 pub use collector::collect;
 pub use datetime::{DATETIME_FIELDS, datetime_parse};
@@ -64,7 +60,7 @@ pub use errors::{
     condition_error, error_new, error_object, method_arity_error, method_not_found, missing_value,
     nominal_arity_error, not_an_iterator, not_error, type_mismatch, wire_mismatch,
 };
-pub use execution::{init_execution, reserve_input, result};
+pub use execution::{init_execution, reserve_input};
 pub use exs_abi::BuiltinMethod;
 pub use exs_layout::{ObjectKind, StaticFunction};
 pub use image::{image_arity_error, image_inputs, image_variadic_inputs};
@@ -90,4 +86,5 @@ pub use values::{compare, compare_value, equal, ordering_test};
 pub use vm::{
     collection_count, set_case_tables, set_heap_flags, set_program_types, set_root_ranges,
 };
+pub use walk::{MAX_DEPTH, Visitor, WalkError, walk_value};
 pub use wire::wire_decode;

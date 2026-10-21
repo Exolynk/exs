@@ -9,8 +9,8 @@ use exs_value::ValueRef;
 use super::execution::Execution;
 use super::heap::VM;
 use crate::{
-    CborError, collect, index_get, object_lookup, object_with_shape, property_get, property_set,
-    set_heap_flags, shape_for,
+    BoundaryError, collect, index_get, object_lookup, object_with_shape, property_get,
+    property_set, set_heap_flags, shape_for,
 };
 
 /// Returns an Object value of `entries`.
@@ -130,20 +130,10 @@ fn encodes_extra_keys_of_typed_objects() {
     );
 }
 
-/// Rejects maps with repeated or non-text keys.
+/// Rejects Objects with repeated keys.
 #[test]
 fn rejects_invalid_maps() {
     let mut execution = Execution::new();
-    // [{"a": 1, "a": 2}]
-    let repeated = [0x81, 0xa2, 0x61, b'a', 0x01, 0x61, b'a', 0x02];
-    assert_eq!(
-        execution.decoded_bytes(&repeated),
-        Err(CborError::Malformed)
-    );
-    // [{1: 2}]
-    let integer_key = [0x81, 0xa1, 0x01, 0x02];
-    assert_eq!(
-        execution.decoded_bytes(&integer_key),
-        Err(CborError::Unsupported)
-    );
+    let repeated = object(&[("a", ExsValue::Int(1)), ("a", ExsValue::Int(2))]);
+    assert_eq!(execution.decoded(&repeated), Err(BoundaryError::Malformed));
 }

@@ -62,6 +62,8 @@ mod report;
 mod timer;
 #[cfg(feature = "serde")]
 mod typed_registry;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod value_reader;
 
 #[cfg(all(feature = "browser", target_arch = "wasm32"))]
 pub use self::browser::{

@@ -13,6 +13,7 @@ use exs_abi::{
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter};
 
 use crate::limits::ExecutionLimits;
+use crate::value_reader::ReadError;
 use crate::{
     HostCborError, HostFunctionRegistry, HostFuture, HostStream, LimitKind, RegistryError,
     decode_arguments_with_limits, encode_result_with_limits,
@@ -449,15 +450,16 @@ fn host_call_start_value(
     source_position: i32,
 ) -> Result<i32, wasmtime::Error> {
     let limits = caller.data().limits.clone();
-    let request = match crate::direct::encode(
+    let read = crate::direct::read(
         memory(&mut caller)?.data(&caller),
         vm.cast_unsigned(),
         arguments.cast_unsigned(),
         limits.max_cbor_payload_bytes,
-    ) {
-        Ok(request) => request,
-        Err(crate::direct::ReadError::Unsupported(_)) => return Ok(HOST_CALL_UNSUPPORTED),
-        Err(crate::direct::ReadError::TooLarge) => {
+        limits.cbor_limits(),
+    );
+    match read {
+        Err(ReadError::Unsupported(_)) => return Ok(HOST_CALL_UNSUPPORTED),
+        Err(ReadError::TooLarge) => {
             caller
                 .data_mut()
                 .report_limit_violation(LimitKind::CborPayload);
@@ -465,12 +467,13 @@ fn host_call_start_value(
                 "host-call payload exceeds configured limit",
             ));
         }
-        Err(crate::direct::ReadError::Malformed) => {
+        Err(ReadError::Malformed) => {
             return Err(wasmtime::Error::msg(
-                "host-call arguments lie outside linear memory",
+                "host-call arguments lie outside linear memory or are malformed",
             ));
         }
-    };
+        _ => {}
+    }
     caller.data_mut().starting_stream_id = None;
     if !caller.data_mut().start_host_call() {
         return Err(wasmtime::Error::msg("host-call limit exceeded"));
@@ -483,8 +486,23 @@ fn host_call_start_value(
     )?;
     let name = std::str::from_utf8(&name_bytes)
         .map_err(|_| wasmtime::Error::msg("host function name is not valid UTF-8"))?;
-    let arguments = decode_arguments_with_limits(&request, limits.cbor_limits())
-        .map_err(|error| host_cbor_error(&mut caller, error))?;
+    // Like the decoding of a CBOR request, limits apply once the call counts.
+    let arguments = match read {
+        Ok(ExsValue::List(arguments)) => arguments,
+        Ok(_) => {
+            return Err(wasmtime::Error::msg(
+                "host-call arguments must be represented as a List",
+            ));
+        }
+        Err(error) => {
+            if let Some(kind) = crate::direct::limit_kind(error) {
+                caller.data_mut().report_limit_violation(kind);
+            }
+            return Err(wasmtime::Error::msg(
+                "host-call payload exceeds configured limits",
+            ));
+        }
+    };
     dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
 }
 

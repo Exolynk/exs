@@ -16,6 +16,17 @@ use crate::objects::{shape, untyped_object, value_address};
 use crate::shapes::key_count;
 use crate::typed::{extra, slot_address, slot_count, typed_object};
 
+/// Why a boundary value could not be adopted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundaryError {
+    /// The image is not well-formed.
+    Malformed,
+    /// The value uses a type or nesting the module cannot represent.
+    Unsupported,
+    /// The heap could not hold the value.
+    OutOfMemory,
+}
+
 /// Deepest nesting the walk follows, like the encoder.
 const MAX_DEPTH: usize = 128;
 

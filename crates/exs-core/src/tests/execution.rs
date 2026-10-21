@@ -10,8 +10,8 @@ use exs_value::layout::object_type_extra;
 
 use super::heap::{VM, VecMemory};
 use crate::{
-    CborError, Memory, allocate, decode_inputs, encode_result, init_execution, list_new,
-    list_object, reserve_input, result, set_program_types,
+    BoundaryError, Memory, allocate, image_inputs, init_execution, list_new, list_object,
+    reserve_input, set_program_types,
 };
 
 /// Address of the program's type table in these tests.
@@ -129,33 +129,28 @@ impl Execution {
         raw
     }
 
-    /// Encodes `raw` as the result and decodes it with the runner's codec.
+    /// Walks `raw` as the runner reads a result and returns the value it builds.
     pub(super) fn encoded(&mut self, raw: u64) -> ExsValue {
-        encode_result(&mut self.memory, VM, raw).expect("encodable");
-        let (address, length) = result(&self.memory, VM);
-        let bytes: Vec<u8> = (0..length)
-            .map(|offset| self.memory.load_u8(address + offset))
-            .collect();
-        ExsValue::from_cbor(&bytes).expect("valid CBOR")
+        super::walk::walked(&self.memory, VM, raw).expect("crosses the boundary")
     }
 
-    /// Decodes the single runner argument of `value` into a rooted slot and returns it.
-    pub(super) fn decoded(&mut self, value: &ExsValue) -> Result<u64, CborError> {
+    /// Adopts the single runner argument of `value` into a rooted slot and returns it.
+    pub(super) fn decoded(&mut self, value: &ExsValue) -> Result<u64, BoundaryError> {
         let input = ExsValue::List(std::vec![value.clone()])
-            .to_cbor()
+            .to_image_with_limits(exs_abi::CborLimits::unrestricted())
             .expect("encodable");
         self.decoded_bytes(&input)
     }
 
-    /// Decodes the runner argument array `input` into a rooted slot and returns its first value.
-    pub(super) fn decoded_bytes(&mut self, input: &[u8]) -> Result<u64, CborError> {
+    /// Adopts the runner argument image `input` into a rooted slot and returns its first value.
+    pub(super) fn decoded_bytes(&mut self, input: &[u8]) -> Result<u64, BoundaryError> {
         let address =
             reserve_input(&mut self.memory, VM, input.len() as u32).expect("memory has room");
         for (offset, byte) in (0_u32..).zip(input) {
             self.memory.store_u8(address + offset, *byte);
         }
         let slot = self.root(&[0]);
-        decode_inputs(&mut self.memory, VM, slot, 1)?;
+        image_inputs(&mut self.memory, VM, slot, 1)?;
         Ok(self.memory.load_u64(slot))
     }
 

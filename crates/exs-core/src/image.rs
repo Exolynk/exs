@@ -12,8 +12,9 @@ use exs_abi::image::{
 };
 use exs_value::ValueRef;
 
+use crate::boundary::BoundaryError;
 use crate::bytes::new_bytes;
-use crate::cbor::{CborError, resolve_enum};
+use crate::enums::resolve_enum;
 use crate::enums::{allocate_enum, field_address as enum_field, host_enum};
 use crate::errors::{ErrorParts, error_from_parts, new_error};
 use crate::execution::input;
@@ -50,11 +51,11 @@ struct Record {
 
 impl Image {
     /// Returns the image of `len` bytes at `base`, after checking its header.
-    fn at(memory: &impl Memory, base: u32, len: u32) -> Result<Self, CborError> {
+    fn at(memory: &impl Memory, base: u32, len: u32) -> Result<Self, BoundaryError> {
         if len < IMAGE_HEADER_SIZE || memory.load_u32(base) != IMAGE_MAGIC {
-            return Err(CborError::Malformed);
+            return Err(BoundaryError::Malformed);
         }
-        base.checked_add(len).ok_or(CborError::Malformed)?;
+        base.checked_add(len).ok_or(BoundaryError::Malformed)?;
         Ok(Self { base, len })
     }
 
@@ -64,18 +65,18 @@ impl Image {
     }
 
     /// Returns the address of the `size` bytes at `offset`, which must lie in the image.
-    fn range(self, offset: u32, size: u32) -> Result<u32, CborError> {
+    fn range(self, offset: u32, size: u32) -> Result<u32, BoundaryError> {
         offset
             .checked_add(size)
             .filter(|end| *end <= self.len)
             .map(|_| self.base + offset)
-            .ok_or(CborError::Malformed)
+            .ok_or(BoundaryError::Malformed)
     }
 
     /// Returns the record at `offset`, which must be an aligned record inside the image.
-    fn record(self, memory: &impl Memory, offset: u32) -> Result<Record, CborError> {
+    fn record(self, memory: &impl Memory, offset: u32) -> Result<Record, BoundaryError> {
         if offset < IMAGE_HEADER_SIZE || !offset.is_multiple_of(8) {
-            return Err(CborError::Malformed);
+            return Err(BoundaryError::Malformed);
         }
         let address = self.range(offset, RECORD_HEADER_SIZE)?;
         Ok(Record {
@@ -86,19 +87,22 @@ impl Image {
     }
 
     /// Returns the address of `size` payload bytes of `record`, which must lie in the image.
-    fn payload(self, record: Record, size: u32) -> Result<u32, CborError> {
+    fn payload(self, record: Record, size: u32) -> Result<u32, BoundaryError> {
         self.range(record.payload - self.base, size)
     }
 
     /// Returns the address and length of the String record at `offset`.
-    fn text(self, memory: &impl Memory, offset: u32) -> Result<(u32, u32), CborError> {
+    fn text(self, memory: &impl Memory, offset: u32) -> Result<(u32, u32), BoundaryError> {
         let record = self.record(memory, offset)?;
         if record.kind != RECORD_STRING {
-            return Err(CborError::Malformed);
+            return Err(BoundaryError::Malformed);
         }
         let start = self.payload(
             record,
-            record.argument.checked_add(8).ok_or(CborError::Malformed)?,
+            record
+                .argument
+                .checked_add(8)
+                .ok_or(BoundaryError::Malformed)?,
         )?;
         Ok((start + 8, record.argument))
     }
@@ -110,23 +114,26 @@ pub(crate) fn adopt_at(
     vm: u32,
     address: u32,
     length: u32,
-) -> Result<u64, CborError> {
+) -> Result<u64, BoundaryError> {
     let image = Image::at(memory, address, length)?;
     let root = image.root(memory);
     adopt(memory, vm, image, root, 0)
 }
 
 /// Returns the input image and the record of its argument List.
-fn input_list(memory: &impl Memory, vm: u32) -> Result<(Image, Record), CborError> {
+fn input_list(memory: &impl Memory, vm: u32) -> Result<(Image, Record), BoundaryError> {
     let (address, length) = input(memory, vm);
     let image = Image::at(memory, address, length)?;
     let record = image.record(memory, image.root(memory))?;
     if record.kind != RECORD_LIST {
-        return Err(CborError::Malformed);
+        return Err(BoundaryError::Malformed);
     }
     image.payload(
         record,
-        record.argument.checked_mul(4).ok_or(CborError::Malformed)?,
+        record
+            .argument
+            .checked_mul(4)
+            .ok_or(BoundaryError::Malformed)?,
     )?;
     Ok((image, record))
 }
@@ -144,7 +151,7 @@ pub fn image_inputs(
     vm: u32,
     slots: u32,
     capacity: u32,
-) -> Result<u32, CborError> {
+) -> Result<u32, BoundaryError> {
     let (image, list) = input_list(memory, vm)?;
     let count = list.argument;
     for index in 0..count {
@@ -172,18 +179,18 @@ pub fn image_variadic_inputs(
     vm: u32,
     slots: u32,
     fixed: u32,
-) -> Result<(), CborError> {
+) -> Result<(), BoundaryError> {
     let (image, list) = input_list(memory, vm)?;
     let count = list.argument;
     for index in 0..fixed {
         memory.store_u64(slots + index * 8, ValueRef::NONE.raw());
     }
     let rest =
-        allocate_list(memory, vm, count.saturating_sub(fixed)).ok_or(CborError::OutOfMemory)?;
+        allocate_list(memory, vm, count.saturating_sub(fixed)).ok_or(BoundaryError::OutOfMemory)?;
     let rest_slot = slots + fixed * 8;
     memory.store_u64(
         rest_slot,
-        list_reference(rest).ok_or(CborError::OutOfMemory)?,
+        list_reference(rest).ok_or(BoundaryError::OutOfMemory)?,
     );
     for index in 0..count {
         let offset = memory.load_u32(list.payload + index * 4);
@@ -203,7 +210,7 @@ pub fn image_variadic_inputs(
 /// # Errors
 ///
 /// Returns why the input could not be adopted.
-pub fn image_arity_error(memory: &mut impl Memory, vm: u32) -> Result<u64, CborError> {
+pub fn image_arity_error(memory: &mut impl Memory, vm: u32) -> Result<u64, BoundaryError> {
     let (address, length) = input(memory, vm);
     let arguments = adopt_at(memory, vm, address, length)?;
     new_error(
@@ -214,7 +221,7 @@ pub fn image_arity_error(memory: &mut impl Memory, vm: u32) -> Result<u64, CborE
         "main received more input values than declared parameters",
         arguments,
     )
-    .ok_or(CborError::OutOfMemory)
+    .ok_or(BoundaryError::OutOfMemory)
 }
 
 /// Adopts the record at `offset` at nesting depth `depth`.
@@ -226,23 +233,23 @@ fn adopt(
     image: Image,
     offset: u32,
     depth: u32,
-) -> Result<u64, CborError> {
+) -> Result<u64, BoundaryError> {
     let record = image.record(memory, offset)?;
     match record.kind {
         RECORD_NONE => Ok(ValueRef::NONE.raw()),
         RECORD_BOOL => Ok(ValueRef::boolean(record.argument != 0).raw()),
         RECORD_INT => {
             let value = memory.load_u64(image.payload(record, 8)?).cast_signed();
-            int_value(memory, vm, value).ok_or(CborError::OutOfMemory)
+            int_value(memory, vm, value).ok_or(BoundaryError::OutOfMemory)
         }
         RECORD_FLOAT => {
             let value = f64::from_bits(memory.load_u64(image.payload(record, 8)?));
-            float_value(memory, vm, value).ok_or(CborError::OutOfMemory)
+            float_value(memory, vm, value).ok_or(BoundaryError::OutOfMemory)
         }
         RECORD_STRING => {
             let (start, len) = image.text(memory, offset)?;
             let chars = memory.load_u32(start - 8);
-            copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)
+            copy_string(memory, vm, start, len, chars).ok_or(BoundaryError::OutOfMemory)
         }
         RECORD_BYTES => {
             let start = image.payload(record, record.argument)?;
@@ -250,21 +257,24 @@ fn adopt(
             new_bytes(memory, vm, len, |memory, position| {
                 memory.copy(position, start, len);
             })
-            .ok_or(CborError::OutOfMemory)
+            .ok_or(BoundaryError::OutOfMemory)
         }
-        _ if depth >= MAX_DEPTH => Err(CborError::Unsupported),
+        _ if depth >= MAX_DEPTH => Err(BoundaryError::Unsupported),
         RECORD_LIST => adopt_list(memory, vm, image, record, depth),
         RECORD_OBJECT => adopt_object(memory, vm, image, record, depth),
         RECORD_ENUM => adopt_enum(memory, vm, image, record, depth),
         RECORD_ERROR => adopt_error(memory, vm, image, record, depth),
-        _ => Err(CborError::Malformed),
+        _ => Err(BoundaryError::Malformed),
     }
 }
 
 /// Reads `count` `u32` offsets of `record`'s payload, starting at word `first`.
-fn offsets(image: Image, record: Record, first: u32, count: u32) -> Result<u32, CborError> {
-    let words = first.checked_add(count).ok_or(CborError::Malformed)?;
-    image.payload(record, words.checked_mul(4).ok_or(CborError::Malformed)?)?;
+fn offsets(image: Image, record: Record, first: u32, count: u32) -> Result<u32, BoundaryError> {
+    let words = first.checked_add(count).ok_or(BoundaryError::Malformed)?;
+    image.payload(
+        record,
+        words.checked_mul(4).ok_or(BoundaryError::Malformed)?,
+    )?;
     Ok(record.payload + first * 4)
 }
 
@@ -275,14 +285,14 @@ fn adopt_list(
     image: Image,
     record: Record,
     depth: u32,
-) -> Result<u64, CborError> {
+) -> Result<u64, BoundaryError> {
     let count = record.argument;
     let items = offsets(image, record, 0, count)?;
-    let list = allocate_list(memory, vm, count).ok_or(CborError::OutOfMemory)?;
-    let raw = list_reference(list).ok_or(CborError::OutOfMemory)?;
+    let list = allocate_list(memory, vm, count).ok_or(BoundaryError::OutOfMemory)?;
+    let raw = list_reference(list).ok_or(BoundaryError::OutOfMemory)?;
     let root = Vm(vm)
         .push_root(memory, raw)
-        .ok_or(CborError::OutOfMemory)?;
+        .ok_or(BoundaryError::OutOfMemory)?;
     let mut adopted = Ok(raw);
     for index in 0..count {
         let offset = memory.load_u32(items + index * 4);
@@ -305,18 +315,20 @@ fn adopt_object(
     image: Image,
     record: Record,
     depth: u32,
-) -> Result<u64, CborError> {
+) -> Result<u64, BoundaryError> {
     let count = record.argument;
     let entries = offsets(
         image,
         record,
         0,
-        count.checked_mul(2).ok_or(CborError::Malformed)?,
+        count.checked_mul(2).ok_or(BoundaryError::Malformed)?,
     )?;
-    let object = empty_object(memory, vm, count + 1).ok_or(CborError::OutOfMemory)?;
-    let raw = object_reference(object).ok_or(CborError::OutOfMemory)?;
+    let object = empty_object(memory, vm, count + 1).ok_or(BoundaryError::OutOfMemory)?;
+    let raw = object_reference(object).ok_or(BoundaryError::OutOfMemory)?;
     let state = Vm(vm);
-    let root = state.push_root(memory, raw).ok_or(CborError::OutOfMemory)?;
+    let root = state
+        .push_root(memory, raw)
+        .ok_or(BoundaryError::OutOfMemory)?;
     let adopted = (|| {
         for index in 0..count {
             let entry = entries + index * 8;
@@ -326,20 +338,20 @@ fn adopt_object(
                 Some(key) => key,
                 None => {
                     let chars = memory.load_u32(start - 8);
-                    copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?
+                    copy_string(memory, vm, start, len, chars).ok_or(BoundaryError::OutOfMemory)?
                 }
             };
             let mark = state
                 .push_root(memory, name)
-                .ok_or(CborError::OutOfMemory)?;
+                .ok_or(BoundaryError::OutOfMemory)?;
             let value = adopt(memory, vm, image, memory.load_u32(entry + 4), depth + 1)?;
             if find_value(memory, object, name as u32).is_some() {
-                return Err(CborError::Malformed);
+                return Err(BoundaryError::Malformed);
             }
             state
                 .push_root(memory, value)
-                .ok_or(CborError::OutOfMemory)?;
-            object_append(memory, vm, object, name, value).ok_or(CborError::OutOfMemory)?;
+                .ok_or(BoundaryError::OutOfMemory)?;
+            object_append(memory, vm, object, name, value).ok_or(BoundaryError::OutOfMemory)?;
             state.pop_roots(memory, mark);
         }
         Ok(raw)
@@ -355,13 +367,13 @@ fn adopt_enum(
     image: Image,
     record: Record,
     depth: u32,
-) -> Result<u64, CborError> {
+) -> Result<u64, BoundaryError> {
     let count = record.argument;
     let words = offsets(
         image,
         record,
         0,
-        count.checked_add(2).ok_or(CborError::Malformed)?,
+        count.checked_add(2).ok_or(BoundaryError::Malformed)?,
     )?;
     let identity = image.text(memory, memory.load_u32(words))?;
     let variant = image.text(memory, memory.load_u32(words + 4))?;
@@ -374,17 +386,20 @@ fn adopt_enum(
             let mut names = [0_u64; 2];
             for (name, (start, len)) in names.iter_mut().zip([identity, variant]) {
                 let chars = memory.load_u32(start - 8);
-                *name = copy_string(memory, vm, start, len, chars).ok_or(CborError::OutOfMemory)?;
+                *name =
+                    copy_string(memory, vm, start, len, chars).ok_or(BoundaryError::OutOfMemory)?;
                 state
                     .push_root(memory, *name)
-                    .ok_or(CborError::OutOfMemory)?;
+                    .ok_or(BoundaryError::OutOfMemory)?;
             }
             host_enum(memory, vm, names[0], names[1], count)
         }
     }
-    .ok_or(CborError::OutOfMemory)?;
+    .ok_or(BoundaryError::OutOfMemory)?;
     state.pop_roots(memory, mark);
-    let root = state.push_root(memory, raw).ok_or(CborError::OutOfMemory)?;
+    let root = state
+        .push_root(memory, raw)
+        .ok_or(BoundaryError::OutOfMemory)?;
     let mut adopted = Ok(raw);
     for field in 0..count {
         let offset = memory.load_u32(words + (field + 2) * 4);
@@ -407,13 +422,13 @@ fn adopt_error(
     image: Image,
     record: Record,
     depth: u32,
-) -> Result<u64, CborError> {
+) -> Result<u64, BoundaryError> {
     let words = offsets(image, record, 0, 6)?;
     let trace_count = memory.load_u32(words + 20);
-    let trace_len = trace_count.checked_mul(8).ok_or(CborError::Malformed)?;
+    let trace_len = trace_count.checked_mul(8).ok_or(BoundaryError::Malformed)?;
     let trace_start = image.payload(
         record,
-        trace_len.checked_add(24).ok_or(CborError::Malformed)?,
+        trace_len.checked_add(24).ok_or(BoundaryError::Malformed)?,
     )? + 24;
     let state = Vm(vm);
     let root = state.root_stack_end(memory);
@@ -428,16 +443,16 @@ fn adopt_error(
                 depth + 1,
             )?;
             if string_object(*text).is_none() {
-                return Err(CborError::Malformed);
+                return Err(BoundaryError::Malformed);
             }
             state
                 .push_root(memory, *text)
-                .ok_or(CborError::OutOfMemory)?;
+                .ok_or(BoundaryError::OutOfMemory)?;
         }
         let data = adopt(memory, vm, image, memory.load_u32(words + 8), depth + 1)?;
         state
             .push_root(memory, data)
-            .ok_or(CborError::OutOfMemory)?;
+            .ok_or(BoundaryError::OutOfMemory)?;
         let origin = memory.load_u32(words + 12).saturating_sub(1);
         let trace = if trace_count == 0 {
             0
@@ -445,8 +460,10 @@ fn adopt_error(
             let raw = new_bytes(memory, vm, trace_len, |memory, position| {
                 memory.copy(position, trace_start, trace_len);
             })
-            .ok_or(CborError::OutOfMemory)?;
-            state.push_root(memory, raw).ok_or(CborError::OutOfMemory)?;
+            .ok_or(BoundaryError::OutOfMemory)?;
+            state
+                .push_root(memory, raw)
+                .ok_or(BoundaryError::OutOfMemory)?;
             raw as u32
         };
         let cause = match memory.load_u32(words + 16) {
@@ -462,7 +479,7 @@ fn adopt_error(
             trace: (0, 0),
             cause,
         };
-        error_from_parts(memory, vm, &parts, trace).ok_or(CborError::OutOfMemory)
+        error_from_parts(memory, vm, &parts, trace).ok_or(BoundaryError::OutOfMemory)
     })();
     state.pop_roots(memory, root);
     adopted
