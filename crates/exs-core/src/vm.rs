@@ -58,6 +58,10 @@ impl Vm {
         program.type_count
     );
     vm_field!(root_shape, set_root_shape, program.root_shape);
+    vm_field!(trace_base, set_trace_base, errors.trace_base);
+    vm_field!(trace_top, set_trace_top, errors.trace_top);
+    vm_field!(trace_limit, set_trace_limit, errors.trace_limit);
+    vm_field!(source_position, set_source_position, errors.source_position);
 
     /// Pushes one raw reference onto the root stack and returns its slot address, or `None`
     /// when the stack is full.

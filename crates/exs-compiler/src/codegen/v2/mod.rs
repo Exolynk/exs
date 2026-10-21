@@ -7,6 +7,7 @@
 
 mod collections;
 mod entry;
+mod errors;
 mod expressions;
 mod function;
 mod linker;

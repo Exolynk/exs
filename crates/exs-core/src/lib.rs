@@ -9,7 +9,7 @@
 //!
 //! It provides the heap (a size-class page allocator and a non-moving mark-and-sweep
 //! collector), execution start-up with the root stack and runner buffers, numeric values and
-//! operations, Strings, Lists, typed and untyped Objects with shapes, and the CBOR conversion of runner inputs and
+//! operations, language Errors with traces, Strings, Lists, typed and untyped Objects with shapes, and the CBOR conversion of runner inputs and
 //! results.
 
 #[cfg(test)]
@@ -19,6 +19,7 @@ mod access;
 mod allocator;
 mod cbor;
 mod collector;
+mod errors;
 mod execution;
 mod lists;
 mod memory;
@@ -34,13 +35,17 @@ mod vm;
 #[cfg(test)]
 mod tests;
 
-pub use access::{AccessError, index_get, index_set, property_get, property_set};
+pub use access::{index_get, index_set, property_get, property_set};
 pub use allocator::{allocate, init_heap};
-pub use cbor::{CborError, decode_inputs, encode_result};
+pub use cbor::{CborError, arity_error, decode_inputs, encode_result};
 pub use collector::collect;
+pub use errors::{
+    condition_error, error_new, error_object, missing_value, not_error, type_mismatch,
+    wire_mismatch,
+};
 pub use execution::{init_execution, reserve_input, result};
 pub use exs_layout::ObjectKind;
-pub use lists::{list_add, list_copy, list_new, list_object};
+pub use lists::{for_snapshot, list_add, list_copy, list_new, list_object};
 #[cfg(target_arch = "wasm32")]
 pub use memory::LinearMemory;
 pub use memory::Memory;
@@ -50,6 +55,6 @@ pub use numbers::{
 };
 pub use objects::{object_lookup, object_with_shape};
 pub use shapes::shape_for;
-pub use strings::{StringError, concat, string_object};
+pub use strings::{concat, string_object};
 pub use values::{compare, equal};
 pub use vm::{collection_count, set_heap_flags, set_program_types, set_root_ranges};

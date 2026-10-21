@@ -15,8 +15,11 @@ macro_rules! vm_offset {
     };
 }
 
-/// Initializes the VM state block at `vm`: an empty heap from `heap_start` and a root stack of
-/// `root_stack_pages` pages. Returns `None` when memory cannot hold the root stack.
+/// Pages of trace storage; generated code traps when a call would exceed it.
+const TRACE_PAGES: u32 = 2;
+
+/// Initializes the VM state block at `vm`: an empty heap from `heap_start`, a root stack of
+/// `root_stack_pages` pages and a trace stack. Returns `None` when memory cannot hold the root stack.
 ///
 /// Does nothing when the block is already initialized, so every runner entry may call it.
 pub fn init_execution(
@@ -35,6 +38,10 @@ pub fn init_execution(
     let state = crate::vm::Vm(vm);
     state.set_root_stack_end(memory, start);
     state.set_root_stack_limit(memory, stack + pages_bytes(root_stack_pages)?);
+    let trace = take_system_pages(memory, vm, TRACE_PAGES)? + PAGE_HEADER_SIZE;
+    state.set_trace_base(memory, trace);
+    state.set_trace_top(memory, trace);
+    state.set_trace_limit(memory, trace - PAGE_HEADER_SIZE + pages_bytes(TRACE_PAGES)?);
     memory.store_u32(
         vm + vm_offset!(roots.ranges),
         vm + vm_offset!(root_stack.range),

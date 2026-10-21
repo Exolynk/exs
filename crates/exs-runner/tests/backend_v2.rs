@@ -321,3 +321,60 @@ fn reports_untyped_object_fuel() {
         println!("v2 fuel concat_{count}_objects: v1 {v1} v2 {v2}");
     }
 }
+
+/// Produces the same Error values as v1, including kinds, messages, data, origins and traces.
+#[test]
+fn matches_v1_for_errors() {
+    let programs = [
+        "fn main() { ret 1 + \"a\"; }",
+        "fn main() { ret \"a\" + None; }",
+        "fn main() { let text = \"x\"; ret text + 1 + None + 2; }",
+        "fn main() { ret 9223372036854775807 + 1; }",
+        "fn main() { let big = 9223372036854775807; ret [big * 2, big - -1, -(-big - 1)]; }",
+        "fn main() { ret [!5, 1.5 / None, -\"x\"]; }",
+        "fn main() { ret -9223372036854775808; }",
+        "fn main() { let e = 1 + \"a\"; ret e + 1; }",
+        "fn main() { if 1 { ret 2; } ret 3; }",
+        "fn main() -> Int { if None { ret 2; } ret 3; }",
+        "fn main() { let count = 0; while count { count = count + 1; } ret count; }",
+        "fn main() { ret 1 && true; }",
+        "fn main() { ret true && 2; }",
+        "fn main() { ret false || None; }",
+        "fn main() { let items = [1]; ret [items[5], items[-1], items[\"x\"], items[true], items[4294967296]]; }",
+        "fn main() { let value = 1; ret [value[0], value.name, { a: 1 }[1], None.x]; }",
+        "fn main() { let items = [1]; items[3] = 2; items.x = 1; let number = 5; number.y = 2; number[0] = 1; ret items; }",
+        "fn inner() { ret 1 + \"a\"; } fn middle() { ret inner(); } fn main() { ret middle(); }",
+        "fn inner() -> Int { ret \"x\"; } fn middle() { let value = inner(); ret value + 1; } fn main() { ret [middle(), 2]; }",
+        "fn take(a: Int) { ret a; } fn main() { ret take(\"x\"); }",
+        "fn take(a: Int) -> Int { ret a; } fn main() { ret take(\"x\"); }",
+        "type Point { x: Int } fn main() { ret Point { y: 1 }; }",
+        "type Point { x: Int } fn main() { ret Point { x: 1, x: 2 }; }",
+        "type Point { x: Int } fn main() { ret Point { x: \"a\" }; }",
+        "type Point { x: Int } fn main() { ret Point {}; }",
+        "fn main() { let x: Int = \"a\"; ret x; }",
+        "fn main() { let x: Int = 1 + \"a\"; ret x; }",
+        "fn main() -> Int { let x: Int = \"a\"; ret x; }",
+        "fn main() { for item in 5 { ret item; } ret 0; }",
+        "fn main() { ret Error(\"Custom\", \"went wrong\", [1, { a: 2 }]); }",
+        "fn main() { ret [Error(1, \"m\", None), Error(\"k\", 2, None)]; }",
+        "fn fail() -> Int | Error { ret Error(\"Custom\", \"m\", 1); } fn main() -> Any { let value = fail()?; ret value + 1; }",
+        "fn missing() { ret None; } fn main() -> Any { let value = missing()?; ret value; }",
+        "fn fine() { ret 4; } fn main() -> Any { ret fine()? + 1; }",
+        "fn main() -> Int { ret \"x\"; }",
+        "fn main() -> Int { }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+    compare(
+        "fn main(a) { ret a; }",
+        &[ExsValue::Int(1), ExsValue::Int(2)],
+    );
+}
+
+/// Keeps Errors, their data and traces alive across collections triggered by many Errors.
+#[test]
+fn matches_v1_for_errors_while_collecting() {
+    let source = "fn fail(index) { ret \"n\" + index + None; } fn main(limit: Int) { let kept = []; let index = 0; let countdown = 0; while index < limit { let error = fail(index); if countdown == 0 { kept = kept + [error]; countdown = 2000; } countdown = countdown - 1; index = index + 1; } ret kept; }";
+    compare(source, &[ExsValue::Int(20_000)]);
+}

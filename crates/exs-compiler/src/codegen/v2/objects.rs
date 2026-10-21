@@ -53,6 +53,24 @@ impl<'a> FunctionCompiler<'a, '_> {
                 format!("enum `{}` requires a variant constructor", type_name.name),
             ));
         }
+        // Like v1, the first undeclared or repeated property returns a TypeError before any
+        // property is evaluated.
+        let invalid = properties.iter().find(|property| {
+            !nominal
+                .fields
+                .iter()
+                .any(|field| field.name == property.key)
+                || properties
+                    .iter()
+                    .filter(|other| other.key == property.key)
+                    .count()
+                    > 1
+        });
+        if let Some(property) = invalid {
+            immediate::push(&mut self.function, ValueRef::NONE);
+            self.instruction(Instruction::LocalSet(self.scratch));
+            return self.return_type_mismatch(self.scratch, property.key_span);
+        }
         let mut slots = vec![None; nominal.fields.len()];
         for property in properties {
             let field = nominal
@@ -67,10 +85,12 @@ impl<'a> FunctionCompiler<'a, '_> {
                     self.check_contract(value, contract, property.span)?;
                     *slot = Some(value);
                 }
-                // v1 reports a TypeError for undeclared and repeated properties; v2 traps.
                 _ => {
-                    self.instruction(Instruction::Unreachable);
-                    return Ok(());
+                    return Err(error(
+                        "E0999",
+                        property.key_span,
+                        "unchecked typed Object property".to_owned(),
+                    ));
                 }
             }
         }
@@ -176,6 +196,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
         self.fill_inline_cache(object, name, cache, span)?;
+        self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(object));
         self.instruction(Instruction::I64Const(name.cast_signed()));
@@ -211,11 +232,14 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
         self.fill_inline_cache(object, name, cache, span)?;
+        // Like v1, the assignment's result, also an Error, is discarded.
+        self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(object));
         self.instruction(Instruction::I64Const(name.cast_signed()));
         self.instruction(Instruction::LocalGet(value));
         self.core_call("__exs_core_property_set", span)?;
+        self.instruction(Instruction::Drop);
         self.instruction(Instruction::End);
         Ok(())
     }

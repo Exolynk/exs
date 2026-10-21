@@ -1,18 +1,21 @@
 //! Lowering of one source function for the v2 backend.
 //!
 //! Wasm locals: the parameters (one `ValueRef` each), then one `i32` holding the function's
-//! root-frame base, then `i64` locals. A local holding a `ValueRef` owns a root-frame slot that
-//! is written whenever the local is, so the collector sees every live value; scalar `i64` locals
-//! such as loop counters own no slot. The frame is pushed on entry by bumping the root stack in
-//! the VM state block and popped before every return.
+//! root-frame base, one `i32` holding its trace entry, then `i64` locals. A local holding a
+//! `ValueRef` owns a root-frame slot that is written whenever the local is, so the collector
+//! sees every live value; scalar `i64` locals such as loop counters own no slot. The frame and
+//! the trace entry are pushed on entry by bumping the root and trace stacks in the VM state
+//! block and popped before every return.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use exs_layout::VmState;
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
+use super::errors::emit_push_trace;
 use crate::ast::FunctionDeclaration;
+use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::codegen::{VALUE_TYPE, immediate};
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -21,6 +24,8 @@ use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 pub(super) struct FunctionInfo {
     /// Wasm function index.
     pub(super) index: u32,
+    /// Identifier recorded in Error traces, the function's position in the module like v1.
+    pub(super) function_id: u32,
     /// Number of parameters.
     pub(super) arity: u32,
     /// Contract of each parameter.
@@ -49,6 +54,12 @@ pub(super) struct Context<'m> {
     pub(super) object_keys: &'m HashMap<Vec<String>, u32>,
     /// Index of the next mutable `i32` global, appended after the template's globals.
     pub(super) next_global: Cell<u32>,
+    /// Source position ids of the module, shared with runtime v1.
+    pub(super) source_map: &'m SourceMap<'m>,
+    /// Address of the static source-position arrays of `+` chains.
+    pub(super) positions_base: u32,
+    /// The `u32` source positions of every `+` chain, back to back.
+    pub(super) positions: RefCell<Vec<u32>>,
 }
 
 /// Lowering state of one function body.
@@ -94,9 +105,10 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
             scopes: vec![scope],
             slots,
             parameter_count,
-            // Local `parameter_count` is the frame base, the next one the scratch local.
-            next_local: parameter_count + 2,
-            scratch: parameter_count + 1,
+            // Local `parameter_count` is the frame base, then the trace entry and the scratch
+            // local.
+            next_local: parameter_count + 3,
+            scratch: parameter_count + 2,
             loops: Vec::new(),
             depth: 0,
             pair: None,
@@ -106,6 +118,11 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
     /// Returns the local holding the root-frame base address.
     pub(super) const fn frame_local(&self) -> u32 {
         self.parameter_count
+    }
+
+    /// Returns the local holding the address of this function's trace entry.
+    pub(super) const fn trace_local(&self) -> u32 {
+        self.parameter_count + 1
     }
 
     /// Allocates one `ValueRef` local with its own root slot.
@@ -205,21 +222,8 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         self.instruction(Instruction::I32Const(self.context.vm.cast_signed()));
     }
 
-    /// Pops a `ValueRef` that must be a Bool and pushes it as a Wasm `i32` condition.
-    ///
-    /// Any other value traps; the v2 backend has no recoverable Errors yet.
-    pub(super) fn condition(&mut self) {
-        self.instruction(Instruction::LocalTee(self.scratch));
-        immediate::is_bool_test(&mut self.function);
-        self.instruction(Instruction::I32Eqz);
-        self.instruction(Instruction::If(BlockType::Empty));
-        self.instruction(Instruction::Unreachable);
-        self.instruction(Instruction::End);
-        self.instruction(Instruction::LocalGet(self.scratch));
-        self.instruction(Instruction::I32WrapI64);
-    }
-
-    /// Traps unless the `ValueRef` in `local` satisfies `contract`.
+    /// Returns from the function with the declared-type TypeError unless the `ValueRef` in
+    /// `local` satisfies `contract`, like v1.
     ///
     /// Nominal Object types are tested through the type id in the reference's extra bits.
     pub(super) fn check_contract(
@@ -248,7 +252,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         }
         self.instruction(Instruction::I32Eqz);
         self.instruction(Instruction::If(BlockType::Empty));
-        self.instruction(Instruction::Unreachable);
+        self.return_type_mismatch(local, span)?;
         self.instruction(Instruction::End);
         Ok(())
     }
@@ -273,13 +277,19 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         Ok(())
     }
 
-    /// Restores the root stack to this function's frame base.
+    /// Restores the root and trace stacks to this function's entry state.
     pub(super) fn pop_frame(&mut self) {
         self.instruction(Instruction::I32Const(0));
         self.instruction(Instruction::LocalGet(self.frame_local()));
         self.instruction(Instruction::I32Store(vm_field(
             self.context.vm,
             root_stack_end_offset(),
+        )));
+        self.instruction(Instruction::I32Const(0));
+        self.instruction(Instruction::LocalGet(self.trace_local()));
+        self.instruction(Instruction::I32Store(vm_field(
+            self.context.vm,
+            core::mem::offset_of!(VmState, errors.trace_top) as u32,
         )));
     }
 
@@ -302,15 +312,17 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
                     "missing v2 function signature".to_owned(),
                 )
             })?;
-        for (local, contract) in (0_u32..).zip(&parameters) {
-            self.check_contract(local, contract, self.declaration.span)?;
+        for ((local, contract), parameter) in
+            (0_u32..).zip(&parameters).zip(&self.declaration.parameters)
+        {
+            self.check_contract(local, contract, parameter.name.span)?;
         }
         self.compile_block(&self.declaration.body)?;
         immediate::push(&mut self.function, exs_value::ValueRef::NONE);
         self.return_value(self.declaration.span)?;
         self.instruction(Instruction::End);
-        let i64_locals = self.next_local - self.parameter_count - 1;
-        let mut function = Function::new([(1, ValType::I32), (i64_locals, VALUE_TYPE)]);
+        let i64_locals = self.next_local - self.parameter_count - 2;
+        let mut function = Function::new([(2, ValType::I32), (i64_locals, VALUE_TYPE)]);
         let slot_count = self.slots.len() as u32;
         emit_push_frame(
             &mut function,
@@ -323,6 +335,17 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
             function.instruction(&Instruction::LocalGet(index));
             function.instruction(&Instruction::I64Store(slot_memory(index)));
         }
+        let function_id = self
+            .context
+            .functions
+            .get(&self.declaration.name.name)
+            .map_or(0, |info| info.function_id);
+        emit_push_trace(
+            &mut function,
+            self.context.vm,
+            self.trace_local(),
+            function_id,
+        );
         let body = self.function.into_raw_body();
         // A body built without locals starts with one byte encoding a zero local-group count.
         function.raw(body.get(1..).unwrap_or_default().iter().copied());

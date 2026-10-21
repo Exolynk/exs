@@ -9,7 +9,7 @@ use exs_layout::{FreeCell, ObjectKind, VmState};
 use exs_value::layout::{EXTRA_SHIFT, INT_BOXED, KIND_SHIFT, type_kind};
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
-use crate::codegen::immediate;
+use crate::codegen::{VALUE_TYPE, immediate};
 
 use super::function::{
     FunctionInfo, emit_push_frame, error, root_stack_end_offset, slot_memory, vm_field,
@@ -46,8 +46,8 @@ impl EntryLayout<'_> {
     /// Returns `__exs_start_<name>(input, length) -> status`, which decodes the arguments,
     /// calls the function and encodes its result.
     ///
-    /// The input was already decoded into the VM buffer by `__exs_input_alloc`; excess
-    /// arguments trap for now.
+    /// The input was already stored in the VM buffer by `__exs_input_alloc`; excess arguments
+    /// produce the fatal ArityError as the result.
     pub(super) fn start<'a>(
         &self,
         target: &FunctionInfo,
@@ -66,18 +66,24 @@ impl EntryLayout<'_> {
         function.instruction(&Instruction::Call(
             self.core("__exs_core_decode_inputs", span)?,
         ));
-        function.instruction(&Instruction::LocalTee(count));
+        function.instruction(&Instruction::LocalSet(count));
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        // Like v1, excess arguments make the result a fatal ArityError instead of a call.
+        function.instruction(&Instruction::LocalGet(count));
         function.instruction(&Instruction::I32Const(target.arity.cast_signed()));
         function.instruction(&Instruction::I32GtU);
-        function.instruction(&Instruction::If(BlockType::Empty));
-        function.instruction(&Instruction::Unreachable);
-        function.instruction(&Instruction::End);
+        function.instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
         function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_arity_error", span)?,
+        ));
+        function.instruction(&Instruction::Else);
         for slot in 0..target.arity {
             function.instruction(&Instruction::LocalGet(frame));
             function.instruction(&Instruction::I64Load(slot_memory(slot)));
         }
         function.instruction(&Instruction::Call(target.index));
+        function.instruction(&Instruction::End);
         function.instruction(&Instruction::Call(
             self.core("__exs_core_encode_result", span)?,
         ));

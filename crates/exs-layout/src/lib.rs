@@ -23,14 +23,14 @@ pub use header::{
     HEADER_WORD_OFFSET, OBJECT_ALIGN, ObjectHeader, ObjectKind,
 };
 pub use objects::{
-    BigIntObject, BufferObject, BytesObject, CellObject, ClosureObject, EnumObject, ErrorObject,
-    FloatObject, FrameObject, FreeCell, ListObject, ObjectObject, ShapeObject, StringObject,
-    TypedObject,
+    BigIntObject, BufferObject, BytesObject, CellObject, ClosureObject, ERROR_FATAL,
+    ERROR_RECOVERABLE, EnumObject, ErrorObject, FloatObject, FrameObject, FreeCell, ListObject,
+    ObjectObject, ShapeObject, StringObject, TypedObject,
 };
 pub use page::{PAGE_HEADER_SIZE, PAGE_SIZE, PageHeader, PageKind};
 pub use size_class::{CLASS_COUNT, MAX_CLASS_SIZE, SIZE_CLASSES, class_for_size};
 pub use trace::{TraceLayout, ValueSlots, trace_layout};
 pub use vm::{
-    BoundaryState, HeapState, ProgramState, RootRange, RootStack, RootState, TypeEntry,
+    BoundaryState, ErrorState, HeapState, ProgramState, RootRange, RootStack, RootState, TypeEntry,
     VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState,
 };

@@ -1,6 +1,6 @@
 //! Linking of a v2 module: the core template plus the compiled program.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use exs_abi::TYPE_STRING;
@@ -24,6 +24,7 @@ use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use crate::ast::{FunctionVisibility, Module};
 use crate::codegen::prune::{PruneHints, prune_unreachable};
+use crate::codegen::source_map::{SOURCE_MAP_SECTION, SourceMap};
 use crate::codegen::trait_registry::TraitRegistry;
 use crate::codegen::types::TypeRegistry;
 use crate::codegen::{VALUE_TYPE, module_span};
@@ -169,7 +170,8 @@ pub(in crate::codegen) fn compile<'a>(
             "too many Object literals for linear memory".to_owned(),
         )
     })?;
-    let heap_start = static_keys.end();
+    let source_map = SourceMap::collect(module);
+    let positions_base = static_keys.end();
     let base = facts.imported_functions + facts.defined_functions;
     let mut program = Program {
         types: Vec::new(),
@@ -179,6 +181,11 @@ pub(in crate::codegen) fn compile<'a>(
         type_base: facts.types,
     };
     let mut infos = HashMap::new();
+    // Like v1, a function's trace id is its position among the module's functions.
+    let function_ids: HashMap<&str, u32> = (0_u32..)
+        .zip(&module.functions)
+        .map(|(id, function)| (function.name.name.as_str(), id))
+        .collect();
     for (index, function) in (base..).zip(&functions) {
         let mut parameters = Vec::with_capacity(function.parameters.len());
         for parameter in &function.parameters {
@@ -195,6 +202,10 @@ pub(in crate::codegen) fn compile<'a>(
             function.name.name.clone(),
             FunctionInfo {
                 index,
+                function_id: function_ids
+                    .get(function.name.name.as_str())
+                    .copied()
+                    .unwrap_or_default(),
                 arity: parameters.len() as u32,
                 parameters,
                 return_contract,
@@ -213,6 +224,9 @@ pub(in crate::codegen) fn compile<'a>(
         types: &types,
         object_keys: &static_keys.addresses,
         next_global: Cell::new(facts.globals),
+        source_map: &source_map,
+        positions_base,
+        positions: RefCell::new(Vec::new()),
     };
     for function in &functions {
         let arity = function.parameters.len();
@@ -222,6 +236,13 @@ pub(in crate::codegen) fn compile<'a>(
             .bodies
             .push(FunctionCompiler::new(&context, function).compile()?);
     }
+    let positions: Vec<u8> = context
+        .positions
+        .borrow()
+        .iter()
+        .flat_map(|position| position.to_le_bytes())
+        .collect();
+    let heap_start = positions_base + positions.len() as u32;
     let layout = EntryLayout {
         core: &facts.exports,
         vm,
@@ -282,6 +303,7 @@ pub(in crate::codegen) fn compile<'a>(
             (statics.base, statics.bytes),
             (type_table.base, type_table.bytes),
             (static_keys.base, static_keys.bytes),
+            (positions_base, positions),
         ],
         globals: context.next_global.get() - facts.globals,
     };
@@ -298,6 +320,10 @@ pub(in crate::codegen) fn compile<'a>(
     wasm.section(&CustomSection {
         name: MODULE_METADATA_SECTION.into(),
         data: format!("abi={ABI_VERSION}\n{entries}").into_bytes().into(),
+    });
+    wasm.section(&CustomSection {
+        name: SOURCE_MAP_SECTION.into(),
+        data: source_map.encode().into(),
     });
     let hints = PruneHints {
         weak_caller: None,

@@ -130,14 +130,14 @@ pub struct ClosureObject {
     pub reserved: u32,
 }
 
-/// A structured language Error; `header.word` is its severity.
+/// A structured language Error; `header.word` is its severity, 0 recoverable and 1 fatal.
 #[repr(C)]
 pub struct ErrorObject {
     /// Common header.
     pub header: ObjectHeader,
     /// Source position id of its origin, or 0.
     pub origin: u32,
-    /// Address of a Bytes object holding the encoded trace entries, or 0.
+    /// Address of a Bytes object holding the trace entries innermost first, or 0.
     pub trace: u32,
     /// Error kind String.
     pub kind: u64,
@@ -145,7 +145,14 @@ pub struct ErrorObject {
     pub message: u64,
     /// Attached data value.
     pub data: u64,
+    /// Related prior Error or value, None when there is none.
+    pub cause: u64,
 }
+
+/// Header word of a recoverable Error.
+pub const ERROR_RECOVERABLE: u32 = 0;
+/// Header word of a fatal Error.
+pub const ERROR_FATAL: u32 = 1;
 
 /// Durable state of one resumable invocation; `header.word` is the function id. Slots follow.
 #[repr(C)]

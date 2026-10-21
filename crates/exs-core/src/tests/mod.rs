@@ -3,6 +3,7 @@
 mod allocator;
 mod boundary;
 mod collector;
+mod errors;
 mod execution;
 mod heap;
 mod lists;

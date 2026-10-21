@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use wasm_encoder::{BlockType, Instruction};
 
+use super::expressions::expression_span;
 use super::function::{FunctionCompiler, unsupported};
 use crate::ast::{AssignmentTarget, Block, ElseBranch, Expression, Statement};
 use crate::codegen::immediate;
@@ -43,7 +44,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                         .context
                         .types
                         .resolve(type_annotation.as_ref(), *span)?;
-                    self.check_contract(local, &contract, *span)?;
+                    self.check_binding(local, &contract, *span)?;
                 }
                 if let Some(scope) = self.scopes.last_mut() {
                     scope.insert(name.name.clone(), local);
@@ -60,21 +61,26 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.compile_expression(value)?;
                 self.store(local);
             }
+            // Like v1, assignments report the span of their target.
             Statement::Assign {
                 target:
                     AssignmentTarget::Index {
-                        receiver, index, ..
+                        receiver,
+                        index,
+                        span,
                     },
                 value,
-                span,
+                ..
             } => self.compile_index_set(receiver, index, value, *span)?,
             Statement::Assign {
                 target:
                     AssignmentTarget::Property {
-                        receiver, property, ..
+                        receiver,
+                        property,
+                        span,
                     },
                 value,
-                span,
+                ..
             } => self.compile_property_set(receiver, &property.name, value, *span)?,
             Statement::Return { value, span } => {
                 match value {
@@ -91,7 +97,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 ..
             } => {
                 self.compile_expression(condition)?;
-                self.condition();
+                self.condition(expression_span(condition))?;
                 self.instruction(Instruction::If(BlockType::Empty));
                 self.compile_block(then_block)?;
                 if let Some(else_branch) = else_branch {
@@ -111,7 +117,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.instruction(Instruction::Loop(BlockType::Empty));
                 let continue_depth = self.depth;
                 self.compile_expression(condition)?;
-                self.condition();
+                self.condition(expression_span(condition))?;
                 self.instruction(Instruction::I32Eqz);
                 self.instruction(Instruction::BrIf(self.depth - break_depth));
                 self.loops.push((break_depth, continue_depth));

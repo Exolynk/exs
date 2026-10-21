@@ -157,4 +157,31 @@ impl Execution {
         decode_inputs(&mut self.memory, VM, slot, 1)?;
         Ok(self.memory.load_u64(slot))
     }
+
+    /// Returns the text of one String reference.
+    pub(super) fn text(&self, raw: u64) -> std::string::String {
+        let object = crate::string_object(raw).expect("a String");
+        let len = self.memory.load_u32(object + 8);
+        let bytes: Vec<u8> = (0..len)
+            .map(|offset| self.memory.load_u8(object + 16 + offset))
+            .collect();
+        std::string::String::from_utf8(bytes).expect("valid UTF-8")
+    }
+
+    /// Returns whether one Error is fatal, its kind, its message and its data.
+    pub(super) fn error(&self, raw: u64) -> (bool, std::string::String, std::string::String, u64) {
+        let object = crate::error_object(raw).expect("an Error");
+        let parts = crate::errors::error_parts(&self.memory, object);
+        (
+            parts.fatal,
+            self.text(parts.kind),
+            self.text(parts.message),
+            parts.data,
+        )
+    }
+
+    /// Returns the kind of one Error.
+    pub(super) fn error_kind(&self, raw: u64) -> std::string::String {
+        self.error(raw).1
+    }
 }

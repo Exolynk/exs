@@ -114,3 +114,19 @@ pub(crate) fn push_unchecked(memory: &mut impl Memory, list: u32, value: u64) {
     memory.store_u64(item_address(memory, list, used), value);
     memory.store_u32(list + LEN, used + 1);
 }
+
+/// Returns what a `for` loop iterates over: a copy of a List, or the NotIterable Error for
+/// values that cannot be iterated.
+///
+/// Returns `None` for Strings, Bytes and Objects, which iterate through Iterators that the v2
+/// backend does not support yet, and when memory is exhausted.
+pub fn for_snapshot(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
+    if list_object(raw).is_some() {
+        return list_copy(memory, vm, raw);
+    }
+    let kind = (raw >> exs_value::layout::KIND_SHIFT) as u32;
+    if kind & (exs_abi::TYPE_STRING | exs_abi::TYPE_BYTES | exs_abi::TYPE_OBJECT) != 0 {
+        return None;
+    }
+    crate::errors::not_iterable(memory, vm, raw)
+}

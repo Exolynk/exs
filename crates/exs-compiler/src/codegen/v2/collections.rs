@@ -114,6 +114,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I64Load(value_field(SLOTS)));
         self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
+        self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(receiver));
         self.instruction(Instruction::LocalGet(index));
@@ -143,18 +144,22 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I64Store(value_field(SLOTS)));
         self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
+        // Like v1, the assignment's result, also an Error, is discarded.
+        self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(receiver));
         self.instruction(Instruction::LocalGet(index));
         self.instruction(Instruction::LocalGet(value));
         self.core_call("__exs_core_index_set", span)?;
+        self.instruction(Instruction::Drop);
         self.instruction(Instruction::End);
         Ok(())
     }
 
     /// Compiles a `for` loop over a List, iterating over a copy taken when the loop starts.
     ///
-    /// Values other than Lists trap for now.
+    /// Values that cannot be iterated return a NotIterable Error from the function; Strings,
+    /// Bytes and Objects, which iterate through Iterators, trap for now.
     pub(super) fn compile_list_for(
         &mut self,
         binding: &str,
@@ -164,10 +169,12 @@ impl<'a> FunctionCompiler<'a, '_> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         self.compile_expression(iterable)?;
         let source = self.store_new();
+        self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(source));
-        self.core_call("__exs_core_list_copy", span)?;
+        self.core_call("__exs_core_for_snapshot", span)?;
         let list = self.store_new();
+        self.return_if_error(list, span)?;
         let position = self.scalar_local();
         self.instruction(Instruction::I64Const(0));
         self.instruction(Instruction::LocalSet(position));

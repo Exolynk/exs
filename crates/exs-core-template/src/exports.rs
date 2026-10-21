@@ -13,6 +13,14 @@ fn trap() -> ! {
     core::arch::wasm32::unreachable()
 }
 
+/// Returns a produced value, trapping when memory was exhausted.
+fn value(result: Option<u64>) -> i64 {
+    match result {
+        Some(value) => value.cast_signed(),
+        None => trap(),
+    }
+}
+
 /// Converts a Wasm `i32` address argument.
 fn address(value: i32) -> u32 {
     value.cast_unsigned()
@@ -148,7 +156,7 @@ pub extern "C" fn __exs_core_collect(vm: i32) {
     exs_core::collect(&mut memory(), address(vm));
 }
 
-/// Applies `+` (0), `-` (1) or `*` (2) to two numeric values.
+/// Applies `+` (0), `-` (1) or `*` (2) to two numeric values; failures are Error values.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_arithmetic(vm: i32, operator: i32, left: i64, right: i64) -> i64 {
     let operator = match operator {
@@ -157,39 +165,34 @@ pub extern "C" fn __exs_core_arithmetic(vm: i32, operator: i32, left: i64, right
         2 => Arithmetic::Multiply,
         _ => trap(),
     };
-    match exs_core::arithmetic(
+    value(exs_core::arithmetic(
         &mut memory(),
         address(vm),
         operator,
         left.cast_unsigned(),
         right.cast_unsigned(),
-    ) {
-        Ok(value) => value.cast_signed(),
-        Err(_) => trap(),
-    }
+    ))
 }
 
-/// Divides two numeric values into a Float.
+/// Divides two numeric values into a Float; a non-numeric operand is a TypeError value.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_divide(vm: i32, left: i64, right: i64) -> i64 {
-    match exs_core::divide(
+    value(exs_core::divide(
         &mut memory(),
         address(vm),
         left.cast_unsigned(),
         right.cast_unsigned(),
-    ) {
-        Ok(value) => value.cast_signed(),
-        Err(_) => trap(),
-    }
+    ))
 }
 
-/// Negates one numeric value.
+/// Negates one numeric value; failures are Error values.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_negate(vm: i32, value: i64) -> i64 {
-    match exs_core::negate(&mut memory(), address(vm), value.cast_unsigned()) {
-        Ok(value) => value.cast_signed(),
-        Err(_) => trap(),
-    }
+pub extern "C" fn __exs_core_negate(vm: i32, operand: i64) -> i64 {
+    value(exs_core::negate(
+        &mut memory(),
+        address(vm),
+        operand.cast_unsigned(),
+    ))
 }
 
 /// Compares two numeric values with `<` (0), `<=` (1), `>` (2) or `>=` (3).
@@ -245,13 +248,17 @@ pub extern "C" fn __exs_core_float(vm: i32, bits: i64) -> i64 {
     }
 }
 
-/// Evaluates `slots[0] + ... + slots[count - 1]` with the language's `+`.
+/// Evaluates `slots[0] + ... + slots[count - 1]` with the language's `+`, taking the origin of
+/// step `i` from `positions[i - 1]` when `positions` is not 0.
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_concat(vm: i32, slots: i32, count: i32) -> i64 {
-    match exs_core::concat(&mut memory(), address(vm), address(slots), address(count)) {
-        Ok(value) => value.cast_signed(),
-        Err(_) => trap(),
-    }
+pub extern "C" fn __exs_core_concat(vm: i32, slots: i32, count: i32, positions: i32) -> i64 {
+    value(exs_core::concat(
+        &mut memory(),
+        address(vm),
+        address(slots),
+        address(count),
+        address(positions),
+    ))
 }
 
 /// Creates a List of the `count` values in the root slots at `slots`.
@@ -272,64 +279,51 @@ pub extern "C" fn __exs_core_list_copy(vm: i32, list: i64) -> i64 {
     }
 }
 
-/// Evaluates `receiver[index]`.
+/// Evaluates `receiver[index]`; failures are Error values.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_index_get(vm: i32, receiver: i64, index: i64) -> i64 {
-    match exs_core::index_get(
-        &memory(),
-        address(vm),
-        receiver.cast_unsigned(),
-        index.cast_unsigned(),
-    ) {
-        Ok(value) => value.cast_signed(),
-        Err(_) => trap(),
-    }
-}
-
-/// Evaluates `receiver[index] = value`.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_index_set(vm: i32, receiver: i64, index: i64, value: i64) {
-    if exs_core::index_set(
+    value(exs_core::index_get(
         &mut memory(),
         address(vm),
         receiver.cast_unsigned(),
         index.cast_unsigned(),
-        value.cast_unsigned(),
-    )
-    .is_err()
-    {
-        trap();
-    }
+    ))
 }
 
-/// Reads the property named by the String `name`.
+/// Evaluates `receiver[index] = value` and returns the value or the Error it produced.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_index_set(vm: i32, receiver: i64, index: i64, stored: i64) -> i64 {
+    value(exs_core::index_set(
+        &mut memory(),
+        address(vm),
+        receiver.cast_unsigned(),
+        index.cast_unsigned(),
+        stored.cast_unsigned(),
+    ))
+}
+
+/// Reads the property named by the String `name`; failures are Error values.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_property_get(vm: i32, receiver: i64, name: i64) -> i64 {
-    match exs_core::property_get(
-        &memory(),
-        address(vm),
-        receiver.cast_unsigned(),
-        name.cast_unsigned(),
-    ) {
-        Ok(value) => value.cast_signed(),
-        Err(_) => trap(),
-    }
-}
-
-/// Writes the property named by the String `name`.
-#[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_property_set(vm: i32, receiver: i64, name: i64, value: i64) {
-    if exs_core::property_set(
+    value(exs_core::property_get(
         &mut memory(),
         address(vm),
         receiver.cast_unsigned(),
         name.cast_unsigned(),
-        value.cast_unsigned(),
-    )
-    .is_err()
-    {
-        trap();
-    }
+    ))
+}
+
+/// Writes the property named by the String `name` and returns the value or the Error it
+/// produced.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_property_set(vm: i32, receiver: i64, name: i64, stored: i64) -> i64 {
+    value(exs_core::property_set(
+        &mut memory(),
+        address(vm),
+        receiver.cast_unsigned(),
+        name.cast_unsigned(),
+        stored.cast_unsigned(),
+    ))
 }
 
 /// Returns the shape of the `count` distinct static key Strings at `keys`.
@@ -361,4 +355,82 @@ pub extern "C" fn __exs_core_object_with_shape(vm: i32, shape: i32, slots: i32, 
 pub extern "C" fn __exs_core_object_lookup(receiver: i64, name: i64) -> i64 {
     exs_core::object_lookup(&memory(), receiver.cast_unsigned(), name.cast_unsigned())
         .map_or(-1, u64::cast_signed)
+}
+
+/// Returns what a `for` loop iterates over: a List copy or a NotIterable Error.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_for_snapshot(vm: i32, iterable: i64) -> i64 {
+    value(exs_core::for_snapshot(
+        &mut memory(),
+        address(vm),
+        iterable.cast_unsigned(),
+    ))
+}
+
+/// Evaluates `!operand` for a value that is no Bool, which is a TypeError value.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_not_error(vm: i32, operand: i64) -> i64 {
+    value(exs_core::not_error(
+        &mut memory(),
+        address(vm),
+        operand.cast_unsigned(),
+    ))
+}
+
+/// Creates the TypeError of a condition that is no Bool.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_condition_error(vm: i32, condition: i64) -> i64 {
+    value(exs_core::condition_error(
+        &mut memory(),
+        address(vm),
+        condition.cast_unsigned(),
+    ))
+}
+
+/// Creates the TypeError of a declared-type violation, recoverable when `recoverable` is 1.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_type_mismatch(vm: i32, mismatch: i64, recoverable: i32) -> i64 {
+    value(exs_core::type_mismatch(
+        &mut memory(),
+        address(vm),
+        mismatch.cast_unsigned(),
+        recoverable != 0,
+    ))
+}
+
+/// Creates the WireDecodeError of a `let` binding whose value violates its declared type.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_wire_mismatch(vm: i32, mismatch: i64) -> i64 {
+    value(exs_core::wire_mismatch(
+        &mut memory(),
+        address(vm),
+        mismatch.cast_unsigned(),
+    ))
+}
+
+/// Creates the MissingValue Error that `?` produces for None.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_missing_value(vm: i32) -> i64 {
+    value(exs_core::missing_value(&mut memory(), address(vm)))
+}
+
+/// Evaluates the language's `Error(kind, message, data)` constructor.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_error_new(vm: i32, kind: i64, message: i64, data: i64) -> i64 {
+    value(exs_core::error_new(
+        &mut memory(),
+        address(vm),
+        kind.cast_unsigned(),
+        message.cast_unsigned(),
+        data.cast_unsigned(),
+    ))
+}
+
+/// Creates the fatal ArityError for an entry that received too many arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_arity_error(vm: i32) -> i64 {
+    match exs_core::arity_error(&mut memory(), address(vm)) {
+        Ok(error) => error.cast_signed(),
+        Err(_) => trap(),
+    }
 }

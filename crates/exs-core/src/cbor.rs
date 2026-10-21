@@ -2,11 +2,12 @@
 //!
 //! The runner passes the entry arguments as one CBOR array and expects one CBOR value back.
 //! This version handles None, Bool, Int, Float, String, List and untyped Object values both
-//! ways and encodes typed Objects as maps of their declared fields followed by their extra
-//! keys; other values are reported as unsupported.
+//! ways, encodes typed Objects as maps of their declared fields followed by their extra keys
+//! and Errors as the codec's tagged seven-field map; other values are reported as unsupported.
 
 use exs_value::{Immediate, ValueRef};
 
+use crate::errors::{error_object, error_parts, new_error};
 use crate::execution::{input, reserve_result};
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, push_unchecked};
 use crate::memory::Memory;
@@ -44,6 +45,10 @@ const MAJOR_TEXT: u8 = 3;
 const MAJOR_ARRAY: u8 = 4;
 /// CBOR major type of maps.
 const MAJOR_MAP: u8 = 5;
+/// CBOR major type of tags.
+const MAJOR_TAG: u8 = 6;
+/// CBOR tag of an ExS Error, as the runner's codec defines it.
+const ERROR_TAG: u64 = 60_001;
 /// CBOR major type of simple values and floats.
 const MAJOR_SIMPLE: u8 = 7;
 /// Encoded CBOR `false`.
@@ -195,6 +200,30 @@ pub fn decode_inputs(
         memory.store_u64(slots + index * 8, ValueRef::NONE.raw());
     }
     Ok(count)
+}
+
+/// Creates the fatal ArityError of an entry that received more arguments than it declares,
+/// with all arguments as a List in its data, like v1.
+///
+/// # Errors
+///
+/// Returns why the input could not be decoded.
+pub fn arity_error(memory: &mut impl Memory, vm: u32) -> Result<u64, CborError> {
+    let (address, length) = input(memory, vm);
+    let mut reader = Reader {
+        position: address,
+        end: address.checked_add(length).ok_or(CborError::Malformed)?,
+    };
+    let arguments = decode_value(memory, vm, &mut reader, 0)?;
+    new_error(
+        memory,
+        vm,
+        true,
+        "ArityError",
+        "main received more input values than declared parameters",
+        arguments,
+    )
+    .ok_or(CborError::OutOfMemory)
 }
 
 /// Decodes one item at nesting depth `depth` into a value.
@@ -446,6 +475,9 @@ impl Sink {
         if let Some(object) = typed_object(memory, raw) {
             return self.typed_object(memory, vm, object, depth);
         }
+        if let Some(object) = error_object(raw) {
+            return self.error(memory, vm, object, depth);
+        }
         if let Some(object) = untyped_object(memory, raw) {
             if depth >= MAX_DEPTH {
                 return Err(CborError::Unsupported);
@@ -543,6 +575,51 @@ impl Sink {
             self.entries(memory, vm, extra, depth)?;
         }
         Ok(())
+    }
+
+    /// Appends the Error at `object` as the tagged seven-field map of the runner's codec.
+    fn error(
+        &mut self,
+        memory: &mut impl Memory,
+        vm: u32,
+        object: u32,
+        depth: u32,
+    ) -> Result<(), CborError> {
+        if depth >= MAX_DEPTH {
+            return Err(CborError::Unsupported);
+        }
+        let parts = error_parts(memory, object);
+        self.head(memory, MAJOR_TAG, ERROR_TAG)?;
+        self.head(memory, MAJOR_MAP, 7)?;
+        self.head(memory, MAJOR_UNSIGNED, 0)?;
+        self.head(memory, MAJOR_UNSIGNED, u64::from(parts.fatal))?;
+        for (key, text) in [(1, parts.kind), (2, parts.message)] {
+            self.head(memory, MAJOR_UNSIGNED, key)?;
+            self.string(memory, string_object(text).ok_or(CborError::Unsupported)?)?;
+        }
+        self.head(memory, MAJOR_UNSIGNED, 3)?;
+        self.value(memory, vm, parts.data, depth + 1)?;
+        self.head(memory, MAJOR_UNSIGNED, 4)?;
+        if parts.origin == 0 {
+            self.bytes(memory, &[NULL])?;
+        } else {
+            self.head(memory, MAJOR_UNSIGNED, u64::from(parts.origin))?;
+        }
+        self.head(memory, MAJOR_UNSIGNED, 5)?;
+        let (entries, count) = parts.trace;
+        self.head(memory, MAJOR_ARRAY, u64::from(count))?;
+        for index in 0..count {
+            let entry = memory.load_u64(entries + index * 8);
+            self.head(memory, MAJOR_ARRAY, 2)?;
+            self.head(memory, MAJOR_UNSIGNED, entry & 0xffff_ffff)?;
+            self.head(memory, MAJOR_UNSIGNED, entry >> 32)?;
+        }
+        self.head(memory, MAJOR_UNSIGNED, 6)?;
+        if parts.cause == ValueRef::NONE.raw() {
+            self.bytes(memory, &[NULL])
+        } else {
+            self.value(memory, vm, parts.cause, depth + 1)
+        }
     }
 
     /// Appends the keys and values of the untyped Object at `object` in key order.

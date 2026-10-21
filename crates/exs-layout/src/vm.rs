@@ -88,6 +88,26 @@ pub struct BoundaryState {
     pub reserved: u32,
 }
 
+/// Language Error context: the trace of active source functions and the current position.
+///
+/// A trace entry is a `u64` of `function_id | call_site << 32`; generated functions push one
+/// on entry and pop it before returning.
+#[repr(C)]
+pub struct ErrorState {
+    /// Address of the first trace entry.
+    pub trace_base: u32,
+    /// Address of the next free trace entry.
+    pub trace_top: u32,
+    /// Address just past the trace storage.
+    pub trace_limit: u32,
+    /// Source position id of the call site the next function entry records, 0 for none.
+    pub pending_call_site: u32,
+    /// Source position id new Errors record as their origin, 0 for none.
+    pub source_position: u32,
+    /// Reserved, keeps the block 8-byte aligned.
+    pub reserved: u32,
+}
+
 /// Compiler-provided static metadata about the program's types.
 #[repr(C)]
 pub struct ProgramState {
@@ -126,6 +146,8 @@ pub struct VmState {
     pub boundary: BoundaryState,
     /// Static program metadata.
     pub program: ProgramState,
+    /// Language Error context.
+    pub errors: ErrorState,
 }
 
 const _: () = assert!(core::mem::size_of::<VmState>().is_multiple_of(8));

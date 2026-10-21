@@ -1,7 +1,7 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
-Status: **approved design**. Phases 0, 0.5, 1, 2a, 2b, 2c-1, 2c-2 and lazy class-page
-linking are done; see sections 12 to 12f.
+Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
+linking) are done; see sections 12 to 12g. Phase 2 awaits its go / no-go decision.
 
 ## 1. Goal
 
@@ -445,6 +445,62 @@ fresh class page into the free list at once, e.g. 4,080 cells for the 16-byte cl
 | List index read and write, 1000 iterations | 692,015 | 428,675 | 319,757 | −54 % |
 | `for` over a 100-element List | 449,855 | 371,718 | 186,953 | −58 % |
 | Float loop, 1000 iterations | 579,772 | 318,437 | 280,825 | −52 % |
+
+## 12g. Phase 2d results
+
+- **Errors are values,** as in v1. Every core operation that can fail returns v1's Error
+  instead of trapping: TypeError, IntOverflowError, IndexError, MissingValue, NotIterable,
+  WireDecodeError and the fatal ArityError, with v1's kinds, messages and data. Generated
+  code returns early exactly where v1 does: for `?`, for a condition that is no Bool, for a
+  declared-type violation (recoverable when the return type admits Errors, fatal otherwise)
+  and after a direct call that produced a fatal Error. `Error(kind, message, data)` is
+  supported.
+- **Origins:** before every core call that may create an Error, generated code stores the
+  source position v1 uses (`VmState::errors.source_position`), only on the slow paths. A `+`
+  chain passes a static array with one position per step, so a failing step deep inside a
+  fused chain reports its own `+`, and later steps add to that Error like v1.
+- **Traces:** each function pushes `function_id | call_site << 32` on a fixed two-page trace
+  stack on entry and restores it before returning; a call stores its call site first. Function
+  ids and source positions come from v1's numbering, and v2 modules carry the same
+  `exs.source.map` section.
+- **Layout:** `ErrorObject` gained a `cause` slot (None until Error methods exist); Errors
+  encode as the codec's tagged seven-field map.
+- **Let annotations** follow v1's wire decoding for built-in types: an Error returns early and
+  a value of another type returns a WireDecodeError. Nominal, enum and List element types in
+  `let` are compile error E0600 until wire decoding is ported.
+- `backend_v2` compares complete Error values, including origin and trace, for 36 programs
+  and runs a loop that keeps Errors alive across collections.
+
+Still trapping, because v1 needs features of later phases: ordering comparisons without an
+order (v1's TypeError carries an `std::Ordering` enum value), formatted-string parts that are
+not Strings or scalars (v1 renders them with the default `ToString`), and `for` over Strings,
+Bytes and Objects (Iterators). Errors as runner inputs remain unsupported until phase 5.
+
+The trace costs about 40 fuel per direct call: sync calls rose from 196,001 to 236,177 per
+1000 calls, still 19 % below v1.
+
+### Phase 2 go / no-go summary
+
+| Workload | v1 fuel | v2 fuel | change |
+|---|---:|---:|---:|
+| `while` Int loop, 1000 iterations | 176,620 | 147,254 | −17 % |
+| `for` over a Range, 1000 iterations | 143,658 | 91,260 | −36 % |
+| sync calls, 1000 calls | 292,614 | 236,177 | −19 % |
+| Float loop, 1000 iterations | 579,772 | 280,001 | −52 % |
+| formatted string per row, 1000 rows | 2,006,248 | 1,747,893 | −13 % |
+| `+` chain per row, 1000 rows | 2,439,203 | 1,792,893 | −26 % |
+| typed property read and write, 1000 iterations | 731,746 | 248,271 | −66 % |
+| typed Object and List literal per row, 1000 rows | 1,952,885 | 833,055 | −57 % |
+| untyped property read and write, 1000 iterations | 731,720 | 289,947 | −60 % |
+| untyped Object literal per row, 1000 rows | 1,167,940 | 704,693 | −40 % |
+| List index read and write, 1000 iterations | 692,015 | 317,933 | −54 % |
+| `for` over a 100-element List | 449,855 | 188,159 | −58 % |
+| `concat_10_objects` | 136,378 | 82,213 | −40 % |
+| `concat_100_objects` | 664,705 | 580,242 | −13 % |
+
+Every measured workload is cheaper in v2, with the largest gains on property access, literals
+and Lists, which meets phase 2's exit criterion. String building gains least, because the
+core still copies byte by byte.
 
 ## 13. Risks and open questions
 

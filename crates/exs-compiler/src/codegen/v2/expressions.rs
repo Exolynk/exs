@@ -43,7 +43,9 @@ impl<'a> FunctionCompiler<'a, '_> {
                         }
                     }
                 }
-                self.concat_values(&values, *span)?;
+                // Formatted strings report their own span for every part, like v1.
+                self.set_position(*span)?;
+                self.concat_values(&values, None, *span)?;
             }
             Expression::Bool(value, _) => {
                 immediate::push(&mut self.function, exs_value::ValueRef::boolean(*value));
@@ -67,27 +69,43 @@ impl<'a> FunctionCompiler<'a, '_> {
                 operand,
                 span,
             } => {
+                // Like v1, a negated Int literal is one constant, which also admits i64::MIN.
+                if matches!(operator, UnaryOperator::Negate)
+                    && let Expression::Integer(value, operand_span) = operand.as_ref()
+                {
+                    let negative = value.checked_neg().ok_or_else(|| {
+                        error(
+                            "E0206",
+                            *operand_span,
+                            "integer literal is outside the ExS signed 64-bit range".to_owned(),
+                        )
+                    })?;
+                    return self.compile_integer(negative, *operand_span);
+                }
                 self.compile_expression(operand)?;
                 match operator {
                     UnaryOperator::Negate => {
                         let value = self.store_new();
+                        self.set_position(*span)?;
                         self.push_vm();
                         self.instruction(Instruction::LocalGet(value));
                         self.core_call("__exs_core_negate", *span)?;
                     }
-                    UnaryOperator::Not => {
-                        self.condition();
-                        self.instruction(Instruction::I32Eqz);
-                        immediate::bool_from_condition(&mut self.function);
-                    }
+                    UnaryOperator::Not => self.compile_not(*span)?,
                 }
             }
+            Expression::Propagate { value, span } => self.compile_propagate(value, *span)?,
             Expression::Binary {
                 operator,
                 left,
                 right,
                 span,
             } => self.compile_binary(*operator, left, right, *span)?,
+            Expression::Call {
+                callee,
+                arguments,
+                span,
+            } if callee.name == "Error" => self.compile_error_constructor(arguments, *span)?,
             Expression::Call {
                 callee,
                 arguments,
@@ -148,29 +166,33 @@ impl<'a> FunctionCompiler<'a, '_> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
-            return self.compile_logical(operator, left, right);
+            return self.compile_logical(operator, left, right, span);
         }
         if matches!(operator, BinaryOperator::Add) {
+            // Each `+` keeps the span of its own Binary node, the origin v1 reports for it.
             let mut operands = vec![right];
+            let mut spans = vec![span];
             let mut leftmost = left;
             while let Expression::Binary {
                 operator: BinaryOperator::Add,
                 left,
                 right,
-                ..
+                span,
             } = leftmost
             {
                 operands.push(right);
+                spans.push(*span);
                 leftmost = left;
             }
             operands.push(leftmost);
             operands.reverse();
+            spans.reverse();
             let mut values = Vec::with_capacity(operands.len());
             for operand in operands {
                 self.compile_expression(operand)?;
                 values.push(self.store_new());
             }
-            return self.add_values(&values, span);
+            return self.add_values(&values, &spans, span);
         }
         self.compile_expression(left)?;
         let left = self.store_new();
@@ -234,6 +256,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         let arithmetic = |code: i32| {
             move |compiler: &mut Self| -> Result<(), CompileDiagnostics<'a>> {
+                compiler.set_position(span)?;
                 compiler.push_vm();
                 compiler.instruction(Instruction::I32Const(code));
                 compiler.instruction(Instruction::LocalGet(left));
@@ -256,6 +279,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             BinaryOperator::Subtract => arithmetic(SUBTRACT)(self),
             BinaryOperator::Multiply => arithmetic(MULTIPLY)(self),
             BinaryOperator::Divide => {
+                self.set_position(span)?;
                 self.push_vm();
                 self.instruction(Instruction::LocalGet(left));
                 self.instruction(Instruction::LocalGet(right));
@@ -284,15 +308,19 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Compiles short-circuiting `&&` or `||`; both operands must be Bools.
+    ///
+    /// Like v1, the left condition reports the whole expression's span and the right one its
+    /// own span.
     fn compile_logical(
         &mut self,
         operator: BinaryOperator,
         left: &Expression<'a>,
         right: &Expression<'a>,
+        span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let is_or = matches!(operator, BinaryOperator::Or);
         self.compile_expression(left)?;
-        self.condition();
+        self.condition(span)?;
         self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
         if is_or {
             immediate::push(&mut self.function, exs_value::ValueRef::TRUE);
@@ -317,7 +345,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.compile_expression(expression)?;
         let value = self.store_new();
         self.instruction(Instruction::LocalGet(value));
-        self.condition();
+        self.condition(expression_span(expression))?;
         self.instruction(Instruction::Drop);
         self.instruction(Instruction::LocalGet(value));
         Ok(())
@@ -359,7 +387,31 @@ impl<'a> FunctionCompiler<'a, '_> {
         for local in locals {
             self.instruction(Instruction::LocalGet(local));
         }
+        self.set_call_site(span)?;
         self.instruction(Instruction::Call(index));
+        let result = self.store_new();
+        self.return_if_fatal(result);
+        self.instruction(Instruction::LocalGet(result));
+        Ok(())
+    }
+
+    /// Compiles `!` on the `ValueRef` on the stack: a Bool flips inline, any other value is a
+    /// TypeError value.
+    fn compile_not(&mut self, span: SourceSpan<'a>) -> Result<(), CompileDiagnostics<'a>> {
+        let value = self.scratch;
+        self.instruction(Instruction::LocalTee(value));
+        immediate::is_bool_test(&mut self.function);
+        self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
+        // Bool immediates differ only in their lowest payload bit.
+        self.instruction(Instruction::LocalGet(value));
+        self.instruction(Instruction::I64Const(1));
+        self.instruction(Instruction::I64Xor);
+        self.instruction(Instruction::Else);
+        self.set_position(span)?;
+        self.push_vm();
+        self.instruction(Instruction::LocalGet(value));
+        self.core_call("__exs_core_not_error", span)?;
+        self.instruction(Instruction::End);
         Ok(())
     }
 }
@@ -475,9 +527,12 @@ impl<'a> FunctionCompiler<'a, '_> {
     ///
     /// A String on the left joins the whole chain with one allocation; otherwise every `+`
     /// runs in turn with its inline Int and Float paths.
+    ///
+    /// `spans` holds the span of each `+`, the origin of an Error that step creates.
     fn add_values(
         &mut self,
         values: &[u32],
+        spans: &[SourceSpan<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let [first, rest @ ..] = values else {
@@ -489,11 +544,11 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::LocalGet(*first));
         immediate::type_mask_test(&mut self.function, TYPE_STRING);
         self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
-        self.concat_values(values, span)?;
+        self.concat_values(values, Some(spans), span)?;
         self.instruction(Instruction::Else);
         let mut accumulated = *first;
-        for value in rest {
-            self.add_pair(accumulated, *value, span)?;
+        for (value, step) in rest.iter().zip(spans) {
+            self.add_pair(accumulated, *value, *step)?;
             accumulated = self.store_new();
         }
         self.instruction(Instruction::LocalGet(accumulated));
@@ -530,18 +585,28 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.store(pair);
         self.instruction(Instruction::LocalGet(right));
         self.store(pair + 1);
+        self.set_position(span)?;
         self.push_vm();
         self.push_slot_address(pair);
         self.instruction(Instruction::I32Const(2));
+        self.instruction(Instruction::I32Const(0));
         self.core_call("__exs_core_concat", span)
     }
 
     /// Joins `values` with the language's `+` in one core call over consecutive root slots.
+    ///
+    /// With `spans`, every step takes its Error origin from a static position array; without,
+    /// Errors use the position set before the call.
     fn concat_values(
         &mut self,
         values: &[u32],
+        spans: Option<&[SourceSpan<'a>]>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        let positions = match spans {
+            Some(spans) => self.positions_address(spans)?,
+            None => 0,
+        };
         let count = u32::try_from(values.len())
             .map_err(|_| error("E0212", span, "too many `+` operands".to_owned()))?;
         let block = self.consecutive_locals(count);
@@ -552,7 +617,21 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.push_vm();
         self.push_slot_address(block);
         self.instruction(Instruction::I32Const(count.cast_signed()));
+        self.instruction(Instruction::I32Const(positions.cast_signed()));
         self.core_call("__exs_core_concat", span)
+    }
+
+    /// Appends the source positions of `spans` to the static position arrays and returns the
+    /// address of the first one.
+    fn positions_address(&self, spans: &[SourceSpan<'a>]) -> Result<u32, CompileDiagnostics<'a>> {
+        let mut ids = Vec::with_capacity(spans.len());
+        for span in spans {
+            ids.push(self.position(*span)?);
+        }
+        let mut positions = self.context.positions.borrow_mut();
+        let address = self.context.positions_base + positions.len() as u32 * 4;
+        positions.extend(ids);
+        Ok(address)
     }
 }
 
@@ -560,7 +639,7 @@ impl<'a> FunctionCompiler<'a, '_> {
 const FLOAT_VALUE: u64 = core::mem::offset_of!(exs_layout::FloatObject, value) as u64;
 
 /// Returns the source span of one expression.
-fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
+pub(super) fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
     match expression {
         Expression::Integer(_, span)
         | Expression::Float(_, span)

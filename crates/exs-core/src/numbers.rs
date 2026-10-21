@@ -12,6 +12,7 @@ use exs_value::layout::{INT_BOXED, type_kind};
 use exs_value::{Immediate, ValueRef};
 
 use crate::allocator::allocate;
+use crate::errors::recoverable;
 use crate::memory::Memory;
 
 /// A numeric operand after Bool-to-Int conversion.
@@ -26,8 +27,8 @@ pub enum Number {
 /// Why a numeric operation produced no value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NumericError {
-    /// An operand is not a Bool, Int or Float.
-    NotNumeric,
+    /// This operand is not a Bool, Int or Float.
+    NotNumeric(u64),
     /// Int arithmetic left the signed 64-bit range.
     Overflow,
     /// Two Floats have no order, because one is NaN.
@@ -132,8 +133,8 @@ fn number_value(memory: &mut impl Memory, vm: u32, number: Number) -> Result<u64
 /// Returns both operands as numbers.
 fn operands(memory: &impl Memory, left: u64, right: u64) -> Result<(Number, Number), NumericError> {
     Ok((
-        number(memory, left).ok_or(NumericError::NotNumeric)?,
-        number(memory, right).ok_or(NumericError::NotNumeric)?,
+        number(memory, left).ok_or(NumericError::NotNumeric(left))?,
+        number(memory, right).ok_or(NumericError::NotNumeric(right))?,
     ))
 }
 
@@ -145,12 +146,53 @@ const fn as_float(number: Number) -> f64 {
     }
 }
 
+/// Message of the TypeError for a non-numeric operand.
+const NOT_NUMERIC: &str = "numeric operations require a Bool, Int, or Float value";
+
+/// Converts the outcome of a numeric operation into a value, turning failures into the
+/// language's Errors. `overflow` is the IntOverflowError message and `left` its data.
+fn numeric_value(
+    memory: &mut impl Memory,
+    vm: u32,
+    outcome: Result<u64, NumericError>,
+    overflow: &str,
+    left: u64,
+) -> Option<u64> {
+    match outcome {
+        Ok(value) => Some(value),
+        Err(NumericError::NotNumeric(operand)) => {
+            recoverable(memory, vm, "TypeError", NOT_NUMERIC, operand)
+        }
+        Err(NumericError::Overflow) => recoverable(memory, vm, "IntOverflowError", overflow, left),
+        Err(NumericError::Unordered | NumericError::OutOfMemory) => None,
+    }
+}
+
+/// Applies `+`, `-` or `*` to two numeric references; failures are TypeError and
+/// IntOverflowError values like in v1. Returns `None` when memory is exhausted.
+pub fn arithmetic(
+    memory: &mut impl Memory,
+    vm: u32,
+    operator: Arithmetic,
+    left: u64,
+    right: u64,
+) -> Option<u64> {
+    let outcome = arithmetic_result(memory, vm, operator, left, right);
+    numeric_value(
+        memory,
+        vm,
+        outcome,
+        "integer arithmetic overflowed the ExS signed 64-bit range",
+        left,
+    )
+}
+
 /// Applies `+`, `-` or `*` to two numeric references.
 ///
 /// # Errors
 ///
 /// Returns why no value was produced.
-pub fn arithmetic(
+fn arithmetic_result(
     memory: &mut impl Memory,
     vm: u32,
     operator: Arithmetic,
@@ -178,32 +220,35 @@ pub fn arithmetic(
     number_value(memory, vm, result)
 }
 
-/// Divides two numeric references into a Float.
-///
-/// # Errors
-///
-/// Returns why no value was produced.
-pub fn divide(
-    memory: &mut impl Memory,
-    vm: u32,
-    left: u64,
-    right: u64,
-) -> Result<u64, NumericError> {
-    let (left, right) = operands(memory, left, right)?;
-    number_value(memory, vm, Number::Float(as_float(left) / as_float(right)))
+/// Divides two numeric references into a Float; a non-numeric operand is a TypeError value.
+/// Returns `None` when memory is exhausted.
+pub fn divide(memory: &mut impl Memory, vm: u32, left: u64, right: u64) -> Option<u64> {
+    let outcome = operands(memory, left, right).and_then(|(left, right)| {
+        number_value(memory, vm, Number::Float(as_float(left) / as_float(right)))
+    });
+    numeric_value(memory, vm, outcome, "", left)
 }
 
-/// Negates one numeric reference.
-///
-/// # Errors
-///
-/// Returns why no value was produced.
-pub fn negate(memory: &mut impl Memory, vm: u32, value: u64) -> Result<u64, NumericError> {
-    let result = match number(memory, value).ok_or(NumericError::NotNumeric)? {
-        Number::Int(value) => Number::Int(value.checked_neg().ok_or(NumericError::Overflow)?),
-        Number::Float(value) => Number::Float(-value),
-    };
-    number_value(memory, vm, result)
+/// Negates one numeric reference; failures are TypeError and IntOverflowError values.
+/// Returns `None` when memory is exhausted.
+pub fn negate(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
+    let outcome = number(memory, value)
+        .ok_or(NumericError::NotNumeric(value))
+        .and_then(|number| match number {
+            Number::Int(number) => number
+                .checked_neg()
+                .ok_or(NumericError::Overflow)
+                .map(Number::Int),
+            Number::Float(number) => Ok(Number::Float(-number)),
+        })
+        .and_then(|number| number_value(memory, vm, number));
+    numeric_value(
+        memory,
+        vm,
+        outcome,
+        "integer negation overflowed the ExS signed 64-bit range",
+        value,
+    )
 }
 
 /// Orders two numbers, `None` when NaN takes part.

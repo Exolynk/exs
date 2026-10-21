@@ -11,9 +11,11 @@ use exs_value::layout::{KIND_SHIFT, type_kind};
 use exs_value::{Immediate, ValueRef};
 
 use crate::allocator::allocate;
+use crate::errors::recoverable;
 use crate::lists::{list_add, list_object};
 use crate::memory::Memory;
-use crate::numbers::{Arithmetic, Number, NumericError, arithmetic, number, reference};
+use crate::numbers::{Arithmetic, Number, arithmetic, number, reference};
+use crate::vm::Vm;
 
 /// Byte offset of [`StringObject::len`].
 const LEN: u32 = offset_of!(StringObject, len) as u32;
@@ -21,17 +23,6 @@ const LEN: u32 = offset_of!(StringObject, len) as u32;
 pub(crate) const DATA: u32 = size_of::<StringObject>() as u32;
 /// Byte offset of the character count in the header word.
 const CHARS: u32 = 4;
-
-/// Why a String operation produced no value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StringError {
-    /// An operand of `+` is neither a String nor a Bool, Int or Float in a String context.
-    NotRenderable,
-    /// A numeric step of the operation failed.
-    Numeric(NumericError),
-    /// The heap could not hold the result.
-    OutOfMemory,
-}
 
 /// Returns the address of the String behind one raw reference, or `None` for other values.
 #[must_use]
@@ -61,6 +52,15 @@ fn allocate_string(memory: &mut impl Memory, vm: u32, len: u32, chars: u32) -> O
 /// Returns the raw reference of the String at `object`.
 pub(crate) fn string_reference(object: u32) -> Option<u64> {
     ValueRef::from_parts(type_kind(TYPE_STRING), 0, object).map(ValueRef::raw)
+}
+
+/// Creates one String holding `text`.
+pub(crate) fn text_string(memory: &mut impl Memory, vm: u32, text: &str) -> Option<u64> {
+    let len = u32::try_from(text.len()).ok()?;
+    let chars = u32::try_from(text.chars().count()).ok()?;
+    let object = allocate_string(memory, vm, len, chars)?;
+    write_bytes(memory, object + DATA, text.as_bytes());
+    string_reference(object)
 }
 
 /// Creates one String from `len` bytes of validated UTF-8 at `source`.
@@ -229,22 +229,34 @@ fn part_size(memory: &impl Memory, part: Part) -> (u32, u32) {
     }
 }
 
-/// Evaluates `slots[0] + slots[1] + ... + slots[count - 1]` with the language's `+`.
+/// Message of the TypeError for a `+` operand a String cannot render.
+const NOT_RENDERABLE: &str = "String addition requires a String, Bool, Int, or Float right operand";
+
+/// Evaluates `slots[0] + slots[1] + ... + slots[count - 1]` with the language's `+`, one
+/// step per right operand like v1.
 ///
 /// While the accumulated value is a String, every following renderable operand is appended and
 /// the whole run is allocated once. A List accumulator builds a new List per operand; other
-/// operands fall back to one numeric `+` at a time. The slots
-/// must be rooted; `slots[0]` is overwritten with intermediate results.
+/// operands fall back to one numeric `+` at a time. A failing step yields an Error value that
+/// the following steps add to, as in v1. When `positions` is not 0, it addresses one `u32`
+/// source position per step, which becomes the origin of an Error that step creates;
+/// otherwise Errors use the VM's current position.
 ///
-/// # Errors
-///
-/// Returns why a `+` produced no value.
+/// The slots must be rooted; `slots[0]` is overwritten with intermediate results. Returns
+/// `None` when memory is exhausted.
 pub fn concat(
     memory: &mut impl Memory,
     vm: u32,
     slots: u32,
     count: u32,
-) -> Result<u64, StringError> {
+    positions: u32,
+) -> Option<u64> {
+    let step_position = |memory: &mut _, step: u32| {
+        if positions != 0 {
+            let position = Memory::load_u32(memory, positions + (step - 1) * 4);
+            Vm(vm).set_source_position(memory, position);
+        }
+    };
     let mut index = 1;
     while index < count {
         let accumulated = memory.load_u64(slots);
@@ -257,35 +269,33 @@ pub fn concat(
                     break;
                 };
                 let (part_len, part_chars) = part_size(memory, part);
-                len = len.checked_add(part_len).ok_or(StringError::OutOfMemory)?;
-                chars = chars
-                    .checked_add(part_chars)
-                    .ok_or(StringError::OutOfMemory)?;
+                len = len.checked_add(part_len)?;
+                chars = chars.checked_add(part_chars)?;
                 end += 1;
             }
             if end == index {
-                return Err(StringError::NotRenderable);
+                let right = memory.load_u64(slots + index * 8);
+                step_position(memory, index);
+                index += 1;
+                recoverable(memory, vm, "TypeError", NOT_RENDERABLE, right)?
+            } else {
+                let joined = join(memory, vm, slots, end, len, chars)?;
+                index = end;
+                joined
             }
-            let joined = join(memory, vm, slots, end, len, chars)?;
-            index = end;
-            joined
         } else if list_object(accumulated).is_some() {
             let right = memory.load_u64(slots + index * 8);
             index += 1;
-            list_add(memory, vm, accumulated, right).ok_or(StringError::OutOfMemory)?
+            list_add(memory, vm, accumulated, right)?
         } else {
             let right = memory.load_u64(slots + index * 8);
+            step_position(memory, index);
             index += 1;
-            if string_object(right).is_some() {
-                // A number cannot be added to a String.
-                return Err(StringError::Numeric(NumericError::NotNumeric));
-            }
-            arithmetic(memory, vm, Arithmetic::Add, accumulated, right)
-                .map_err(StringError::Numeric)?
+            arithmetic(memory, vm, Arithmetic::Add, accumulated, right)?
         };
         memory.store_u64(slots, result);
     }
-    Ok(memory.load_u64(slots))
+    Some(memory.load_u64(slots))
 }
 
 /// Joins the String in `slots[0]` with the renderable operands `slots[1..end]`, measured as
@@ -297,12 +307,12 @@ fn join(
     end: u32,
     len: u32,
     chars: u32,
-) -> Result<u64, StringError> {
-    let object = allocate_string(memory, vm, len, chars).ok_or(StringError::OutOfMemory)?;
+) -> Option<u64> {
+    let object = allocate_string(memory, vm, len, chars)?;
     let mut position = object + DATA;
     for index in 0..end {
         // Allocation never moves objects, so the parts read here are the ones measured above.
-        match part(memory, memory.load_u64(slots + index * 8)).ok_or(StringError::NotRenderable)? {
+        match part(memory, memory.load_u64(slots + index * 8))? {
             Part::String(source) => {
                 let source_len = byte_len(memory, source);
                 memory.copy(position, source + DATA, source_len);
@@ -311,7 +321,7 @@ fn join(
             Part::Scalar(scalar) => position = scalar.write(memory, position),
         }
     }
-    string_reference(object).ok_or(StringError::OutOfMemory)
+    string_reference(object)
 }
 
 /// Returns whether two Strings hold the same text.

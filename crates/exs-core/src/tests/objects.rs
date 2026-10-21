@@ -9,8 +9,8 @@ use exs_value::ValueRef;
 use super::execution::Execution;
 use super::heap::VM;
 use crate::{
-    AccessError, CborError, collect, index_get, object_lookup, object_with_shape, property_get,
-    property_set, set_heap_flags, shape_for,
+    CborError, collect, index_get, object_lookup, object_with_shape, property_get, property_set,
+    set_heap_flags, shape_for,
 };
 
 /// Returns an Object value of `entries`.
@@ -55,23 +55,21 @@ fn shares_shapes_and_grows_objects() {
     property_set(memory, VM, first, names[0], Execution::int(7)).expect("room");
     assert_eq!(
         property_get(memory, VM, first, names[5]),
-        Ok(Execution::int(13))
+        Some(Execution::int(13))
     );
     assert_eq!(
         index_get(memory, VM, first, names[0]),
-        Ok(Execution::int(7))
+        Some(Execution::int(7))
     );
     let missing = execution.string("missing");
     let memory = &mut execution.memory;
     assert_eq!(
         property_get(memory, VM, first, missing),
-        Ok(ValueRef::NONE.raw())
+        Some(ValueRef::NONE.raw())
     );
     assert_eq!(object_lookup(memory, first, missing), None);
-    assert_eq!(
-        property_get(memory, VM, first, Execution::int(1)),
-        Err(AccessError::InvalidKey)
-    );
+    let error = property_get(memory, VM, first, Execution::int(1)).expect("room");
+    assert_eq!(execution.error_kind(error), "TypeError");
     assert_eq!(
         execution.encoded(first),
         object(&[

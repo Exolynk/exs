@@ -7,8 +7,8 @@ use exs_value::ValueRef;
 use super::execution::Execution;
 use super::heap::VM;
 use crate::{
-    AccessError, Memory, concat, decode_inputs, encode_result, index_get, index_set, list_copy,
-    list_object, property_get, property_set, reserve_input, set_heap_flags,
+    Memory, concat, decode_inputs, encode_result, index_get, index_set, list_copy, list_object,
+    property_get, property_set, reserve_input, set_heap_flags,
 };
 
 /// Builds Lists, adds Lists and values like v1 and copies Lists for iteration.
@@ -23,7 +23,7 @@ fn creates_adds_and_copies_lists() {
     assert!(execution.elements(empty).is_empty());
     let right = execution.list(&[two]);
     let slots = execution.root(&[left, right, one, left]);
-    let sum = concat(&mut execution.memory, VM, slots, 4).expect("List addition");
+    let sum = concat(&mut execution.memory, VM, slots, 4, 0).expect("List addition");
     assert_eq!(execution.elements(sum), [one, two, two, one, one, two]);
     assert_eq!(execution.elements(left), [one, two], "an operand changed");
     let copy = list_copy(&mut execution.memory, VM, left).expect("room");
@@ -31,7 +31,8 @@ fn creates_adds_and_copies_lists() {
     assert_eq!(execution.elements(copy), [one, two]);
     let text = execution.string("x");
     let slots = execution.root(&[text, left]);
-    assert!(concat(&mut execution.memory, VM, slots, 2).is_err());
+    let error = concat(&mut execution.memory, VM, slots, 2, 0).expect("room");
+    assert_eq!(execution.error_kind(error), "TypeError");
 }
 
 /// Keeps every List and element alive while allocating under constant collection.
@@ -43,7 +44,7 @@ fn builds_lists_while_collecting_at_every_allocation() {
     let mut list = execution.list(&[text]);
     for _ in 0..50 {
         let slots = execution.root(&[list, text]);
-        list = concat(&mut execution.memory, VM, slots, 2).expect("List addition");
+        list = concat(&mut execution.memory, VM, slots, 2, 0).expect("List addition");
         execution.root(&[list]);
     }
     let elements = execution.elements(list);
@@ -63,20 +64,30 @@ fn accesses_list_elements_and_fields() {
     let (one, two) = (Execution::int(1), Execution::int(2));
     let list = execution.list(&[one, two]);
     let memory = &mut execution.memory;
-    assert_eq!(index_get(memory, VM, list, Execution::int(1)), Ok(two));
+    assert_eq!(index_get(memory, VM, list, Execution::int(1)), Some(two));
+    for (index, message) in [
+        (Execution::int(2), "List index is outside the List bounds"),
+        (
+            Execution::int(-1),
+            "List index requires a non-negative Int value",
+        ),
+        (
+            ValueRef::TRUE.raw(),
+            "List index requires a non-negative Int value",
+        ),
+    ] {
+        let error = index_get(&mut execution.memory, VM, list, index).expect("room");
+        let (fatal, kind, text, data) = execution.error(error);
+        assert_eq!(
+            (fatal, kind.as_str(), text.as_str(), data),
+            (false, "IndexError", message, index)
+        );
+    }
+    let memory = &mut execution.memory;
     assert_eq!(
-        index_get(memory, VM, list, Execution::int(2)),
-        Err(AccessError::OutOfBounds)
+        index_set(memory, VM, list, Execution::int(0), two),
+        Some(two)
     );
-    assert_eq!(
-        index_get(memory, VM, list, Execution::int(-1)),
-        Err(AccessError::InvalidIndex)
-    );
-    assert_eq!(
-        index_get(memory, VM, list, ValueRef::TRUE.raw()),
-        Err(AccessError::InvalidIndex)
-    );
-    assert_eq!(index_set(memory, VM, list, Execution::int(0), two), Ok(()));
     assert_eq!(execution.elements(list), [two, two]);
     let point = execution.typed_object(&["x", "y"], &[one, ValueRef::NONE.raw()]);
     let (x, y, z) = (
@@ -85,19 +96,27 @@ fn accesses_list_elements_and_fields() {
         execution.string("z"),
     );
     let memory = &mut execution.memory;
-    assert_eq!(property_get(memory, VM, point, x), Ok(one));
-    assert_eq!(property_get(memory, VM, point, z), Ok(ValueRef::NONE.raw()));
-    assert_eq!(property_set(memory, VM, point, y, two), Ok(()));
-    assert_eq!(index_get(memory, VM, point, y), Ok(two));
-    assert_eq!(property_set(memory, VM, point, z, two), Ok(()));
-    assert_eq!(property_get(memory, VM, point, z), Ok(two));
+    assert_eq!(property_get(memory, VM, point, x), Some(one));
     assert_eq!(
-        property_get(memory, VM, point, one),
-        Err(AccessError::InvalidKey)
+        property_get(memory, VM, point, z),
+        Some(ValueRef::NONE.raw())
     );
+    assert_eq!(property_set(memory, VM, point, y, two), Some(two));
+    assert_eq!(index_get(memory, VM, point, y), Some(two));
+    assert_eq!(property_set(memory, VM, point, z, two), Some(two));
+    assert_eq!(property_get(memory, VM, point, z), Some(two));
+    let error = property_get(memory, VM, point, one).expect("room");
     assert_eq!(
-        property_get(memory, VM, list, x),
-        Err(AccessError::NotAccessible)
+        execution.error(error).2,
+        "Object keys and method names require a String value"
+    );
+    // A property of a List is an index with a String, which is no valid List index.
+    let error = property_get(&mut execution.memory, VM, list, x).expect("room");
+    assert_eq!(execution.error_kind(error), "IndexError");
+    let error = property_get(&mut execution.memory, VM, one, x).expect("room");
+    assert_eq!(
+        execution.error(error).2,
+        "index access requires a Bytes, List, or Object receiver"
     );
 }
 

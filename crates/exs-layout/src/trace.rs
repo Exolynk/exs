@@ -65,6 +65,7 @@ const ERROR_VALUES: &[u32] = &[
     offset(offset_of!(ErrorObject, kind)),
     offset(offset_of!(ErrorObject, message)),
     offset(offset_of!(ErrorObject, data)),
+    offset(offset_of!(ErrorObject, cause)),
 ];
 /// Address fields of Errors.
 const ERROR_ADDRESSES: &[u32] = &[offset(offset_of!(ErrorObject, trace))];
