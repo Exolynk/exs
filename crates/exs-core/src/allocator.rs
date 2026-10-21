@@ -75,8 +75,12 @@ fn allocate_cell(memory: &mut impl Memory, vm: Vm, class: usize) -> Option<u32> 
     if vm.free_head(memory, class) == 0 && over_threshold(memory, vm) {
         collect(memory, vm.0);
     }
-    if vm.free_head(memory, class) == 0 {
-        refill_class(memory, vm, class)?;
+    if vm.free_head(memory, class) == 0 && refill_class(memory, vm, class).is_none() {
+        // Memory cannot grow any more: collecting may free cells or whole pages.
+        collect(memory, vm.0);
+        if vm.free_head(memory, class) == 0 {
+            refill_class(memory, vm, class)?;
+        }
     }
     let cell = vm.free_head(memory, class);
     vm.set_free_head(memory, class, memory.load_u32(cell + FREE_NEXT));
@@ -142,7 +146,14 @@ fn allocate_large(memory: &mut impl Memory, vm: Vm, size: u32) -> Option<(u32, u
         collect(memory, vm.0);
     }
     let pages = size.checked_add(PAGE_HEADER_SIZE)?.div_ceil(PAGE_SIZE);
-    let page = take_pages(memory, vm, pages)?;
+    let page = match take_pages(memory, vm, pages) {
+        Some(page) => page,
+        None => {
+            // Memory cannot grow any more: collecting may free a run of pages.
+            collect(memory, vm.0);
+            take_pages(memory, vm, pages)?
+        }
+    };
     write_run(
         memory,
         page,

@@ -10,7 +10,7 @@ use exs_abi::{
     RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
     SourcePositionId, builtin_host_operation,
 };
-use wasmtime::{Caller, Extern, Linker, ResourceLimiter, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Caller, Extern, Linker, ResourceLimiter};
 
 use crate::limits::ExecutionLimits;
 use crate::{
@@ -49,7 +49,7 @@ pub(crate) struct HostAbiState {
     /// Monotonic instant at which this root execution must time out.
     deadline_at: Instant,
     /// Wasmtime-owned resource limiter for this instance's linear memory.
-    store_limits: StoreLimits,
+    store_limits: crate::guest_limiter::GuestLimiter,
     /// The most recent hard-limit violation reported through a Wasm import.
     limit_violation: Option<LimitKind>,
     /// Whether the module uses the direct boundary of runtime v2, which takes host responses
@@ -77,14 +77,7 @@ impl HostAbiState {
             active_tasks: 0,
             host_calls_started: 0,
             pending_host_calls: 0,
-            store_limits: StoreLimitsBuilder::new()
-                .memory_size(limits.max_memory_bytes)
-                .table_elements(limits.max_table_elements)
-                .instances(1)
-                .tables(limits.max_tables)
-                .memories(limits.max_memories)
-                .trap_on_grow_failure(true)
-                .build(),
+            store_limits: crate::guest_limiter::GuestLimiter::new(&limits),
             limits,
             execution_started_at,
             deadline_at,
@@ -98,9 +91,16 @@ impl HostAbiState {
         self.direct
     }
 
-    /// Makes the module take host responses as images of the direct boundary.
+    /// Makes the module take host responses as images of the direct boundary, and lets its
+    /// memory refuse to grow beyond the limit so its collector can reclaim memory first.
     pub(crate) fn use_direct_boundary(&mut self) {
         self.direct = true;
+        self.store_limits.refuse_memory_growth();
+    }
+
+    /// Returns whether the module's memory refused to grow beyond the limit.
+    pub(crate) const fn memory_refused(&self) -> bool {
+        self.store_limits.memory_refused()
     }
 
     /// Removes every pending host future together with its runtime-assigned identifier.

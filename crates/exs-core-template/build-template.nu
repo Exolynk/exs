@@ -13,7 +13,7 @@ $env.RUSTFLAGS = if ($rustflags | is-empty) {
 } else {
   $"($rustflags) ($remap_flag)"
 }
-cargo rustc -p exs-core-template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory
+cargo rustc -p exs-core-template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory -C link-arg=-zstack-size=262144
 
 let template = ($crate_dir | path join "exs-core-template.wasm")
 cp target/wasm32-unknown-unknown/release/exs_core_template.wasm $template

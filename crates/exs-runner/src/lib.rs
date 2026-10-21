@@ -37,6 +37,8 @@ mod deadline;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod direct;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod guest_limiter;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_abi;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod host_function;
@@ -439,6 +441,8 @@ fn execution_error(
     }
     match store.data_mut().take_limit_violation() {
         Some(kind) => RunnerError::LimitExceeded(kind),
+        // A module whose memory refused to grow traps once nothing is left to reclaim.
+        None if store.data().memory_refused() => RunnerError::LimitExceeded(LimitKind::Memory),
         None => wasmtime_error(error),
     }
 }
