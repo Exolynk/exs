@@ -4,7 +4,7 @@ Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-p
 linking) are done and phase 2 got its go; phase 3 is done except programs with more than
 65,534 nominal types; phase 4 is done except one test under a 2 MiB memory limit; phase 5 is
 done (section 12x). Both remaining gaps are closed, so every runner suite passes on v2 (section
-12y). See sections 12 to 12y.
+12y), and the optional optimizations are done (section 12z). See sections 12 to 12z.
 
 ## 1. Goal
 
@@ -204,25 +204,12 @@ Each phase ends with measurement and an explicit go / no-go.
 
 ### Later work outside the phases
 
-- **Template diet.** The template's initialized data (about 15.4 KB after phase 3) leaves a
-  program less than 1 KB of static data before its span starts a second 16 KiB block, which
-  costs 16,384 fuel on every execution (sections 12j, 12q and 12r; `for_range` and
-  `format_loop` already pay it). The template's data is mostly about 400 small panic
-  locations and panic or formatting texts, plus `core::fmt`'s float table `CACHED_POW10`
-  (1.3 KB), a libm square-root table and the Unicode whitespace table. Levers: panic-free
-  indexing (`get` instead of `[]`, no `unwrap`), an own float formatter like the table-free
-  `Float::parse`, replacing the small tables, and moving the uninitialized VM state block out
-  of the initialized span (a memory layout change). Goal: typical programs stay in one block
-  with margin. To be planned and approved separately.
-- **Input adoption.** Adopting an image builds every Object key as a new String and walks
-  the shape transitions per entry, so 200 small records still cost about 8,000 fuel each
-  (section 12x). Interning keys the program knows statically is the lever.
 - **CBOR in the core library.** The template no longer links the CBOR codec; the core keeps
   it for the browser runner and `exs-guest` (phase 6), but its decoder does not create host
   enums yet.
-- **Resumable loop overhead.** A loop in a resumable function loads and stores frame slots
-  for every operation, so `async_int_while_1000` is only 3 % below v1 (section 12w); keeping
-  values of one state machine in locals between suspension points is the lever.
+- **Data span.** The uninitialized VM state block (356 bytes) still lies inside the
+  initialized data span, because generated code needs its address before the size of the
+  program's static data is known (section 12z).
 
 ## 12. Phase 0 results
 
@@ -1097,6 +1084,49 @@ variadic entries, excess arguments and host enums in every operation listed abov
 | every other runner suite | all | all |
 
 The fuel suite on v2 is unchanged.
+
+## 12z. Optional optimizations: template diet, input adoption and resumable loops
+
+- **How data costs fuel:** measured with Wasmtime directly, initialized data costs 16,384 fuel
+  per 16 KiB page between the first and the last initialized byte, whatever lies between
+  (the host's page size on this machine). Template data, the VM state block and the
+  program's static data form one span, and 6 of the 18 fuel scenarios spanned two pages.
+- **Template diet:** Floats render with a table-free shortest-digit formatter on exact big
+  integers, a port of the Steele and White algorithm Rust falls back on, byte for byte like
+  Rust's `{}` (native tests: edge cases, every power of two and 1.2 million random values;
+  `backend_v2.rs` compares with v1). The template no longer links Grisu, `CACHED_POW10` and
+  the Dragon tables. The last 22 panic sites, mostly in the big-integer code, are
+  panic-free, which drops the panic locations, messages and digit table. The template's
+  data shrinks from 15,494 to 11,169 bytes, leaving programs about 4.8 KB of static data in
+  the first page; every scenario now fits one page.
+- **Input adoption:** an adopted Object whose key sequence an earlier Object already had
+  shares the shape's key Strings, found by the shape lookup it needs anyway; keys are
+  appended without a second search, and Strings compare eight bytes at a time. A sorted
+  table of the program's static keys with a binary search was measured first: it cost more
+  than copying the keys, so it was dropped.
+- **Operators and resumable loops:** binary operators use a plain binding's own local as an
+  operand when the following operands run no statements, instead of copying it into a new
+  rooted local, in synchronous and resumable code alike. In step functions, slots that only
+  one constant operation writes are read as constants and never stored, and an operation
+  that continues with the following state falls through instead of branching.
+
+| Fuel (v2) | before | after | v1 |
+|---|---:|---:|---:|
+| `for_range_1000` | 63,773 | 47,378 | 109,602 |
+| `async_int_loop_100` | 53,973 | 35,578 | 88,929 |
+| `async_int_while_1000` | 356,301 | 275,044 | 367,762 |
+| `async_empty_while_1000` | 163,284 | 133,035 | 204,743 |
+| `int_loop_1000` | 235,377 | 210,356 | 266,620 |
+| `sync_call_loop_1000` | 237,377 | 217,356 | 292,614 |
+| `list_churn_6000` | 3,505,145 | 3,385,124 | 7,789,101 |
+| `concat_100_objects` | 347,613 | 311,453 | 568,365 |
+| `format_loop_1000` | 1,790,557 | 1,736,492 | 2,201,848 |
+| `datetime_roundtrip_100` | 3,311,089 | 3,159,571 | 5,597,206 |
+| `record_roundtrip_20` | 2,048,591 | 1,882,224 | 4,255,698 |
+| 200 records as input only | 1,629,274 | 1,371,653 | 2,342,137 |
+
+Every v2 scenario now costs less fuel than v1, from 21 % (`int_loop_1000`, `format_loop_1000`) to 77 %
+(`resumable_call_loop_100`), and every runner suite passes on v2.
 
 ## 13. Risks and open questions
 
