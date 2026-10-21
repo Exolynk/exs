@@ -1,7 +1,8 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done; see sections 12 to 12g. Phase 2 awaits its go / no-go decision.
+linking) are done and phase 2 got its go; phase 3 is in progress (3a done). See sections 12 to
+12h.
 
 ## 1. Goal
 
@@ -501,6 +502,58 @@ The trace costs about 40 fuel per direct call: sync calls rose from 196,001 to 2
 Every measured workload is cheaper in v2, with the largest gains on property access, literals
 and Lists, which meets phase 2's exit criterion. String building gains least, because the
 core still copies byte by byte.
+
+## 12h. Phase 3a results
+
+Phase 3 is split into 3a (measurement and formatted strings), 3b (built-in methods and Bytes),
+3c (enums, `match`, `is`, `std::Ordering` and wire decoding of `let` annotations), 3d
+(implementation methods, traits and operator traits, `ToString`, `Range` values), 3e (closures,
+Cells and variadic parameters) and 3f (Iterators).
+
+- **Test switch:** `EXS_TEST_BACKEND=v2` makes the runner's shared test support compile with
+  the v2 backend, so every existing suite measures v2 unchanged. E0600 now names the
+  unsupported expression kind.
+- **Formatted strings** render like v1: Strings and scalars as with `+`, every other value
+  with v1's default text (`None`, `[]`, `{}`, `Error`), through one `__exs_core_format` call
+  that never fails.
+- **Protocol guards:** v1 dispatches operators to nominal `Add`, `Sub`, `Mul`, `Div` and
+  `Compare` implementations and formatted-string parts to `ToString` implementations. v2 does
+  not compile implementation methods yet and silently applied the built-in behavior; it now
+  traps on exactly those receivers until 3d.
+
+Suites on v2 (v1 passes all of them):
+
+| Suite | v2 passed | v2 failed |
+|---|---:|---:|
+| `runtime_values` | 26 | 70 |
+| `protocols_and_nominal` | 3 | 24 |
+| `contracts_and_errors` | 8 | 7 |
+| `closures_parallel` | 1 | 16 |
+| `limits` | 9 | 2 |
+| `fuel` | 8 | 10 |
+| `continuations` (phase 4) | 0 | 18 |
+| `host_calls` (phases 4 and 5) | 2 | 29 |
+
+No failing test produces a different value than v1; each one is a compile error or a trap.
+Compile errors across the non-async suites, by cause:
+
+| Unsupported | Tests | Phase |
+|---|---:|---|
+| method calls | 41 | 3b, 3d |
+| enum and List element type contracts | 18 | 3c |
+| static method calls | 15 | 3b, 3d |
+| closures | 10 | 3e |
+| Host operations | 9 | 4, 5 |
+| parallel expressions | 7 | 4 |
+| `is` type tests | 5 | 3c |
+| enum values, `match` | 7 | 3c |
+| calls of prelude functions | 4 | 3d |
+| calls of local bindings, variadic parameters | 3 | 3e |
+| Bytes literals | 1 | 3b |
+| more than 65,534 nominal types | 1 | open |
+
+The traps are Bytes and Error runner inputs (phase 5 and 3b), the guarded trait
+implementations (3d) and literal Range bounds outside `i32` (3f).
 
 ## 13. Risks and open questions
 

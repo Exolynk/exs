@@ -434,3 +434,14 @@ pub extern "C" fn __exs_core_arity_error(vm: i32) -> i64 {
         Err(_) => trap(),
     }
 }
+
+/// Renders `slots[0..count]` into one String like v1's formatted strings.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_format(vm: i32, slots: i32, count: i32) -> i64 {
+    value(exs_core::format(
+        &mut memory(),
+        address(vm),
+        address(slots),
+        address(count),
+    ))
+}

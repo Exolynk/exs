@@ -378,3 +378,41 @@ fn matches_v1_for_errors_while_collecting() {
     let source = "fn fail(index) { ret \"n\" + index + None; } fn main(limit: Int) { let kept = []; let index = 0; let countdown = 0; while index < limit { let error = fail(index); if countdown == 0 { kept = kept + [error]; countdown = 2000; } countdown = countdown - 1; index = index + 1; } ret kept; }";
     compare(source, &[ExsValue::Int(20_000)]);
 }
+
+/// Renders every value in formatted strings like v1, including None, Lists, Objects and Errors.
+#[test]
+fn matches_v1_for_formatted_strings() {
+    let programs = [
+        r#"fn main() { ret f"none {None}, list {[1, 2]}, object {{ a: 1 }}, flag {true}"; }"#,
+        r#"type Point { x: Int } fn main() { let error = 1 + "a"; ret f"{Point { x: 1 }} {error} {-2.5} {9223372036854775807}"; }"#,
+        r#"fn main() { ret f"{""}{"ä"}{1}"; }"#,
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+}
+
+/// Traps instead of silently bypassing operator and `ToString` implementations, which v2 does
+/// not dispatch yet.
+#[test]
+fn traps_on_undispatched_trait_implementations() {
+    let programs = [
+        "type Number { value: Int } impl Add for Number { fn add(self, other: Any) -> Any { ret Number { value: self.value + other.value }; } } fn main() { let one = Number { value: 1 }; ret one + one; }",
+        "type Number { value: Int } impl ToString for Number { fn to_string(self) -> String { ret \"n\"; } } fn main() { ret f\"{Number { value: 1 }}\"; }",
+    ];
+    for program in programs {
+        let compiled = compile_with_backend(
+            SourceInput {
+                source_id: "test.exs",
+                text: program,
+            },
+            CompileOptions::default(),
+            Backend::V2,
+        )
+        .expect("v2 compiles the program");
+        let runner = ServerRunner::default();
+        let outcome =
+            block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+        assert!(outcome.is_err(), "v2 did not trap on:\n{program}");
+    }
+}

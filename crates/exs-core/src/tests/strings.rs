@@ -106,3 +106,22 @@ fn compares_strings() {
         Ok(true)
     );
 }
+
+/// Renders every value like v1's formatted strings, using default texts for non-scalars.
+#[test]
+fn formats_every_value_with_default_texts() {
+    let mut execution = super::execution::Execution::new();
+    let prefix = execution.string("v: ");
+    let list = execution.list(&[ValueRef::TRUE.raw()]);
+    let values = [
+        prefix,
+        ValueRef::NONE.raw(),
+        list,
+        ValueRef::small_int(-4).expect("small").raw(),
+        ValueRef::FALSE.raw(),
+    ];
+    let slots = execution.root(&values);
+    let formatted =
+        crate::format(&mut execution.memory, VM, slots, values.len() as u32).expect("room");
+    assert_eq!(execution.text(formatted), "v: None[]-4false");
+}

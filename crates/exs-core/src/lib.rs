@@ -26,6 +26,7 @@ mod memory;
 mod numbers;
 mod objects;
 mod pages;
+mod render;
 mod shapes;
 mod strings;
 mod typed;
@@ -55,6 +56,6 @@ pub use numbers::{
 };
 pub use objects::{object_lookup, object_with_shape};
 pub use shapes::shape_for;
-pub use strings::{concat, string_object};
+pub use strings::{concat, format, string_object};
 pub use values::{compare, equal};
 pub use vm::{collection_count, set_heap_flags, set_program_types, set_root_ranges};

@@ -15,6 +15,7 @@ use crate::errors::recoverable;
 use crate::lists::{list_add, list_object};
 use crate::memory::Memory;
 use crate::numbers::{Arithmetic, Number, arithmetic, number, reference};
+use crate::render::default_text;
 use crate::vm::Vm;
 
 /// Byte offset of [`StringObject::len`].
@@ -115,6 +116,8 @@ enum Part {
     String(u32),
     /// A Bool, Int or Float rendered with `core::fmt`.
     Scalar(Scalar),
+    /// The fixed ASCII default rendering of another value.
+    Text(&'static str),
 }
 
 /// A scalar value that renders as text.
@@ -218,6 +221,12 @@ fn part(memory: &impl Memory, raw: u64) -> Option<Part> {
     }))
 }
 
+/// Returns how one value renders in a formatted string: like a `+` operand where possible,
+/// otherwise with its default text.
+fn default_part(memory: &impl Memory, raw: u64) -> Option<Part> {
+    Some(part(memory, raw).unwrap_or(Part::Text(default_text(raw))))
+}
+
 /// Returns the byte and character length of one part.
 fn part_size(memory: &impl Memory, part: Part) -> (u32, u32) {
     match part {
@@ -226,7 +235,23 @@ fn part_size(memory: &impl Memory, part: Part) -> (u32, u32) {
             let len = scalar.len();
             (len, len)
         }
+        Part::Text(text) => (text.len() as u32, text.len() as u32),
     }
+}
+
+/// Renders `slots[0..count]` into one String like v1's formatted strings: Strings and scalars
+/// as with `+`, every other value with its default text, so formatting never fails.
+///
+/// The slots must be rooted. Returns `None` when memory is exhausted.
+pub fn format(memory: &mut impl Memory, vm: u32, slots: u32, count: u32) -> Option<u64> {
+    let (mut len, mut chars) = (0_u32, 0_u32);
+    for index in 0..count {
+        let part = default_part(memory, memory.load_u64(slots + index * 8))?;
+        let (part_len, part_chars) = part_size(memory, part);
+        len = len.checked_add(part_len)?;
+        chars = chars.checked_add(part_chars)?;
+    }
+    join(memory, vm, slots, count, len, chars, default_part)
 }
 
 /// Message of the TypeError for a `+` operand a String cannot render.
@@ -279,7 +304,7 @@ pub fn concat(
                 index += 1;
                 recoverable(memory, vm, "TypeError", NOT_RENDERABLE, right)?
             } else {
-                let joined = join(memory, vm, slots, end, len, chars)?;
+                let joined = join(memory, vm, slots, end, len, chars, part)?;
                 index = end;
                 joined
             }
@@ -298,27 +323,29 @@ pub fn concat(
     Some(memory.load_u64(slots))
 }
 
-/// Joins the String in `slots[0]` with the renderable operands `slots[1..end]`, measured as
-/// `len` bytes and `chars` characters, into one String.
-fn join(
-    memory: &mut impl Memory,
+/// Joins the parts `slots[0..end]`, rendered by `render` and measured as `len` bytes and
+/// `chars` characters, into one String.
+fn join<M: Memory>(
+    memory: &mut M,
     vm: u32,
     slots: u32,
     end: u32,
     len: u32,
     chars: u32,
+    render: fn(&M, u64) -> Option<Part>,
 ) -> Option<u64> {
     let object = allocate_string(memory, vm, len, chars)?;
     let mut position = object + DATA;
     for index in 0..end {
         // Allocation never moves objects, so the parts read here are the ones measured above.
-        match part(memory, memory.load_u64(slots + index * 8))? {
+        match render(memory, memory.load_u64(slots + index * 8))? {
             Part::String(source) => {
                 let source_len = byte_len(memory, source);
                 memory.copy(position, source + DATA, source_len);
                 position += source_len;
             }
             Part::Scalar(scalar) => position = scalar.write(memory, position),
+            Part::Text(text) => position = write_bytes(memory, position, text.as_bytes()),
         }
     }
     string_reference(object)

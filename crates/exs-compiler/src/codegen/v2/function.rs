@@ -14,6 +14,7 @@ use exs_layout::VmState;
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
 use super::errors::emit_push_trace;
+use super::protocols::Protocols;
 use crate::ast::FunctionDeclaration;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::types::{TypeContract, TypeRegistry};
@@ -60,6 +61,8 @@ pub(super) struct Context<'m> {
     pub(super) positions_base: u32,
     /// The `u32` source positions of every `+` chain, back to back.
     pub(super) positions: RefCell<Vec<u32>>,
+    /// Nominal types with standard-trait implementations the backend must not bypass.
+    pub(super) protocols: &'m Protocols,
 }
 
 /// Lowering state of one function body.

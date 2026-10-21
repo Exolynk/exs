@@ -30,22 +30,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             }
             Expression::String(text, span) => self.push_string(text, *span)?,
             Expression::FormattedString { parts, span, .. } => {
-                let mut values = vec![self.static_string("", *span)?];
-                for part in parts {
-                    match part {
-                        FormattedStringPart::Text(text) => {
-                            self.push_string(text, *span)?;
-                            values.push(self.store_new());
-                        }
-                        FormattedStringPart::Expression(expression) => {
-                            self.compile_expression(expression)?;
-                            values.push(self.store_new());
-                        }
-                    }
-                }
-                // Formatted strings report their own span for every part, like v1.
-                self.set_position(*span)?;
-                self.concat_values(&values, None, *span)?;
+                self.compile_formatted(parts, *span)?
             }
             Expression::Bool(value, _) => {
                 immediate::push(&mut self.function, exs_value::ValueRef::boolean(*value));
@@ -129,7 +114,10 @@ impl<'a> FunctionCompiler<'a, '_> {
                 span,
             } => self.compile_property_get(receiver, &property.name, *span)?,
             other => {
-                return Err(unsupported(expression_span(other), "these expressions"));
+                return Err(unsupported(
+                    expression_span(other),
+                    unsupported_expression(other),
+                ));
             }
         }
         Ok(())
@@ -254,6 +242,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         right: u32,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        self.guard_operator(operator, left);
         let arithmetic = |code: i32| {
             move |compiler: &mut Self| -> Result<(), CompileDiagnostics<'a>> {
                 compiler.set_position(span)?;
@@ -395,6 +384,34 @@ impl<'a> FunctionCompiler<'a, '_> {
         Ok(())
     }
 
+    /// Compiles a formatted string like v1: text parts and expression parts in order, every
+    /// value rendered with its default text, which never fails.
+    fn compile_formatted(
+        &mut self,
+        parts: &[FormattedStringPart<'a>],
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let count = u32::try_from(parts.len())
+            .map_err(|_| error("E0212", span, "too many formatted-string parts".to_owned()))?;
+        let block = self.consecutive_locals(count.max(1));
+        for (offset, part) in (0..count).zip(parts) {
+            match part {
+                FormattedStringPart::Text(text) => self.push_string(text, span)?,
+                FormattedStringPart::Expression(expression) => {
+                    self.compile_expression(expression)?;
+                }
+            }
+            self.store(block + offset);
+            if matches!(part, FormattedStringPart::Expression(_)) {
+                self.guard_to_string(block + offset);
+            }
+        }
+        self.push_vm();
+        self.push_slot_address(block);
+        self.instruction(Instruction::I32Const(count.cast_signed()));
+        self.core_call("__exs_core_format", span)
+    }
+
     /// Compiles `!` on the `ValueRef` on the stack: a Bool flips inline, any other value is a
     /// TypeError value.
     fn compile_not(&mut self, span: SourceSpan<'a>) -> Result<(), CompileDiagnostics<'a>> {
@@ -475,16 +492,6 @@ impl<'a> FunctionCompiler<'a, '_> {
         let raw = self.static_string_value(text, span)?;
         self.instruction(Instruction::I64Const(raw.cast_signed()));
         Ok(())
-    }
-
-    /// Stores the static String of one literal in a new rooted local.
-    fn static_string(
-        &mut self,
-        text: &str,
-        span: SourceSpan<'a>,
-    ) -> Result<u32, CompileDiagnostics<'a>> {
-        self.push_string(text, span)?;
-        Ok(self.store_new())
     }
 
     /// Emits `operation` inline for two Float operands and `otherwise` for anything else.
@@ -637,6 +644,25 @@ impl<'a> FunctionCompiler<'a, '_> {
 
 /// Byte offset of the value inside a Float object.
 const FLOAT_VALUE: u64 = core::mem::offset_of!(exs_layout::FloatObject, value) as u64;
+
+/// Names the expressions of one kind the v2 backend does not compile yet.
+fn unsupported_expression(expression: &Expression<'_>) -> &'static str {
+    match expression {
+        Expression::Bytes(..) => "Bytes literals",
+        Expression::IsType { .. } => "`is` type tests",
+        Expression::Match { .. } => "`match` expressions",
+        Expression::Closure { .. } => "closures",
+        Expression::ParallelStatic { .. } | Expression::ParallelDynamic { .. } => {
+            "parallel expressions"
+        }
+        Expression::HostCall { .. }
+        | Expression::HostStream { .. }
+        | Expression::HostTime { .. } => "Host operations",
+        Expression::MethodCall { .. } => "method calls",
+        Expression::StaticMethodCall { .. } => "static method calls",
+        _ => "these expressions",
+    }
+}
 
 /// Returns the source span of one expression.
 pub(super) fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {

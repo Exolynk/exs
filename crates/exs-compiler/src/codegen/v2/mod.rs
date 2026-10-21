@@ -12,6 +12,7 @@ mod expressions;
 mod function;
 mod linker;
 mod objects;
+mod protocols;
 mod reachability;
 mod statements;
 mod static_keys;

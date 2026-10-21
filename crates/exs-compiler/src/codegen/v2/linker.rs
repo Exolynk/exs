@@ -19,6 +19,7 @@ use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 
 use super::entry::EntryLayout;
 use super::function::{Context, FunctionCompiler, FunctionInfo, error};
+use super::protocols::Protocols;
 use super::reachability::{object_key_lists, reachable_functions, string_literals};
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
@@ -171,6 +172,7 @@ pub(in crate::codegen) fn compile<'a>(
         )
     })?;
     let source_map = SourceMap::collect(module);
+    let protocols = Protocols::build(module, traits, &types);
     let positions_base = static_keys.end();
     let base = facts.imported_functions + facts.defined_functions;
     let mut program = Program {
@@ -227,6 +229,7 @@ pub(in crate::codegen) fn compile<'a>(
         source_map: &source_map,
         positions_base,
         positions: RefCell::new(Vec::new()),
+        protocols: &protocols,
     };
     for function in &functions {
         let arity = function.parameters.len();
