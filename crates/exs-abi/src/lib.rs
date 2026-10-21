@@ -192,6 +192,9 @@ pub const HOST_IMPORT_MODULE: &str = "exs";
 pub const RUNNER_IMPORT_MODULE: &str = "runner";
 /// The generic runner import that starts one host call.
 pub const HOST_CALL_START_IMPORT: &str = "__exs_host_call_start";
+/// The runner import of runtime v2 modules that starts one host call with the arguments as a
+/// List value the runner reads from module memory.
+pub const HOST_CALL_START_VALUE_IMPORT: &str = "__exs_host_call_start_value";
 /// The runner import returning one ready host response byte length.
 pub const HOST_CALL_RESPONSE_LENGTH_IMPORT: &str = "__exs_host_call_response_len";
 /// The runner import copying one ready host response into Wasm linear memory.
@@ -262,3 +265,6 @@ pub const HOST_CALL_READY: i32 = 0;
 pub const HOST_CALL_PENDING: i32 = 1;
 /// A host call failed at the runner-technical layer.
 pub const HOST_CALL_FATAL: i32 = 2;
+/// The arguments of a direct-boundary host call cannot cross the boundary; the module reports
+/// v1's recoverable SerializationError instead of calling.
+pub const HOST_CALL_UNSUPPORTED: i32 = 3;

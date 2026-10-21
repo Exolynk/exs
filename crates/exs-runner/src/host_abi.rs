@@ -6,9 +6,9 @@ use std::time::Instant;
 use exs_abi::{
     BuiltinHostOperation, ErrorSeverity, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
     HOST_CALL_RESPONSE_COPY_IMPORT, HOST_CALL_RESPONSE_LENGTH_IMPORT, HOST_CALL_START_IMPORT,
-    HOST_IMPORT_MODULE, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
-    RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY, SourcePositionId,
-    builtin_host_operation,
+    HOST_CALL_START_VALUE_IMPORT, HOST_CALL_UNSUPPORTED, HOST_IMPORT_MODULE, RUNNER_IMPORT_MODULE,
+    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
+    SourcePositionId, builtin_host_operation,
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter, StoreLimits, StoreLimitsBuilder};
 
@@ -351,6 +351,11 @@ pub(crate) fn define(linker: &mut Linker<HostAbiState>) -> Result<(), wasmtime::
     linker.func_wrap(HOST_IMPORT_MODULE, HOST_CALL_START_IMPORT, host_call_start)?;
     linker.func_wrap(
         HOST_IMPORT_MODULE,
+        HOST_CALL_START_VALUE_IMPORT,
+        host_call_start_value,
+    )?;
+    linker.func_wrap(
+        HOST_IMPORT_MODULE,
         HOST_CALL_RESPONSE_LENGTH_IMPORT,
         host_call_response_length,
     )?;
@@ -413,6 +418,71 @@ fn host_call_start(
     )?;
     let arguments = decode_arguments_with_limits(&request, limits.cbor_limits())
         .map_err(|error| host_cbor_error(&mut caller, error))?;
+    dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
+}
+
+/// Starts one dynamically resolved host call of a runtime v2 module, whose arguments the
+/// runner reads as the List value `arguments` from the module's memory with its VM state
+/// block at `vm`. Returns `HOST_CALL_UNSUPPORTED` without starting the call when the
+/// arguments cannot cross the boundary.
+fn host_call_start_value(
+    mut caller: Caller<'_, HostAbiState>,
+    call_id: i64,
+    name_pointer: i32,
+    name_length: i32,
+    arguments: i64,
+    vm: i32,
+    source_position: i32,
+) -> Result<i32, wasmtime::Error> {
+    let limits = caller.data().limits.clone();
+    let request = match crate::direct::encode(
+        memory(&mut caller)?.data(&caller),
+        vm.cast_unsigned(),
+        arguments.cast_unsigned(),
+        limits.max_cbor_payload_bytes,
+    ) {
+        Ok(request) => request,
+        Err(crate::direct::ReadError::Unsupported(_)) => return Ok(HOST_CALL_UNSUPPORTED),
+        Err(crate::direct::ReadError::TooLarge) => {
+            caller
+                .data_mut()
+                .report_limit_violation(LimitKind::CborPayload);
+            return Err(wasmtime::Error::msg(
+                "host-call payload exceeds configured limit",
+            ));
+        }
+        Err(crate::direct::ReadError::Malformed) => {
+            return Err(wasmtime::Error::msg(
+                "host-call arguments lie outside linear memory",
+            ));
+        }
+    };
+    caller.data_mut().starting_stream_id = None;
+    if !caller.data_mut().start_host_call() {
+        return Err(wasmtime::Error::msg("host-call limit exceeded"));
+    }
+    let name_bytes = read_memory(
+        &mut caller,
+        name_pointer,
+        name_length,
+        limits.max_cbor_payload_bytes,
+    )?;
+    let name = std::str::from_utf8(&name_bytes)
+        .map_err(|_| wasmtime::Error::msg("host function name is not valid UTF-8"))?;
+    let arguments = decode_arguments_with_limits(&request, limits.cbor_limits())
+        .map_err(|error| host_cbor_error(&mut caller, error))?;
+    dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
+}
+
+/// Starts the host call `call_id` of the function `name` with the decoded `arguments`, reported
+/// at `source_position`, and records its ready result or future.
+fn dispatch_host_call(
+    caller: &mut Caller<'_, HostAbiState>,
+    call_id: i64,
+    name: &str,
+    arguments: Vec<ExsValue>,
+    source_position: i32,
+) -> Result<i32, wasmtime::Error> {
     let origin = u32::try_from(source_position).ok().map(SourcePositionId);
 
     let call = match builtin_host_operation(name) {
@@ -439,7 +509,7 @@ fn host_call_start(
     };
     match call {
         Ok(crate::HostCall::Ready(value)) => {
-            store_ready_response(&mut caller, call_id, value)?;
+            store_ready_response(caller, call_id, value)?;
             Ok(HOST_CALL_READY)
         }
         Ok(crate::HostCall::Pending(future)) => {
@@ -471,7 +541,7 @@ fn host_call_start(
             Ok(HOST_CALL_PENDING)
         }
         Err(RegistryError::UnknownName(name)) => {
-            store_ready_response(&mut caller, call_id, missing_host_error(name, origin))?;
+            store_ready_response(caller, call_id, missing_host_error(name, origin))?;
             Ok(HOST_CALL_READY)
         }
         Err(error) => Err(wasmtime::Error::msg(format!(

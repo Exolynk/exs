@@ -837,6 +837,9 @@ fn matches_v1_for_host_calls() {
         r#"fn main() { let values = []; for value in Countdown { left: 3 } { values.push(value); } ret values; }"#,
         r#"fn main() { let seen = []; let index = 0; while index < 3 { if Host::call("echo", index) == 1 { index = index + 1; continue; } seen.push(index); index = index + 1; } ret seen; }"#,
         r#"fn main(limit: Int) { Host::call("echo", 1); ret limit; }"#,
+        r#"fn main() { let f = () => { ret 1; }; ret [Host::call("echo", f), Host::call("echo", [1, { g: f }]), 2]; }"#,
+        r#"fn main() { let list = [1]; list.push(list); ret [Host::call("echo", list), Host::call("add", 1, 2)]; }"#,
+        r#"fn main() { ret Host::call("echo", { a: [1.5, b"x", None, Error("K", "m", 1)], e: Ordering::Greater }); }"#,
     ];
     for program in programs {
         compare(&format!("{counter} {program}"), &[]);

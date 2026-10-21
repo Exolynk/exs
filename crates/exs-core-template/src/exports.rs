@@ -588,13 +588,13 @@ pub extern "C" fn __exs_core_range_finish(range: i64, range_type: i32, cursor: i
 
 #[link(wasm_import_module = "exs")]
 unsafe extern "C" {
-    /// Starts one host call through the runner.
-    fn __exs_host_call_start(
+    /// Starts one host call through the runner, which reads the arguments from memory.
+    fn __exs_host_call_start_value(
         call_id: i64,
         name_pointer: i32,
         name_length: i32,
-        request_pointer: i32,
-        request_length: i32,
+        arguments: i64,
+        vm: i32,
         source_position: i32,
     ) -> i32;
     /// Returns the byte length of one ready host response.
@@ -612,18 +612,18 @@ impl exs_core::Host for RunnerHost {
         call_id: u64,
         name: u32,
         name_len: u32,
-        request: u32,
-        request_len: u32,
+        arguments: u64,
+        vm: u32,
         position: u32,
     ) -> i32 {
         // SAFETY: the runner provides the host-call imports for every module.
         unsafe {
-            __exs_host_call_start(
+            __exs_host_call_start_value(
                 call_id.cast_signed(),
                 name.cast_signed(),
                 name_len.cast_signed(),
-                request.cast_signed(),
-                request_len.cast_signed(),
+                arguments.cast_signed(),
+                vm.cast_signed(),
                 position.cast_signed(),
             )
         }
