@@ -115,20 +115,63 @@ pub(crate) fn push_unchecked(memory: &mut impl Memory, list: u32, value: u64) {
     memory.store_u32(list + LEN, used + 1);
 }
 
-/// Returns what a `for` loop iterates over: a copy of a List, or the NotIterable Error for
-/// values that cannot be iterated.
+/// Returns what a `for` loop iterates over, like v1: a copy of a List, a List of the Unicode
+/// scalars of a String as Strings or of the octets of Bytes as Ints, an Object itself, which
+/// iterates through `Iterator::next`, or the NotIterable Error for other values.
 ///
-/// Returns `None` for Strings, Bytes and Objects, which iterate through Iterators that the v2
-/// backend does not support yet, and when memory is exhausted.
+/// Strings and Bytes never change, so their eager copy yields what v1's lazy iterators yield.
+/// Returns `None` when memory is exhausted.
 pub fn for_snapshot(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
     if list_object(raw).is_some() {
         return list_copy(memory, vm, raw);
     }
-    let kind = (raw >> exs_value::layout::KIND_SHIFT) as u32;
-    if kind & (exs_abi::TYPE_STRING | exs_abi::TYPE_BYTES | exs_abi::TYPE_OBJECT) != 0 {
-        return None;
+    if let Some(object) = crate::strings::string_object(raw) {
+        return string_scalars(memory, vm, object);
+    }
+    if let Some(object) = crate::bytes::bytes_object(raw) {
+        let count = crate::bytes::bytes_len(memory, object);
+        let list = allocate_list(memory, vm, count)?;
+        for index in 0..count {
+            let octet = crate::bytes::octets(memory, object)[index as usize];
+            push_unchecked(memory, list, ValueRef::small_int(i64::from(octet))?.raw());
+        }
+        return list_reference(list);
+    }
+    if crate::methods::is_object(memory, raw) {
+        return Some(raw);
     }
     crate::errors::not_iterable(memory, vm, raw)
+}
+
+/// Returns a new List of the Unicode scalars of the String at `object`, each a String.
+fn string_scalars(memory: &mut impl Memory, vm: u32, object: u32) -> Option<u64> {
+    let count = crate::strings::char_count(memory, object);
+    let list = allocate_list(memory, vm, count)?;
+    let state = Vm(vm);
+    let root = state.push_root(memory, list_reference(list)?)?;
+    let mut offset = 0;
+    let mut outcome = list_reference(list);
+    for _ in 0..count {
+        let text = crate::strings::text(memory, object);
+        let Some(scalar) = text
+            .get(offset as usize..)
+            .and_then(|rest| rest.chars().next())
+        else {
+            break;
+        };
+        let width = scalar.len_utf8() as u32;
+        let start = object + crate::strings::DATA + offset;
+        match crate::strings::copy_string(memory, vm, start, width, 1) {
+            Some(scalar) => push_unchecked(memory, list, scalar),
+            None => {
+                outcome = None;
+                break;
+            }
+        }
+        offset += width;
+    }
+    state.pop_roots(memory, root);
+    outcome
 }
 
 /// Sets the number of elements of the List at `list`, which must not exceed its capacity.

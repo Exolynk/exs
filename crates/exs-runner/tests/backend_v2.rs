@@ -731,6 +731,33 @@ fn matches_v1_for_closures_and_variadics() {
     compare("fn main(first, rest...) { ret [first, rest]; }", &[]);
 }
 
+/// Iterates Strings, Bytes, Range objects and Iterator implementations like v1.
+#[test]
+fn matches_v1_for_iterators() {
+    let counter = "type Countdown { left: Int } impl Iterator for Countdown { fn next(self) -> IteratorStep | Error { if self.left == 0 { ret IteratorStep::Done; } self.left = self.left - 1; ret IteratorStep::Item(self.left); } } type Broken {} impl Iterator for Broken { fn next(self) -> IteratorStep | Error { ret 5; } } type Failing {} impl Iterator for Failing { fn next(self) -> IteratorStep | Error { ret Error(\"K\", \"m\", None); } }";
+    let programs = [
+        r#"fn main() { let parts = []; for scalar in "aé𝄞" { parts.push(scalar); } for octet in b"hi" { parts.push(octet); } ret parts; }"#,
+        "fn main() { let values = []; for value in Range::step(0, 10, 3) { values.push(value); } for value in Range::step_through(10, 0, -5) { values.push(value); } ret values; }",
+        "fn main() { let range = 0..5; let seen = []; for value in range { seen.push(value); if value == 2 { break; } } for value in range { seen.push(value); } ret [seen, range.current, range.done]; }",
+        "fn main() { let range = 0..=3; let seen = []; for value in range { seen.push([value, range.current]); } ret seen; }",
+        "fn main() { let range = 0..4; for value in range { range.end = 2; } ret [range.current, range.done]; }",
+        "fn main() { let values = []; for value in Countdown { left: 3 } { values.push(value); } ret values; }",
+        "fn main() { let total = 0; for value in Countdown { left: 5 } { if value == 3 { continue; } if value == 1 { break; } total = total + value; } ret total; }",
+        "fn main() { for value in Broken {} { } ret 1; }",
+        "fn main() { for value in Failing {} { } ret 1; }",
+        "fn main() { for value in { a: 1 } { } ret 1; }",
+        "fn main() { for value in 5 { } ret 1; }",
+        "fn main() { let values = []; for value in -9223372036854775807..=-9223372036854775808 { values.push(value); } for value in 2147483646..2147483649 { values.push(value); } ret values; }",
+        "fn main() { for value in 0..\"x\" { } ret 1; }",
+        "fn main() { ret [(0..4).collect(), (0..4).count(), Range::step(0, 9, 4).to_list(), [3, 4].count(), Countdown { left: 2 }.collect(), (1..4).map((x) => { ret x * x; })]; }",
+        "fn main() { let values = []; for value: Int in Countdown { left: 2 } { values.push(value); } ret values; }",
+        "fn main() { let make = []; for value in Countdown { left: 3 } { make.push(() => { ret value; }); } let out = []; for f in make { out.push(f()); } ret out; }",
+    ];
+    for program in programs {
+        compare(&format!("{counter} {program}"), &[]);
+    }
+}
+
 /// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
 /// before host enums arrive.
 #[test]

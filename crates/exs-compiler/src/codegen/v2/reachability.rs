@@ -11,6 +11,7 @@ use crate::ast::{
     FunctionVisibility, MatchArmBody, ObjectProperty, Statement,
 };
 use crate::codegen::trait_registry::TraitOperator;
+use crate::codegen::types::TypeRegistry;
 
 /// Returns the public functions and every unit they can reach, in trace-id order.
 ///
@@ -22,6 +23,8 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
     units: &'u [Unit<'m, 'a>],
     dispatch: &Dispatch,
     closures: &HashMap<(String, u32, u32), String>,
+    types: &TypeRegistry,
+    declared: &HashSet<u32>,
 ) -> Vec<&'u Unit<'m, 'a>> {
     let by_key: HashMap<&str, &Unit<'m, 'a>> =
         units.iter().map(|unit| (unit.key.as_str(), unit)).collect();
@@ -33,47 +36,129 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
         })
         .map(|unit| unit.key.clone())
         .collect();
-    while let Some(key) = pending.pop() {
-        let Some(unit) = by_key.get(key.as_str()) else {
-            continue;
-        };
-        if !reached.insert(unit.key.as_str()) {
-            continue;
+    // `for` loops over Objects reach the Iterator implementations of the types the program
+    // can construct: the types it declares and the prelude types reached code builds.
+    let mut constructible = declared.clone();
+    let mut iterates = false;
+    loop {
+        while let Some(key) = pending.pop() {
+            let Some(unit) = by_key.get(key.as_str()) else {
+                continue;
+            };
+            if !reached.insert(unit.key.as_str()) {
+                continue;
+            }
+            iterates |= contains_for(&unit.declaration.body);
+            let targets = |targets: &[Target], pending: &mut Vec<String>| {
+                pending.extend(targets.iter().map(|target| target.key.clone()));
+            };
+            visit_block(&unit.declaration.body, &mut |expression| match expression {
+                Expression::Call { callee, .. } if !is_datetime_parser(&callee.name) => {
+                    if let Some(variant) = types.enum_variant(&callee.name) {
+                        constructible.insert(variant.type_id);
+                    }
+                    pending.push(callee.name.clone());
+                }
+                Expression::Variable(identifier) => {
+                    if let Some(variant) = types.enum_variant(&identifier.name) {
+                        constructible.insert(variant.type_id);
+                    }
+                }
+                Expression::TypedObject { type_name, .. } => {
+                    if let Some(nominal) = types.get(&type_name.name) {
+                        constructible.insert(nominal.id);
+                    }
+                }
+                Expression::StaticMethodCall {
+                    type_name, method, ..
+                } => {
+                    let key = format!("{}::{}", type_name.name, method.name);
+                    if let Some(variant) = types.enum_variant(&key) {
+                        constructible.insert(variant.type_id);
+                    }
+                    pending.push(key);
+                }
+                Expression::MethodCall { method, .. } => {
+                    targets(dispatch.instance(&method.name), &mut pending);
+                    if let Some(helper) = crate::prelude::iterator_helper(&method.name) {
+                        pending.push(helper.to_owned());
+                    }
+                }
+                Expression::Closure { span, .. } => {
+                    if let Some(key) = closures.get(&closure_span_key(*span)) {
+                        pending.push(key.clone());
+                    }
+                }
+                Expression::Binary { operator, .. } => {
+                    if let Some(operator) = TraitOperator::from_binary(*operator) {
+                        targets(dispatch.operator(operator), &mut pending);
+                    }
+                }
+                Expression::FormattedString { .. } => targets(dispatch.to_string(), &mut pending),
+                _ => {}
+            });
         }
-        let targets = |targets: &[Target], pending: &mut Vec<String>| {
-            pending.extend(targets.iter().map(|target| target.key.clone()));
-        };
-        visit_block(&unit.declaration.body, &mut |expression| match expression {
-            Expression::Call { callee, .. } if !is_datetime_parser(&callee.name) => {
-                pending.push(callee.name.clone());
-            }
-            Expression::StaticMethodCall {
-                type_name, method, ..
-            } => pending.push(format!("{}::{}", type_name.name, method.name)),
-            Expression::MethodCall { method, .. } => {
-                targets(dispatch.instance(&method.name), &mut pending);
-                if let Some(helper) = crate::prelude::iterator_helper(&method.name) {
-                    pending.push(helper.to_owned());
-                }
-            }
-            Expression::Closure { span, .. } => {
-                if let Some(key) = closures.get(&closure_span_key(*span)) {
-                    pending.push(key.clone());
-                }
-            }
-            Expression::Binary { operator, .. } => {
-                if let Some(operator) = TraitOperator::from_binary(*operator) {
-                    targets(dispatch.operator(operator), &mut pending);
-                }
-            }
-            Expression::FormattedString { .. } => targets(dispatch.to_string(), &mut pending),
-            _ => {}
-        });
+        if iterates {
+            pending.extend(
+                dispatch
+                    .iterator_next()
+                    .iter()
+                    .filter(|target| {
+                        constructible.contains(&target.type_id)
+                            && !reached.contains(target.key.as_str())
+                    })
+                    .map(|target| target.key.clone()),
+            );
+        }
+        if pending.is_empty() {
+            break;
+        }
     }
     units
         .iter()
         .filter(|unit| reached.contains(unit.key.as_str()))
         .collect()
+}
+
+/// Returns whether `block` contains a `for` loop, also inside `match` arm blocks.
+fn contains_for(block: &Block<'_>) -> bool {
+    block.statements.iter().any(statement_contains_for)
+}
+
+/// Returns whether `statement` is or contains a `for` loop.
+fn statement_contains_for(statement: &Statement<'_>) -> bool {
+    match statement {
+        Statement::For { .. } => return true,
+        Statement::Block { block, .. } | Statement::While { body: block, .. }
+            if contains_for(block) =>
+        {
+            return true;
+        }
+        Statement::If {
+            then_block,
+            else_branch,
+            ..
+        } => {
+            let nested = match else_branch {
+                Some(ElseBranch::Block(block)) => contains_for(block),
+                Some(ElseBranch::If(statement)) => statement_contains_for(statement),
+                None => false,
+            };
+            if nested || contains_for(then_block) {
+                return true;
+            }
+        }
+        _ => {}
+    }
+    let mut found = false;
+    visit_statement(statement, &mut |expression| {
+        if let Expression::Match { arms, .. } = expression {
+            found |= arms
+                .iter()
+                .any(|arm| matches!(&arm.body, MatchArmBody::Block(block) if contains_for(block)));
+        }
+    });
+    found
 }
 
 /// Returns every distinct String literal, formatted-string text and property name of

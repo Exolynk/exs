@@ -24,19 +24,8 @@ pub(super) fn used_types(
     types: &TypeRegistry,
     reached: &[&Unit<'_, '_>],
 ) -> HashSet<u32> {
-    let mut used = HashSet::from([STANDARD_ORDERING_TYPE_ID]);
-    let declared = module
-        .types
-        .iter()
-        .map(|declaration| &declaration.name)
-        .chain(module.enums.iter().map(|declaration| &declaration.name));
-    for name in declared {
-        if !name.span.source_id.starts_with(PRELUDE_SOURCE)
-            && let Some(nominal) = types.get(&name.name)
-        {
-            used.insert(nominal.id);
-        }
-    }
+    let mut used = declared_types(module, types);
+    used.insert(STANDARD_ORDERING_TYPE_ID);
     let mut collector = Collector {
         types,
         used: &mut used,
@@ -55,6 +44,18 @@ pub(super) fn used_types(
     }
     contained_types(types, &mut used);
     used
+}
+
+/// Returns the ids of the types and enums the program declares, without the prelude's.
+pub(super) fn declared_types(module: &Module<'_>, types: &TypeRegistry) -> HashSet<u32> {
+    module
+        .types
+        .iter()
+        .map(|declaration| &declaration.name)
+        .chain(module.enums.iter().map(|declaration| &declaration.name))
+        .filter(|name| !name.span.source_id.starts_with(PRELUDE_SOURCE))
+        .filter_map(|name| types.get(&name.name).map(|nominal| nominal.id))
+        .collect()
 }
 
 /// Adds the types the fields and payloads of the types in `used` contain, transitively.

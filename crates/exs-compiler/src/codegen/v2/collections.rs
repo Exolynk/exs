@@ -1,7 +1,5 @@
 //! List lowering of the v2 backend: literals, inline element access and `for` over Lists.
 
-use std::collections::HashMap;
-
 use core::mem::{offset_of, size_of};
 
 use exs_abi::TYPE_LIST;
@@ -9,9 +7,8 @@ use exs_layout::{BufferObject, ListObject};
 use exs_value::layout::{EXTRA_SHIFT, SMALL_INT_TAG, tag, type_kind};
 use wasm_encoder::{BlockType, Instruction, MemArg};
 
-use super::errors::ForBinding;
 use super::function::{FunctionCompiler, error};
-use crate::ast::{Block, Expression};
+use crate::ast::Expression;
 use crate::codegen::VALUE_TYPE;
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
@@ -154,74 +151,6 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.core_call("__exs_core_index_set", span)?;
         self.instruction(Instruction::Drop);
         self.instruction(Instruction::End);
-        Ok(())
-    }
-
-    /// Compiles a `for` loop over a List, iterating over a copy taken when the loop starts.
-    ///
-    /// Values that cannot be iterated return a NotIterable Error from the function; Strings,
-    /// Bytes and Objects, which iterate through Iterators, trap for now.
-    pub(super) fn compile_list_for(
-        &mut self,
-        binding: ForBinding<'a, '_>,
-        iterable: &Expression<'a>,
-        body: &Block<'a>,
-        span: SourceSpan<'a>,
-    ) -> Result<(), CompileDiagnostics<'a>> {
-        self.compile_expression(iterable)?;
-        let source = self.store_new();
-        self.set_position(span)?;
-        self.push_vm();
-        self.instruction(Instruction::LocalGet(source));
-        self.core_call("__exs_core_for_snapshot", span)?;
-        let list = self.store_new();
-        self.return_if_error(list, span)?;
-        let position = self.scalar_local();
-        self.instruction(Instruction::I64Const(0));
-        self.instruction(Instruction::LocalSet(position));
-        let item = self.value_local();
-        self.scopes
-            .push(HashMap::from([(binding.identifier.name.clone(), item)]));
-        self.instruction(Instruction::Block(BlockType::Empty));
-        let break_depth = self.depth;
-        self.instruction(Instruction::Loop(BlockType::Empty));
-        let loop_depth = self.depth;
-        self.instruction(Instruction::LocalGet(position));
-        self.instruction(Instruction::I32WrapI64);
-        self.push_address(list);
-        self.instruction(Instruction::I32Load(u32_field(LEN)));
-        self.instruction(Instruction::I32GeU);
-        self.instruction(Instruction::BrIf(self.depth - break_depth));
-        self.push_address(list);
-        self.instruction(Instruction::I32Load(u32_field(ITEMS)));
-        self.instruction(Instruction::LocalGet(position));
-        self.instruction(Instruction::I32WrapI64);
-        self.instruction(Instruction::I32Const(3));
-        self.instruction(Instruction::I32Shl);
-        self.instruction(Instruction::I32Add);
-        self.instruction(Instruction::I64Load(value_field(SLOTS)));
-        self.store(item);
-        self.check_for_binding(item, binding)?;
-        if self.is_cell(&binding.identifier.name) {
-            self.wrap_in_cell(item)?;
-        }
-        self.instruction(Instruction::LocalGet(position));
-        self.instruction(Instruction::I64Const(1));
-        self.instruction(Instruction::I64Add);
-        self.instruction(Instruction::LocalSet(position));
-        // The body is one block, so `continue` leaves it and returns to the loop head.
-        self.instruction(Instruction::Block(BlockType::Empty));
-        let continue_depth = self.depth;
-        self.loops.push((break_depth, continue_depth));
-        for statement in &body.statements {
-            self.compile_statement(statement)?;
-        }
-        self.loops.pop();
-        self.instruction(Instruction::End);
-        self.branch_to(loop_depth);
-        self.instruction(Instruction::End);
-        self.instruction(Instruction::End);
-        self.scopes.pop();
         Ok(())
     }
 }

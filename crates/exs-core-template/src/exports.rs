@@ -545,6 +545,47 @@ pub extern "C" fn __exs_core_not_callable(vm: i32, callee: i64) -> i64 {
     ))
 }
 
+/// Creates the NotIterable Error of a `for` loop over an Object that implements no Iterator.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_not_an_iterator(vm: i32, iterated: i64) -> i64 {
+    value(exs_core::not_an_iterator(
+        &mut memory(),
+        address(vm),
+        iterated.cast_unsigned(),
+    ))
+}
+
+/// Advances the prelude Range `range` of type `range_type` natively, returning the item, 0
+/// once exhausted, or -1 when `Range::next` must take the step.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_range_step(range: i64, range_type: i32) -> i64 {
+    exs_core::range_step(
+        &mut memory(),
+        range.cast_unsigned(),
+        range_type.cast_unsigned(),
+    )
+    .cast_signed()
+}
+
+/// Starts counting an unobserved Range variable, returning its packed bounds or a fallback.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_range_begin(range: i64, range_type: i32) -> i64 {
+    exs_core::range_begin(&memory(), range.cast_unsigned(), range_type.cast_unsigned())
+        .cast_signed()
+}
+
+/// Writes a counted Range variable's state back once its loop exits.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_range_finish(range: i64, range_type: i32, cursor: i64, state: i64) {
+    exs_core::range_finish(
+        &mut memory(),
+        range.cast_unsigned(),
+        range_type.cast_unsigned(),
+        cursor,
+        state,
+    );
+}
+
 /// Creates the MissingValue Error that `?` produces for None.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_missing_value(vm: i32) -> i64 {

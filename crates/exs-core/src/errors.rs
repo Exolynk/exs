@@ -279,6 +279,18 @@ pub fn method_not_found(memory: &mut impl Memory, vm: u32, receiver: u64) -> Opt
     )
 }
 
+/// Creates the NotIterable Error of a `for` loop over an Object that implements no Iterator,
+/// like v1's built-in `next`.
+pub fn not_an_iterator(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
+    recoverable(
+        memory,
+        vm,
+        "NotIterable",
+        "next requires an Iterator receiver",
+        value,
+    )
+}
+
 /// Creates the ArityError of an implementation method called with the wrong number of
 /// arguments, like v1.
 pub fn nominal_arity_error(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option<u64> {

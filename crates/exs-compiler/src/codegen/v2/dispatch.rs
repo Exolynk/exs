@@ -17,6 +17,11 @@ use crate::codegen::trait_registry::{TraitOperator, TraitRegistry};
 use crate::codegen::types::TypeRegistry;
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
+/// The prelude trait `for` loops advance Objects through.
+const ITERATOR_TRAIT: &str = "Iterator";
+/// The method of [`ITERATOR_TRAIT`] that yields the next `IteratorStep`.
+const ITERATOR_METHOD: &str = "next";
+
 /// One implementation method a dispatch chain may call.
 #[derive(Clone, Debug)]
 pub(super) struct Target {
@@ -33,6 +38,8 @@ pub(super) struct Dispatch {
     instance: HashMap<String, Vec<Target>>,
     /// `ToString::to_string` implementations, which formatted strings call.
     to_string: Vec<Target>,
+    /// `Iterator::next` implementations, which `for` loops over Objects call.
+    iterator_next: Vec<Target>,
     /// Implementations selected by each source operator.
     operators: HashMap<TraitOperator, Vec<Target>>,
     /// Keys of the static methods.
@@ -83,7 +90,10 @@ impl Dispatch {
                         .push(target.clone());
                 }
                 if trait_name == TO_STRING_TRAIT && method.name.name == TO_STRING_METHOD {
-                    dispatch.to_string.push(target);
+                    dispatch.to_string.push(target.clone());
+                }
+                if trait_name == ITERATOR_TRAIT && method.name.name == ITERATOR_METHOD {
+                    dispatch.iterator_next.push(target);
                 }
             }
         }
@@ -103,6 +113,11 @@ impl Dispatch {
     /// Returns the `ToString` implementations.
     pub(super) fn to_string(&self) -> &[Target] {
         &self.to_string
+    }
+
+    /// Returns the `Iterator::next` implementations.
+    pub(super) fn iterator_next(&self) -> &[Target] {
+        &self.iterator_next
     }
 
     /// Returns whether `key` names a static method.

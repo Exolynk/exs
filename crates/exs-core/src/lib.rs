@@ -32,6 +32,7 @@ mod methods;
 mod numbers;
 mod objects;
 mod pages;
+mod ranges;
 mod render;
 mod shapes;
 mod strings;
@@ -53,7 +54,7 @@ pub use datetime::{DATETIME_FIELDS, datetime_parse};
 pub use enums::{enum_new, match_error, missing_field};
 pub use errors::{
     condition_error, error_new, error_object, method_arity_error, method_not_found, missing_value,
-    nominal_arity_error, not_error, type_mismatch, wire_mismatch,
+    nominal_arity_error, not_an_iterator, not_error, type_mismatch, wire_mismatch,
 };
 pub use execution::{init_execution, reserve_input, result};
 pub use exs_abi::BuiltinMethod;
@@ -68,6 +69,7 @@ pub use numbers::{
     number,
 };
 pub use objects::{object_lookup, object_with_shape};
+pub use ranges::{RANGE_DONE, RANGE_FALLBACK, range_begin, range_finish, range_step};
 pub use shapes::shape_for;
 pub use strings::{concat, format, string_object};
 pub use values::{compare, compare_value, equal, ordering_test};

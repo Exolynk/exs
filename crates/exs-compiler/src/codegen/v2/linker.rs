@@ -29,7 +29,7 @@ use super::reachability::{
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use super::units::{Unit, units};
-use super::used_types::used_types;
+use super::used_types::{declared_types, used_types};
 use crate::ast::{FunctionVisibility, Module};
 use crate::codegen::linker::lifted_functions;
 use crate::codegen::prune::{PruneHints, prune_unreachable};
@@ -179,7 +179,8 @@ pub(in crate::codegen) fn compile<'a>(
         })
         .collect();
     let all_units = units(module, &lifted)?;
-    let reached = reachable_units(&all_units, &dispatch, &closure_keys);
+    let declared = declared_types(module, &types);
+    let reached = reachable_units(&all_units, &dispatch, &closure_keys, &types, &declared);
     let functions: Vec<_> = reached.iter().map(|unit| unit.declaration).collect();
     let used = used_types(module, &types, &reached);
     let statics = StaticStrings::build(

@@ -1,8 +1,8 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done and phase 2 got its go; phase 3 is in progress (3a to 3e done). See
-sections 12 to 12q.
+linking) are done and phase 2 got its go; phase 3 is done except programs with more than 65,534 nominal types (section 12r). See
+sections 12 to 12r.
 
 ## 1. Goal
 
@@ -774,6 +774,45 @@ data costs every script.
   is overdue: about 400 small panic and formatting texts make up most of the template's data.
 - Suites on v2: `runtime_values` 77 of 96, `contracts_and_errors` 11 of 15, `host_calls` 10 of
   31, `closures_parallel` 7 of 17, still without a differing result.
+
+## 12r. Phase 3f results and the end of phase 3
+
+- **Iteration:** the core's `for` snapshot copies Lists, turns Strings into a List of their
+  Unicode scalars and Bytes into a List of Ints (both never change, so this yields what v1's
+  lazy iterators yield), keeps Objects and returns v1's NotIterable for other values. Every
+  loop has one inline fast path, the List index or the Range counter, and only once that is
+  exhausted advances an Object through the `Iterator::next` dispatch and its `IteratorStep`
+  with v1's order of Errors (an Error returns, `Done` ends, `Item` binds, anything else is a
+  MatchError, an Object without an Iterator its "next requires an Iterator receiver"). The
+  body is compiled once.
+- **Ranges:** literal Ranges of immediate Ints count in locals; other bounds call the
+  prelude's `Range::until` or `Range::through` with their contract checks and iterate the
+  Range. Range objects step natively in the core when their fields are immediate (v1's fast
+  path), else through `Range::next`. Like v1, loops over Range variables that nothing observes
+  (v1's `unobserved_range_loops`) count in locals and write `current` and `done` back on exit
+  (`for_range_variable_1000`: v1 108,074, v2 58,160). The prelude's eager helpers (`collect`,
+  `count`, `to_list`, `map` and the others) run on v2. Reachability adds the `Iterator`
+  implementations of the types a program can construct, so `HostStream` (phase 4) stays out.
+- **Data budget:** `for` loops now reach `Range::next` and `IteratorStep`, so a program with a
+  literal Range loop crosses into a second 16 KiB data block (`for_range` 91,295 → 108,685,
+  +16,384 of it from the block). The template diet is now the main fuel lever.
+
+### Phase 3 summary
+
+| Suite on v2 | after 3a | after 3f | remaining failures |
+|---|---:|---:|---|
+| `runtime_values` | 26 / 96 | 87 / 96 | host operations (8), more than 65,534 nominal types (1) |
+| `protocols_and_nominal` | 3 / 27 | 20 / 27 | host operations |
+| `contracts_and_errors` | 8 / 15 | 12 / 15 | Error runner inputs (phase 5) |
+| `fuel` | 8 / 18 | 16 / 18 | host operations |
+| `limits` | 9 / 11 | 9 / 11 | host operations |
+| `closures_parallel` | 1 / 17 | 7 / 17 | `par`, host operations |
+| `host_calls` | 2 / 31 | 11 / 31 | phases 4 and 5 |
+| `continuations` | 0 / 18 | 0 / 18 | phase 4 |
+
+No test produces a value that differs from v1. Phase 3's exit criterion, every non-async
+runtime-value test green, holds except for programs with more than 65,534 nominal types,
+which need a heap type-id fallback for every inline tag test.
 
 ## 13. Risks and open questions
 

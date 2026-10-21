@@ -10,7 +10,7 @@ use super::function::{FunctionCompiler, unsupported};
 use crate::ast::{AssignmentTarget, Block, ElseBranch, Expression, Statement};
 use crate::codegen::immediate;
 use crate::codegen::standard::is_unshared_range;
-use crate::diagnostic::{CompileDiagnostics, SourceSpan};
+use crate::diagnostic::CompileDiagnostics;
 
 impl<'a> FunctionCompiler<'a, '_> {
     /// Compiles every statement of `block` in a new scope.
@@ -145,8 +145,12 @@ impl<'a> FunctionCompiler<'a, '_> {
                 };
                 if is_unshared_range(iterable) {
                     self.compile_range_for(binding, iterable, body, *span)?;
+                } else if matches!(iterable, Expression::Variable(_))
+                    && self.unobserved_ranges.contains(span)
+                {
+                    self.compile_range_variable_for(binding, iterable, body, *span)?;
                 } else {
-                    self.compile_list_for(binding, iterable, body, *span)?;
+                    self.compile_iterable_for(binding, iterable, body, *span)?;
                 }
             }
             Statement::Break { span } | Statement::Continue { span } => {
@@ -165,126 +169,6 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.instruction(Instruction::Drop);
             }
         }
-        Ok(())
-    }
-
-    /// Compiles a `for` loop over a literal `a..b` or `a..=b` Range of immediate Ints.
-    ///
-    /// Mirrors the prelude `Range::next`: the cursor moves toward the end by one and an
-    /// inclusive Range yields its end last. Bounds outside the `i32` range trap for now.
-    fn compile_range_for(
-        &mut self,
-        binding: ForBinding<'a, '_>,
-        iterable: &Expression<'a>,
-        body: &Block<'a>,
-        span: SourceSpan<'a>,
-    ) -> Result<(), CompileDiagnostics<'a>> {
-        let Expression::StaticMethodCall {
-            method, arguments, ..
-        } = iterable
-        else {
-            return Err(unsupported(
-                span,
-                "for loops over values other than Range literals",
-            ));
-        };
-        if !is_unshared_range(iterable) || arguments.len() != 2 {
-            return Err(unsupported(
-                span,
-                "for loops over values other than Range literals",
-            ));
-        }
-        let inclusive = method.name == "through";
-        self.compile_expression(&arguments[0])?;
-        let start = self.store_new();
-        self.compile_expression(&arguments[1])?;
-        let end = self.store_new();
-        immediate::both_small_ints_test(&mut self.function, start, end);
-        self.instruction(Instruction::I32Eqz);
-        self.instruction(Instruction::If(BlockType::Empty));
-        self.instruction(Instruction::Unreachable);
-        self.instruction(Instruction::End);
-        let (cursor, last, step, done) = (
-            self.scalar_local(),
-            self.scalar_local(),
-            self.scalar_local(),
-            self.scalar_local(),
-        );
-        immediate::push_payload(&mut self.function, start);
-        self.instruction(Instruction::LocalSet(cursor));
-        immediate::push_payload(&mut self.function, end);
-        self.instruction(Instruction::LocalSet(last));
-        // A start after the end counts down.
-        self.instruction(Instruction::I64Const(-1));
-        self.instruction(Instruction::I64Const(1));
-        self.instruction(Instruction::LocalGet(cursor));
-        self.instruction(Instruction::LocalGet(last));
-        self.instruction(Instruction::I64GtS);
-        self.instruction(Instruction::Select);
-        self.instruction(Instruction::LocalSet(step));
-        self.instruction(Instruction::I64Const(0));
-        self.instruction(Instruction::LocalSet(done));
-        let item = self.value_local();
-        self.scopes
-            .push(HashMap::from([(binding.identifier.name.clone(), item)]));
-        self.instruction(Instruction::Block(BlockType::Empty));
-        let break_depth = self.depth;
-        self.instruction(Instruction::Loop(BlockType::Empty));
-        let loop_depth = self.depth;
-        self.instruction(Instruction::LocalGet(done));
-        self.instruction(Instruction::I32WrapI64);
-        self.instruction(Instruction::BrIf(self.depth - break_depth));
-        let (ascending_past, descending_past) = if inclusive {
-            (Instruction::I64GtS, Instruction::I64LtS)
-        } else {
-            (Instruction::I64GeS, Instruction::I64LeS)
-        };
-        self.instruction(Instruction::LocalGet(step));
-        self.instruction(Instruction::I64Const(0));
-        self.instruction(Instruction::I64GtS);
-        self.instruction(Instruction::If(BlockType::Result(
-            wasm_encoder::ValType::I32,
-        )));
-        self.instruction(Instruction::LocalGet(cursor));
-        self.instruction(Instruction::LocalGet(last));
-        self.instruction(ascending_past);
-        self.instruction(Instruction::Else);
-        self.instruction(Instruction::LocalGet(cursor));
-        self.instruction(Instruction::LocalGet(last));
-        self.instruction(descending_past);
-        self.instruction(Instruction::End);
-        self.instruction(Instruction::BrIf(self.depth - break_depth));
-        immediate::push_small_int(&mut self.function, cursor);
-        self.store(item);
-        self.check_for_binding(item, binding)?;
-        if self.is_cell(&binding.identifier.name) {
-            self.wrap_in_cell(item)?;
-        }
-        self.instruction(Instruction::LocalGet(cursor));
-        self.instruction(Instruction::LocalGet(last));
-        self.instruction(Instruction::I64Eq);
-        self.instruction(Instruction::If(BlockType::Empty));
-        self.instruction(Instruction::I64Const(1));
-        self.instruction(Instruction::LocalSet(done));
-        self.instruction(Instruction::Else);
-        self.instruction(Instruction::LocalGet(cursor));
-        self.instruction(Instruction::LocalGet(step));
-        self.instruction(Instruction::I64Add);
-        self.instruction(Instruction::LocalSet(cursor));
-        self.instruction(Instruction::End);
-        // The body is one block, so `continue` leaves it and returns to the loop head.
-        self.instruction(Instruction::Block(BlockType::Empty));
-        let continue_depth = self.depth;
-        self.loops.push((break_depth, continue_depth));
-        for statement in &body.statements {
-            self.compile_statement(statement)?;
-        }
-        self.loops.pop();
-        self.instruction(Instruction::End);
-        self.branch_to(loop_depth);
-        self.instruction(Instruction::End);
-        self.instruction(Instruction::End);
-        self.scopes.pop();
         Ok(())
     }
 }

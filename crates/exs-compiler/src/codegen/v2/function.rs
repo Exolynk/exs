@@ -94,6 +94,8 @@ pub(super) struct FunctionCompiler<'a, 'm> {
     pub(super) key: &'m str,
     /// Number of leading parameters holding captured Cells.
     captures: u32,
+    /// Spans of the `for` loops over Range variables no source code observes, like v1.
+    pub(super) unobserved_ranges: Vec<SourceSpan<'a>>,
     /// The source declaration.
     pub(super) declaration: &'m FunctionDeclaration<'a>,
     /// Body instructions, emitted without local declarations.
@@ -142,6 +144,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
             key,
             declaration,
             captures: captures.len() as u32,
+            unobserved_ranges: crate::codegen::range_variables::unobserved_range_loops(declaration),
             function: Function::new([]),
             scopes: vec![scope],
             slots,

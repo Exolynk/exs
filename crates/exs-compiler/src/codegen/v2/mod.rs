@@ -14,6 +14,7 @@ mod errors;
 mod expressions;
 mod function;
 mod intrinsics;
+mod iteration;
 mod linker;
 mod methods;
 mod objects;
