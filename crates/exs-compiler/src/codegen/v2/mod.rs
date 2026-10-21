@@ -5,6 +5,7 @@
 //! reachable from public entry points and reports every construct it does not support yet as a
 //! compile error, so a module either runs with v2 semantics or does not compile.
 
+mod closures;
 mod collections;
 mod dispatch;
 mod entry;
@@ -22,6 +23,7 @@ mod static_keys;
 mod type_table;
 mod units;
 mod untyped;
+mod used_types;
 mod wire_schema;
 
 pub(super) use linker::compile;

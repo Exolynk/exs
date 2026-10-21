@@ -1,7 +1,7 @@
 //! Linking of a v2 module: the core template plus the compiled program.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, MODULE_METADATA_SECTION,
@@ -17,6 +17,9 @@ use wasm_encoder::{
 };
 use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 
+use super::closures::{
+    ClosureInfo, DispatchCase, closure_dispatcher as closure_dispatcher_body, closure_span_key,
+};
 use super::dispatch::Dispatch;
 use super::entry::EntryLayout;
 use super::function::{Context, FunctionCompiler, FunctionInfo, error};
@@ -25,14 +28,18 @@ use super::reachability::{
 };
 use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
-use super::units::units;
+use super::units::{Unit, units};
+use super::used_types::used_types;
 use crate::ast::{FunctionVisibility, Module};
+use crate::codegen::linker::lifted_functions;
 use crate::codegen::prune::{PruneHints, prune_unreachable};
 use crate::codegen::source_map::{SOURCE_MAP_SECTION, SourceMap};
+use crate::codegen::suspension::Suspendability;
 use crate::codegen::trait_registry::TraitRegistry;
 use crate::codegen::types::TypeRegistry;
 use crate::codegen::{VALUE_TYPE, module_span};
 use crate::diagnostic::CompileDiagnostics;
+use crate::hir::HirModule;
 
 /// Facts read from the core template before re-encoding it.
 struct TemplateFacts {
@@ -149,11 +156,34 @@ pub(in crate::codegen) fn compile<'a>(
     let types = TypeRegistry::build(module, traits)?;
     let vm = facts.heap_base.next_multiple_of(8);
     let dispatch = Dispatch::build(module, traits, &types);
-    let all_units = units(module)?;
-    let reached = reachable_units(&all_units, &dispatch);
+    let hir = HirModule::lower(module, traits);
+    let lifted = lifted_functions(module, &hir);
+    // v1 reports some origins differently in resumable functions, so v2 needs its analysis.
+    let mut suspendability = Suspendability::analyze(&hir);
+    if hir.closures().next().is_some() {
+        suspendability.include_all(hir.functions().map(|(key, _)| key));
+    }
+    let suspendable = suspendability.functions().clone();
+    drop(hir);
+    let captured: HashSet<String> = lifted
+        .iter()
+        .flat_map(|closure| closure.captures.iter().cloned())
+        .collect();
+    let closure_keys: HashMap<(String, u32, u32), String> = lifted
+        .iter()
+        .map(|closure| {
+            (
+                closure_span_key(closure.declaration.span),
+                closure.key.clone(),
+            )
+        })
+        .collect();
+    let all_units = units(module, &lifted)?;
+    let reached = reachable_units(&all_units, &dispatch, &closure_keys);
     let functions: Vec<_> = reached.iter().map(|unit| unit.declaration).collect();
+    let used = used_types(module, &types, &reached);
     let statics = StaticStrings::build(
-        &string_literals(&functions, TypeTable::field_names(&types)),
+        &string_literals(&functions, TypeTable::field_names(&types, &used)),
         &bytes_literals(&functions),
         vm + core::mem::size_of::<VmState>() as u32,
     )
@@ -164,7 +194,7 @@ pub(in crate::codegen) fn compile<'a>(
             "too many string literals for linear memory".to_owned(),
         )
     })?;
-    let type_table = TypeTable::build(&types, &statics.references, statics.end())
+    let type_table = TypeTable::build(&types, &used, &statics.references, statics.end())
         .ok_or_else(|| error("E0210", span, "too many types for linear memory".to_owned()))?;
     let static_keys = StaticKeys::build(
         object_key_lists(&functions),
@@ -201,14 +231,14 @@ pub(in crate::codegen) fn compile<'a>(
     for (index, unit) in (base..).zip(&reached) {
         let function = unit.declaration;
         let mut parameters = Vec::with_capacity(function.parameters.len());
+        let mut variadic = None;
         for parameter in &function.parameters {
+            let contract = types.resolve(parameter.type_annotation.as_ref(), function.span)?;
             if parameter.variadic {
-                return Err(super::function::unsupported(
-                    function.span,
-                    "variadic parameters",
-                ));
+                variadic = Some(contract);
+            } else {
+                parameters.push(contract);
             }
-            parameters.push(types.resolve(parameter.type_annotation.as_ref(), function.span)?);
         }
         let return_contract = types.resolve(function.return_type.as_ref(), function.span)?;
         infos.insert(
@@ -218,12 +248,32 @@ pub(in crate::codegen) fn compile<'a>(
                 function_id: unit.function_id,
                 arity: parameters.len() as u32,
                 parameters,
+                variadic,
+                captures: unit.captures.len() as u32,
                 return_contract,
             },
         );
     }
+    let reached_closures: Vec<&&Unit<'_, '_>> = reached
+        .iter()
+        .filter(|unit| unit.key.starts_with("$closure:"))
+        .collect();
+    let closures: HashMap<(String, u32, u32), ClosureInfo> = reached_closures
+        .iter()
+        .zip(0_u32..)
+        .map(|(unit, index)| {
+            (
+                closure_span_key(unit.declaration.span),
+                ClosureInfo {
+                    index,
+                    captures: unit.captures.to_vec(),
+                },
+            )
+        })
+        .collect();
     let int_new = base + functions.len() as u32;
     let float_new = int_new + 1;
+    let closure_dispatcher = (!reached_closures.is_empty()).then_some(float_new + 1);
     let context = Context {
         core: &facts.exports,
         functions: &infos,
@@ -240,14 +290,19 @@ pub(in crate::codegen) fn compile<'a>(
         positions: RefCell::new(Vec::new()),
         static_arrays: RefCell::new(HashMap::new()),
         dispatch: &dispatch,
+        captured: &captured,
+        closures: &closures,
+        closure_dispatcher,
+        suspendable: &suspendable,
     };
     for unit in &reached {
-        let arity = unit.declaration.parameters.len();
+        let arity = unit.captures.len() + unit.declaration.parameters.len();
         let type_index = program.type_index(vec![VALUE_TYPE; arity], vec![VALUE_TYPE]);
         program.function_types.push(type_index);
-        program
-            .bodies
-            .push(FunctionCompiler::new(&context, &unit.key, unit.declaration).compile()?);
+        program.bodies.push(
+            FunctionCompiler::new(&context, &unit.key, unit.declaration, unit.captures)
+                .compile()?,
+        );
     }
     let positions: Vec<u8> = context
         .positions
@@ -273,6 +328,31 @@ pub(in crate::codegen) fn compile<'a>(
         .bodies
         .push(layout.boxed_number(ObjectKind::Float, span)?);
     let mut next = float_new + 1;
+    if closure_dispatcher.is_some() {
+        let cases = reached_closures
+            .iter()
+            .map(|unit| {
+                infos
+                    .get(&unit.key)
+                    .map(|info| DispatchCase {
+                        function: info.index,
+                        captures: info.captures,
+                        arity: info.arity,
+                        variadic: info.variadic.is_some(),
+                    })
+                    .ok_or_else(|| error("E0999", span, "missing v2 closure".to_owned()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let dispatcher_type = program.type_index(
+            vec![VALUE_TYPE, ValType::I32, ValType::I32],
+            vec![VALUE_TYPE],
+        );
+        program.function_types.push(dispatcher_type);
+        program
+            .bodies
+            .push(closure_dispatcher_body(&layout, &cases, span)?);
+        next += 1;
+    }
     let start_type = program.type_index(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
     let mut entries = String::new();
     for unit in &reached {

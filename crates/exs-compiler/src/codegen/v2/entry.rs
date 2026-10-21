@@ -35,7 +35,11 @@ pub(super) struct EntryLayout<'m> {
 
 impl EntryLayout<'_> {
     /// Returns the index of one core export.
-    fn core<'a>(&self, name: &str, span: SourceSpan<'a>) -> Result<u32, CompileDiagnostics<'a>> {
+    pub(super) fn core<'a>(
+        &self,
+        name: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<u32, CompileDiagnostics<'a>> {
         self.core.get(name).copied().ok_or_else(|| {
             error(
                 "E1001",
@@ -55,6 +59,9 @@ impl EntryLayout<'_> {
         target: &FunctionInfo,
         span: SourceSpan<'a>,
     ) -> Result<Function, CompileDiagnostics<'a>> {
+        if target.variadic.is_some() {
+            return self.variadic_start(target, span);
+        }
         // Locals: 0 and 1 are the input parameters, 2 the frame base, 3 the argument count.
         let (frame, count) = (2, 3);
         let mut function = Function::new([(2, ValType::I32)]);
@@ -86,6 +93,17 @@ impl EntryLayout<'_> {
         }
         function.instruction(&Instruction::Call(target.index));
         function.instruction(&Instruction::End);
+        self.finish_start(function, frame, span)
+    }
+
+    /// Ends a start function after the entry's result is on the stack above the VM address:
+    /// encodes the result, pops the frame at `frame` and releases the task.
+    fn finish_start<'a>(
+        &self,
+        mut function: Function,
+        frame: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<Function, CompileDiagnostics<'a>> {
         function.instruction(&Instruction::Call(
             self.core("__exs_core_encode_result", span)?,
         ));
@@ -101,6 +119,36 @@ impl EntryLayout<'_> {
         function.instruction(&Instruction::I32Const(STATUS_COMPLETE));
         function.instruction(&Instruction::End);
         Ok(function)
+    }
+
+    /// Returns the start function of a variadic entry: like v1, the arguments after the
+    /// fixed parameters become a List, so no argument count is too large.
+    fn variadic_start<'a>(
+        &self,
+        target: &FunctionInfo,
+        span: SourceSpan<'a>,
+    ) -> Result<Function, CompileDiagnostics<'a>> {
+        // Locals: 0 and 1 are the input parameters, 2 the frame base.
+        let frame = 2;
+        let slots = target.arity + 1;
+        let mut function = Function::new([(1, ValType::I32)]);
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_task_acquire", span)?,
+        ));
+        emit_push_frame(&mut function, self.vm, frame, slots);
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::LocalGet(frame));
+        function.instruction(&Instruction::I32Const(target.arity.cast_signed()));
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_decode_variadic_inputs", span)?,
+        ));
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        for slot in 0..slots {
+            function.instruction(&Instruction::LocalGet(frame));
+            function.instruction(&Instruction::I64Load(slot_memory(slot)));
+        }
+        function.instruction(&Instruction::Call(target.index));
+        self.finish_start(function, frame, span)
     }
 
     /// Returns `__exs_input_alloc(length) -> address`, which initializes the VM on first use.

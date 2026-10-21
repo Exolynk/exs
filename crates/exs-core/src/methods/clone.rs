@@ -4,6 +4,10 @@
 //! A hash table from source to copy lives in a List rooted on the root stack, so every copy is
 //! reachable while its contents are cloned.
 
+use crate::closures::{
+    allocate_closure, capture_address, capture_count, cell_new, cell_object, cell_value_address,
+    closure_index, closure_object,
+};
 use crate::enums::{
     allocate_enum, enum_object, enum_type, field_address as enum_field, field_count, variant,
 };
@@ -157,6 +161,32 @@ impl Cloner {
             if keys != 0 {
                 let extra_copy = self.value(memory, vm, object_reference(keys)?)?;
                 set_extra(memory, copy_object, extra_copy as u32);
+            }
+            return Some(copy);
+        }
+        if let Some(object) = cell_object(source) {
+            if let Some(copy) = self.existing(memory, source) {
+                return Some(copy);
+            }
+            let copy = cell_new(memory, vm, exs_value::ValueRef::NONE.raw())?;
+            self.register(memory, vm, source, copy)?;
+            let item = memory.load_u64(cell_value_address(object));
+            let item = self.value(memory, vm, item)?;
+            memory.store_u64(cell_value_address(copy as u32), item);
+            return Some(copy);
+        }
+        if let Some(object) = closure_object(source) {
+            if let Some(copy) = self.existing(memory, source) {
+                return Some(copy);
+            }
+            let count = capture_count(memory, object);
+            let index = closure_index(memory, object);
+            let copy = allocate_closure(memory, vm, index, count)?;
+            self.register(memory, vm, source, copy)?;
+            for slot in 0..count {
+                let item = memory.load_u64(capture_address(object, slot));
+                let item = self.value(memory, vm, item)?;
+                memory.store_u64(capture_address(copy as u32, slot), item);
             }
             return Some(copy);
         }

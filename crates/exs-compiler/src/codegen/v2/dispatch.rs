@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{BlockType, Instruction};
 
+use super::closures::accepts;
 use super::function::{FunctionCompiler, error};
 use crate::ast::Module;
 use crate::codegen::VALUE_TYPE;
@@ -145,21 +146,32 @@ impl<'a> FunctionCompiler<'a, '_> {
         arguments: &[u32],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        let (index, arity) = self
+        let (index, arity, variadic) = self
             .context
             .functions
             .get(key)
-            .map(|info| (info.index, info.arity))
+            .map(|info| (info.index, info.arity, info.variadic.is_some()))
             .ok_or_else(|| error("E0999", span, format!("missing v2 method `{key}`")))?;
-        if arity as usize != arguments.len() + 1 {
+        if !accepts(arity, variadic, arguments.len() + 1) {
             self.set_position(span)?;
             self.push_vm();
             self.instruction(Instruction::LocalGet(receiver));
             return self.core_call("__exs_core_nominal_arity_error", span);
         }
         self.instruction(Instruction::LocalGet(receiver));
-        for argument in arguments {
+        let fixed = arity.saturating_sub(1) as usize;
+        for argument in arguments.iter().take(fixed) {
             self.instruction(Instruction::LocalGet(*argument));
+        }
+        if variadic {
+            let rest = &arguments[fixed.min(arguments.len())..];
+            let count = rest.len() as u32;
+            let block = self.consecutive_locals(count.max(1));
+            for (offset, argument) in (0..count).zip(rest) {
+                self.instruction(Instruction::LocalGet(*argument));
+                self.store(block + offset);
+            }
+            self.push_arguments(block, count, 0, true, span)?;
         }
         self.direct_call(index, span)
     }

@@ -8,11 +8,12 @@
 //! block and popped before every return.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use exs_layout::VmState;
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
+use super::closures::ClosureInfo;
 use super::dispatch::Dispatch;
 use super::errors::emit_push_trace;
 use crate::ast::FunctionDeclaration;
@@ -27,10 +28,14 @@ pub(super) struct FunctionInfo {
     pub(super) index: u32,
     /// Identifier recorded in Error traces, the function's position in the module like v1.
     pub(super) function_id: u32,
-    /// Number of parameters.
+    /// Number of fixed parameters, without captures and a variadic parameter.
     pub(super) arity: u32,
-    /// Contract of each parameter.
+    /// Contract of each fixed parameter.
     pub(super) parameters: Vec<TypeContract>,
+    /// Element contract of the trailing variadic parameter, if any.
+    pub(super) variadic: Option<TypeContract>,
+    /// Number of captured Cells a lifted closure takes before its parameters.
+    pub(super) captures: u32,
     /// Contract of the returned value.
     pub(super) return_contract: TypeContract,
 }
@@ -70,14 +75,25 @@ pub(super) struct Context<'m> {
     pub(super) static_arrays: RefCell<HashMap<Vec<u32>, u32>>,
     /// The module's implementation methods and their dispatch.
     pub(super) dispatch: &'m Dispatch,
+    /// Names of the bindings some closure captures, which live in Cells like v1.
+    pub(super) captured: &'m HashSet<String>,
+    /// Every closure expression by its source span.
+    pub(super) closures: &'m HashMap<(String, u32, u32), ClosureInfo>,
+    /// Index of the generated closure dispatcher, when the program creates closures.
+    pub(super) closure_dispatcher: Option<u32>,
+    /// Keys of the functions v1 lowers as resumable, whose parameter checks it reports at
+    /// the declaration rather than the parameter.
+    pub(super) suspendable: &'m HashSet<String>,
 }
 
 /// Lowering state of one function body.
 pub(super) struct FunctionCompiler<'a, 'm> {
     /// Module-wide inputs.
     pub(super) context: &'m Context<'m>,
-    /// The function key, the name of a top-level function or `Type::method`.
+    /// The function key, the name of a top-level function, `Type::method` or `$closure:N`.
     pub(super) key: &'m str,
+    /// Number of leading parameters holding captured Cells.
+    captures: u32,
     /// The source declaration.
     pub(super) declaration: &'m FunctionDeclaration<'a>,
     /// Body instructions, emitted without local declarations.
@@ -106,18 +122,26 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         context: &'m Context<'m>,
         key: &'m str,
         declaration: &'m FunctionDeclaration<'a>,
+        captures: &'m [String],
     ) -> Self {
-        let parameter_count = declaration.parameters.len() as u32;
+        let names = captures.iter().chain(
+            declaration
+                .parameters
+                .iter()
+                .map(|parameter| &parameter.name.name),
+        );
         let mut scope = HashMap::new();
         let mut slots = HashMap::new();
-        for (index, parameter) in (0_u32..).zip(&declaration.parameters) {
-            scope.insert(parameter.name.name.clone(), index);
+        for (index, name) in (0_u32..).zip(names) {
+            scope.insert(name.clone(), index);
             slots.insert(index, index);
         }
+        let parameter_count = slots.len() as u32;
         Self {
             context,
             key,
             declaration,
+            captures: captures.len() as u32,
             function: Function::new([]),
             scopes: vec![scope],
             slots,
@@ -344,11 +368,11 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
 
     /// Compiles the whole function into a Wasm body with its locals and frame prologue.
     pub(super) fn compile(mut self) -> Result<Function, CompileDiagnostics<'a>> {
-        let parameters = self
+        let (parameters, variadic) = self
             .context
             .functions
             .get(self.key)
-            .map(|info| info.parameters.clone())
+            .map(|info| (info.parameters.clone(), info.variadic.clone()))
             .ok_or_else(|| {
                 error(
                     "E0999",
@@ -356,11 +380,21 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
                     "missing v2 function signature".to_owned(),
                 )
             })?;
+        let first = self.captures;
+        // v1 reports parameter checks of resumable functions at the declaration.
+        let resumable = self.context.suspendable.contains(self.key);
+        let declaration = self.declaration.span;
+        let span_of = |span| if resumable { declaration } else { span };
         for ((local, contract), parameter) in
-            (0_u32..).zip(&parameters).zip(&self.declaration.parameters)
+            (first..).zip(&parameters).zip(&self.declaration.parameters)
         {
-            self.check_contract(local, contract, parameter.name.span)?;
+            self.check_contract(local, contract, span_of(parameter.name.span))?;
         }
+        if let (Some(contract), Some(parameter)) = (&variadic, self.declaration.parameters.last()) {
+            let local = first + parameters.len() as u32;
+            self.check_variadic(local, contract, span_of(parameter.name.span))?;
+        }
+        self.wrap_captured_parameters(first)?;
         self.compile_block(&self.declaration.body)?;
         immediate::push(&mut self.function, exs_value::ValueRef::NONE);
         self.return_value(self.declaration.span)?;

@@ -7,8 +7,8 @@ use exs_value::ValueRef;
 use super::execution::Execution;
 use super::heap::VM;
 use crate::{
-    Memory, concat, decode_inputs, encode_result, index_get, index_set, list_copy, list_object,
-    property_get, property_set, reserve_input, set_heap_flags,
+    Memory, concat, decode_inputs, index_get, index_set, list_copy, list_object, property_get,
+    property_set, reserve_input, set_heap_flags,
 };
 
 /// Builds Lists, adds Lists and values like v1 and copies Lists for iteration.
@@ -149,9 +149,16 @@ fn converts_lists_and_typed_objects() {
             ("label".into(), nested),
         ])
     );
-    // A List containing itself cannot be encoded.
+    // A List containing itself becomes v1's fatal SerializationError.
     let cyclic = execution.list(&[0]);
     let slot = list_object(cyclic).map(|list| execution.memory.load_u32(list + 12) + 8);
     execution.memory.store_u64(slot.expect("a List"), cyclic);
-    assert!(encode_result(&mut execution.memory, VM, cyclic).is_err());
+    let ExsValue::Error(error) = execution.encoded(cyclic) else {
+        panic!("a cyclic result encodes as an Error");
+    };
+    assert_eq!(error.kind, "SerializationError");
+    assert_eq!(
+        error.message,
+        "value graph contains a cycle and cannot cross the runner boundary"
+    );
 }

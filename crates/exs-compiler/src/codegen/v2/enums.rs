@@ -227,6 +227,9 @@ impl<'a> FunctionCompiler<'a, '_> {
             self.core_call("__exs_core_enum_missing_field", binding.span)?;
             self.instruction(Instruction::End);
             let local = self.store_new();
+            if self.is_cell(&binding.name) {
+                self.wrap_in_cell(local)?;
+            }
             scope.insert(binding.name.clone(), local);
         }
         self.scopes.push(scope);

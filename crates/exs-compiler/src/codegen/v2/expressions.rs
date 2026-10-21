@@ -2,6 +2,7 @@
 
 use wasm_encoder::{BlockType, Instruction};
 
+use super::closures::{accepts, arity_description};
 use super::function::{FunctionCompiler, error, unsupported};
 use super::intrinsics::is_datetime_parser;
 use crate::ast::{BinaryOperator, Expression, FormattedStringPart, UnaryOperator};
@@ -55,7 +56,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                         format!("unknown binding `{}`", identifier.name),
                     )
                 })?;
-                self.instruction(Instruction::LocalGet(local));
+                self.push_binding(&identifier.name, local);
             }
             Expression::Unary {
                 operator,
@@ -94,6 +95,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 span,
             } => self.compile_is_type(value, type_annotation, *span)?,
             Expression::Match { value, arms, span } => self.compile_match(value, arms, *span)?,
+            Expression::Closure { span, .. } => self.compile_closure(*span)?,
             Expression::Binary {
                 operator,
                 left,
@@ -395,41 +397,36 @@ impl<'a> FunctionCompiler<'a, '_> {
         if let Some(variant) = self.context.types.enum_variant(callee) {
             return self.compile_enum_variant(variant, arguments, span);
         }
-        if self.lookup(callee).is_some() {
-            return Err(unsupported(span, "calls of local bindings"));
+        if let Some(local) = self.lookup(callee) {
+            return self.compile_closure_call(callee, local, arguments, span);
         }
-        let Some((index, arity)) = self
+        let Some((index, arity, variadic)) = self
             .context
             .functions
             .get(callee)
-            .map(|info| (info.index, info.arity))
+            .map(|info| (info.index, info.arity, info.variadic.is_some()))
         else {
             return Err(unsupported(span, "calls of built-in and prelude functions"));
         };
-        if arity as usize != arguments.len() {
+        if !accepts(arity, variadic, arguments.len()) {
             return Err(error(
                 "E0208",
                 span,
                 format!(
-                    "function `{callee}` expects {arity} arguments but received {}",
+                    "function `{callee}` expects {} arguments but received {}",
+                    arity_description(arity, variadic),
                     arguments.len()
                 ),
             ));
         }
-        let mut locals = Vec::with_capacity(arguments.len());
-        for argument in arguments {
+        let count = arguments.len() as u32;
+        let block = self.consecutive_locals(count.max(1));
+        for (offset, argument) in (0..count).zip(arguments) {
             self.compile_expression(argument)?;
-            locals.push(self.store_new());
+            self.store(block + offset);
         }
-        for local in locals {
-            self.instruction(Instruction::LocalGet(local));
-        }
-        self.set_call_site(span)?;
-        self.instruction(Instruction::Call(index));
-        let result = self.store_new();
-        self.return_if_fatal(result);
-        self.instruction(Instruction::LocalGet(result));
-        Ok(())
+        self.push_arguments(block, count, arity, variadic, span)?;
+        self.direct_call(index, span)
     }
 
     /// Compiles a formatted string like v1: text parts and expression parts in order, every

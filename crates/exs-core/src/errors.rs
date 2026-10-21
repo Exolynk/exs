@@ -152,6 +152,13 @@ pub(crate) fn new_error(
     created
 }
 
+/// Clears the origin and trace of the new Error at `object`, for Errors of the runner
+/// boundary, which v1 reports without either.
+pub(crate) fn clear_origin_and_trace(memory: &mut impl Memory, object: u32) {
+    memory.store_u32(object + ORIGIN, 0);
+    memory.store_u32(object + TRACE, 0);
+}
+
 /// Creates one recoverable Error with the texts `kind` and `message`, attaching `data`.
 pub(crate) fn recoverable(
     memory: &mut impl Memory,

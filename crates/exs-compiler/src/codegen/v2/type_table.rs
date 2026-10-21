@@ -4,7 +4,7 @@
 //! The table is an array of `exs_layout::TypeEntry`s indexed by nominal type id, followed by
 //! the name arrays they point to, each a run of raw `ValueRef`s of static Strings.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use exs_layout::TypeEntry;
 
@@ -21,18 +21,24 @@ pub(super) struct TypeTable {
 }
 
 impl TypeTable {
-    /// Returns the field names of every nominal Object type and the identities, variant names
-    /// and payload names of every enum, which must all be static Strings.
-    pub(super) fn field_names(types: &TypeRegistry) -> impl Iterator<Item = &str> {
+    /// Returns the field names of the `used` nominal Object types and the identities, variant
+    /// names and payload names of the `used` enums, which must all be static Strings.
+    pub(super) fn field_names<'t>(
+        types: &'t TypeRegistry,
+        used: &'t HashSet<u32>,
+    ) -> impl Iterator<Item = &'t str> {
         let fields = types
             .nominal_types()
-            .filter(|nominal| nominal.kind == NominalKind::Object)
+            .filter(|nominal| nominal.kind == NominalKind::Object && used.contains(&nominal.id))
             .flat_map(|nominal| nominal.fields.iter().map(|field| field.name.as_str()));
-        let enums = types.enum_variants().flat_map(|variant| {
-            [variant.type_identity.as_str(), variant.name.as_str()]
-                .into_iter()
-                .chain(variant.field_names.iter().map(String::as_str))
-        });
+        let enums = types
+            .enum_variants()
+            .filter(|variant| used.contains(&variant.type_id))
+            .flat_map(|variant| {
+                [variant.type_identity.as_str(), variant.name.as_str()]
+                    .into_iter()
+                    .chain(variant.field_names.iter().map(String::as_str))
+            });
         fields.chain(enums)
     }
 
@@ -49,11 +55,12 @@ impl TypeTable {
             .collect()
     }
 
-    /// Lays out the table for `types` at `base`, naming fields, variants and enum identities
-    /// with the static Strings in `strings`. Returns `None` when an address leaves linear
-    /// memory or a name is missing.
+    /// Lays out the table for `types` at `base`, naming the fields, variants and enum
+    /// identities of the `used` types with the static Strings in `strings`; other entries stay
+    /// empty. Returns `None` when an address leaves linear memory or a name is missing.
     pub(super) fn build(
         types: &TypeRegistry,
+        used: &HashSet<u32>,
         strings: &HashMap<String, u64>,
         base: u32,
     ) -> Option<Self> {
@@ -67,7 +74,10 @@ impl TypeTable {
         let mut entries = vec![(0_u32, 0_u32, 0_u64); count as usize];
         let mut names = Vec::new();
         let names_base = base.checked_add(count.checked_mul(entry_size)?)?;
-        for nominal in types.nominal_types() {
+        for nominal in types
+            .nominal_types()
+            .filter(|nominal| used.contains(&nominal.id))
+        {
             let (listed, identity): (Vec<&str>, u64) = match (&nominal.kind, &nominal.enum_type_id)
             {
                 (NominalKind::Enum, Some(identity)) => (

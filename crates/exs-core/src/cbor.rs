@@ -224,6 +224,50 @@ pub fn decode_inputs(
     Ok(count)
 }
 
+/// Decodes the runner's argument array for an entry with `fixed` parameters and a trailing
+/// variadic one: the first `fixed` arguments into the root slots at `slots`, None for missing
+/// ones, and a List of the rest into the slot after them, like v1.
+///
+/// # Errors
+///
+/// Returns why the input could not be decoded.
+pub fn decode_variadic_inputs(
+    memory: &mut impl Memory,
+    vm: u32,
+    slots: u32,
+    fixed: u32,
+) -> Result<(), CborError> {
+    let (address, length) = input(memory, vm);
+    let mut reader = Reader {
+        position: address,
+        end: address.checked_add(length).ok_or(CborError::Malformed)?,
+    };
+    let initial = reader.byte(memory)?;
+    if initial >> 5 != MAJOR_ARRAY {
+        return Err(CborError::Malformed);
+    }
+    let count = reader.count(memory, initial & 0x1f)?;
+    for index in 0..fixed {
+        memory.store_u64(slots + index * 8, ValueRef::NONE.raw());
+    }
+    let rest =
+        allocate_list(memory, vm, count.saturating_sub(fixed)).ok_or(CborError::OutOfMemory)?;
+    let rest_slot = slots + fixed * 8;
+    memory.store_u64(
+        rest_slot,
+        list_reference(rest).ok_or(CborError::OutOfMemory)?,
+    );
+    for index in 0..count {
+        let raw = decode_value(memory, vm, &mut reader, 1)?;
+        if index < fixed {
+            memory.store_u64(slots + index * 8, raw);
+        } else {
+            push_unchecked(memory, rest, raw);
+        }
+    }
+    Ok(())
+}
+
 /// Creates the fatal ArityError of an entry that received more arguments than it declares,
 /// with all arguments as a List in its data, like v1.
 ///
@@ -513,10 +557,25 @@ fn utf8_chars(memory: &impl Memory, start: u32, len: u32) -> Option<u32> {
 
 /// Encodes one result value into the VM's result buffer.
 ///
+/// A result that cannot cross the boundary, such as a closure or a cyclic graph, is encoded as
+/// v1's fatal SerializationError instead.
+///
 /// # Errors
 ///
 /// Returns why the value could not be encoded.
 pub fn encode_result(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), CborError> {
+    match encode(memory, vm, raw) {
+        Err(CborError::Unsupported) => {
+            let error = crate::boundary::serialization_error(memory, vm, raw)
+                .ok_or(CborError::OutOfMemory)?;
+            encode(memory, vm, error)
+        }
+        outcome => outcome,
+    }
+}
+
+/// Encodes `raw` as the result in two passes, measuring and then writing.
+fn encode(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<(), CborError> {
     let mut measure = Sink {
         start: None,
         len: 0,

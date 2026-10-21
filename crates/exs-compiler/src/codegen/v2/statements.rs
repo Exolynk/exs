@@ -47,9 +47,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                         .resolve(type_annotation.as_ref(), *span)?;
                     self.check_binding(local, &contract, *span)?;
                 }
-                if let Some(scope) = self.scopes.last_mut() {
-                    scope.insert(name.name.clone(), local);
-                }
+                self.define(&name.name, local)?;
             }
             Statement::Assign {
                 target: AssignmentTarget::Variable(identifier),
@@ -60,7 +58,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                     .lookup(&identifier.name)
                     .ok_or_else(|| unsupported(*span, "assignments to unknown bindings"))?;
                 self.compile_expression(value)?;
-                self.store(local);
+                self.assign_binding(&identifier.name, local);
             }
             // Like v1, assignments report the span of their target.
             Statement::Assign {
@@ -259,6 +257,9 @@ impl<'a> FunctionCompiler<'a, '_> {
         immediate::push_small_int(&mut self.function, cursor);
         self.store(item);
         self.check_for_binding(item, binding)?;
+        if self.is_cell(&binding.identifier.name) {
+            self.wrap_in_cell(item)?;
+        }
         self.instruction(Instruction::LocalGet(cursor));
         self.instruction(Instruction::LocalGet(last));
         self.instruction(Instruction::I64Eq);

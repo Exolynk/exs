@@ -1,8 +1,8 @@
 # Runtime v2: Compiler-Owned Values and a Stateless Runtime Library
 
 Status: **approved design**. Phases 0, 0.5, 1 and 2 (2a to 2d, plus lazy class-page
-linking) are done and phase 2 got its go; phase 3 is in progress (3a to 3d done). See
-sections 12 to 12p.
+linking) are done and phase 2 got its go; phase 3 is in progress (3a to 3e done). See
+sections 12 to 12q.
 
 ## 1. Goal
 
@@ -745,6 +745,35 @@ data costs every script.
 - Suites on v2: `runtime_values` 62 of 96, `protocols_and_nominal` 20 of 27, `fuel` 14 of 18,
   all without differing results. The rest needs closures and variadics (3e), iterators (3f),
   host operations (4, 5) and Error inputs (5).
+
+## 12q. Phase 3e results
+
+- **Closures** are lifted like v1 (`$closure:N`, trace ids after the methods) into functions
+  whose leading parameters are the captured Cells. A closure value is a `ClosureObject`
+  (kind `Fn`) holding its dense index and Cells. Calls of a binding go through one generated
+  dispatcher, a `br_table` over the reached closures, which checks the argument count (v1's
+  ArityError), packs variadic arguments and calls the lifted function; a value that is no
+  closure returns v1's "value is not callable". Closures run synchronously; phase 4 replaces
+  the call mechanism with frames and keeps the object layout.
+- **Cells:** like v1, every binding whose name some closure captures lives in a Cell
+  (`let`, parameters, `for` and `match` bindings), so closures share mutations and each loop
+  iteration binds a new Cell. Reads and writes are inline loads and stores; `clone` copies
+  closures with independent Cells, keeping aliases.
+- **Variadic parameters** pack the remaining arguments into a List at call sites (functions,
+  methods, static methods, closures and entries) and check each element against the
+  parameter's contract. v1 reports parameter checks of functions it lowers as resumable at the
+  declaration instead of the parameter, so v2 reuses v1's suspendability analysis for that
+  origin. The prelude's iterator helpers (`map`, `filter`, `find`, `any`, `all`, `each`,
+  `reduce`) dispatch like v1 after implementations and before built-in methods.
+- **Runner boundary:** a result with a closure or a cycle becomes v1's fatal
+  SerializationError (cycle versus unsupported value, found by a depth-first walk).
+- **Data budget:** the template's data grew to 15,388 bytes, and template data, VM block and
+  a program's statics crossed into a second 16 KiB block for every program (+16,384 fuel).
+  The type table now names the prelude's types only when reached code uses them (all user
+  types stay), which keeps small programs in one block (`int_loop` 147,289). The template diet
+  is overdue: about 400 small panic and formatting texts make up most of the template's data.
+- Suites on v2: `runtime_values` 77 of 96, `contracts_and_errors` 11 of 15, `host_calls` 10 of
+  31, `closures_parallel` 7 of 17, still without a differing result.
 
 ## 13. Risks and open questions
 

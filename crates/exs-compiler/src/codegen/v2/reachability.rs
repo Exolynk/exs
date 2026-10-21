@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::closures::closure_span_key;
 use super::dispatch::{Dispatch, Target};
 use super::intrinsics::{DATETIME_KEYS, is_datetime_parser};
 use super::units::Unit;
@@ -13,12 +14,14 @@ use crate::codegen::trait_registry::TraitOperator;
 
 /// Returns the public functions and every unit they can reach, in trace-id order.
 ///
-/// Calls reach their function, static calls their method, and like v1's dispatch, method
-/// calls reach every implementation of the method name, operators their implementations and
+/// Calls reach their function, static calls their method, closure expressions their lifted
+/// function, and like v1's dispatch, method calls reach every implementation of the method
+/// name and the prelude's iterator helper of that name, operators their implementations and
 /// formatted strings every `ToString` implementation.
 pub(super) fn reachable_units<'u, 'm, 'a>(
     units: &'u [Unit<'m, 'a>],
     dispatch: &Dispatch,
+    closures: &HashMap<(String, u32, u32), String>,
 ) -> Vec<&'u Unit<'m, 'a>> {
     let by_key: HashMap<&str, &Unit<'m, 'a>> =
         units.iter().map(|unit| (unit.key.as_str(), unit)).collect();
@@ -49,6 +52,14 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
             } => pending.push(format!("{}::{}", type_name.name, method.name)),
             Expression::MethodCall { method, .. } => {
                 targets(dispatch.instance(&method.name), &mut pending);
+                if let Some(helper) = crate::prelude::iterator_helper(&method.name) {
+                    pending.push(helper.to_owned());
+                }
+            }
+            Expression::Closure { span, .. } => {
+                if let Some(key) = closures.get(&closure_span_key(*span)) {
+                    pending.push(key.clone());
+                }
             }
             Expression::Binary { operator, .. } => {
                 if let Some(operator) = TraitOperator::from_binary(*operator) {
@@ -186,7 +197,6 @@ fn visit_block_targets<'e, 'a>(
 
 /// Calls `visit` for every assignment target inside `statement`, including nested blocks.
 ///
-/// Closure bodies are not visited, because the v2 backend does not compile closures yet.
 fn visit_statement_targets<'e, 'a>(
     statement: &'e Statement<'a>,
     visit: &mut dyn FnMut(&'e AssignmentTarget<'a>),
@@ -280,6 +290,14 @@ fn visit_statement<'e, 'a>(
         }
         Statement::Break { .. } | Statement::Continue { .. } => {}
     }
+}
+
+/// Calls `visit` for `expression` and every expression inside it, outer expressions first.
+pub(super) fn visit_expression_tree<'e, 'a>(
+    expression: &'e Expression<'a>,
+    visit: &mut dyn FnMut(&'e Expression<'a>),
+) {
+    visit_expression(expression, visit);
 }
 
 /// Calls `visit` for `expression` and every expression inside it.

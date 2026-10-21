@@ -10,6 +10,7 @@ use exs_layout::StaticFunction;
 use exs_value::ValueRef;
 use wasm_encoder::Instruction;
 
+use super::closures::{accepts, arity_description};
 use super::function::{FunctionCompiler, error, unsupported};
 use crate::ast::{Expression, Identifier};
 use crate::codegen::immediate;
@@ -112,13 +113,12 @@ impl<'a> FunctionCompiler<'a, '_> {
         let builtin = BuiltinMethod::from_name(&method.name);
         // Receivers no implementation accepts fall back to built-in behavior the backend may
         // not support yet; without implementations that is a compile error, with them a trap.
-        let unsupported_fallback = if crate::prelude::iterator_helper(&method.name).is_some() {
-            Some("iterator helper methods".to_owned())
-        } else {
-            builtin
-                .filter(|builtin| builtin.arity() == arguments.len() && !is_supported(*builtin))
-                .map(|_| format!("calls of the built-in `{}` method", method.name))
-        };
+        let helper = crate::prelude::iterator_helper(&method.name);
+        let unsupported_fallback = builtin
+            .filter(|builtin| {
+                helper.is_none() && builtin.arity() == arguments.len() && !is_supported(*builtin)
+            })
+            .map(|_| format!("calls of the built-in `{}` method", method.name));
         if let Some(what) = &unsupported_fallback
             && targets.is_empty()
         {
@@ -135,6 +135,10 @@ impl<'a> FunctionCompiler<'a, '_> {
         }
         let arguments: Vec<u32> = (0..count).map(|offset| block + offset).collect();
         self.dispatch_chain(targets, receiver, &arguments, span, |compiler| {
+            // Like v1, the prelude's eager iterator helpers come before built-in methods.
+            if let Some(helper) = helper {
+                return compiler.call_method(helper, receiver, &arguments, span);
+            }
             if unsupported_fallback.is_some() {
                 compiler.instruction(Instruction::Unreachable);
                 return Ok(());
@@ -252,11 +256,11 @@ impl<'a> FunctionCompiler<'a, '_> {
                 format!("unknown type `{}`", type_name.name),
             ));
         }
-        let Some((index, arity)) = self
+        let Some((index, arity, variadic)) = self
             .context
             .functions
             .get(key)
-            .map(|info| (info.index, info.arity))
+            .map(|info| (info.index, info.arity, info.variadic.is_some()))
         else {
             return Err(error(
                 "E0225",
@@ -277,24 +281,24 @@ impl<'a> FunctionCompiler<'a, '_> {
                 ),
             ));
         }
-        if arity as usize != arguments.len() {
+        if !accepts(arity, variadic, arguments.len()) {
             return Err(error(
                 "E0208",
                 span,
                 format!(
-                    "static method `{key}` expects {arity} arguments but received {}",
+                    "static method `{key}` expects {} arguments but received {}",
+                    arity_description(arity, variadic),
                     arguments.len()
                 ),
             ));
         }
-        let mut locals = Vec::with_capacity(arguments.len());
-        for argument in arguments {
+        let count = arguments.len() as u32;
+        let block = self.consecutive_locals(count.max(1));
+        for (offset, argument) in (0..count).zip(arguments) {
             self.compile_expression(argument)?;
-            locals.push(self.store_new());
+            self.store(block + offset);
         }
-        for local in locals {
-            self.instruction(Instruction::LocalGet(local));
-        }
+        self.push_arguments(block, count, arity, variadic, span)?;
         self.direct_call(index, span)
     }
 }

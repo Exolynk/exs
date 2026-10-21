@@ -202,6 +202,9 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I64Load(value_field(SLOTS)));
         self.store(item);
         self.check_for_binding(item, binding)?;
+        if self.is_cell(&binding.identifier.name) {
+            self.wrap_in_cell(item)?;
+        }
         self.instruction(Instruction::LocalGet(position));
         self.instruction(Instruction::I64Const(1));
         self.instruction(Instruction::I64Add);

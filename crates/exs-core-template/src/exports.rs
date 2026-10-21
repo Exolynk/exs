@@ -121,6 +121,22 @@ pub extern "C" fn __exs_core_encode_result(vm: i32, value: i64) {
     }
 }
 
+/// Decodes the runner's arguments of a variadic entry with `fixed` parameters into the
+/// rooted `slots`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_decode_variadic_inputs(vm: i32, slots: i32, fixed: i32) {
+    if exs_core::decode_variadic_inputs(
+        &mut memory(),
+        address(vm),
+        address(slots),
+        fixed.cast_unsigned(),
+    )
+    .is_err()
+    {
+        trap();
+    }
+}
+
 /// Returns the address of the encoded result.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_result_ptr(vm: i32) -> i32 {
@@ -488,6 +504,44 @@ pub extern "C" fn __exs_core_datetime_parse(vm: i32, text: i64, slots: i32) -> i
         address(vm),
         text.cast_unsigned(),
         address(slots),
+    ))
+}
+
+/// Creates the closure of index `index` capturing the `count` rooted Cells at `slots`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_closure_new(vm: i32, index: i32, slots: i32, count: i32) -> i64 {
+    value(exs_core::closure_new(
+        &mut memory(),
+        address(vm),
+        index.cast_unsigned(),
+        address(slots),
+        count.cast_unsigned(),
+    ))
+}
+
+/// Creates a Cell holding the rooted `held`.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_cell_new(vm: i32, held: i64) -> i64 {
+    value(exs_core::cell_new(
+        &mut memory(),
+        address(vm),
+        held.cast_unsigned(),
+    ))
+}
+
+/// Creates the ArityError of a closure called with the wrong number of arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_closure_arity_error(vm: i32) -> i64 {
+    value(exs_core::closure_arity_error(&mut memory(), address(vm)))
+}
+
+/// Creates the TypeError of a call of a value that is no closure.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_not_callable(vm: i32, callee: i64) -> i64 {
+    value(exs_core::not_callable(
+        &mut memory(),
+        address(vm),
+        callee.cast_unsigned(),
     ))
 }
 

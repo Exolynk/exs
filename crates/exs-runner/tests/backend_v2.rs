@@ -700,6 +700,37 @@ fn matches_v1_for_implementations() {
     }
 }
 
+/// Creates, calls and clones closures, shares captured bindings and packs variadic
+/// arguments like v1.
+#[test]
+fn matches_v1_for_closures_and_variadics() {
+    let programs = [
+        "fn main() { let base = 10; let add = (value) => { ret value + base; }; base = 20; ret [add(1), add(2)]; }",
+        "fn main() { let count = 0; let bump = () => { count = count + 1; ret count; }; bump(); bump(); ret [count, bump()]; }",
+        "fn main() { let makers = []; for index in 0..3 { makers.push(() => { ret index * 10; }); } let results = []; for make in makers { results.push(make()); } ret results; }",
+        "fn adder(base) { ret (value) => { ret (inner) => { ret base + value + inner; }; }; } fn main() { let first = adder(1); let second = first(2); let third = adder(10); let fourth = third(20); ret [second(3), fourth(30)]; }",
+        "fn main() { let f = (a, b) => { ret a + b; }; ret [f(1), f(1, 2, 3), f(1, 2)]; }",
+        "fn main() { let value = 5; ret value(1); }",
+        "fn main() { let sum = (values...) => { let total = 0; for value in values { total = total + value; } ret total; }; ret [sum(), sum(1, 2, 3)]; }",
+        "fn total(first: Int, rest: Int...) -> Int { let sum = first; for value in rest { sum = sum + value; } ret sum; } fn main() { ret [total(1), total(1, 2, 3)]; }",
+        "fn select(values: Int...) -> Int | Error { ret values[1]; } fn main() { ret [select(1, 2), select(1, \"x\")]; }",
+        "type Total {} impl Total { fn sum(values: Int...) -> Int { let total = 0; for value in values { total = total + value; } ret total; } fn add(self, values: Int...) -> Int { ret Total::sum(values[0], 1); } } fn main() { ret [Total::sum(1, 2, 3), Total {}.add(5), Total {}.add()]; }",
+        "fn main() { let items = [1, 2, 3, 4]; ret [items.map((x) => { ret x * 2; }), items.filter((x) => { ret x > 2; }), items.find((x) => { ret x == 3; }), items.any((x) => { ret x > 3; }), items.all((x) => { ret x > 0; }), items.reduce(0, (sum, x) => { ret sum + x; })]; }",
+        "fn main() { let seen = []; [1, 2].each((x) => { seen.push(x); }); ret [seen, [1].map((x) => { ret Error(\"K\", \"m\", x); }), [1].map(5)]; }",
+        "fn main() { let count = 0; let f = () => { count = count + 1; ret count; }; let g = f.clone(); g(); ret [f(), g(), f == f, f == g, f\"{f}\"]; }",
+        "fn main() { ret [() => { ret 1; }]; }",
+        "fn main() { let cycle = []; cycle.push(cycle); ret cycle; }",
+    ];
+    for program in programs {
+        compare(program, &[]);
+    }
+    compare(
+        "fn main(first, rest...) { ret [first, rest]; }",
+        &[ExsValue::Int(1), ExsValue::Int(2), ExsValue::Int(3)],
+    );
+    compare("fn main(first, rest...) { ret [first, rest]; }", &[]);
+}
+
 /// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
 /// before host enums arrive.
 #[test]
