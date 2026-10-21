@@ -59,10 +59,13 @@ pub(super) struct Context<'m> {
     pub(super) next_global: Cell<u32>,
     /// Source position ids of the module, shared with runtime v1.
     pub(super) source_map: &'m SourceMap<'m>,
-    /// Address of the static source-position arrays of `+` chains.
+    /// Address of the static `u32` arrays of `+` chain positions and field orders.
     pub(super) positions_base: u32,
-    /// The `u32` source positions of every `+` chain, back to back.
+    /// The source positions of every `+` chain and the slot indices of every typed Object
+    /// field order, back to back.
     pub(super) positions: RefCell<Vec<u32>>,
+    /// Address of the array of every typed Object field order stored in `positions`.
+    pub(super) field_orders: RefCell<HashMap<Vec<u32>, u32>>,
     /// Nominal types with standard-trait implementations the backend must not bypass.
     pub(super) protocols: &'m Protocols,
 }

@@ -20,7 +20,9 @@ use crate::objects::{
 };
 use crate::shapes::{key, key_count};
 use crate::strings::{DATA, byte_len, copy_string, string_object};
-use crate::typed::{extra, slot_address, slot_count, type_entry, type_id, typed_object};
+use crate::typed::{
+    extra, ordered_slot, slot_address, slot_count, type_entry, type_id, typed_object,
+};
 use crate::vm::Vm;
 
 /// Deepest nesting of Lists and Objects the codec converts; deeper values, including cyclic
@@ -656,7 +658,7 @@ impl Sink {
         Ok(())
     }
 
-    /// Appends the typed Object at `object` as a map of its declared fields in order.
+    /// Appends the typed Object at `object` as a map of its declared fields in entry order.
     fn typed_object(
         &mut self,
         memory: &mut impl Memory,
@@ -686,7 +688,8 @@ impl Sink {
             MAJOR_MAP,
             u64::from(count.ok_or(CborError::Unsupported)?),
         )?;
-        for index in 0..entry.field_count {
+        for position in 0..entry.field_count {
+            let index = ordered_slot(memory, object, position);
             let value = memory.load_u64(slot_address(object, index));
             if value == 0 {
                 continue;

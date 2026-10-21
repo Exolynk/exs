@@ -108,7 +108,7 @@ existing inline immediate code keeps working:
 | String / Bytes | `len: u32`, `hash: u32`, inline bytes | immutable; one allocation; literal Strings are **static objects in a data segment** (no first-use allocation, never collected) |
 | BigInt / Float | `i64` / `f64` | Ints outside `i32` and all Floats |
 | List | `len`, `capacity`, `items: *Buffer` | elements are raw `ValueRef`s in a separate growable Buffer object |
-| TypedObject | fixed `ValueRef` slots in declaration order, then `extra: *Dict` | field offset known at compile time from the nominal type; extra keys only through the overflow dictionary |
+| TypedObject | fixed `ValueRef` slots in declaration order, `extra: *Dict` and `order: *[u32]` (entry order, 0 = declaration order) | field offset known at compile time from the nominal type; extra keys only through the overflow dictionary |
 | Object (untyped) | `shape: *Shape`, `values: *Buffer` | hidden-class shapes (ordered key list + transition table) make property access cacheable |
 | Enum | variant index in the header word, payload slots | `match` becomes a header load and a `br_table` |
 | Error | kind, message, data, severity, origin, trace | still built by runtime helpers |
@@ -390,7 +390,7 @@ rendering into the destination directly are possible follow-ups.
 
 **Difference from v1:** v1 stores a typed Object's fields in literal order followed by the
 missing fields, so its CBOR map uses that order; v2 always uses declaration order. Both agree
-whenever a literal names its fields in declaration order.
+whenever a literal names its fields in declaration order. (Resolved in section 12n.)
 
 ## 12e. Phase 2c-2 results
 
@@ -678,6 +678,23 @@ data costs every script.
   (`P { z: 3, x: 1 }` has keys `z, x`), while v2 always uses declaration order, in `keys`,
   `entries` and CBOR. The other new failures are known traps: user `impl` and trait dispatch
   (3d), iterating non-Lists, Error inputs, and Range bounds outside `i32`.
+
+## 12n. Field order of typed Objects
+
+- A `TypedObject` carries `order`: 0 for declaration order, or the address of a static array
+  of slot indices in entry order. Like v1, a literal orders its properties in source order,
+  then the fields it omits in declaration order. The compiler stores an array only for
+  literals whose order differs from the declaration, deduplicated among the static `u32`
+  arrays after the `+` positions. Slots stay in declaration order, so inline property access
+  is unchanged.
+- `keys`, `values`, `entries`, `length`, `merge`, `get`, CBOR and `clone` follow the entry
+  order. Assigning a field keeps its position, as in v1. Arrays are static only: Objects
+  decoded from inputs (3c-2) will need a heap order, and setting a removed field again still
+  traps until then.
+- **Fuel:** the header grows by 8 bytes (`order` plus padding for 8-byte slots), which the
+  allocator's zeroing charges per typed Object: the typed literal benchmark rises by 2,896
+  (839,084 → 841,980). A reordered literal adds one `i32` store.
+- `runtime_values` on v2: 58 of 96, with no differing results.
 
 ## 13. Risks and open questions
 

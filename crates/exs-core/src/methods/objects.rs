@@ -15,7 +15,9 @@ use crate::objects::{
 };
 use crate::shapes::{key, key_count};
 use crate::strings::string_object;
-use crate::typed::{extra, set_extra, slot_address, slot_count, type_entry, type_id, typed_object};
+use crate::typed::{
+    extra, ordered_slot, set_extra, slot_address, slot_count, type_entry, type_id, typed_object,
+};
 use crate::vm::Vm;
 
 /// Message of the TypeError for an Object key that is no String.
@@ -76,7 +78,8 @@ fn entry(memory: &impl Memory, vm: u32, receiver: Receiver, index: u32) -> (u64,
         Receiver::Typed(object) => {
             let mut remaining = index;
             if let Some(entry) = type_entry(memory, vm, type_id(memory, object)) {
-                for field in 0..declared_count(memory, vm, object) {
+                for position in 0..declared_count(memory, vm, object) {
+                    let field = ordered_slot(memory, object, position);
                     let value = memory.load_u64(slot_address(object, field));
                     if value == 0 {
                         continue;

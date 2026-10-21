@@ -613,6 +613,22 @@ fn matches_v1_for_list_contracts() {
     }
 }
 
+/// Lists the fields of typed Objects in the order of the literal that built them, like v1.
+#[test]
+fn matches_v1_for_typed_object_field_order() {
+    let point = "type Point { x: Int, y: Int | None, z: Int | None }";
+    let programs = [
+        "fn main() { ret [Point { z: 3, x: 1 }, Point { x: 1, z: 3 }, Point { y: 2, x: 1 }, Point { x: 1 }]; }",
+        "fn main() { let point = Point { z: 3, x: 1 }; point.y = 2; point.extra = 4; ret [point.keys(), point.values(), point.entries(), point.y, point.extra]; }",
+        "fn main() { let point = Point { z: 3, x: 1 }; ret [point.clone(), point.merge({ a: 1 }), { a: 1 }.merge(point), point.clone().keys(), point.length()]; }",
+        "fn main() { let point = Point { z: 3, x: 1, y: 2 }; point.delete(\"x\"); ret [point, point.keys(), point.get(\"z\")]; }",
+        "fn make(value) { ret Point { z: value, x: 1 }; } fn main() { ret [make(1), make(2), Point { z: 5, x: 6 }.keys()]; }",
+    ];
+    for program in programs {
+        compare(&format!("{point} {program}"), &[]);
+    }
+}
+
 /// Rejects enum inputs whose identity the program does not declare, which v2 cannot represent
 /// before host enums arrive.
 #[test]

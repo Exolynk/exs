@@ -67,6 +67,11 @@ pub struct TypedObject {
     pub slot_count: u32,
     /// Address of an untyped Object holding keys outside the declaration, or 0.
     pub extra: u32,
+    /// Address of a static array of `slot_count` `u32` slot indices listing the declared
+    /// fields in entry order, or 0 for declaration order.
+    pub order: u32,
+    /// Padding that keeps the field slots 8-byte aligned.
+    pub reserved: u32,
 }
 
 /// An untyped Object; its keys live in a shape and its values in a Buffer.

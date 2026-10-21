@@ -16,6 +16,8 @@ const TYPE_ID: u32 = 4;
 const SLOT_COUNT: u32 = offset_of!(TypedObject, slot_count) as u32;
 /// Byte offset of [`TypedObject::extra`].
 const EXTRA: u32 = offset_of!(TypedObject, extra) as u32;
+/// Byte offset of [`TypedObject::order`].
+const ORDER: u32 = offset_of!(TypedObject, order) as u32;
 /// Byte offset of the first field slot.
 const SLOTS: u32 = size_of::<TypedObject>() as u32;
 
@@ -48,6 +50,25 @@ pub(crate) fn extra(memory: &impl Memory, object: u32) -> u32 {
 /// Sets the untyped Object holding the undeclared keys of the typed Object at `object`.
 pub(crate) fn set_extra(memory: &mut impl Memory, object: u32, extra: u32) {
     memory.store_u32(object + EXTRA, extra);
+}
+
+/// Returns the field-order array of the typed Object at `object`, or 0 for declaration order.
+pub(crate) fn order(memory: &impl Memory, object: u32) -> u32 {
+    memory.load_u32(object + ORDER)
+}
+
+/// Sets the field-order array of the typed Object at `object`.
+pub(crate) fn set_order(memory: &mut impl Memory, object: u32, order: u32) {
+    memory.store_u32(object + ORDER, order);
+}
+
+/// Returns the slot index of the declared field at entry position `position` of the typed
+/// Object at `object`, which lists its fields in the order of the literal that built it.
+pub(crate) fn ordered_slot(memory: &impl Memory, object: u32, position: u32) -> u32 {
+    match order(memory, object) {
+        0 => position,
+        order => memory.load_u32(order + position * 4),
+    }
 }
 
 /// Returns the address of field slot `index` of the typed Object at `object`.

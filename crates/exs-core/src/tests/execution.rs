@@ -1,10 +1,10 @@
 //! An initialized execution whose test values are rooted on the root stack.
 
-use core::mem::offset_of;
+use core::mem::{offset_of, size_of};
 use std::vec::Vec;
 
 use exs_abi::ExsValue;
-use exs_layout::{ObjectKind, TypeEntry, VmState};
+use exs_layout::{ObjectKind, TypeEntry, TypedObject, VmState};
 use exs_value::ValueRef;
 use exs_value::layout::object_type_extra;
 
@@ -111,11 +111,12 @@ impl Execution {
             FIELD_NAMES,
         );
         set_program_types(&mut self.memory, VM, TYPES, 1);
-        let size = 16 + values.len() as u32 * 8;
+        let slots = size_of::<TypedObject>() as u32;
+        let size = slots + values.len() as u32 * 8;
         let object = allocate(&mut self.memory, VM, size, ObjectKind::TypedObject).expect("room");
         self.memory.store_u32(object + 8, values.len() as u32);
         for (index, value) in (0_u32..).zip(values) {
-            self.memory.store_u64(object + 16 + index * 8, *value);
+            self.memory.store_u64(object + slots + index * 8, *value);
         }
         let raw = ValueRef::from_parts(
             exs_abi::TYPE_OBJECT as u16,

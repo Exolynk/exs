@@ -4,6 +4,10 @@
 //! id in its reference's extra bits. Property access tests the receiver's tag against every
 //! type declaring the property and reads that type's slot inline, then tries the site's inline
 //! cache for untyped Objects; any other receiver goes through the core library.
+//!
+//! Like v1, a literal lists its properties in source order, then the fields it omits in
+//! declaration order. A literal whose order differs from the declaration points its Object at
+//! a static array of slot indices in that order.
 
 use core::mem::size_of;
 
@@ -16,7 +20,7 @@ use super::collections::{u32_field, value_field};
 use super::function::{FunctionCompiler, error};
 use super::untyped::VALUE_SLOTS;
 use crate::ast::{Expression, Identifier, ObjectProperty};
-use crate::codegen::types::NominalKind;
+use crate::codegen::types::{NominalField, NominalKind};
 use crate::codegen::{VALUE_TYPE, immediate};
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
@@ -24,6 +28,8 @@ use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 const TYPE_ID: u64 = 4;
 /// Byte offset of [`TypedObject::slot_count`].
 const SLOT_COUNT: u64 = core::mem::offset_of!(TypedObject, slot_count) as u64;
+/// Byte offset of [`TypedObject::order`].
+const ORDER: u64 = core::mem::offset_of!(TypedObject, order) as u64;
 /// Byte offset of the first field slot.
 const SLOTS: u64 = size_of::<TypedObject>() as u64;
 
@@ -117,7 +123,11 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I64Const(i64::from(tag) << 32));
         self.instruction(Instruction::I64Or);
         let object = self.store_new();
-        for (offset, value) in [(TYPE_ID, nominal.id), (SLOT_COUNT, count)] {
+        let order = self.field_order(properties, &nominal.fields);
+        let header = [(TYPE_ID, nominal.id), (SLOT_COUNT, count)]
+            .into_iter()
+            .chain(order.map(|order| (ORDER, order)));
+        for (offset, value) in header {
             self.push_address(object);
             self.instruction(Instruction::I32Const(value.cast_signed()));
             self.instruction(Instruction::I32Store(u32_field(offset)));
@@ -132,6 +142,38 @@ impl<'a> FunctionCompiler<'a, '_> {
         }
         self.instruction(Instruction::LocalGet(object));
         Ok(())
+    }
+
+    /// Returns the address of the static field-order array of a literal with `properties` of a
+    /// type declaring `fields`, or `None` when the literal keeps the declaration order.
+    fn field_order(
+        &self,
+        properties: &[ObjectProperty<'a>],
+        fields: &[NominalField],
+    ) -> Option<u32> {
+        let position = |name: &str| fields.iter().position(|field| field.name == name);
+        let mut order: Vec<u32> = properties
+            .iter()
+            .filter_map(|property| position(&property.key))
+            .map(|index| index as u32)
+            .collect();
+        for (index, field) in (0_u32..).zip(fields) {
+            if !properties.iter().any(|property| property.key == field.name) {
+                order.push(index);
+            }
+        }
+        if order.iter().copied().eq(0..order.len() as u32) {
+            return None;
+        }
+        let mut orders = self.context.field_orders.borrow_mut();
+        if let Some(address) = orders.get(&order) {
+            return Some(*address);
+        }
+        let mut positions = self.context.positions.borrow_mut();
+        let address = self.context.positions_base + positions.len() as u32 * 4;
+        positions.extend(&order);
+        orders.insert(order, address);
+        Some(address)
     }
 
     /// Returns the inline tag and slot offset of every nominal Object type declaring

@@ -13,7 +13,8 @@ use crate::memory::Memory;
 use crate::objects::{allocate_object, object_reference, shape, untyped_object, value_address};
 use crate::shapes::key_count;
 use crate::typed::{
-    allocate_typed, extra, set_extra, slot_address, slot_count, type_id, typed_object,
+    allocate_typed, extra, order, set_extra, set_order, slot_address, slot_count, type_id,
+    typed_object,
 };
 use crate::vm::Vm;
 
@@ -142,6 +143,7 @@ impl Cloner {
             let slots = slot_count(memory, object);
             let copy = allocate_typed(memory, vm, type_id(memory, object), slots)?;
             let copy_object = copy as u32;
+            set_order(memory, copy_object, order(memory, object));
             self.register(memory, vm, source, copy)?;
             for index in 0..slots {
                 let item = memory.load_u64(slot_address(object, index));

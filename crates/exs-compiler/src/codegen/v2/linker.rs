@@ -241,6 +241,7 @@ pub(in crate::codegen) fn compile<'a>(
         source_map: &source_map,
         positions_base,
         positions: RefCell::new(Vec::new()),
+        field_orders: RefCell::new(HashMap::new()),
         protocols: &protocols,
     };
     for function in &functions {
