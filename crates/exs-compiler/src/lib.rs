@@ -23,7 +23,9 @@ pub use diagnostic::{
     CompileDiagnostic, CompileDiagnosticCategory, CompileDiagnostics, RelatedSpan, SourceSpan,
 };
 pub use documentation::{
-    StandardEnum, StandardFunction, StandardMethod, StandardNamespace, StandardTrait, StandardType,
+    ApiDocumentation, CompactForm, ItemDocs, ItemKind, ItemRef, MarkdownOptions, MemberDocs,
+    ModuleDocs, ModuleOrigin, PageInfo, PageKind, PageLayout, SectionDocs, StandardEnum,
+    StandardFunction, StandardMethod, StandardNamespace, StandardTrait, StandardType,
     standard_library_enums, standard_library_functions, standard_library_namespace,
     standard_library_namespaces, standard_library_traits, standard_library_type_static_functions,
     standard_library_types,
@@ -84,12 +86,11 @@ pub struct DocumentationPage {
     pub markdown: String,
 }
 
-/// Generated Markdown documentation for one resolved ExS module graph.
+/// Generated Markdown documentation pages.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Documentation {
-    /// Project overview and language reference page.
-    pub index: String,
-    /// Module, type, enum, trait, and function API pages.
+    /// The index page, then one page per module and, in the per-item layout, one page per
+    /// type, enum, trait, and namespace.
     pub pages: Vec<DocumentationPage>,
 }
 
@@ -113,6 +114,12 @@ pub trait ModuleResolver {
     fn library(&mut self, path: &str) -> Option<ResolvedSource> {
         let _ = path;
         None
+    }
+
+    /// Returns the path of every library module the embedder provides, such as `log` and
+    /// `exo::db`; [`document_libraries`] documents them. The default provides none.
+    fn libraries(&mut self) -> Vec<String> {
+        Vec::new()
     }
 }
 
@@ -241,10 +248,12 @@ pub fn format<'a>(source: SourceInput<'a>) -> Result<String, CompileDiagnostics<
     formatter::format(source)
 }
 
-/// Generates Markdown language and API documentation for a resolved module graph.
+/// Documents the standard library, `source`, every module it imports, and every library
+/// module they name.
 ///
-/// The resolver owns import loading and canonical source identities. The returned documentation
-/// contains no filesystem side effects, so callers decide where and whether to write pages.
+/// The resolver owns import loading and canonical source identities. Render the result with
+/// [`ApiDocumentation::markdown`] or [`ApiDocumentation::llm`]; neither touches the
+/// filesystem.
 ///
 /// # Errors
 ///
@@ -252,21 +261,31 @@ pub fn format<'a>(source: SourceInput<'a>) -> Result<String, CompileDiagnostics<
 pub fn document_with_resolver<R: ModuleResolver>(
     source: SourceInput<'_>,
     resolver: &mut R,
-) -> Result<Documentation, String> {
-    documentation::generate(source, resolver)
+) -> Result<ApiDocumentation, String> {
+    documentation::project(source, resolver)
 }
 
-/// Generates one self-contained Markdown language and API reference for an LLM.
-///
-/// The result starts with the authoritative ExS language specification, followed by generated
-/// standard-library and reachable-project API documentation.
+/// Documents the standard library and every library module [`ModuleResolver::libraries`]
+/// lists.
 ///
 /// # Errors
 ///
-/// Returns a rendered diagnostic report when source loading or parsing fails.
-pub fn document_llm_with_resolver<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    resolver: &mut R,
-) -> Result<String, String> {
-    documentation::generate_llm(source, resolver)
+/// Returns a rendered diagnostic report when a listed library is missing or does not parse.
+pub fn document_libraries<R: ModuleResolver>(resolver: &mut R) -> Result<ApiDocumentation, String> {
+    documentation::libraries(resolver)
+}
+
+impl ApiDocumentation {
+    /// Renders the documentation as Markdown pages laid out by `options`.
+    #[must_use]
+    pub fn markdown(&self, options: &MarkdownOptions<'_>) -> Documentation {
+        documentation::render_markdown(self, options)
+    }
+
+    /// Renders the language specification followed by a compact reference of the
+    /// documentation, for an LLM context window.
+    #[must_use]
+    pub fn llm(&self) -> String {
+        documentation::render_llm(self)
+    }
 }

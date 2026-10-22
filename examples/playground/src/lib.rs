@@ -111,7 +111,7 @@ fn main() -> Vehicle | Error {
     }
 
     /// Entry page for the generated standard-library documentation.
-    const STANDARD_DOCUMENTATION_INDEX: &str = "modules/std/index.md";
+    const STANDARD_DOCUMENTATION_INDEX: &str = "std/index.md";
 
     /// Selects the currently visible auxiliary playground panel.
     #[derive(Clone, Copy, Eq, PartialEq)]

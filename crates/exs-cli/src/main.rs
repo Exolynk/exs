@@ -11,9 +11,9 @@ use std::process::ExitCode;
 use std::task::{Context, Poll, Waker};
 
 use exs_compiler::{
-    CompileOptions, ModuleDebugInfo, ModuleResolver, ResolvedSource, SourceInput,
-    compile_tests_with_resolver, compile_with_resolver, document_llm_with_resolver,
-    document_with_resolver, format, has_tests, read_debug_info,
+    CompileOptions, MarkdownOptions, ModuleDebugInfo, ModuleResolver, ResolvedSource, SourceInput,
+    compile_tests_with_resolver, compile_with_resolver, document_with_resolver, format, has_tests,
+    read_debug_info,
 };
 use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
 
@@ -86,16 +86,9 @@ fn generate_docs(path: &str, output: &str) -> Result<(), String> {
             text: &source,
         },
         &mut resolver,
-    )?;
+    )?
+    .markdown(&MarkdownOptions::default());
     let output = Path::new(output);
-    fs::create_dir_all(output)
-        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
-    fs::write(output.join("index.md"), documentation.index).map_err(|error| {
-        format!(
-            "could not write {}: {error}",
-            output.join("index.md").display()
-        )
-    })?;
     for page in documentation.pages {
         let path = output.join(page.path);
         let parent = path
@@ -117,13 +110,14 @@ fn generate_llm_docs(path: &str, output: &str) -> Result<(), String> {
         fs::canonicalize(path).map_err(|error| format!("could not resolve {path}: {error}"))?;
     let source_id = canonical.to_string_lossy().into_owned();
     let mut resolver = FileResolver;
-    let documentation = document_llm_with_resolver(
+    let documentation = document_with_resolver(
         SourceInput {
             source_id: &source_id,
             text: &source,
         },
         &mut resolver,
-    )?;
+    )?
+    .llm();
     fs::write(output, documentation).map_err(|error| format!("could not write {output}: {error}"))
 }
 

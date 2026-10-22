@@ -57,7 +57,7 @@ fn reports_format_errors_with_source_context() {
     assert!(stderr.contains("fn main( {"));
 }
 
-/// Writes an index and root-module API page through the documentation CLI command.
+/// Writes the index and one page per module through the documentation CLI command.
 #[test]
 fn generates_markdown_documentation() {
     let directory = std::env::temp_dir().join(format!("exs-cli-docs-{}", std::process::id()));
@@ -87,24 +87,21 @@ fn generates_markdown_documentation() {
         Ok(index) => index,
         Err(error) => panic!("could not read documentation index: {error}"),
     };
-    let module = match fs::read_to_string(output_path.join("modules/00-main/index.md")) {
+    let module = match fs::read_to_string(output_path.join("main/index.md")) {
         Ok(module) => module,
         Err(error) => panic!("could not read module documentation: {error}"),
     };
-    let function = match fs::read_to_string(output_path.join("modules/00-main/fn/main.md")) {
-        Ok(function) => function,
-        Err(error) => panic!("could not read function documentation: {error}"),
-    };
+    let standard = output_path.join("std/index.md").exists();
     if let Err(error) = fs::remove_dir_all(&directory) {
         panic!("could not remove documentation fixture directory: {error}");
     }
     assert!(index.contains("# ExS API Documentation"));
-    assert!(index.contains("[`std`](modules/std/index.md)"));
-    assert!(index.contains("[`./main.exs`](modules/00-main/index.md)"));
+    assert!(index.contains("[`std`](std/index.md)"));
+    assert!(index.contains("[`./main.exs`](main/index.md)"));
+    assert!(standard);
     assert!(module.starts_with("# Module `./main.exs`"));
-    assert!(module.contains("[`main`](fn/main.md)"));
-    assert!(function.contains("Runs the program."));
-    assert!(function.contains("fn main(value: Int) -> Int"));
+    assert!(module.contains("### `main`\n\nRuns the program."));
+    assert!(module.contains("fn main(value: Int) -> Int"));
 }
 
 /// Writes one self-contained language and API reference through the LLM documentation mode.
@@ -143,7 +140,7 @@ fn generates_single_llm_markdown_documentation() {
     }
     assert!(documentation.starts_with("# Exolynk Script (ExS) LLM Specification"));
     assert!(documentation.contains("# Compact API Reference"));
-    assert!(documentation.contains("#### Type `Int`"));
+    assert!(documentation.contains("### Type `Int`"));
     assert!(documentation.contains("Runs the program."));
 }
 

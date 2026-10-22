@@ -55,14 +55,7 @@ impl LoadedProject {
         resolver: &mut R,
         limits: CompileLimits,
     ) -> Result<Self, String> {
-        let mut loader = Loader {
-            files: Vec::new(),
-            edges: Vec::new(),
-            indices: HashMap::new(),
-            libraries: HashMap::new(),
-            total_bytes: 0,
-            limits,
-        };
+        let mut loader = Loader::new(limits);
         loader.add(
             ResolvedSource {
                 source_id: source.source_id.to_owned(),
@@ -71,59 +64,24 @@ impl LoadedProject {
             root_display_path(source.source_id),
             None,
         )?;
-        let mut index = 0;
-        while index < loader.files.len() {
-            let source_id = loader.files[index].source_id.clone();
-            let text = loader.files[index].text.clone();
-            let scanned = scan_source(&source_id, &text)?;
-            for import in scanned.imports {
-                if let Some(target) = loader.library(resolver, &import.path)? {
-                    // A library is visible everywhere; only a different alias needs an edge.
-                    if let Some(alias) = import.alias.filter(|alias| alias.name != import.path) {
-                        loader.edges[index].push(ImportEdge {
-                            namespace: alias.name,
-                            start_byte: import.span.start_byte,
-                            end_byte: import.span.end_byte,
-                            target,
-                        });
-                    }
-                    continue;
-                }
-                let resolved = resolver
-                    .resolve(&source_id, &import.path)
-                    .map_err(|error| {
-                        format!(
-                            "{}:{}-{}: could not resolve import `{}`: {error}",
-                            source_id, import.span.start_byte, import.span.end_byte, import.path
-                        )
-                    })?;
-                let target = loader.add(resolved, import.path.clone(), None)?;
-                loader.edges[index].push(ImportEdge {
-                    namespace: import
-                        .alias
-                        .map_or_else(|| default_namespace(&import.path), |alias| alias.name),
-                    start_byte: import.span.start_byte,
-                    end_byte: import.span.end_byte,
-                    target,
-                });
+        loader.load_reachable(resolver)
+    }
+
+    /// Loads the library modules at `paths`, which must exist, and everything they reach.
+    pub(crate) fn load_libraries<R: ModuleResolver>(
+        paths: &[String],
+        resolver: &mut R,
+        limits: CompileLimits,
+    ) -> Result<Self, String> {
+        let mut loader = Loader::new(limits);
+        for path in paths {
+            if loader.library(resolver, path)?.is_none() {
+                return Err(format!(
+                    "library `{path}` is listed but the resolver does not provide it"
+                ));
             }
-            for path in scanned.paths {
-                let mut prefix = String::new();
-                for segment in path.split("::") {
-                    if !prefix.is_empty() {
-                        prefix.push_str("::");
-                    }
-                    prefix.push_str(segment);
-                    loader.library(resolver, &prefix)?;
-                }
-            }
-            index += 1;
         }
-        Ok(Self {
-            files: loader.files,
-            edges: loader.edges,
-            max_nesting: limits.max_nesting,
-        })
+        loader.load_reachable(resolver)
     }
 
     /// Returns the loaded sources in deterministic discovery order.
@@ -179,6 +137,78 @@ struct Loader {
 }
 
 impl Loader {
+    /// Returns a loader without sources.
+    fn new(limits: CompileLimits) -> Self {
+        Self {
+            files: Vec::new(),
+            edges: Vec::new(),
+            indices: HashMap::new(),
+            libraries: HashMap::new(),
+            total_bytes: 0,
+            limits,
+        }
+    }
+
+    /// Loads every relative import and library module the loaded sources reach.
+    fn load_reachable<R: ModuleResolver>(
+        mut self,
+        resolver: &mut R,
+    ) -> Result<LoadedProject, String> {
+        let mut index = 0;
+        while index < self.files.len() {
+            let source_id = self.files[index].source_id.clone();
+            let text = self.files[index].text.clone();
+            let scanned = scan_source(&source_id, &text)?;
+            for import in scanned.imports {
+                if let Some(target) = self.library(resolver, &import.path)? {
+                    // A library is visible everywhere; only a different alias needs an edge.
+                    if let Some(alias) = import.alias.filter(|alias| alias.name != import.path) {
+                        self.edges[index].push(ImportEdge {
+                            namespace: alias.name,
+                            start_byte: import.span.start_byte,
+                            end_byte: import.span.end_byte,
+                            target,
+                        });
+                    }
+                    continue;
+                }
+                let resolved = resolver
+                    .resolve(&source_id, &import.path)
+                    .map_err(|error| {
+                        format!(
+                            "{}:{}-{}: could not resolve import `{}`: {error}",
+                            source_id, import.span.start_byte, import.span.end_byte, import.path
+                        )
+                    })?;
+                let target = self.add(resolved, import.path.clone(), None)?;
+                self.edges[index].push(ImportEdge {
+                    namespace: import
+                        .alias
+                        .map_or_else(|| default_namespace(&import.path), |alias| alias.name),
+                    start_byte: import.span.start_byte,
+                    end_byte: import.span.end_byte,
+                    target,
+                });
+            }
+            for path in scanned.paths {
+                let mut prefix = String::new();
+                for segment in path.split("::") {
+                    if !prefix.is_empty() {
+                        prefix.push_str("::");
+                    }
+                    prefix.push_str(segment);
+                    self.library(resolver, &prefix)?;
+                }
+            }
+            index += 1;
+        }
+        Ok(LoadedProject {
+            files: self.files,
+            edges: self.edges,
+            max_nesting: self.limits.max_nesting,
+        })
+    }
+
     /// Adds `source` unless a source of its identity is loaded already, and returns its index.
     fn add(
         &mut self,

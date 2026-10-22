@@ -202,15 +202,15 @@ mod tests {
     #[test]
     fn renders_safe_internal_documentation_links() {
         let pages = vec![DocumentationPage {
-            path: "modules/std/index.md".to_owned(),
+            path: "std/index.md".to_owned(),
             markdown: String::new(),
         }];
         let rendered = render_documentation_markdown(
-            "[Standard](modules/std/index.md) <script>alert(1)</script>",
-            "modules/00-playground/index.md",
+            "[Standard](../std/index.md) <script>alert(1)</script>",
+            "playground/index.md",
             &pages,
         );
-        assert!(rendered.contains("data-documentation-page=\"modules/std/index.md\""));
+        assert!(rendered.contains("data-documentation-page=\"std/index.md\""));
         assert!(rendered.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
     }
 }

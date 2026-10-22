@@ -1,9 +1,344 @@
-use super::shared::*;
-use super::source::{
-    parse, render_compact_module, render_enum_page, render_trait_page, render_type_page,
-};
-use super::*;
-use crate::loaded_project::LoadedSource;
+//! Descriptors of the runtime-owned standard library: types, functions, namespaces, and the
+//! methods traits provide automatically.
+
+use crate::codegen::standard as codegen_standard;
+
+/// One source-visible standard-library type and its documentation metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardType {
+    /// Source-visible built-in type name.
+    pub name: &'static str,
+    /// Overview rendered before the type declaration.
+    pub description: &'static str,
+    /// Short valid ExS example that introduces the type.
+    pub usage: &'static str,
+    /// Runtime-owned methods exposed by this type.
+    pub methods: &'static [StandardMethod],
+}
+
+/// One documented runtime-owned standard-library method.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardMethod {
+    /// Source-level method signature.
+    pub signature: &'static str,
+    /// Detailed observable behavior and error conditions.
+    pub description: &'static str,
+    /// Short valid ExS example of a call to the method.
+    pub example: &'static str,
+}
+
+/// One globally callable standard-library function and its documentation metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardFunction {
+    /// Source-visible function name.
+    pub name: &'static str,
+    /// Source-level call signature.
+    pub signature: &'static str,
+    /// Detailed observable behavior and error conditions.
+    pub description: &'static str,
+    /// Short valid ExS example of a call to the function.
+    pub example: &'static str,
+}
+
+/// One source-visible standard-library namespace and its static operations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardNamespace {
+    /// Source-visible namespace name.
+    pub name: &'static str,
+    /// Overview rendered before the namespace operations.
+    pub description: &'static str,
+    /// Static operations available through the namespace separator.
+    pub functions: &'static [StandardFunction],
+}
+
+/// One source-visible standard-library trait.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardTrait {
+    /// Source-visible trait name.
+    pub name: &'static str,
+}
+
+/// One source-visible standard-library enum and its variants.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StandardEnum {
+    /// Source-visible enum name.
+    pub name: &'static str,
+    /// Source-visible variants in declaration order.
+    pub variants: &'static [&'static str],
+}
+
+/// Returns every globally callable standard-library function.
+#[must_use]
+pub fn standard_library_functions() -> &'static [StandardFunction] {
+    &[StandardFunction {
+        name: "Error",
+        signature: "Error(kind, message, data)",
+        description: "Constructs a recoverable Error with a stable category, a human-readable message, and any related language value. `kind` and `message` must be Strings. The constructor does not assign a cause; `cause()` consequently returns None for directly constructed Errors.",
+        example: "let error = Error(\"InvalidInput\", \"age must be positive\", -1);\nret error.message();",
+    }]
+}
+
+/// Returns every source-visible standard-library namespace.
+#[must_use]
+pub fn standard_library_namespaces() -> &'static [StandardNamespace] {
+    &[
+        StandardNamespace {
+            name: "test",
+            description: "Test assertions available directly in every module and through the std::test namespace.",
+            functions: &[
+                StandardFunction {
+                    name: "assert",
+                    signature: "std::test::assert(condition: Bool[, description: String]) -> None",
+                    description: "Returns None when condition is true. When condition is false, it creates a fatal AssertionFailed Error with the supplied description, or the default message \"assert failed\" when omitted. The direct assert spelling is equivalent.",
+                    example: "assert(total > 0, \"total must be positive\");",
+                },
+                StandardFunction {
+                    name: "assert_eq",
+                    signature: "std::test::assert_eq(actual: Any, expected: Any[, description: String]) -> None",
+                    description: "Returns None when actual and expected compare equal with ExS equality semantics. Otherwise it creates a fatal AssertionFailed Error whose data contains actual and expected values and uses the supplied description, or the default message \"assert_eq failed\" when omitted. The direct assert_eq spelling is equivalent.",
+                    example: "assert_eq(total, 42, \"total must include every line item\");",
+                },
+            ],
+        },
+        StandardNamespace {
+            name: "Host",
+            description: "The runner-provided boundary for application-specific operations.",
+            functions: &[
+                StandardFunction {
+                    name: "call",
+                    signature: "Host::call(name, arguments...)",
+                    description: "Invokes a runner-registered host function selected by a runtime String name. Arguments are collected into a List and passed through the runner boundary. A call may complete immediately or suspend; it returns the host result or a recoverable Error such as `HostFunctionNotFound`.",
+                    example: "let greeting = Host::call(\"greet\", \"Ada\");\nret greeting;",
+                },
+                StandardFunction {
+                    name: "sleep",
+                    signature: "Host::sleep(duration: Duration) -> None",
+                    description: "Suspends the current ExS task until the supplied normalized Duration elapses, then returns None. This capability is built into every runner and does not use the application host-function registry.",
+                    example: "Host::sleep(Duration::milliseconds(250));\nret None;",
+                },
+                StandardFunction {
+                    name: "now",
+                    signature: "Host::now() -> DateTime",
+                    description: "Returns a snapshot of the runner wall clock. The result always carries the Unix instant and observed UTC offset; `timezone` contains the runner-resolved IANA name when available.",
+                    example: "let now = Host::now();\nret now.unix_seconds;",
+                },
+                StandardFunction {
+                    name: "elapsed",
+                    signature: "Host::elapsed() -> Duration",
+                    description: "Returns monotonic time elapsed since this root execution began. It is unaffected by wall-clock changes and is suitable for measuring work inside one execution.",
+                    example: "Host::sleep(Duration::milliseconds(250));\nret Host::elapsed();",
+                },
+                StandardFunction {
+                    name: "stream",
+                    signature: "Host::stream(name, arguments...) -> HostStream | Error",
+                    description: "Opens a runner-registered pull stream selected by a runtime String name. Arguments are collected into a List and passed to the stream factory without the name. HostStream implements Iterator; each advance may suspend, and the runner drops the stream after IteratorStep::Done or execution cleanup.",
+                    example: "let events = Host::stream(\"events.subscribe\", user_id)?;\nfor event in events {\n    Host::call(\"events.record\", event);\n}",
+                },
+            ],
+        },
+    ]
+}
+
+/// Returns one standard namespace by its source-visible name.
+#[must_use]
+pub fn standard_library_namespace(name: &str) -> Option<&'static StandardNamespace> {
+    standard_library_namespaces()
+        .iter()
+        .find(|namespace| namespace.name == name)
+}
+
+/// Returns static functions declared by one documented standard type.
+#[must_use]
+pub fn standard_library_type_static_functions(name: &str) -> &'static [StandardFunction] {
+    match name {
+        "Bytes" => &[
+            StandardFunction {
+                name: "from_list",
+                signature: "Bytes::from_list(values: List) -> Bytes | Error",
+                description: "Creates immutable Bytes from a List of Int octets. Every value must be between 0 and 255; non-Int entries return TypeError and out-of-range entries return ValueError.",
+                example: "let payload = Bytes::from_list([0, 127, 255]);",
+            },
+            StandardFunction {
+                name: "from_utf8",
+                signature: "Bytes::from_utf8(value: String) -> Bytes | Error",
+                description: "Encodes the UTF-8 contents of a String into immutable Bytes.",
+                example: "let encoded = Bytes::from_utf8(\"hello\");",
+            },
+            StandardFunction {
+                name: "from_hex",
+                signature: "Bytes::from_hex(value: String) -> Bytes | Error",
+                description: "Decodes pairs of lowercase or uppercase hexadecimal digits. Odd-length or malformed input returns ParseError.",
+                example: "let payload = Bytes::from_hex(\"4869\");",
+            },
+            StandardFunction {
+                name: "from_base64",
+                signature: "Bytes::from_base64(value: String) -> Bytes | Error",
+                description: "Decodes canonical padded RFC 4648 base64 text. Malformed input returns ParseError.",
+                example: "let payload = Bytes::from_base64(\"SGk=\");",
+            },
+        ],
+        "Int" => &[StandardFunction {
+            name: "parse",
+            signature: "Int::parse(value: String) -> Int | Error",
+            description: "Parses a base-10 signed 64-bit integer without trimming or coercion. Invalid or out-of-range input returns ParseError.",
+            example: "let count = Int::parse(\"42\");",
+        }],
+        "Float" => &[StandardFunction {
+            name: "parse",
+            signature: "Float::parse(value: String) -> Float | Error",
+            description: "Parses one IEEE-754 binary64 decimal spelling without trimming or coercion. Invalid input returns ParseError.",
+            example: "let ratio = Float::parse(\"0.75\");",
+        }],
+        "Math" => &[
+            StandardFunction {
+                name: "pi",
+                signature: "Math::pi() -> Float",
+                description: "Returns the mathematical constant pi.",
+                example: "let angle = Math::pi();",
+            },
+            StandardFunction {
+                name: "tau",
+                signature: "Math::tau() -> Float",
+                description: "Returns the mathematical constant tau, equal to two pi.",
+                example: "let turn = Math::tau();",
+            },
+            StandardFunction {
+                name: "e",
+                signature: "Math::e() -> Float",
+                description: "Returns Euler's number.",
+                example: "let base = Math::e();",
+            },
+            StandardFunction {
+                name: "sin",
+                signature: "Math::sin(value: Float) -> Float | Error",
+                description: "Returns the sine of a radian Float. Non-Float input returns TypeError.",
+                example: "let height = Math::sin(angle);",
+            },
+            StandardFunction {
+                name: "cos",
+                signature: "Math::cos(value: Float) -> Float | Error",
+                description: "Returns the cosine of a radian Float. Non-Float input returns TypeError.",
+                example: "let width = Math::cos(angle);",
+            },
+            StandardFunction {
+                name: "tan",
+                signature: "Math::tan(value: Float) -> Float | Error",
+                description: "Returns the tangent of a radian Float. Non-Float input returns TypeError.",
+                example: "let slope = Math::tan(angle);",
+            },
+            StandardFunction {
+                name: "asin",
+                signature: "Math::asin(value: Float) -> Float | Error",
+                description: "Returns the inverse sine in radians. Non-Float input returns TypeError.",
+                example: "let angle = Math::asin(0.5);",
+            },
+            StandardFunction {
+                name: "acos",
+                signature: "Math::acos(value: Float) -> Float | Error",
+                description: "Returns the inverse cosine in radians. Non-Float input returns TypeError.",
+                example: "let angle = Math::acos(0.5);",
+            },
+            StandardFunction {
+                name: "atan",
+                signature: "Math::atan(value: Float) -> Float | Error",
+                description: "Returns the inverse tangent in radians. Non-Float input returns TypeError.",
+                example: "let angle = Math::atan(1.0);",
+            },
+            StandardFunction {
+                name: "atan2",
+                signature: "Math::atan2(y: Float, x: Float) -> Float | Error",
+                description: "Returns the quadrant-aware inverse tangent in radians. Non-Float input returns TypeError.",
+                example: "let angle = Math::atan2(y, x);",
+            },
+            StandardFunction {
+                name: "exp",
+                signature: "Math::exp(value: Float) -> Float | Error",
+                description: "Returns e raised to a Float power. Non-Float input returns TypeError.",
+                example: "let value = Math::exp(1.0);",
+            },
+            StandardFunction {
+                name: "ln",
+                signature: "Math::ln(value: Float) -> Float | Error",
+                description: "Returns the natural logarithm. Non-Float input returns TypeError.",
+                example: "let power = Math::ln(value);",
+            },
+            StandardFunction {
+                name: "log2",
+                signature: "Math::log2(value: Float) -> Float | Error",
+                description: "Returns the base-two logarithm. Non-Float input returns TypeError.",
+                example: "let bits = Math::log2(value);",
+            },
+            StandardFunction {
+                name: "log10",
+                signature: "Math::log10(value: Float) -> Float | Error",
+                description: "Returns the base-ten logarithm. Non-Float input returns TypeError.",
+                example: "let digits = Math::log10(value);",
+            },
+            StandardFunction {
+                name: "hypot",
+                signature: "Math::hypot(x: Float, y: Float) -> Float | Error",
+                description: "Returns the Euclidean length of two Floats. Non-Float input returns TypeError.",
+                example: "let distance = Math::hypot(x, y);",
+            },
+        ],
+        "Object" => &[StandardFunction {
+            name: "from_entries",
+            signature: "Object::from_entries(entries: List) -> Object | Error",
+            description: "Builds an Object from two-item [String, value] Lists. Repeated keys replace their earlier value without changing their insertion position.",
+            example: "let user = Object::from_entries([[\"name\", \"Ada\"]]);",
+        }],
+        "Duration" => &[
+            StandardFunction {
+                name: "nanoseconds",
+                signature: "Duration::nanoseconds(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative exact nanosecond count. Negative input returns ValueError.",
+                example: "let pause = Duration::nanoseconds(500);",
+            },
+            StandardFunction {
+                name: "microseconds",
+                signature: "Duration::microseconds(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative exact microsecond count. Negative input returns ValueError and conversion overflow returns IntOverflowError.",
+                example: "let pause = Duration::microseconds(500);",
+            },
+            StandardFunction {
+                name: "milliseconds",
+                signature: "Duration::milliseconds(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative exact millisecond count. Negative input returns ValueError and non-Int input returns TypeError.",
+                example: "let timeout = Duration::milliseconds(500);",
+            },
+            StandardFunction {
+                name: "seconds",
+                signature: "Duration::seconds(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative exact second count. Negative input returns ValueError.",
+                example: "let interval = Duration::seconds(2);",
+            },
+        ],
+        _ => &[],
+    }
+}
+
+/// Returns every documented source-visible standard-library trait.
+#[must_use]
+pub fn standard_library_traits() -> Vec<StandardTrait> {
+    codegen_standard::traits()
+        .iter()
+        .map(|descriptor| StandardTrait {
+            name: descriptor.name,
+        })
+        .collect()
+}
+
+/// Returns every documented source-visible standard-library enum.
+#[must_use]
+pub fn standard_library_enums() -> Vec<StandardEnum> {
+    codegen_standard::enums()
+        .iter()
+        .map(|descriptor| StandardEnum {
+            name: descriptor.name,
+            variants: descriptor.variants,
+        })
+        .collect()
+}
 
 /// Returns every documented source-visible standard-library type.
 #[must_use]
@@ -558,421 +893,6 @@ pub fn standard_library_types() -> Vec<StandardType> {
     ]
 }
 
-/// Generates runtime-owned and source-prelude declaration pages for the standard library.
-/// Generates runtime-owned and source-prelude declaration pages for the standard library.
-pub(super) fn standard_pages() -> Result<Vec<DocumentationPage>, String> {
-    let prelude_modules = standard_prelude_modules()?;
-    let prelude_type_names = prelude_modules
-        .iter()
-        .flat_map(|(module, _)| {
-            module
-                .types
-                .iter()
-                .map(|declaration| declaration.name.name.as_str())
-        })
-        .collect::<Vec<_>>();
-    let prelude_enum_names = prelude_modules
-        .iter()
-        .flat_map(|(module, _)| {
-            module
-                .enums
-                .iter()
-                .map(|declaration| declaration.name.name.as_str())
-        })
-        .collect::<Vec<_>>();
-    let prelude_trait_names = prelude_modules
-        .iter()
-        .flat_map(|(module, _)| {
-            module
-                .traits
-                .iter()
-                .map(|declaration| declaration.name.name.as_str())
-        })
-        .collect::<Vec<_>>();
-    let types = standard_library_types()
-        .into_iter()
-        .filter(|type_info| !prelude_type_names.contains(&type_info.name))
-        .collect::<Vec<_>>();
-    let functions = standard_library_functions();
-    let namespaces = standard_library_namespaces();
-    let traits = codegen_standard::traits()
-        .iter()
-        .filter(|descriptor| !prelude_trait_names.contains(&descriptor.name))
-        .collect::<Vec<_>>();
-    let enums = codegen_standard::enums()
-        .iter()
-        .filter(|descriptor| !prelude_enum_names.contains(&descriptor.name))
-        .collect::<Vec<_>>();
-    let type_names = types
-        .iter()
-        .map(|type_info| type_info.name)
-        .chain(prelude_type_names.iter().copied())
-        .collect::<Vec<_>>();
-    let trait_names = traits
-        .iter()
-        .map(|descriptor| descriptor.name)
-        .chain(prelude_trait_names.iter().copied())
-        .collect::<Vec<_>>();
-    let enum_names = enums
-        .iter()
-        .map(|descriptor| descriptor.name)
-        .chain(prelude_enum_names.iter().copied())
-        .collect::<Vec<_>>();
-    let mut pages = vec![DocumentationPage {
-        path: "modules/std/index.md".to_owned(),
-        markdown: render_standard_index(
-            &type_names,
-            functions,
-            namespaces,
-            &enum_names,
-            &trait_names,
-        ),
-    }];
-    for type_info in &types {
-        pages.push(DocumentationPage {
-            path: format!("modules/std/types/{}.md", slug(type_info.name)),
-            markdown: if type_info.name == "Error" {
-                render_standard_error_type(type_info)
-            } else {
-                render_standard_type(type_info)
-            },
-        });
-    }
-    for trait_info in traits {
-        pages.push(standard_trait_page(trait_info));
-    }
-    for enum_info in enums {
-        pages.push(DocumentationPage {
-            path: format!("modules/std/enums/{}.md", slug(enum_info.name)),
-            markdown: render_standard_enum(enum_info),
-        });
-    }
-    for namespace in namespaces {
-        pages.push(standard_namespace_page(namespace));
-    }
-    for (module, source) in &prelude_modules {
-        pages.extend(standard_prelude_pages(module, source));
-    }
-    Ok(pages)
-}
-
-/// Renders the compact standard-library surface with declaration-local API contracts.
-pub(super) fn render_compact_standard_library() -> Result<String, String> {
-    let prelude_modules = standard_prelude_modules()?;
-    let prelude_type_names = prelude_modules
-        .iter()
-        .flat_map(|(module, _)| {
-            module
-                .types
-                .iter()
-                .map(|declaration| declaration.name.name.as_str())
-        })
-        .collect::<Vec<_>>();
-    let prelude_enum_names = prelude_modules
-        .iter()
-        .flat_map(|(module, _)| {
-            module
-                .enums
-                .iter()
-                .map(|declaration| declaration.name.name.as_str())
-        })
-        .collect::<Vec<_>>();
-    let prelude_trait_names = prelude_modules
-        .iter()
-        .flat_map(|(module, _)| {
-            module
-                .traits
-                .iter()
-                .map(|declaration| declaration.name.name.as_str())
-        })
-        .collect::<Vec<_>>();
-    let mut output = String::from("## Standard Library\n\n");
-    output.push_str(
-        "All standard items are globally available; `std::` qualification is optional. Every source-visible value provides `clone() -> T | Error`, where `T` is the receiver type.\n\n",
-    );
-    output.push_str("### Runtime Types\n\n");
-    for type_info in standard_library_types()
-        .into_iter()
-        .filter(|type_info| !prelude_type_names.contains(&type_info.name))
-    {
-        render_compact_standard_type(&mut output, &type_info);
-    }
-    output.push_str("### Global Functions\n\n");
-    for function in standard_library_functions() {
-        render_compact_standard_function(&mut output, function);
-    }
-    output.push_str("### Namespaces\n\n");
-    for namespace in standard_library_namespaces() {
-        output.push_str(&format!(
-            "#### Namespace `{}`\n\n{}\n\n```exs\n",
-            namespace.name, namespace.description
-        ));
-        for function in namespace.functions {
-            render_compact_standard_function_declaration(&mut output, function, "");
-        }
-        output.push_str("```\n\n");
-    }
-    output.push_str("### Built-in Traits\n\n");
-    for trait_info in codegen_standard::traits()
-        .iter()
-        .filter(|trait_info| !prelude_trait_names.contains(&trait_info.name))
-    {
-        output.push_str(&format!("#### `{}`\n\n", trait_info.name));
-        for method in trait_info.methods {
-            output.push_str(&format!("- `{}`\n", method.signature));
-        }
-        output.push('\n');
-    }
-    output.push_str("### Built-in Enums\n\n");
-    for enum_info in codegen_standard::enums()
-        .iter()
-        .filter(|enum_info| !prelude_enum_names.contains(&enum_info.name))
-    {
-        output.push_str(&format!("#### `{}`\n\n", enum_info.name));
-        for variant in enum_info.variants {
-            output.push_str(&format!("- `{}::{variant}`\n", enum_info.name));
-        }
-        output.push('\n');
-    }
-    for (module, source) in &prelude_modules {
-        render_compact_module(&mut output, module, source, true, false);
-    }
-    output.push_str("### Automatically Provided Iterator Methods\n\n");
-    for method in automatic_trait_methods("Iterator") {
-        output.push_str(&format!("- `{}`\n", method.signature));
-    }
-    output.push('\n');
-    Ok(output)
-}
-
-/// Renders one runtime-owned standard type and its callable operations as ExS declarations.
-fn render_compact_standard_type(output: &mut String, type_info: &StandardType) {
-    let static_functions = standard_library_type_static_functions(type_info.name);
-    output.push_str(&format!(
-        "#### Type `{}`\n\n{}\n\n```exs\ntype {}\n",
-        type_info.name, type_info.description, type_info.name
-    ));
-    if !type_info.methods.is_empty() || !static_functions.is_empty() {
-        output.push_str(&format!("\nimpl {} {{\n", type_info.name));
-        for method in type_info.methods {
-            render_compact_standard_method_declaration(output, method, "    ");
-        }
-        for function in static_functions {
-            render_compact_standard_function_declaration(output, function, "    ");
-        }
-        output.push_str("}\n");
-    }
-    output.push_str("```\n\n");
-}
-
-/// Renders one globally callable standard function as a compact ExS declaration block.
-fn render_compact_standard_function(output: &mut String, function: &StandardFunction) {
-    output.push_str(&format!("#### Function `{}`\n\n```exs\n", function.name));
-    render_compact_standard_function_declaration(output, function, "");
-    output.push_str("```\n\n");
-}
-
-/// Renders one documented standard static or namespace function inside a declaration block.
-fn render_compact_standard_function_declaration(
-    output: &mut String,
-    function: &StandardFunction,
-    indentation: &str,
-) {
-    render_compact_documentation_comment(output, function.description, indentation);
-    output.push_str(indentation);
-    output.push_str("fn ");
-    output.push_str(function.signature);
-    output.push_str(" { ... }\n");
-}
-
-/// Renders one documented standard instance method inside a declaration block.
-fn render_compact_standard_method_declaration(
-    output: &mut String,
-    method: &StandardMethod,
-    indentation: &str,
-) {
-    render_compact_documentation_comment(output, method.description, indentation);
-    output.push_str(indentation);
-    output.push_str("fn ");
-    output.push_str(method.signature);
-    output.push_str(" { ... }\n");
-}
-
-/// Appends prose metadata as ExS documentation comments at a declaration's indentation level.
-fn render_compact_documentation_comment(
-    output: &mut String,
-    documentation: &str,
-    indentation: &str,
-) {
-    for line in documentation.lines() {
-        output.push_str(indentation);
-        output.push_str("///");
-        if !line.is_empty() {
-            output.push(' ');
-            output.push_str(line);
-        }
-        output.push('\n');
-    }
-}
-
-/// Parses every bundled ExS prelude source for standard-library documentation rendering.
-fn standard_prelude_modules() -> Result<Vec<(Module<'static>, LoadedSource)>, String> {
-    crate::prelude::source_inputs()
-        .into_iter()
-        .map(|source| {
-            let module = parse(source.source_id, source.text)?;
-            Ok((
-                module,
-                LoadedSource {
-                    source_id: source.source_id.to_owned(),
-                    display_path: source.source_id.to_owned(),
-                    library: None,
-                    text: source.text.to_owned(),
-                },
-            ))
-        })
-        .collect()
-}
-
-/// Builds standard-library declaration pages from one bundled ExS prelude source.
-fn standard_prelude_pages(module: &Module<'_>, source: &LoadedSource) -> Vec<DocumentationPage> {
-    let mut pages = Vec::new();
-    for declaration in &module.types {
-        pages.push(DocumentationPage {
-            path: format!("modules/std/types/{}.md", slug(&declaration.name.name)),
-            markdown: render_type_page(module, declaration, source),
-        });
-    }
-    for declaration in &module.enums {
-        pages.push(DocumentationPage {
-            path: format!("modules/std/enums/{}.md", slug(&declaration.name.name)),
-            markdown: render_enum_page(module, declaration, source),
-        });
-    }
-    for declaration in &module.traits {
-        pages.push(DocumentationPage {
-            path: format!("modules/std/traits/{}.md", slug(&declaration.name.name)),
-            markdown: render_trait_page(declaration, source),
-        });
-    }
-    pages
-}
-
-/// Renders the synthetic standard-library module index.
-fn render_standard_index(
-    types: &[&str],
-    functions: &[StandardFunction],
-    namespaces: &[StandardNamespace],
-    enums: &[&str],
-    traits: &[&str],
-) -> String {
-    let mut output = String::from(
-        "# Module `std`\n\nBuilt-in standard items are globally available in ExS source and may also be written with the `std::` qualifier. Importing `std` is not required or allowed.\n\n## Types\n\n",
-    );
-    for type_name in types {
-        output.push_str(&format!(
-            "- [`{}`](types/{}.md)\n",
-            type_name,
-            slug(type_name)
-        ));
-    }
-    for namespace in namespaces
-        .iter()
-        .filter(|namespace| namespace.name == "Host")
-    {
-        output.push_str(&format!(
-            "- [`{}`](namespaces/{}.md)\n",
-            namespace.name,
-            slug(namespace.name)
-        ));
-    }
-    if namespaces.iter().any(|namespace| namespace.name == "test") {
-        output.push_str("\n## Components\n\n");
-        for namespace in namespaces
-            .iter()
-            .filter(|namespace| namespace.name == "test")
-        {
-            output.push_str(&format!(
-                "- [`{}`](namespaces/{}.md)\n",
-                namespace.name,
-                slug(namespace.name)
-            ));
-        }
-    }
-    if !enums.is_empty() {
-        output.push_str("\n## Enums\n\n");
-        for enum_name in enums {
-            output.push_str(&format!(
-                "- [`{}`](enums/{}.md)\n",
-                enum_name,
-                slug(enum_name)
-            ));
-        }
-    }
-    output.push_str("\n## Traits\n\n");
-    for trait_name in traits {
-        output.push_str(&format!(
-            "- [`{}`](traits/{}.md)\n",
-            trait_name,
-            slug(trait_name)
-        ));
-    }
-    output.push_str("\n## Functions\n\n");
-    for function in functions {
-        if function.name == "Error" {
-            output.push_str("- [`Error`](types/error.md#constructor)\n");
-        } else {
-            render_standard_function(&mut output, function, "###");
-        }
-    }
-    output
-}
-
-/// Builds one dedicated compiler-owned standard-trait API page.
-fn standard_trait_page(descriptor: &StandardTraitDescriptor) -> DocumentationPage {
-    let implementations = descriptor
-        .implemented_by
-        .iter()
-        .map(|type_name| {
-            let directory = if codegen_standard::enum_descriptor(type_name).is_some() {
-                "enums"
-            } else {
-                "types"
-            };
-            format!(
-                "- [`std::{type_name}`](../{directory}/{}.md)",
-                slug(type_name)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let methods = descriptor
-        .methods
-        .iter()
-        .map(|method| {
-            format!(
-                "### `{}`\n\n```exs\n{}\n```\n\n{}",
-                method.name, method.signature, method.description
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let method_heading = if descriptor.methods.len() == 1 {
-        "Required Method"
-    } else {
-        "Required Methods"
-    };
-    let automatic_methods = automatic_trait_methods(descriptor.name);
-    let automatic_section = render_automatic_trait_methods(automatic_methods);
-    DocumentationPage {
-        path: format!("modules/std/traits/{}.md", slug(descriptor.name)),
-        markdown: format!(
-            "# Trait `std::{}`\n\n{}\n\n## {method_heading}\n\n{methods}{automatic_section}\n## Built-in Implementations\n\n{implementations}\n\n## Usage\n\n```exs\n{}\n```\n",
-            descriptor.name, descriptor.description, descriptor.usage,
-        ),
-    }
-}
-
 /// Returns standard-library methods automatically available through one trait.
 pub(super) fn automatic_trait_methods(trait_name: &str) -> &'static [StandardMethod] {
     match trait_name {
@@ -1032,197 +952,10 @@ pub(super) fn automatic_trait_methods(trait_name: &str) -> &'static [StandardMet
     }
 }
 
-/// Renders automatic methods supplied to values that satisfy one trait.
-pub(super) fn render_automatic_trait_methods(methods: &[StandardMethod]) -> String {
-    if methods.is_empty() {
-        return String::new();
-    }
-    let mut output = String::from("\n\n## Automatically Provided Methods\n\n");
-    output.push_str("The standard library provides these eager methods for every iterable value, including user-defined types that satisfy this trait. They do not need to be implemented by user-defined types.\n\n");
-    for method in methods {
-        render_standard_method(&mut output, method, "###");
-    }
-    output
-}
-
-/// Renders automatic trait methods inherited by one documented type or enum.
-pub(super) fn render_type_automatic_trait_methods(output: &mut String, trait_names: &[&str]) {
-    let trait_names = trait_names
-        .iter()
-        .copied()
-        .filter(|trait_name| !automatic_trait_methods(trait_name).is_empty())
-        .collect::<Vec<_>>();
-    if trait_names.is_empty() {
-        return;
-    }
-    output.push_str("\n## Automatically Provided Methods\n\n");
-    output.push_str("These methods are supplied by the listed traits and do not need to be implemented by this type.\n\n");
-    for trait_name in trait_names {
-        output.push_str(&format!(
-            "### Trait [`{trait_name}`](../traits/{}.md)\n\n",
-            slug(trait_name)
-        ));
-        for method in automatic_trait_methods(trait_name) {
-            render_standard_method(output, method, "####");
-        }
-    }
-}
-
 /// Returns traits whose automatic methods are available to one runtime-owned built-in type.
-fn automatic_traits_for_standard_type(type_name: &str) -> &'static [&'static str] {
+pub(super) fn automatic_traits_for_standard_type(type_name: &str) -> &'static [&'static str] {
     match type_name {
         "String" | "Bytes" | "List" => &["Iterator"],
         _ => &[],
-    }
-}
-
-/// Renders one compiler-owned standard enum page.
-fn render_standard_enum(descriptor: &StandardEnumDescriptor) -> String {
-    let mut output = format!(
-        "# Enum `std::{}`\n\n{}\n\n```exs\nenum {} {{\n",
-        descriptor.name, descriptor.description, descriptor.name
-    );
-    for variant in descriptor.variants {
-        output.push_str(&format!("    {variant},\n"));
-    }
-    output.push_str("}\n```\n\n## Usage\n\n```exs\n");
-    output.push_str(descriptor.usage);
-    output.push_str("\n```\n");
-    let traits = codegen_standard::traits()
-        .iter()
-        .filter(|trait_info| trait_info.implemented_by.contains(&descriptor.name));
-    if traits.clone().next().is_some() {
-        output.push_str("\n## Implemented Methods\n\n");
-        for trait_info in traits {
-            render_standard_trait_implementation(&mut output, trait_info);
-        }
-    }
-    output.push_str("\n## Runtime Methods\n\n");
-    render_clone_method(&mut output, descriptor.name);
-    output
-}
-
-/// Renders the Error type page with its source-level constructor.
-fn render_standard_error_type(type_info: &StandardType) -> String {
-    let mut output = render_standard_type(type_info);
-    if let Some(constructor) = standard_library_functions()
-        .iter()
-        .find(|function| function.name == "Error")
-    {
-        output.push_str("\n## Constructor\n\n```exs\n");
-        output.push_str(constructor.signature);
-        output.push_str("\n```\n\n");
-        output.push_str(constructor.description);
-        output.push_str("\n\n```exs\n");
-        output.push_str(&script_example(constructor.example));
-        output.push_str("\n```\n");
-    }
-    output
-}
-
-/// Renders one synthetic standard-library type page.
-fn render_standard_type(type_info: &StandardType) -> String {
-    let mut output = format!(
-        "# Type `std::{}`\n\n{}\n\n",
-        type_info.name, type_info.description
-    );
-    output.push_str("```exs\n");
-    output.push_str(&format!("type {}\n```\n", type_info.name));
-    output.push_str("\n## Usage\n\n```exs\n");
-    output.push_str(type_info.usage);
-    output.push_str("\n```\n");
-    let traits = codegen_standard::traits()
-        .iter()
-        .filter(|descriptor| descriptor.implemented_by.contains(&type_info.name))
-        .collect::<Vec<_>>();
-    output.push_str("\n## Implemented Methods\n\n");
-    for descriptor in traits {
-        render_standard_trait_implementation(&mut output, descriptor);
-    }
-    for method in type_info.methods {
-        render_standard_method(&mut output, method, "###");
-    }
-    render_type_automatic_trait_methods(
-        &mut output,
-        automatic_traits_for_standard_type(type_info.name),
-    );
-    let static_functions = standard_library_type_static_functions(type_info.name);
-    if !static_functions.is_empty() {
-        output.push_str("## Static Functions\n\n");
-        for function in static_functions {
-            render_standard_function(&mut output, function, "###");
-        }
-    }
-    render_clone_method(&mut output, type_info.name);
-    output
-}
-
-/// Renders one standard static function under a caller-selected Markdown heading level.
-fn render_standard_function(output: &mut String, function: &StandardFunction, heading: &str) {
-    output.push_str(&format!(
-        "{heading} `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
-        function.signature,
-        function.description,
-        script_example(function.example)
-    ));
-}
-
-/// Renders one documented standard-library instance method.
-pub(super) fn render_standard_method(output: &mut String, method: &StandardMethod, heading: &str) {
-    output.push_str(&format!(
-        "{heading} `{}`\n\n{}\n\n```exs\n{}\n```\n\n",
-        method.signature,
-        method.description,
-        script_example(method.example)
-    ));
-}
-
-/// Renders the automatic runtime-owned deep clone method for one source-visible type.
-pub(super) fn render_clone_method(output: &mut String, type_name: &str) {
-    output.push_str(&format!(
-        "### `clone() -> {type_name} | Error`\n\nCreates a synchronous deep copy of this value's reachable mutable graph. Lists, Objects, nominal values, enum payloads, Errors, Cells, and Closures are copied while preserving aliases and cycles inside the copy; immutable values such as None, Bool, Int, Float, String, and Bytes are reused. `clone()` never mutates its source, cannot be overridden, and returns `CloneError` when a reachable host-owned resource cannot be cloned.\n\n```exs\nfn main(value: {type_name}) -> {type_name} | Error {{\n    ret value.clone();\n}}\n```\n\n"
-    ));
-}
-
-/// Renders one built-in trait implementation with the same method detail as nominal pages.
-fn render_standard_trait_implementation(output: &mut String, descriptor: &StandardTraitDescriptor) {
-    output.push_str(&format!(
-        "### Trait [`{}`](../traits/{}.md)\n\n",
-        descriptor.name,
-        slug(descriptor.name)
-    ));
-    for method in descriptor.methods {
-        output.push_str(&format!("#### `{}`\n\n", method.name));
-        output.push_str(method.description);
-        output.push_str("\n\n```exs\n");
-        output.push_str(method.signature.trim_end_matches(';'));
-        output.push_str(" { ... }\n```\n\n");
-    }
-}
-
-/// Renders one method-body example as an independently runnable ExS script.
-fn script_example(body: &str) -> String {
-    let mut output = String::from("fn main() {\n");
-    for line in body.lines() {
-        output.push_str("    ");
-        output.push_str(line);
-        output.push('\n');
-    }
-    output.push('}');
-    output
-}
-
-/// Builds one synthetic standard-library namespace page.
-fn standard_namespace_page(namespace: &StandardNamespace) -> DocumentationPage {
-    let mut markdown = format!(
-        "# Namespace `std::{}`\n\n{}\n\n## Functions\n\n",
-        namespace.name, namespace.description
-    );
-    for function in namespace.functions {
-        render_standard_function(&mut markdown, function, "###");
-    }
-    DocumentationPage {
-        path: format!("modules/std/namespaces/{}.md", slug(namespace.name)),
-        markdown,
     }
 }

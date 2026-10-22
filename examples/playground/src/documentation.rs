@@ -1,7 +1,8 @@
 //! Generated documentation selection for the browser playground.
 
 use exs_compiler::{
-    DocumentationPage, ModuleResolver, ResolvedSource, SourceInput, document_with_resolver,
+    DocumentationPage, MarkdownOptions, ModuleResolver, ResolvedSource, SourceInput,
+    document_with_resolver,
 };
 
 /// Stable source identifier used for editor diagnostics and generated documentation paths.
@@ -29,10 +30,11 @@ pub(crate) fn documentation_pages(source: &str) -> Result<Vec<DocumentationPage>
         },
         &mut resolver,
     )?
+    .markdown(&MarkdownOptions::default())
     .pages;
     pages.sort_by(|left, right| {
-        let left_is_standard = left.path.starts_with("modules/std/");
-        let right_is_standard = right.path.starts_with("modules/std/");
+        let left_is_standard = left.path.starts_with("std/");
+        let right_is_standard = right.path.starts_with("std/");
         right_is_standard
             .cmp(&left_is_standard)
             .then_with(|| left.path.cmp(&right.path))
@@ -50,17 +52,11 @@ pub(crate) fn resolve_documentation_link(
     if destination.is_empty() || destination.contains("://") || destination.starts_with("mailto:") {
         return None;
     }
-    let mut components = if destination.starts_with("modules/") {
-        Vec::new()
-    } else {
-        current_page
-            .split('/')
-            .filter(|component| !component.is_empty())
-            .collect::<Vec<_>>()
-    };
-    if !destination.starts_with("modules/") {
-        let _file_name = components.pop();
-    }
+    let mut components = current_page
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
+    let _file_name = components.pop();
     for component in destination.split('/') {
         match component {
             "" | "." => {}
@@ -93,20 +89,22 @@ mod tests {
             Ok(pages) => pages,
             Err(error) => panic!("documentation generation failed: {error}"),
         };
-        assert!(pages.iter().any(|page| page.path == "modules/std/index.md"));
-        assert!(pages.iter().any(|page| page.path.ends_with("/fn/greet.md")));
+        assert!(pages.iter().any(|page| page.path == "std/index.md"));
+        assert!(pages.iter().any(
+            |page| page.path == "playground/index.md" && page.markdown.contains("### `greet`")
+        ));
     }
 
     /// Resolves generated documentation links relative to the current page.
     #[test]
     fn resolves_relative_documentation_links() {
         let pages = vec![DocumentationPage {
-            path: "modules/std/types/int.md".to_owned(),
+            path: "std/index.md".to_owned(),
             markdown: String::new(),
         }];
         assert_eq!(
-            resolve_documentation_link("modules/std/index.md", "types/int.md", &pages),
-            Some(String::from("modules/std/types/int.md"))
+            resolve_documentation_link("main/index.md", "../std/index.md#type-int", &pages),
+            Some(String::from("std/index.md"))
         );
     }
 }

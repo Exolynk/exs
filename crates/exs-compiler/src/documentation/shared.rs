@@ -1,4 +1,7 @@
-use super::*;
+//! Helpers shared by the documentation builders.
+
+use crate::SourceSpan;
+use crate::ast::{Parameter, TypeAnnotation};
 
 /// Renders one declaration signature without its executable body.
 pub(super) fn function_signature(
@@ -45,16 +48,6 @@ pub(super) fn type_name(member: &crate::ast::TypeName<'_>) -> String {
     )
 }
 
-/// Appends the consecutive preceding `///` documentation comment and reports whether one exists.
-pub(super) fn append_comment(output: &mut String, source: &str, span: SourceSpan<'_>) -> bool {
-    let Some(comment) = documentation_comment(source, span) else {
-        return false;
-    };
-    output.push_str(&comment);
-    output.push_str("\n\n");
-    true
-}
-
 /// Returns the consecutive preceding `///` documentation comment, if present.
 pub(super) fn documentation_comment(source: &str, span: SourceSpan<'_>) -> Option<String> {
     let start = usize::try_from(span.start_byte)
@@ -79,17 +72,18 @@ pub(super) fn documentation_comment(source: &str, span: SourceSpan<'_>) -> Optio
     }
 }
 
-/// Builds a deterministic documentation directory for one source module.
-pub(super) fn module_directory(index: usize, source_id: &str) -> String {
-    format!(
-        "modules/{index:02}-{}",
-        slug(
-            Path::new(source_id)
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or("module")
-        )
-    )
+/// Returns the leading `//!` comment of a module source, without the comment markers.
+pub(super) fn module_comment(source: &str) -> String {
+    source
+        .lines()
+        .map(str::trim_start)
+        .take_while(|line| line.starts_with("//!"))
+        .map(|line| {
+            let line = &line[3..];
+            line.strip_prefix(' ').unwrap_or(line)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Produces a portable lowercase page-name segment.

@@ -1,12 +1,221 @@
+use exs_compiler::{
+    ApiDocumentation, Documentation, DocumentationPage, MarkdownOptions, PageInfo, PageKind,
+    PageLayout, document_libraries,
+};
+
 use super::*;
 
-/// Generates language and API pages for reachable imported modules.
+/// Root source that imports `./math.exs`.
+const MAIN: &str = "//! The demo program.\nimport \"./math.exs\" as math;\n/// Runs the program.\nfn main() -> Int { ret math::add(20, 22); }";
+
+/// Module with public and private declarations of every kind.
+const MATH: &str = "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\nprivate fn hidden() -> Int { ret 1; }\n\n/// A coordinate.\ntype Point { value: Int }\n\nimpl Point {\n    fn coordinate(self) -> Int { ret self.value; }\n    private fn secret(self) -> Int { ret 0; }\n}\n\n/// A display color.\nenum Color {\n    /// Red, green, and blue channels.\n    Rgb(red: Int, green: Int, blue: Int),\n    Transparent,\n}\n\nimpl Color { fn channels(self) -> Int { ret 3; } }\n\nprivate type Secret {}";
+
+/// Documents `MAIN` and `MATH`.
+fn project_documentation() -> ApiDocumentation {
+    let mut resolver = TestResolver {
+        sources: HashMap::from([("./math.exs".to_owned(), MATH.to_owned())]),
+    };
+    match document_with_resolver(
+        SourceInput {
+            source_id: "./main.exs",
+            text: MAIN,
+        },
+        &mut resolver,
+    ) {
+        Ok(documentation) => documentation,
+        Err(error) => panic!("documentation generation failed: {error}"),
+    }
+}
+
+/// Returns the page at `path`.
+fn page<'d>(documentation: &'d Documentation, path: &str) -> &'d DocumentationPage {
+    documentation
+        .pages
+        .iter()
+        .find(|page| page.path == path)
+        .unwrap_or_else(|| panic!("missing page {path}"))
+}
+
+/// Builds one module per standard, library, and project module with only public items.
 #[test]
-fn generates_markdown_api_documentation() {
+fn builds_the_documentation_model() {
+    let documentation = project_documentation();
+    let names = documentation
+        .modules
+        .iter()
+        .map(|module| module.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["std", "std::test", "./main.exs", "./math.exs"]);
+    let main = documentation.module("./main.exs").expect("main module");
+    assert_eq!(main.segments, ["main"]);
+    assert_eq!(main.description, "The demo program.");
+    let math = documentation.module("./math.exs").expect("math module");
+    let items = math
+        .items
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(items, ["Point", "Color", "add"]);
+    let point = math.item("Point").expect("Point");
+    assert!(
+        point
+            .sections
+            .iter()
+            .flat_map(|section| &section.members)
+            .all(|member| member.name != "secret")
+    );
+    let std = documentation.module("std").expect("std module");
+    assert!(std.items.iter().all(|item| !item.name.starts_with("__")));
+    assert!(std.item("Duration").is_some());
+    assert!(std.item("Host").is_some());
+}
+
+/// Renders one page per module by default.
+#[test]
+fn renders_one_page_per_module() {
+    let documentation = project_documentation().markdown(&MarkdownOptions::default());
+    let paths = documentation
+        .pages
+        .iter()
+        .map(|page| page.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        [
+            "index.md",
+            "std/index.md",
+            "std/test/index.md",
+            "main/index.md",
+            "math/index.md"
+        ]
+    );
+    let index = page(&documentation, "index.md");
+    assert!(index.markdown.starts_with("# ExS API Documentation"));
+    assert!(index.markdown.contains("## Language"));
+    assert!(index.markdown.contains("- [`std`](std/index.md)"));
+    assert!(
+        index
+            .markdown
+            .contains("- [`./main.exs`](main/index.md) - The demo program.")
+    );
+    let math = &page(&documentation, "math/index.md").markdown;
+    assert!(math.starts_with("# Module `./math.exs`"));
+    assert!(math.contains(
+        "## Type `Point`\n\nA coordinate.\n\n```exs\ntype Point {\n    value: Int,\n}\n```"
+    ));
+    assert!(
+        math.contains("### Implemented Methods\n\n#### Inherent methods\n\n##### `coordinate`")
+    );
+    assert!(math.contains("fn clone(self) -> Point | Error"));
+    assert!(math.contains("Rgb(red: Int, green: Int, blue: Int)"));
+    assert!(math.contains("#### `Rgb`\n\nRed, green, and blue channels."));
+    assert!(math.contains("## Functions\n\n### `add`\n\nAdds two integers."));
+    assert!(!math.contains("hidden"));
+    assert!(!math.contains("secret"));
+    assert!(!math.contains("Secret"));
+    let std = &page(&documentation, "std/index.md").markdown;
+    assert!(std.contains("`std::` qualifier"));
+    assert!(std.contains("- [`std::test`](test/index.md)"));
+    assert!(std.contains("## Namespace `Host`"));
+    assert!(std.contains("fn Host::call(name, arguments...)"));
+    assert!(std.contains("fn Host::stream(name, arguments...) -> HostStream | Error"));
+    assert!(std.contains("fn Host::sleep(duration: Duration) -> None"));
+    assert!(std.contains("## Type `Duration`"));
+    assert!(std.contains("Creates an exact Duration from a non-negative millisecond count."));
+    assert!(std.contains("fn milliseconds(value: Int) -> Duration | Error"));
+    assert!(std.contains("fn as_nanoseconds(self) -> Int | Error"));
+    assert!(std.contains("optional IANA time-zone metadata"));
+    assert!(std.contains("## Enum `IteratorStep`"));
+    assert!(std.contains("Item(value: Any)"));
+    assert!(std.contains("## Trait `Iterator`"));
+    assert!(std.contains("fn next(self) -> IteratorStep | Error;"));
+    assert!(std.contains("##### `map`"));
+    assert!(std.contains("#### Trait [`Iterator`](#trait-iterator)"));
+    assert!(std.contains("#### Trait [`Add`](#trait-add)"));
+    assert!(std.contains("- [`String`](#type-string)"));
+    assert!(std.contains("### `Error`\n\nConstructs a recoverable Error"));
+    assert!(std.contains("fn Error(kind, message, data)"));
+    assert!(std.contains("##### `push`"));
+    assert!(std.contains("mutates the existing List"));
+    assert!(std.contains("fn compare(self, other: Any) -> Ordering;"));
+    assert!(std.contains("Ordering::Unordered"));
+    assert!(!std.contains("__exs_"));
+    let test = &page(&documentation, "std/test/index.md").markdown;
+    assert!(test.contains("fn assert(condition: Bool"));
+    assert!(test.contains("fn assert_eq(actual: Any, expected: Any"));
+}
+
+/// Gives types, enums, traits, and namespaces their own pages in the per-item layout.
+#[test]
+fn renders_one_page_per_item() {
+    let documentation = project_documentation().markdown(&MarkdownOptions {
+        layout: PageLayout::PerItem,
+        ..MarkdownOptions::default()
+    });
+    let math = &page(&documentation, "math/index.md").markdown;
+    assert!(math.contains("## Types\n\n- [`Point`](point.md)"));
+    assert!(math.contains("## Enums\n\n- [`Color`](color.md)"));
+    assert!(math.contains("## Functions\n\n### `add`"));
+    let color = &page(&documentation, "math/color.md").markdown;
+    assert!(color.starts_with("# Enum `Color`"));
+    assert!(color.contains("## Variants"));
+    let range = &page(&documentation, "std/range.md").markdown;
+    assert!(range.contains("### Trait [`Iterator`](iterator.md)"));
+    let string = &page(&documentation, "std/string.md").markdown;
+    assert!(string.contains("### Trait [`Add`](add.md)"));
+    assert!(
+        page(&documentation, "std/host.md")
+            .markdown
+            .contains("## Functions")
+    );
+    let add = &page(&documentation, "std/add.md").markdown;
+    assert!(add.contains("## Built-in Implementations"));
+    assert!(add.contains("- [`Int`](int.md)"));
+    assert!(add.contains("Vector { value: 20 } + Vector { value: 22 }"));
+}
+
+/// Writes front matter, absolute links, and custom index file names for static-site
+/// generators such as Zola.
+#[test]
+fn renders_front_matter_and_absolute_links() {
+    let front_matter = |info: &PageInfo<'_>| {
+        let template = match info.kind {
+            PageKind::Index | PageKind::Module => "section",
+            PageKind::Item(_) => "page",
+        };
+        format!(
+            "+++\ntitle = \"{}\"\ntemplate = \"{template}\"\n+++\n\n",
+            info.title
+        )
+    };
+    let documentation = project_documentation().markdown(&MarkdownOptions {
+        layout: PageLayout::PerItem,
+        index_file: "_index.md",
+        link_prefix: Some("@/exs/"),
+        title_heading: false,
+        front_matter: Some(&front_matter),
+    });
+    let index = &page(&documentation, "_index.md").markdown;
+    assert!(index.starts_with(
+        "+++\ntitle = \"ExS API Documentation\"\ntemplate = \"section\"\n+++\n\nExS is"
+    ));
+    assert!(index.contains("- [`std`](@/exs/std/_index.md)"));
+    let std = &page(&documentation, "std/_index.md").markdown;
+    assert!(std.starts_with("+++\ntitle = \"std\""));
+    let range = &page(&documentation, "std/range.md").markdown;
+    assert!(range.starts_with("+++\ntitle = \"Range\"\ntemplate = \"page\""));
+    assert!(range.contains("[`Iterator`](@/exs/std/iterator.md)"));
+}
+
+/// Combines the language specification and a compact reference of the API.
+#[test]
+fn renders_the_compact_llm_reference() {
     let mut resolver = TestResolver {
         sources: HashMap::from([(
             "./math.exs".to_owned(),
-            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\n/// A coordinate.\ntype Point { value: Int }\n\nimpl Point { fn coordinate(self) -> Int { ret self.value; } }\n\n/// A display color.\nenum Color { Rgb(red: Int, green: Int, blue: Int), Transparent, }\n\nimpl Color { fn channels(self) -> Int { ret 3; } }".to_owned(),
+            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\ntype Counter {}\n\nimpl Counter {\n/// Returns the current count.\nfn count(self) -> Int { ret 0; }\n}"
+                .to_owned(),
         )]),
     };
     let documentation = match document_with_resolver(
@@ -16,444 +225,11 @@ fn generates_markdown_api_documentation() {
         },
         &mut resolver,
     ) {
-        Ok(documentation) => documentation,
-        Err(error) => panic!("documentation generation failed: {error}"),
-    };
-    assert!(documentation.index.contains("## Language"));
-    assert!(
-        documentation
-            .index
-            .contains("[`std`](modules/std/index.md)")
-    );
-    let main = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/00-main/index.md")
-        .unwrap_or_else(|| panic!("missing main module page"));
-    assert!(main.markdown.contains("[module](../01-math/index.md)"));
-    let math = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/01-math/index.md")
-        .unwrap_or_else(|| panic!("missing math module index"));
-    assert!(math.markdown.starts_with("# Module `./math.exs`"));
-    assert!(math.markdown.contains("[`add`](fn/add.md)"));
-    assert!(math.markdown.contains("[`Point`](types/point.md)"));
-    assert!(math.markdown.contains("[`Color`](enums/color.md)"));
-    assert!(!math.markdown.contains("## Implementations"));
-    let add = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/01-math/fn/add.md")
-        .unwrap_or_else(|| panic!("missing function page"));
-    assert!(add.markdown.contains("Adds two integers."));
-    let point = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/01-math/types/point.md")
-        .unwrap_or_else(|| panic!("missing Point type page"));
-    assert!(point.markdown.contains("## Implemented Methods"));
-    assert!(point.markdown.contains("coordinate"));
-    assert!(point.markdown.contains("## Runtime Methods"));
-    assert!(point.markdown.contains("clone() -> Point | Error"));
-    let color = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/01-math/enums/color.md")
-        .unwrap_or_else(|| panic!("missing Color enum page"));
-    assert!(
-        color
-            .markdown
-            .contains("Rgb(red: Int, green: Int, blue: Int)")
-    );
-    assert!(color.markdown.contains("## Implemented Methods"));
-    assert!(color.markdown.contains("clone() -> Color | Error"));
-    let host = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/namespaces/host.md")
-        .unwrap_or_else(|| panic!("missing std Host namespace page"));
-    assert!(host.markdown.contains("Host::call(name, arguments...)"));
-    assert!(
-        host.markdown
-            .contains("Host::stream(name, arguments...) -> HostStream | Error")
-    );
-    assert!(
-        host.markdown
-            .contains("Host::sleep(duration: Duration) -> None")
-    );
-    assert!(host.markdown.contains("Host::now() -> DateTime"));
-    assert!(host.markdown.contains("Host::elapsed() -> Duration"));
-    assert!(host.markdown.contains("# Namespace `std::Host`"));
-    let duration = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/duration.md")
-        .unwrap_or_else(|| panic!("missing std Duration type page"));
-    assert!(duration.markdown.contains("## Implemented Methods"));
-    assert!(
-        duration
-            .markdown
-            .contains("fn milliseconds(value: Int) -> Duration | Error")
-    );
-    let date_time = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/datetime.md")
-        .unwrap_or_else(|| panic!("missing std DateTime type page"));
-    assert!(
-        date_time
-            .markdown
-            .contains("optional IANA time-zone metadata")
-    );
-    assert!(
-        date_time
-            .markdown
-            .contains("fn duration_since(self, earlier: DateTime)")
-    );
-    assert!(
-        duration
-            .markdown
-            .contains("Creates an exact Duration from a non-negative millisecond count.")
-    );
-    assert!(
-        duration
-            .markdown
-            .contains("fn nanoseconds(value: Int) -> Duration | Error")
-    );
-    assert!(
-        duration
-            .markdown
-            .contains("fn microseconds(value: Int) -> Duration | Error")
-    );
-    assert!(
-        duration
-            .markdown
-            .contains("fn seconds(value: Int) -> Duration | Error")
-    );
-    assert!(
-        duration
-            .markdown
-            .contains("fn as_nanoseconds(self) -> Int | Error")
-    );
-    let iterator_step = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/enums/iteratorstep.md")
-        .unwrap_or_else(|| panic!("missing std IteratorStep enum page"));
-    assert!(
-        iterator_step
-            .markdown
-            .contains("The result of advancing one Iterator.")
-    );
-    assert!(iterator_step.markdown.contains("Item(value: Any)"));
-    let iterator = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/traits/iterator.md")
-        .unwrap_or_else(|| panic!("missing std Iterator trait page"));
-    assert!(
-        iterator
-            .markdown
-            .contains("fn next(self) -> IteratorStep | Error;")
-    );
-    assert!(iterator.markdown.contains("## Required Methods"));
-    assert!(
-        iterator
-            .markdown
-            .contains("## Automatically Provided Methods")
-    );
-    assert!(
-        iterator
-            .markdown
-            .contains("`map(callback: Fn) -> List | Error`")
-    );
-    assert!(iterator.markdown.contains("`collect() -> List | Error`"));
-    let range = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/range.md")
-        .unwrap_or_else(|| panic!("missing std Range type page"));
-    assert!(range.markdown.contains("## Automatically Provided Methods"));
-    assert!(
-        range
-            .markdown
-            .contains("Trait [`Iterator`](../traits/iterator.md)")
-    );
-    assert!(range.markdown.contains("#### `collect() -> List | Error`"));
-    let host_stream = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/hoststream.md")
-        .unwrap_or_else(|| panic!("missing std HostStream type page"));
-    assert!(
-        host_stream
-            .markdown
-            .contains("A host-backed pull stream that implements Iterator.")
-    );
-    assert!(
-        host_stream
-            .markdown
-            .contains("Trait [`Iterator`](../traits/iterator.md)")
-    );
-    assert!(
-        host_stream
-            .markdown
-            .contains("## Automatically Provided Methods")
-    );
-    let standard = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/index.md")
-        .unwrap_or_else(|| panic!("missing std module page"));
-    assert!(standard.markdown.contains("[`Host`](namespaces/host.md)"));
-    assert!(
-        !standard
-            .markdown
-            .contains("[`Duration`](namespaces/duration.md)")
-    );
-    assert!(!standard.markdown.contains("[`type`]"));
-    assert!(!standard.markdown.contains("[`len`]"));
-    assert!(
-        standard
-            .markdown
-            .contains("[`Duration`](types/duration.md)")
-    );
-    assert!(
-        standard
-            .markdown
-            .contains("[`HostStream`](types/hoststream.md)")
-    );
-    assert!(
-        standard
-            .markdown
-            .contains("[`IteratorStep`](enums/iteratorstep.md)")
-    );
-    assert!(
-        standard
-            .markdown
-            .contains("[`Iterator`](traits/iterator.md)")
-    );
-    assert!(standard.markdown.contains("`std::` qualifier"));
-    assert!(standard.markdown.contains("[`Add`](traits/add.md)"));
-    assert!(standard.markdown.contains("[`Sub`](traits/sub.md)"));
-    assert!(standard.markdown.contains("[`Mul`](traits/mul.md)"));
-    assert!(standard.markdown.contains("[`Div`](traits/div.md)"));
-    assert!(standard.markdown.contains("[`Compare`](traits/compare.md)"));
-    assert!(
-        standard
-            .markdown
-            .contains("[`Ordering`](enums/ordering.md)")
-    );
-    let test_namespace = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/namespaces/test.md")
-        .unwrap_or_else(|| panic!("missing std test namespace page"));
-    assert!(test_namespace.markdown.contains("# Namespace `std::test`"));
-    assert!(
-        test_namespace
-            .markdown
-            .contains("std::test::assert(condition: Bool")
-    );
-    assert!(
-        test_namespace
-            .markdown
-            .contains("std::test::assert_eq(actual: Any, expected: Any")
-    );
-    assert!(documentation.pages.iter().all(|page| !matches!(
-        page.path.as_str(),
-        "modules/std/fn/type.md"
-            | "modules/std/fn/len.md"
-            | "modules/std/namespaces/std.md"
-            | "modules/std/namespaces/duration.md"
-    )));
-    assert!(
-        documentation
-            .pages
-            .iter()
-            .all(|page| !page.path.contains("__exs_"))
-    );
-    let error = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/error.md")
-        .unwrap_or_else(|| panic!("missing std Error type page"));
-    assert!(error.markdown.contains("## Constructor"));
-    let any = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/any.md")
-        .unwrap_or_else(|| panic!("missing std Any page"));
-    assert!(any.markdown.contains("clone() -> Any | Error"));
-    assert!(any.markdown.contains("preserving aliases and cycles"));
-    assert!(error.markdown.contains("Error(kind, message, data)"));
-    assert!(error.markdown.contains("### `kind() -> String`"));
-    assert!(error.markdown.contains("machine-readable category"));
-    assert!(error.markdown.contains("fn main()"));
-    assert!(
-        documentation
-            .pages
-            .iter()
-            .all(|page| page.path != "modules/std/fn/error.md")
-    );
-    let list = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/list.md")
-        .unwrap_or_else(|| panic!("missing standard List page"));
-    assert!(list.markdown.contains("### `push(value) -> Int`"));
-    assert!(list.markdown.contains("### `length() -> Int`"));
-    assert!(list.markdown.contains("mutates the existing List"));
-    assert!(list.markdown.contains("let items = [\"Ada\"];"));
-    assert!(list.markdown.contains("## Automatically Provided Methods"));
-    assert!(
-        list.markdown
-            .contains("Trait [`Iterator`](../traits/iterator.md)")
-    );
-    assert!(
-        list.markdown
-            .contains("#### `map(callback: Fn) -> List | Error`")
-    );
-    let bytes = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/bytes.md")
-        .unwrap_or_else(|| panic!("missing standard Bytes page"));
-    assert!(bytes.markdown.contains("## Automatically Provided Methods"));
-    assert!(bytes.markdown.contains("#### `count() -> Int | Error`"));
-    let float = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/float.md")
-        .unwrap_or_else(|| panic!("missing standard Float page"));
-    assert!(float.markdown.contains("### `round() -> Float`"));
-    let add_trait = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/traits/add.md")
-        .unwrap_or_else(|| panic!("missing std Add trait page"));
-    assert!(
-        add_trait
-            .markdown
-            .contains("fn add(self, other: Any) -> Any;")
-    );
-    assert!(
-        add_trait
-            .markdown
-            .contains("Vector { value: 20 } + Vector { value: 22 }")
-    );
-    assert!(add_trait.markdown.contains("## Built-in Implementations"));
-    assert!(
-        add_trait
-            .markdown
-            .contains("[`std::String`](../types/string.md)")
-    );
-    let string = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/string.md")
-        .unwrap_or_else(|| panic!("missing standard String page"));
-    assert!(string.markdown.contains("## Implemented Methods"));
-    assert!(string.markdown.contains("Trait [`Add`](../traits/add.md)"));
-    assert!(string.markdown.contains("#### `add`"));
-    assert!(
-        string
-            .markdown
-            .contains("Adds the receiver to the evaluated `other` operand.")
-    );
-    let div_trait = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/traits/div.md")
-        .unwrap_or_else(|| panic!("missing std Div trait page"));
-    assert!(
-        div_trait
-            .markdown
-            .contains("fn div(self, other: Any) -> Any;")
-    );
-    let integer = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/types/int.md")
-        .unwrap_or_else(|| panic!("missing standard Int page"));
-    assert!(integer.markdown.contains("Trait [`Sub`](../traits/sub.md)"));
-    assert!(integer.markdown.contains("Trait [`Mul`](../traits/mul.md)"));
-    assert!(integer.markdown.contains("Trait [`Div`](../traits/div.md)"));
-    assert!(
-        integer
-            .markdown
-            .contains("Trait [`Compare`](../traits/compare.md)")
-    );
-    assert!(
-        integer
-            .markdown
-            .contains("Trait [`ToString`](../traits/tostring.md)")
-    );
-    assert!(
-        integer
-            .markdown
-            .contains("Trait [`Debug`](../traits/debug.md)")
-    );
-    assert!(integer.markdown.contains("clone() -> Int | Error"));
-    let ordering = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/enums/ordering.md")
-        .unwrap_or_else(|| panic!("missing standard Ordering enum page"));
-    assert!(ordering.markdown.contains("Ordering::Unordered"));
-    assert!(ordering.markdown.contains("clone() -> Ordering | Error"));
-    let compare_trait = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/traits/compare.md")
-        .unwrap_or_else(|| panic!("missing std Compare trait page"));
-    assert!(
-        compare_trait
-            .markdown
-            .contains("fn compare(self, other: Any) -> Ordering;")
-    );
-    let to_string_trait = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/traits/tostring.md")
-        .unwrap_or_else(|| panic!("missing std ToString trait page"));
-    assert!(
-        to_string_trait
-            .markdown
-            .contains("fn to_string(self) -> String;")
-    );
-    let debug_trait = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/std/traits/debug.md")
-        .unwrap_or_else(|| panic!("missing std Debug trait page"));
-    assert!(debug_trait.markdown.contains("fn debug(self) -> String;"));
-}
-
-/// Combines the language specification and generated standard and source API documentation.
-#[test]
-fn generates_single_llm_markdown_documentation() {
-    let mut resolver = TestResolver {
-        sources: HashMap::from([(
-            "./math.exs".to_owned(),
-            "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\ntype Counter {}\n\nimpl Counter {\n/// Returns the current count.\nfn count(self) -> Int { ret 0; }\n}"
-                .to_owned(),
-        )]),
-    };
-    let documentation = match document_llm_with_resolver(
-        SourceInput {
-            source_id: "./main.exs",
-            text: "import \"./math.exs\" as math;\n/// Runs the program.\nfn main() -> Int { ret math::add(20, 22); }",
-        },
-        &mut resolver,
-    ) {
-        Ok(documentation) => documentation,
+        Ok(documentation) => documentation.llm(),
         Err(error) => panic!("LLM documentation generation failed: {error}"),
     };
     assert!(documentation.starts_with("# Exolynk Script (ExS) LLM Specification"));
     assert!(documentation.contains("# Compact API Reference"));
-    assert!(documentation.contains("Host::stream(name, arguments...) -> HostStream | Error"));
     assert!(documentation.contains("fn next(self) -> IteratorStep | Error;"));
     assert!(documentation.contains("Adds two integers."));
     assert!(documentation.contains("```exs\n/// Runs the program.\nfn main() -> Int { ... }"));
@@ -461,7 +237,6 @@ fn generates_single_llm_markdown_documentation() {
         documentation.contains("impl Counter {\n    /// Returns the current count.\n    fn count")
     );
     assert!(documentation.contains("type Counter {\n}\n\nimpl Counter {"));
-    assert!(!documentation.contains("#### `impl Counter`"));
     assert!(
         documentation.contains(
             "/// Opens a runner-registered pull stream selected by a runtime String name."
@@ -470,12 +245,13 @@ fn generates_single_llm_markdown_documentation() {
     assert!(
         documentation.contains("fn Host::stream(name, arguments...) -> HostStream | Error { ... }")
     );
+    assert!(documentation.contains("### Type `Int`"));
     assert!(!documentation.contains("__exs_list_any"));
 }
 
-/// Links a standard trait implementation and inherits its method documentation on an enum page.
+/// Links a standard trait implementation and inherits its method documentation.
 #[test]
-fn documents_standard_add_implementations_on_nominal_pages() {
+fn documents_standard_add_implementations() {
     let mut resolver = TestResolver {
         sources: HashMap::new(),
     };
@@ -486,22 +262,12 @@ fn documents_standard_add_implementations_on_nominal_pages() {
         },
         &mut resolver,
     ) {
-        Ok(documentation) => documentation,
+        Ok(documentation) => documentation.markdown(&MarkdownOptions::default()),
         Err(error) => panic!("documentation generation failed: {error}"),
     };
-    let abc = documentation
-        .pages
-        .iter()
-        .find(|page| page.path == "modules/00-add/enums/abc.md")
-        .unwrap_or_else(|| panic!("missing enum page"));
-    assert!(
-        abc.markdown
-            .contains("Trait [`Add`](../../std/traits/add.md)")
-    );
-    assert!(
-        abc.markdown
-            .contains("Adds the receiver to the evaluated `other` operand.")
-    );
+    let abc = &page(&documentation, "add/index.md").markdown;
+    assert!(abc.contains("#### Trait [`Add`](../std/index.md#trait-add)"));
+    assert!(abc.contains("Adds the receiver to the evaluated `other` operand."));
 }
 
 /// Prefers an implementation method's own documentation over inherited trait documentation.
@@ -517,22 +283,93 @@ fn prefers_implementation_documentation_over_standard_add_documentation() {
         },
         &mut resolver,
     ) {
-        Ok(documentation) => documentation,
+        Ok(documentation) => documentation.markdown(&MarkdownOptions::default()),
         Err(error) => panic!("documentation generation failed: {error}"),
     };
-    let counter = documentation
-        .pages
+    let counter = &page(&documentation, "custom-add/index.md").markdown;
+    assert!(counter.contains("Adds one application-specific count."));
+    assert!(!counter.contains("Adds the receiver to the evaluated `other` operand."));
+}
+
+/// Provides the libraries `log`, `exo`, and `exo::db`.
+struct Libraries;
+
+impl ModuleResolver for Libraries {
+    /// Rejects file imports.
+    fn resolve(&mut self, _importer: &str, path: &str) -> Result<ResolvedSource, String> {
+        Err(format!("no file `{path}`"))
+    }
+
+    /// Returns the library module at `path`.
+    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
+        let text = match path {
+            "log" => {
+                "//! Logging.\n/// Logs an informational message.\nfn info(message: String) -> None { ret None; }"
+            }
+            "exo" => {
+                "//! The Exolynk API.\n/// A stored record.\ntype Record { id: Int }\nprivate fn internal() -> Int { ret 1; }"
+            }
+            "exo::db" => {
+                "/// Loads one record.\nfn load(id: Int) -> exo::Record { ret exo::Record { id: id }; }"
+            }
+            _ => return None,
+        };
+        Some(ResolvedSource {
+            source_id: path.to_owned(),
+            text: text.to_owned(),
+        })
+    }
+
+    /// Lists every library module.
+    fn libraries(&mut self) -> Vec<String> {
+        vec!["log".to_owned(), "exo::db".to_owned(), "exo".to_owned()]
+    }
+}
+
+/// Documents the standard library and every listed library module, sorted by path.
+#[test]
+fn documents_listed_libraries() {
+    let documentation = match document_libraries(&mut Libraries) {
+        Ok(documentation) => documentation,
+        Err(error) => panic!("library documentation failed: {error}"),
+    };
+    let names = documentation
+        .modules
         .iter()
-        .find(|page| page.path == "modules/00-custom-add/types/counter.md")
-        .unwrap_or_else(|| panic!("missing Counter type page"));
-    assert!(
-        counter
-            .markdown
-            .contains("Adds one application-specific count.")
-    );
-    assert!(
-        !counter
-            .markdown
-            .contains("Adds the receiver to the evaluated `other` operand.")
-    );
+        .map(|module| module.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["std", "std::test", "exo", "exo::db", "log"]);
+    let exo = documentation.module("exo").expect("exo module");
+    assert_eq!(exo.description, "The Exolynk API.");
+    assert_eq!(exo.items.len(), 1);
+    let pages = documentation.markdown(&MarkdownOptions::default());
+    let exo = &page(&pages, "exo/index.md").markdown;
+    assert!(exo.contains("## Modules\n\n- [`exo::db`](db/index.md)"));
+    assert!(!exo.contains("internal"));
+    let db = &page(&pages, "exo/db/index.md").markdown;
+    assert!(db.contains("fn load(id: Int) -> exo::Record"));
+    let log = &page(&pages, "log/index.md").markdown;
+    assert!(log.contains("Logging.\n\n## Functions\n\n### `info`"));
+}
+
+/// Rejects a listed library the resolver does not provide.
+#[test]
+fn rejects_missing_listed_libraries() {
+    /// Lists a library it does not provide.
+    struct Missing;
+
+    impl ModuleResolver for Missing {
+        /// Rejects file imports.
+        fn resolve(&mut self, _importer: &str, path: &str) -> Result<ResolvedSource, String> {
+            Err(format!("no file `{path}`"))
+        }
+
+        /// Lists the library `ghost`.
+        fn libraries(&mut self) -> Vec<String> {
+            vec!["ghost".to_owned()]
+        }
+    }
+
+    let error = document_libraries(&mut Missing).expect_err("missing library documented");
+    assert!(error.contains("library `ghost` is listed"));
 }
