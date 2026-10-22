@@ -26,7 +26,7 @@ Values live in the module's linear memory in the layout of `exs-layout`. The com
 
 ### Compiler limits
 
-`CompileOptions::limits` bounds one compilation of untrusted source: 1 MiB per source file, 8 MiB per project, 512 modules and 64 nesting levels of expressions, blocks and type annotations by default. Adjust them with struct update syntax:
+`CompileOptions::limits` bounds one compilation of untrusted source: 1 MiB per source file, 8 MiB per project, 512 modules and 32 nesting levels of expressions, blocks and type annotations by default. Adjust them with struct update syntax:
 
 ```rust
 let mut options = CompileOptions::default();

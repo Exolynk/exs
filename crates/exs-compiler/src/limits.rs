@@ -17,17 +17,18 @@ pub struct CompileLimits {
 
 impl Default for CompileLimits {
     /// Returns limits suited to untrusted source: 1 MiB per file, 8 MiB in total, 512 files
-    /// and 64 nesting levels.
+    /// and 32 nesting levels.
     ///
-    /// Each nesting level costs the parser and later passes several kilobytes of stack in an
-    /// optimized build and far more in a debug build, so the nesting limit stays well below
-    /// what a 2 MiB thread stack holds.
+    /// Each nesting level costs the passes after parsing about 4 KiB of stack in an optimized
+    /// build and several times that in a debug build. With 32 levels an optimized build keeps
+    /// at least seven times that headroom on a 1 MiB stack, and a debug build fits a 2 MiB
+    /// thread.
     fn default() -> Self {
         Self {
             max_source_bytes: 1024 * 1024,
             max_total_source_bytes: 8 * 1024 * 1024,
             max_modules: 512,
-            max_nesting: 64,
+            max_nesting: 32,
         }
     }
 }

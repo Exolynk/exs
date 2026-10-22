@@ -1258,10 +1258,19 @@ is unchanged since 7a, and the browser check passes for compiled modules and the
   `parallel-compilation`; the component model, GC, threads, async support, caching,
   profiling, debugging and WebAssembly text parsing are no longer compiled in.
 - **Compile limits:** `CompileOptions::limits` bounds each source file (1 MiB), a project
-  (8 MiB, 512 modules) and nesting (64 levels, E0114). A nesting level costs the parser and the
-  later passes several kilobytes of stack in an optimized build and far more in a debug build;
-  in measurements a 2 MiB thread overflowed at about 50 nested parentheses in a debug build and
-  near 255 in an optimized one, which set the default.
+  (8 MiB, 512 modules) and nesting (32 levels, E0114). The expression parser climbs binding
+  strengths in one loop instead of one function per precedence level, so a nesting level of
+  parentheses costs it a few frames; it no longer limits the depth. Deepest nesting that
+  compiles, nested parentheses / calls / blocks:
+
+  | Stack | optimized | debug |
+  |---|---|---|
+  | 2 MiB | 515 / 764 / 845 | 64 / 91 / 76 |
+  | 1 MiB | 257 / 383 / 421 | 29 / 44 / 35 |
+
+  Before the parser change, a debug build overflowed at 39 parentheses on 2 MiB and 20 on
+  1 MiB. A debug build on a 1 MiB stack, such as a development build of a browser
+  application, still overflows just below the limit for nested parentheses and Lists.
 - **One result export for Rust guests:** `__exs_result_image` returns the result image's
   address and length in one `i64`; runners identify compiled modules and guests by
   `__exs_result_value` or `__exs_result_image` and reject modules with neither.

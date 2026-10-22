@@ -2,118 +2,72 @@ use super::*;
 
 impl<'a> Parser<'a> {
     pub(super) fn expression(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.nested(Self::or)
+        self.nested(|parser| parser.binary(0))
     }
 
-    pub(super) fn or(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.binary(Self::and, &[(TokenKind::OrOr, BinaryOperator::Or)])
-    }
-
-    pub(super) fn and(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.binary(Self::equality, &[(TokenKind::AndAnd, BinaryOperator::And)])
-    }
-
-    pub(super) fn equality(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.binary(
-            Self::comparison,
-            &[
-                (TokenKind::EqualEqual, BinaryOperator::Equal),
-                (TokenKind::BangEqual, BinaryOperator::NotEqual),
-            ],
-        )
-    }
-
-    pub(super) fn comparison(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        let mut expression = self.binary(
-            Self::range,
-            &[
-                (TokenKind::Less, BinaryOperator::LessThan),
-                (TokenKind::LessEqual, BinaryOperator::LessOrEqual),
-                (TokenKind::Greater, BinaryOperator::GreaterThan),
-                (TokenKind::GreaterEqual, BinaryOperator::GreaterOrEqual),
-            ],
-        )?;
-        if self.matches(&TokenKind::Is) {
-            let type_annotation = self.type_annotation()?;
-            let span = expression_span(&expression).through(type_annotation.span);
-            expression = Expression::IsType {
-                value: Box::new(expression),
-                type_annotation,
-                span,
+    /// Parses the binary expression whose operators bind at least as tightly as `minimum`.
+    ///
+    /// One loop over the binding strength replaces a function per precedence level, so each
+    /// nesting level of parentheses costs a few stack frames instead of one per level. All
+    /// binary operators are left-associative; `..` and `..=` apply at most once, between two
+    /// additive operands, and `is` applies to a whole comparison chain, after which only
+    /// equality and logical operators may follow.
+    fn binary(&mut self, minimum: u8) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
+        let mut left = self.unary()?;
+        // The binding strength of the operator that produced `left`; operators binding more
+        // tightly no longer apply to it.
+        let mut left_strength = u8::MAX;
+        loop {
+            if self.check(&TokenKind::Is) {
+                if COMPARISON < minimum || COMPARISON > left_strength {
+                    break;
+                }
+                self.advance();
+                let type_annotation = self.type_annotation()?;
+                let span = expression_span(&left).through(type_annotation.span);
+                left = Expression::IsType {
+                    value: Box::new(left),
+                    type_annotation,
+                    span,
+                };
+                left_strength = EQUALITY;
+                continue;
+            }
+            let inclusive = if self.check(&TokenKind::RangeInclusive) {
+                Some(true)
+            } else if self.check(&TokenKind::Range) {
+                Some(false)
+            } else {
+                None
             };
-        }
-        Ok(expression)
-    }
-
-    /// Parses an Int Range expression and desugars it to the prelude constructor.
-    pub(super) fn range(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        let start = self.term()?;
-        let inclusive = if self.matches(&TokenKind::RangeInclusive) {
-            Some(true)
-        } else if self.matches(&TokenKind::Range) {
-            Some(false)
-        } else {
-            None
-        };
-        let Some(inclusive) = inclusive else {
-            return Ok(start);
-        };
-        let end = self.term()?;
-        let span = expression_span(&start).through(expression_span(&end));
-        Ok(Expression::StaticMethodCall {
-            type_name: Identifier {
-                name: "Range".to_owned(),
-                span: expression_span(&start),
-            },
-            method: Identifier {
-                name: if inclusive { "through" } else { "until" }.to_owned(),
-                span,
-            },
-            arguments: vec![start, end],
-            span,
-        })
-    }
-
-    pub(super) fn term(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.binary(
-            Self::factor,
-            &[
-                (TokenKind::Plus, BinaryOperator::Add),
-                (TokenKind::Minus, BinaryOperator::Subtract),
-            ],
-        )
-    }
-
-    pub(super) fn factor(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.binary(
-            Self::unary,
-            &[
-                (TokenKind::Star, BinaryOperator::Multiply),
-                (TokenKind::Slash, BinaryOperator::Divide),
-            ],
-        )
-    }
-
-    pub(super) fn binary(
-        &mut self,
-        next: fn(&mut Self) -> Result<Expression<'a>, CompileDiagnostic<'a>>,
-        operators: &[(TokenKind, BinaryOperator)],
-    ) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        let mut expression = next(self)?;
-        while let Some(operator) = operators
-            .iter()
-            .find_map(|(token, operator)| self.matches(token).then_some(*operator))
-        {
-            let right = next(self)?;
-            let span = expression_span(&expression).through(expression_span(&right));
-            expression = Expression::Binary {
+            if let Some(inclusive) = inclusive {
+                if RANGE < minimum || RANGE >= left_strength {
+                    break;
+                }
+                self.advance();
+                let end = self.binary(RANGE + 1)?;
+                left = range(left, end, inclusive);
+                left_strength = RANGE;
+                continue;
+            }
+            let Some((strength, operator)) = binary_operator(&self.peek().kind) else {
+                break;
+            };
+            if strength < minimum || strength > left_strength {
+                break;
+            }
+            self.advance();
+            let right = self.binary(strength + 1)?;
+            let span = expression_span(&left).through(expression_span(&right));
+            left = Expression::Binary {
                 operator,
-                left: Box::new(expression),
+                left: Box::new(left),
                 right: Box::new(right),
                 span,
             };
+            left_strength = strength;
         }
-        Ok(expression)
+        Ok(left)
     }
 
     pub(super) fn unary(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
@@ -715,5 +669,57 @@ impl<'a> Parser<'a> {
             arguments: values,
             span: start.through(end),
         })
+    }
+}
+
+/// Binding strength of `||`, the loosest binary operator.
+const OR: u8 = 1;
+/// Binding strength of `&&`.
+const AND: u8 = 2;
+/// Binding strength of `==` and `!=`.
+const EQUALITY: u8 = 3;
+/// Binding strength of `<`, `<=`, `>`, `>=` and `is`.
+const COMPARISON: u8 = 4;
+/// Binding strength of the Range operators `..` and `..=`.
+const RANGE: u8 = 5;
+/// Binding strength of `+` and `-`.
+const TERM: u8 = 6;
+/// Binding strength of `*` and `/`, the tightest binary operators.
+const FACTOR: u8 = 7;
+
+/// Returns the binding strength and operator of the binary operator token `kind`.
+fn binary_operator(kind: &TokenKind) -> Option<(u8, BinaryOperator)> {
+    Some(match kind {
+        TokenKind::OrOr => (OR, BinaryOperator::Or),
+        TokenKind::AndAnd => (AND, BinaryOperator::And),
+        TokenKind::EqualEqual => (EQUALITY, BinaryOperator::Equal),
+        TokenKind::BangEqual => (EQUALITY, BinaryOperator::NotEqual),
+        TokenKind::Less => (COMPARISON, BinaryOperator::LessThan),
+        TokenKind::LessEqual => (COMPARISON, BinaryOperator::LessOrEqual),
+        TokenKind::Greater => (COMPARISON, BinaryOperator::GreaterThan),
+        TokenKind::GreaterEqual => (COMPARISON, BinaryOperator::GreaterOrEqual),
+        TokenKind::Plus => (TERM, BinaryOperator::Add),
+        TokenKind::Minus => (TERM, BinaryOperator::Subtract),
+        TokenKind::Star => (FACTOR, BinaryOperator::Multiply),
+        TokenKind::Slash => (FACTOR, BinaryOperator::Divide),
+        _ => return None,
+    })
+}
+
+/// Desugars the Int Range `start..end`, or `start..=end` when `inclusive`, to the prelude
+/// constructor.
+fn range<'a>(start: Expression<'a>, end: Expression<'a>, inclusive: bool) -> Expression<'a> {
+    let span = expression_span(&start).through(expression_span(&end));
+    Expression::StaticMethodCall {
+        type_name: Identifier {
+            name: "Range".to_owned(),
+            span: expression_span(&start),
+        },
+        method: Identifier {
+            name: if inclusive { "through" } else { "until" }.to_owned(),
+            span,
+        },
+        arguments: vec![start, end],
+        span,
     }
 }

@@ -666,3 +666,49 @@ fn concatenates_strings_with_scalar_right_operands() {
         );
     }
 }
+
+/// Applies operator precedence and associativity: `*` before `+` before Ranges before
+/// comparisons before `is` before equality before `&&` before `||`, all left-associative.
+#[test]
+fn applies_operator_precedence() {
+    let source = r#"
+        fn main(input) {
+            let range = 1 + 1..2 * 3;
+            ret [
+                1 + 2 * 3,
+                10 - 4 - 3,
+                24 / 4 / 2,
+                -2 * 3 + 1,
+                1 < 2 == true,
+                1 + 1 is Int,
+                1 < 2 is Bool == true,
+                false && true || true,
+                true || false && false,
+                1 == 1 && 2 > 1,
+                range.current,
+                range.end,
+                0..3 is Range,
+                [1, 2][0] + 1 * 2,
+            ];
+        }
+    "#;
+    assert_eq!(
+        execute_source(source, ExsValue::None),
+        ExsValue::List(vec![
+            ExsValue::Int(7),
+            ExsValue::Int(3),
+            ExsValue::Float(3.0),
+            ExsValue::Int(-5),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Int(2),
+            ExsValue::Int(6),
+            ExsValue::Bool(true),
+            ExsValue::Int(3),
+        ])
+    );
+}
