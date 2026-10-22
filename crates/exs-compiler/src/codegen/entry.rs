@@ -1,204 +1,317 @@
-//! Lowering of the multi-argument Wasm entry wrapper.
+//! The runner-facing exports of a module.
 
 use std::collections::HashMap;
 
-use wasm_encoder::{BlockType, Function, Instruction, ValType};
+use core::mem::offset_of;
 
-use super::function::FunctionSignature;
-use super::{diagnostics, module_span};
-use crate::ast::Module;
-use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
+use exs_abi::{ABI_VERSION, STATUS_COMPLETE, TYPE_FLOAT, TYPE_INT};
+use exs_layout::{FreeCell, ObjectKind, VmState};
+use exs_value::layout::{EXTRA_SHIFT, INT_BOXED, KIND_SHIFT, type_kind};
+use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
-/// Lowers the stable Wasm entry point that invokes the source `main` function.
-pub(super) fn compile_start<'a>(
-    module: &Module<'a>,
-    main: &FunctionSignature,
-    runtime: &HashMap<String, u32>,
-) -> Result<Function, CompileDiagnostics<'a>> {
-    let fixed_parameter_count = u32::try_from(main.arity).map_err(|_| {
-        diagnostics(CompileDiagnostic::new(
-            "E0212",
-            module_span(module),
-            "too many main parameters for the Wasm i32 ABI",
-        ))
-    })?;
-    let parameter_count = u32::try_from(main.wasm_arity()).map_err(|_| {
-        diagnostics(CompileDiagnostic::new(
-            "E0212",
-            module_span(module),
-            "too many main parameters for the Wasm i32 ABI",
-        ))
-    })?;
-    let root_slot_count = parameter_count.checked_add(2).ok_or_else(|| {
-        diagnostics(CompileDiagnostic::new(
-            "E0212",
-            module_span(module),
-            "too many main root slots",
-        ))
-    })?;
-    // Scalar i32 locals follow the two i32 parameters; ValueRef i64 locals come last.
-    let value_local_count = parameter_count.checked_add(3).ok_or_else(|| {
-        diagnostics(CompileDiagnostic::new(
-            "E0212",
-            module_span(module),
-            "too many main entry locals",
-        ))
-    })?;
-    let root_frame_local = 2_u32;
-    let argument_count_local = 3_u32;
-    let variadic_index_local = 4_u32;
-    let arguments_local = 5_u32;
-    let first_parameter_local = 6_u32;
-    let result_local = first_parameter_local
-        .checked_add(parameter_count)
-        .ok_or_else(|| {
-            diagnostics(CompileDiagnostic::new(
-                "E0212",
-                module_span(module),
-                "too many main parameters for the Wasm i32 ABI",
-            ))
-        })?;
-    let variadic_list_local = result_local + 1;
-    let mut function = Function::new([(3, ValType::I32), (value_local_count, super::VALUE_TYPE)]);
+use crate::codegen::{VALUE_TYPE, immediate};
 
-    function.instruction(&Instruction::LocalGet(0));
-    function.instruction(&Instruction::LocalGet(1));
-    call_runtime(&mut function, runtime, "__exs_rt_decode_input", module)?;
-    function.instruction(&Instruction::LocalSet(arguments_local));
+use super::function::{
+    FunctionInfo, emit_push_frame, error, root_stack_end_offset, slot_memory, vm_field,
+};
+use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
-    function.instruction(&Instruction::I32Const(root_slot_count.cast_signed()));
-    call_runtime(&mut function, runtime, "__exs_rt_root_push", module)?;
-    function.instruction(&Instruction::LocalSet(root_frame_local));
-    set_root_slot(&mut function, root_frame_local, 0, arguments_local);
+/// Pages of root-stack storage created when the module first runs.
+pub(super) const ROOT_STACK_PAGES: u32 = 16;
 
-    function.instruction(&Instruction::LocalGet(arguments_local));
-    call_runtime(
-        &mut function,
-        runtime,
-        "__exs_rt_input_argument_count",
-        module,
-    )?;
-    function.instruction(&Instruction::LocalSet(argument_count_local));
-    if !main.variadic {
-        function.instruction(&Instruction::LocalGet(argument_count_local));
-        function.instruction(&Instruction::I32Const(fixed_parameter_count.cast_signed()));
-        function.instruction(&Instruction::I32GtU);
-        function.instruction(&Instruction::If(BlockType::Empty));
-        function.instruction(&Instruction::LocalGet(arguments_local));
-        call_runtime(&mut function, runtime, "__exs_rt_input_arity_error", module)?;
-        function.instruction(&Instruction::LocalSet(result_local));
-        set_root_slot(
-            &mut function,
-            root_frame_local,
-            root_slot_count - 1,
-            result_local,
-        );
-        function.instruction(&Instruction::LocalGet(result_local));
-        call_runtime(&mut function, runtime, "__exs_rt_set_result", module)?;
-        function.instruction(&Instruction::LocalGet(root_frame_local));
-        call_runtime(&mut function, runtime, "__exs_rt_root_pop", module)?;
-        function.instruction(&Instruction::I32Const(exs_abi::STATUS_COMPLETE));
-        function.instruction(&Instruction::Return);
-        function.instruction(&Instruction::End);
+/// Addresses the generated exports work with.
+pub(super) struct EntryLayout<'m> {
+    /// Core template export indices.
+    pub(super) core: &'m HashMap<String, u32>,
+    /// Address of the VM state block.
+    pub(super) vm: u32,
+    /// First address available to the heap.
+    pub(super) heap_start: u32,
+    /// Address and entry count of the static type table.
+    pub(super) types: (u32, u32),
+    /// Address of the program's case tables, 0 when it changes no case.
+    pub(super) case_tables: u32,
+}
+
+impl EntryLayout<'_> {
+    /// Returns the index of one core export.
+    pub(super) fn core<'a>(
+        &self,
+        name: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<u32, CompileDiagnostics<'a>> {
+        self.core.get(name).copied().ok_or_else(|| {
+            error(
+                "E1001",
+                span,
+                format!("the core template does not export `{name}`"),
+            )
+        })
     }
 
-    for index in 0..fixed_parameter_count {
-        let parameter_local = first_parameter_local + index;
-        function.instruction(&Instruction::LocalGet(arguments_local));
-        function.instruction(&Instruction::I32Const(index.cast_signed()));
-        call_runtime(&mut function, runtime, "__exs_rt_input_argument", module)?;
-        function.instruction(&Instruction::LocalSet(parameter_local));
-        set_root_slot(&mut function, root_frame_local, index + 1, parameter_local);
-    }
-    if main.variadic {
+    /// Returns `__exs_start_<name>(input, length) -> status`, which decodes the arguments,
+    /// calls the function and stores its result.
+    ///
+    /// The input was already stored in the VM buffer by `__exs_input_alloc`; excess arguments
+    /// produce the fatal ArityError as the result.
+    pub(super) fn start<'a>(
+        &self,
+        target: &FunctionInfo,
+        span: SourceSpan<'a>,
+    ) -> Result<Function, CompileDiagnostics<'a>> {
+        if target.variadic.is_some() {
+            return self.variadic_start(target, span);
+        }
+        // Locals: 0 and 1 are the input parameters, 2 the frame base, 3 the argument count.
+        let (frame, count) = (2, 3);
+        let mut function = Function::new([(2, ValType::I32)]);
         function.instruction(&Instruction::Call(
-            *runtime.get("__exs_rt_list_new").ok_or_else(|| {
-                diagnostics(CompileDiagnostic::new(
-                    "E0209",
-                    module_span(module),
-                    "missing runtime List constructor",
-                ))
-            })?,
+            self.core("__exs_core_task_acquire", span)?,
         ));
-        function.instruction(&Instruction::LocalSet(variadic_list_local));
-        set_root_slot(
-            &mut function,
-            root_frame_local,
-            fixed_parameter_count + 1,
-            variadic_list_local,
-        );
-        function.instruction(&Instruction::I32Const(fixed_parameter_count.cast_signed()));
-        function.instruction(&Instruction::LocalSet(variadic_index_local));
-        function.instruction(&Instruction::Block(BlockType::Empty));
-        function.instruction(&Instruction::Loop(BlockType::Empty));
-        function.instruction(&Instruction::LocalGet(variadic_index_local));
-        function.instruction(&Instruction::LocalGet(argument_count_local));
+        emit_push_frame(&mut function, self.vm, frame, target.arity);
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::LocalGet(frame));
+        function.instruction(&Instruction::I32Const(target.arity.cast_signed()));
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_adopt_inputs", span)?,
+        ));
+        function.instruction(&Instruction::LocalSet(count));
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        // Like v1, excess arguments make the result a fatal ArityError instead of a call.
+        function.instruction(&Instruction::LocalGet(count));
+        function.instruction(&Instruction::I32Const(target.arity.cast_signed()));
+        function.instruction(&Instruction::I32GtU);
+        function.instruction(&Instruction::If(BlockType::Result(VALUE_TYPE)));
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_arity_error", span)?,
+        ));
+        function.instruction(&Instruction::Else);
+        for slot in 0..target.arity {
+            function.instruction(&Instruction::LocalGet(frame));
+            function.instruction(&Instruction::I64Load(slot_memory(slot)));
+        }
+        function.instruction(&Instruction::Call(target.index));
+        function.instruction(&Instruction::End);
+        self.finish_start(function, frame, span)
+    }
+
+    /// Ends a start function after the entry's result is on the stack above the VM address:
+    /// stores the result for the runner, pops the frame at `frame` and releases the task.
+    fn finish_start<'a>(
+        &self,
+        mut function: Function,
+        frame: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<Function, CompileDiagnostics<'a>> {
+        Self::store_result(&mut function);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::LocalGet(frame));
+        function.instruction(&Instruction::I32Store(vm_field(
+            self.vm,
+            root_stack_end_offset(),
+        )));
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_task_release", span)?,
+        ));
+        function.instruction(&Instruction::I32Const(STATUS_COMPLETE));
+        function.instruction(&Instruction::End);
+        Ok(function)
+    }
+
+    /// Returns the start function of a variadic entry: like v1, the arguments after the
+    /// fixed parameters become a List, so no argument count is too large.
+    fn variadic_start<'a>(
+        &self,
+        target: &FunctionInfo,
+        span: SourceSpan<'a>,
+    ) -> Result<Function, CompileDiagnostics<'a>> {
+        // Locals: 0 and 1 are the input parameters, 2 the frame base.
+        let frame = 2;
+        let slots = target.arity + 1;
+        let mut function = Function::new([(1, ValType::I32)]);
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_task_acquire", span)?,
+        ));
+        emit_push_frame(&mut function, self.vm, frame, slots);
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::LocalGet(frame));
+        function.instruction(&Instruction::I32Const(target.arity.cast_signed()));
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_adopt_variadic_inputs", span)?,
+        ));
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        for slot in 0..slots {
+            function.instruction(&Instruction::LocalGet(frame));
+            function.instruction(&Instruction::I64Load(slot_memory(slot)));
+        }
+        function.instruction(&Instruction::Call(target.index));
+        self.finish_start(function, frame, span)
+    }
+
+    /// Stores the result on the stack above the VM address in the VM state block, where the
+    /// runner reads it.
+    pub(super) fn store_result(function: &mut Function) {
+        function.instruction(&Instruction::I64Store(MemArg {
+            offset: offset_of!(VmState, boundary.result_value) as u64,
+            align: 3,
+            memory_index: 0,
+        }));
+    }
+
+    /// Returns `__exs_result_value() -> i64`, the completed result.
+    pub(super) fn result_value(&self) -> Function {
+        let mut function = Function::new([]);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I64Load(vm_field(
+            self.vm,
+            offset_of!(VmState, boundary.result_value) as u32,
+        )));
+        function.instruction(&Instruction::End);
+        function
+    }
+
+    /// Returns `__exs_vm() -> i32`, the address of the VM state block.
+    pub(super) fn vm_address(&self) -> Function {
+        let mut function = Function::new([]);
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::End);
+        function
+    }
+
+    /// Returns `__exs_input_alloc(length) -> address`, which initializes the VM on first use.
+    pub(super) fn input_alloc<'a>(
+        &self,
+        span: SourceSpan<'a>,
+    ) -> Result<Function, CompileDiagnostics<'a>> {
+        let mut function = Function::new([]);
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::I32Const(self.heap_start.cast_signed()));
+        function.instruction(&Instruction::I32Const(ROOT_STACK_PAGES.cast_signed()));
+        function.instruction(&Instruction::Call(self.core("__exs_core_init", span)?));
+        // The type table is static, so writing it on every input keeps it set after init.
+        let (types, count) = self.types;
+        for (offset, value) in [
+            (offset_of!(VmState, program.types), types),
+            (offset_of!(VmState, program.type_count), count),
+            (offset_of!(VmState, program.case_tables), self.case_tables),
+        ] {
+            function.instruction(&Instruction::I32Const(0));
+            function.instruction(&Instruction::I32Const(value.cast_signed()));
+            function.instruction(&Instruction::I32Store(vm_field(self.vm, offset as u32)));
+        }
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::LocalGet(0));
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_reserve_input", span)?,
+        ));
+        function.instruction(&Instruction::End);
+        Ok(function)
+    }
+
+    /// Returns `__exs_abi_version() -> i32`.
+    pub(super) fn abi_version() -> Function {
+        let mut function = Function::new([]);
+        function.instruction(&Instruction::I32Const(ABI_VERSION.cast_signed()));
+        function.instruction(&Instruction::End);
+        function
+    }
+
+    /// Returns the `(i64) -> i64` helper that boxes one Int value or Float bits.
+    ///
+    /// Ints inside the `i32` range stay immediates. Otherwise it takes a 16-byte cell straight
+    /// from the size-class free list and only calls the core allocator when the list is empty,
+    /// a collection is due or the heap debug flags are set.
+    pub(super) fn boxed_number<'a>(
+        &self,
+        kind: ObjectKind,
+        span: SourceSpan<'a>,
+    ) -> Result<Function, CompileDiagnostics<'a>> {
+        let (type_bit, extra) = match kind {
+            ObjectKind::BigInt => (TYPE_INT, INT_BOXED),
+            _ => (TYPE_FLOAT, 0),
+        };
+        let cell = 1;
+        let mut function = Function::new([(1, ValType::I32)]);
+        if kind == ObjectKind::BigInt {
+            function.instruction(&Instruction::LocalGet(0));
+            function.instruction(&Instruction::I32WrapI64);
+            function.instruction(&Instruction::I64ExtendI32S);
+            function.instruction(&Instruction::LocalGet(0));
+            function.instruction(&Instruction::I64Eq);
+            function.instruction(&Instruction::If(BlockType::Empty));
+            immediate::push_small_int(&mut function, 0);
+            function.instruction(&Instruction::Return);
+            function.instruction(&Instruction::End);
+        }
+        let field = |offset: usize| vm_field(self.vm, offset as u32);
+        let head = field(offset_of!(VmState, heap.free_heads));
+        let allocated = field(offset_of!(VmState, heap.allocated_since_collection));
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(head));
+        function.instruction(&Instruction::LocalTee(cell));
+        function.instruction(&Instruction::I32Eqz);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(allocated));
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(field(offset_of!(
+            VmState,
+            heap.collection_threshold
+        ))));
         function.instruction(&Instruction::I32GeU);
-        function.instruction(&Instruction::BrIf(1));
-        function.instruction(&Instruction::LocalGet(variadic_list_local));
-        function.instruction(&Instruction::LocalGet(arguments_local));
-        function.instruction(&Instruction::LocalGet(variadic_index_local));
-        call_runtime(&mut function, runtime, "__exs_rt_input_argument", module)?;
-        call_runtime(&mut function, runtime, "__exs_rt_append", module)?;
-        function.instruction(&Instruction::Drop);
-        function.instruction(&Instruction::LocalGet(variadic_index_local));
-        function.instruction(&Instruction::I32Const(1));
+        function.instruction(&Instruction::I32Or);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(field(offset_of!(
+            VmState, heap.flags
+        ))));
+        function.instruction(&Instruction::I32Or);
+        function.instruction(&Instruction::If(BlockType::Empty));
+        function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::I32Const(CELL_SIZE.cast_signed()));
+        function.instruction(&Instruction::I32Const(i32::from(kind as u8)));
+        function.instruction(&Instruction::Call(self.core("__exs_core_allocate", span)?));
+        function.instruction(&Instruction::LocalSet(cell));
+        function.instruction(&Instruction::Else);
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::LocalGet(cell));
+        function.instruction(&Instruction::I32Load(MemArg {
+            offset: u64::from(FREE_NEXT),
+            align: 2,
+            memory_index: 0,
+        }));
+        function.instruction(&Instruction::I32Store(head));
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Const(0));
+        function.instruction(&Instruction::I32Load(allocated));
+        function.instruction(&Instruction::I32Const(CELL_SIZE.cast_signed()));
         function.instruction(&Instruction::I32Add);
-        function.instruction(&Instruction::LocalSet(variadic_index_local));
-        function.instruction(&Instruction::Br(0));
+        function.instruction(&Instruction::I32Store(allocated));
+        // Header: the kind byte, clear GC bits, size class 0 and a zero header word.
+        function.instruction(&Instruction::LocalGet(cell));
+        function.instruction(&Instruction::I64Const(i64::from(kind as u8)));
+        function.instruction(&Instruction::I64Store(slot_memory(0)));
         function.instruction(&Instruction::End);
+        function.instruction(&Instruction::LocalGet(cell));
+        function.instruction(&Instruction::LocalGet(0));
+        function.instruction(&Instruction::I64Store(slot_memory(1)));
+        let tag =
+            (i64::from(type_kind(type_bit)) << KIND_SHIFT) | (i64::from(extra) << EXTRA_SHIFT);
+        function.instruction(&Instruction::I64Const(tag));
+        function.instruction(&Instruction::LocalGet(cell));
+        function.instruction(&Instruction::I64ExtendI32U);
+        function.instruction(&Instruction::I64Or);
         function.instruction(&Instruction::End);
-        let parameter_local = first_parameter_local + fixed_parameter_count;
-        function.instruction(&Instruction::LocalGet(variadic_list_local));
-        function.instruction(&Instruction::LocalSet(parameter_local));
-        set_root_slot(
-            &mut function,
-            root_frame_local,
-            fixed_parameter_count + 1,
-            parameter_local,
-        );
+        Ok(function)
     }
-    for index in 0..parameter_count {
-        function.instruction(&Instruction::LocalGet(first_parameter_local + index));
-    }
-    function.instruction(&Instruction::Call(main.index));
-    function.instruction(&Instruction::LocalSet(result_local));
-    set_root_slot(
-        &mut function,
-        root_frame_local,
-        root_slot_count - 1,
-        result_local,
-    );
-    function.instruction(&Instruction::LocalGet(result_local));
-    call_runtime(&mut function, runtime, "__exs_rt_set_result", module)?;
-    function.instruction(&Instruction::LocalGet(root_frame_local));
-    call_runtime(&mut function, runtime, "__exs_rt_root_pop", module)?;
-    function.instruction(&Instruction::I32Const(exs_abi::STATUS_COMPLETE));
-    function.instruction(&Instruction::End);
-    Ok(function)
 }
 
-/// Roots one ValueRef local in the generated entry wrapper with an inline shadow-stack store.
-fn set_root_slot(function: &mut Function, frame_local: u32, slot: u32, value_local: u32) {
-    function.instruction(&Instruction::LocalGet(frame_local));
-    function.instruction(&Instruction::LocalGet(value_local));
-    function.instruction(&Instruction::I64Store(super::root_slot_memory_arg(slot)));
-}
+/// Byte size of the size-class cell that holds one boxed Int or Float.
+const CELL_SIZE: u32 = 16;
 
-/// Emits one linked runtime call required by the generated entry wrapper.
-fn call_runtime<'a>(
-    function: &mut Function,
-    runtime: &HashMap<String, u32>,
-    name: &str,
-    module: &Module<'a>,
-) -> Result<(), CompileDiagnostics<'a>> {
-    let index = runtime.get(name).copied().ok_or_else(|| {
-        diagnostics(CompileDiagnostic::new(
-            "E0999",
-            module_span(module),
-            format!("runtime template does not export {name}"),
-        ))
-    })?;
-    function.instruction(&Instruction::Call(index));
-    Ok(())
-}
+/// Byte offset of the next-cell link of a free cell.
+const FREE_NEXT: u32 = offset_of!(FreeCell, next) as u32;
+
+// Boxed numbers are exactly one cell of the smallest size class.
+const _: () = assert!(exs_layout::SIZE_CLASSES[0] == CELL_SIZE);
+const _: () = assert!(core::mem::size_of::<exs_layout::FloatObject>() == CELL_SIZE as usize);
+const _: () = assert!(core::mem::size_of::<exs_layout::BigIntObject>() == CELL_SIZE as usize);

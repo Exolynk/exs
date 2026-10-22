@@ -3,8 +3,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinaryOperator, Expression, FunctionDeclaration, UnaryOperator};
+use crate::codegen::declarations::{
+    FunctionSignature, InstanceMethod, LiftedFunction, MethodRegistry,
+};
 use crate::codegen::diagnostics;
-use crate::codegen::function::{FunctionSignature, InstanceMethod, LiftedFunction, MethodRegistry};
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types;
 use crate::codegen::types::{TypeContract, TypeRegistry};
@@ -21,8 +23,6 @@ pub(in crate::codegen) struct ContinuationGraph<'source, 'function> {
 /// Built-in comparison fallback that produces the final Bool without an `Ordering` value.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::codegen) struct ComparisonFallback {
-    /// Comparison test code selected by the source operator.
-    pub(in crate::codegen) test: i32,
     /// Frame slot receiving the resulting Bool or Error.
     pub(in crate::codegen) destination: u32,
     /// State following the bypassed `OrderingTest` state.
@@ -94,9 +94,7 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
         source: u32,
         /// Frame slot receiving the decoded ExS value.
         destination: u32,
-        /// Opaque compiler/runtime schema contract.
-        schema: String,
-        /// The resolved contract the schema encodes, which runtime v2 decodes against.
+        /// The resolved contract the schema encodes, which the core library decodes against.
         contract: TypeContract,
         /// Source location for decoder diagnostics.
         span: SourceSpan<'source>,
@@ -122,8 +120,6 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     /// Creates one runtime closure retaining shared captured Cells.
     Closure {
         layout: FrameLayout,
-        arity: usize,
-        variadic: bool,
         captures: Vec<u32>,
         destination: u32,
         span: SourceSpan<'source>,
@@ -157,8 +153,6 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     },
     /// Allocates one formatted-string builder.
     FormatNew {
-        /// Initial builder capacity in bytes.
-        capacity: i32,
         /// Frame slot receiving the builder.
         destination: u32,
         /// Source location of the formatted string.
@@ -252,7 +246,7 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     /// Constructs an empty nominal Object with a compiler-resolved type tag.
     TypedObject {
         type_id: u32,
-        /// The literal's keys in source order, which fix its field order in runtime v2.
+        /// The literal's keys in source order, which fix its field order.
         keys: Vec<String>,
         destination: u32,
         span: SourceSpan<'source>,
@@ -261,8 +255,6 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     Enum {
         /// Compiler-owned nominal enum tag.
         type_id: u32,
-        /// Stable host-boundary enum identity.
-        type_identity: String,
         /// Selected source-visible variant name.
         variant: String,
         /// Ordered payload frame slots.
@@ -390,8 +382,6 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     /// Creates a linked child frame for a suspendable direct function invocation.
     ChildCall {
         layout: FrameLayout,
-        /// Wasm function index of the child's step function.
-        step: u32,
         arguments: Vec<u32>,
         destination: u32,
         span: SourceSpan<'source>,
@@ -428,8 +418,6 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
         method_span: SourceSpan<'source>,
         arguments: Vec<u32>,
         targets: Vec<InstanceMethod>,
-        /// Private standard-library callback helper used after nominal dispatch misses.
-        fallback: Option<FunctionSignature>,
         destination: u32,
         span: SourceSpan<'source>,
     },
@@ -456,7 +444,6 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     /// Branches after checking a source Boolean condition.
     Branch {
         condition: u32,
-        checked: u32,
         when_true: u32,
         when_false: u32,
         span: SourceSpan<'source>,
@@ -471,8 +458,6 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     IterSnapshot {
         iterable: u32,
         destination: u32,
-        /// Prelude Range type id when the iterable is an unshared Range temporary.
-        unshared_range: Option<i32>,
         span: SourceSpan<'source>,
     },
     /// Advances built-in iterators and prelude Ranges natively before `Iterator::next` dispatch.
@@ -496,13 +481,6 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     IteratorBranch {
         step: u32,
         item: u32,
-        checked: u32,
-        type_identity_slot: u32,
-        done_variant_slot: u32,
-        item_variant_slot: u32,
-        type_identity: String,
-        done_variant: String,
-        item_variant: String,
         when_item: u32,
         when_done: u32,
         span: SourceSpan<'source>,

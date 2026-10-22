@@ -1,569 +1,605 @@
-//! Runtime-template reencoding and final executable module linking.
+//! Linking of a module: the core template plus the compiled program.
 
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, MODULE_METADATA_SECTION, RESUME_HOST_EXPORT,
-    START_EXPORT_PREFIX,
+    ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, MODULE_METADATA_SECTION,
+    RESULT_VALUE_EXPORT, START_EXPORT_PREFIX, VM_EXPORT,
 };
-use exs_runtime::WASM_TEMPLATE;
+use exs_abi::{CANCEL_EXPORT, RESUME_HOST_EXPORT};
+use exs_abi::{TYPE_BYTES, TYPE_STRING};
+use exs_layout::{GC_STATIC, ObjectKind, VmState};
+use exs_value::layout::type_kind;
+use wasm_encoder::reencode::{self, Reencode};
 use wasm_encoder::{
-    CodeSection, ConstExpr, CustomSection, DataCountSection, DataSection, ExportKind,
-    ExportSection, Function, FunctionSection, GlobalSection, GlobalType, Instruction,
-    Module as WasmModule, SectionId, TypeSection, ValType,
-    reencode::{self, Reencode},
+    CodeSection, ConstExpr, CustomSection, DataSection, ExportKind, ExportSection, Function,
+    FunctionSection, GlobalSection, GlobalType, Module as WasmModule, TypeSection, ValType,
 };
-use wasmparser::{ExternalKind, Parser as WasmParser, TypeRef};
+use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef};
 
-use super::continuation;
-use super::entry::compile_start;
-use super::function::{
-    FunctionCompiler, FunctionCompilerContext, FunctionSignature, LiftedFunction, MethodRegistry,
-    add_program_types, build_signatures,
+use super::closures::{
+    ClosureInfo, DispatchCase, closure_dispatcher as closure_dispatcher_body, closure_span_key,
 };
-use super::literals::{LiteralPool, TemplateDataLayout, template_data_layout};
-use super::prune::PruneHints;
-use super::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
-use super::trait_registry::TraitRegistry;
-use super::types::TypeRegistry;
-use super::{diagnostics, module_span};
-use crate::CompileOptions;
-use crate::ast::{
-    AssignmentTarget, Block, Expression, FunctionDeclaration, FunctionVisibility, Identifier,
-    Module, Parameter, Statement,
+use super::dispatch::Dispatch;
+use super::entry::EntryLayout;
+use super::function::{Context, FunctionCompiler, FunctionInfo, error};
+use super::reachability::{
+    bytes_literals, changes_case, object_key_lists, reachable_units, string_literals,
 };
-use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics};
+use super::resumable::{ClosureStep, Resumable, StepEmitter, parallel_units, resumable_units};
+use super::static_keys::StaticKeys;
+use super::type_table::TypeTable;
+use super::units::{Unit, units};
+use super::used_types::{declared_types, used_types};
+use super::validation::unreached_diagnostics;
+use crate::ast::{FunctionVisibility, Module};
+use crate::codegen::declarations::lifted_functions;
+use crate::codegen::prune::{PruneHints, prune_unreachable};
+use crate::codegen::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
+use crate::codegen::trait_registry::TraitRegistry;
+use crate::codegen::types::TypeRegistry;
+use crate::codegen::{VALUE_TYPE, module_span};
+use crate::diagnostic::CompileDiagnostics;
 use crate::hir::HirModule;
 
-/// Builds the stable Wasm export name for one runner-callable source function.
-fn entry_export_name(name: &str) -> String {
-    format!("{START_EXPORT_PREFIX}{name}")
+/// Facts read from the core template before re-encoding it.
+struct TemplateFacts {
+    /// Number of types in the template.
+    types: u32,
+    /// Number of imported functions.
+    imported_functions: u32,
+    /// Number of defined functions.
+    defined_functions: u32,
+    /// Indices of every exported function by name.
+    exports: HashMap<String, u32>,
+    /// Address just past the template's static data and stack.
+    heap_base: u32,
+    /// Number of globals in the template.
+    globals: u32,
 }
 
-/// Links one source module against the committed runtime template.
-pub(super) fn link<'source>(
-    module: &Module<'source>,
-    sources: &[crate::SourceInput<'source>],
-    options: CompileOptions,
-    lifted: Vec<LiftedFunction<'source>>,
-    suspendable_functions: &HashSet<String>,
-    traits: &TraitRegistry<'source>,
-) -> Result<(Vec<u8>, PruneHints), CompileDiagnostics<'source>> {
-    let type_registry = TypeRegistry::build(module, traits)?;
-    let literal_pool = LiteralPool::collect(module, &type_registry)?;
-    let template_data = template_data_layout(module)?;
-    let source_map = SourceMap::collect(module);
-    let mut linker = TemplateLinker::new(
-        module,
-        lifted,
-        literal_pool,
-        template_data,
-        source_map,
-        suspendable_functions.clone(),
-        traits,
-        type_registry,
-    )?;
-    let mut wasm = WasmModule::new();
-    reencode::utils::parse_core_module(&mut linker, &mut wasm, WasmParser::new(0), WASM_TEMPLATE)
-        .map_err(|error| match error {
-        reencode::Error::UserError(diagnostics) => diagnostics,
-        error => diagnostics(CompileDiagnostic::new(
-            "E1001",
-            module_span(module),
-            format!("could not link runtime template: {error}"),
-        )),
-    })?;
-    let entries = module
-        .functions
+/// Reads the template's sizes, exports and heap base.
+fn template_facts(template: &[u8]) -> Result<TemplateFacts, String> {
+    let error = |error: wasmparser::BinaryReaderError| error.to_string();
+    let mut facts = TemplateFacts {
+        types: 0,
+        imported_functions: 0,
+        defined_functions: 0,
+        exports: HashMap::new(),
+        heap_base: 0,
+        globals: 0,
+    };
+    let mut globals = Vec::new();
+    let mut heap_base_global = None;
+    for payload in Parser::new(0).parse_all(template) {
+        match payload.map_err(error)? {
+            Payload::TypeSection(section) => facts.types = section.count(),
+            Payload::ImportSection(section) => {
+                for import in section.into_imports() {
+                    if matches!(
+                        import.map_err(error)?.ty,
+                        TypeRef::Func(_) | TypeRef::FuncExact(_)
+                    ) {
+                        facts.imported_functions += 1;
+                    }
+                }
+            }
+            Payload::FunctionSection(section) => facts.defined_functions = section.count(),
+            Payload::GlobalSection(section) => {
+                for global in section {
+                    let mut reader = global.map_err(error)?.init_expr.get_operators_reader();
+                    let value = match reader.read().map_err(error)? {
+                        Operator::I32Const { value } => Some(value.cast_unsigned()),
+                        _ => None,
+                    };
+                    globals.push(value);
+                }
+            }
+            Payload::ExportSection(section) => {
+                for export in section {
+                    let export = export.map_err(error)?;
+                    match export.kind {
+                        ExternalKind::Func => {
+                            facts.exports.insert(export.name.to_owned(), export.index);
+                        }
+                        ExternalKind::Global if export.name == "__heap_base" => {
+                            heap_base_global = Some(export.index as usize);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    facts.globals = globals.len() as u32;
+    facts.heap_base = heap_base_global
+        .and_then(|index| globals.get(index).copied().flatten())
+        .ok_or_else(|| "the core template exports no constant `__heap_base`".to_owned())?;
+    Ok(facts)
+}
+
+/// Program additions appended to the template's sections.
+struct Program {
+    /// Function types, appended after the template's types.
+    types: Vec<(Vec<ValType>, Vec<ValType>)>,
+    /// Type index of every appended function.
+    function_types: Vec<u32>,
+    /// Bodies of every appended function, in index order.
+    bodies: Vec<Function>,
+    /// Exports of appended functions.
+    exports: Vec<(String, u32)>,
+    /// Number of template types, the base of `types`.
+    type_base: u32,
+}
+
+impl Program {
+    /// Returns the index of a function type, appending it on first use.
+    fn type_index(&mut self, parameters: Vec<ValType>, results: Vec<ValType>) -> u32 {
+        let key = (parameters, results);
+        let position = self.types.iter().position(|existing| *existing == key);
+        let position = position.unwrap_or_else(|| {
+            self.types.push(key);
+            self.types.len() - 1
+        });
+        self.type_base + position as u32
+    }
+}
+
+/// Compiles `module` into a linked, pruned Wasm module, embedding
+/// `sources` when `options` ask for it.
+pub(in crate::codegen) fn compile<'a>(
+    module: &Module<'a>,
+    sources: &[crate::SourceInput<'a>],
+    options: crate::CompileOptions,
+    traits: &TraitRegistry<'a>,
+) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
+    let span = module_span(module);
+    let template = exs_core_template::WASM_TEMPLATE;
+    let facts = template_facts(template).map_err(|message| error("E1001", span, message))?;
+    let types = TypeRegistry::build(module, traits)?;
+    let vm = facts.heap_base.next_multiple_of(8);
+    let dispatch = Dispatch::build(module, traits, &types);
+    let hir = HirModule::lower(module, traits);
+    let lifted = lifted_functions(module, &hir);
+    let captured: HashSet<String> = lifted
         .iter()
-        .filter(|function| function.visibility == FunctionVisibility::Public)
-        .map(|function| format!("entry={}\n", function.name.name))
-        .collect::<String>();
+        .flat_map(|closure| closure.captures.iter().cloned())
+        .collect();
+    let closure_keys: HashMap<(String, u32, u32), String> = lifted
+        .iter()
+        .map(|closure| {
+            (
+                closure_span_key(closure.declaration.span),
+                closure.key.clone(),
+            )
+        })
+        .collect();
+    let all_units = units(module, &lifted)?;
+    let declared = declared_types(module, &types);
+    let reached = reachable_units(&all_units, &dispatch, &closure_keys, &types, &declared);
+    let reached_keys: HashSet<&str> = reached.iter().map(|unit| unit.key.as_str()).collect();
+    let mut diagnostics =
+        unreached_diagnostics(module, traits, &types, &lifted, &all_units, &reached_keys);
+    let parallel = parallel_units(&reached, &closure_keys);
+    let resumable_keys = resumable_units(&hir, &dispatch, &reached_keys, &parallel);
+    drop(hir);
+    let functions: Vec<_> = reached.iter().map(|unit| unit.declaration).collect();
+    let used = used_types(&types, &reached);
+    let statics = StaticStrings::build(
+        &string_literals(&functions, TypeTable::field_names(&types, &used)),
+        &bytes_literals(&functions),
+        vm + core::mem::size_of::<VmState>() as u32,
+    )
+    .ok_or_else(|| {
+        error(
+            "E0210",
+            span,
+            "too many string literals for linear memory".to_owned(),
+        )
+    })?;
+    let type_table = TypeTable::build(&types, &used, &statics.references, statics.end())
+        .ok_or_else(|| error("E0210", span, "too many types for linear memory".to_owned()))?;
+    let static_keys = StaticKeys::build(
+        object_key_lists(&functions),
+        &statics.references,
+        type_table.end(),
+    )
+    .ok_or_else(|| {
+        error(
+            "E0210",
+            span,
+            "too many Object literals for linear memory".to_owned(),
+        )
+    })?;
+    let source_map = SourceMap::collect(module);
+    // The case tables cost data and therefore fuel, so only programs that change the case of
+    // Strings carry them.
+    let case_tables = changes_case(&functions).then(|| {
+        let base = static_keys.end().next_multiple_of(8);
+        (base, exs_layout::CASE_TABLES.to_vec())
+    });
+    let positions_base = case_tables
+        .as_ref()
+        .map_or(static_keys.end(), |(base, bytes)| base + bytes.len() as u32)
+        .next_multiple_of(8);
+    let base = facts.imported_functions + facts.defined_functions;
+    let mut program = Program {
+        types: Vec::new(),
+        function_types: Vec::new(),
+        bodies: Vec::new(),
+        exports: Vec::new(),
+        type_base: facts.types,
+    };
+    let mut infos = HashMap::new();
+    for (index, unit) in (base..).zip(&reached) {
+        let function = unit.declaration;
+        let mut parameters = Vec::with_capacity(function.parameters.len());
+        let mut variadic = None;
+        for parameter in &function.parameters {
+            let contract = types.resolve(parameter.type_annotation.as_ref(), function.span)?;
+            if parameter.variadic {
+                variadic = Some(contract);
+            } else {
+                parameters.push(contract);
+            }
+        }
+        let return_contract = types.resolve(function.return_type.as_ref(), function.span)?;
+        infos.insert(
+            unit.key.clone(),
+            FunctionInfo {
+                index,
+                function_id: unit.function_id,
+                arity: parameters.len() as u32,
+                parameters,
+                variadic,
+                captures: unit.captures.len() as u32,
+                return_contract,
+            },
+        );
+    }
+    let mut resumable = (!resumable_keys.is_empty())
+        .then(|| {
+            Resumable::build(
+                module,
+                traits,
+                &types,
+                &lifted,
+                &reached,
+                &resumable_keys,
+                |key| infos.get(key).map(|info| info.index),
+            )
+        })
+        .transpose()?;
+    let reached_closures: Vec<&&Unit<'_, '_>> = reached
+        .iter()
+        .filter(|unit| unit.key.starts_with("$closure:"))
+        .collect();
+    let closures: HashMap<(String, u32, u32), ClosureInfo> = reached_closures
+        .iter()
+        .zip(0_u32..)
+        .map(|(unit, index)| {
+            (
+                closure_span_key(unit.declaration.span),
+                ClosureInfo {
+                    index,
+                    captures: unit.captures.to_vec(),
+                },
+            )
+        })
+        .collect();
+    if let Some(resumable) = &mut resumable {
+        resumable.parallel = !parallel.is_empty();
+        for (unit, index) in reached_closures.iter().zip(0_u32..) {
+            let (Some(step), Some(info)) = (resumable.steps.get(&unit.key), infos.get(&unit.key))
+            else {
+                continue;
+            };
+            let closure = ClosureStep {
+                step: *step,
+                captures: info.captures,
+                arity: info.arity,
+                variadic: info.variadic.is_some(),
+            };
+            resumable.closures.insert(index, closure);
+        }
+    }
+    let int_new = base + functions.len() as u32;
+    let float_new = int_new + 1;
+    let closure_dispatcher = (!reached_closures.is_empty()).then_some(float_new + 1);
+    let context = Context {
+        core: &facts.exports,
+        functions: &infos,
+        int_new,
+        float_new,
+        strings: &statics.references,
+        bytes: &statics.bytes_references,
+        vm,
+        types: &types,
+        object_keys: &static_keys.addresses,
+        next_global: Cell::new(facts.globals),
+        source_map: &source_map,
+        positions_base,
+        positions: RefCell::new(Vec::new()),
+        static_arrays: RefCell::new(HashMap::new()),
+        dispatch: &dispatch,
+        captured: &captured,
+        closures: &closures,
+        closure_dispatcher,
+        used_types: &used,
+    };
+    for unit in &reached {
+        if let Some(resumable) = &resumable
+            && resumable.steps.contains_key(&unit.key)
+        {
+            let type_index = program.type_index(vec![ValType::I32], vec![ValType::I32]);
+            program.function_types.push(type_index);
+            match StepEmitter::compile(&context, resumable, &unit.key, unit.declaration) {
+                Ok(body) => program.bodies.push(body),
+                Err(error) => diagnostics.extend(error),
+            }
+            continue;
+        }
+        let arity = unit.captures.len() + unit.declaration.parameters.len();
+        let type_index = program.type_index(vec![VALUE_TYPE; arity], vec![VALUE_TYPE]);
+        program.function_types.push(type_index);
+        // Like v1, every function body reports its errors before the module is rejected.
+        match FunctionCompiler::new(&context, &unit.key, unit.declaration, unit.captures).compile()
+        {
+            Ok(body) => program.bodies.push(body),
+            Err(error) => diagnostics.extend(error),
+        }
+    }
+    if !diagnostics.is_empty() {
+        diagnostics.sort_by_span();
+        return Err(diagnostics);
+    }
+    let positions: Vec<u8> = context
+        .positions
+        .borrow()
+        .iter()
+        .flat_map(|position| position.to_le_bytes())
+        .collect();
+    let heap_start = positions_base + positions.len() as u32;
+    let layout = EntryLayout {
+        core: &facts.exports,
+        vm,
+        heap_start,
+        types: (type_table.base, type_table.count),
+        case_tables: case_tables.as_ref().map_or(0, |(base, _)| *base),
+    };
+    let int_type = program.type_index(vec![VALUE_TYPE], vec![VALUE_TYPE]);
+    program.function_types.push(int_type);
+    program
+        .bodies
+        .push(layout.boxed_number(ObjectKind::BigInt, span)?);
+    program.function_types.push(int_type);
+    program
+        .bodies
+        .push(layout.boxed_number(ObjectKind::Float, span)?);
+    let mut next = float_new + 1;
+    if closure_dispatcher.is_some() {
+        let cases = reached_closures
+            .iter()
+            .map(|unit| {
+                infos
+                    .get(&unit.key)
+                    .map(|info| DispatchCase {
+                        function: info.index,
+                        captures: info.captures,
+                        arity: info.arity,
+                        variadic: info.variadic.is_some(),
+                        suspends: resumable_keys.contains(&unit.key),
+                    })
+                    .ok_or_else(|| error("E0999", span, "missing closure".to_owned()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let dispatcher_type = program.type_index(
+            vec![VALUE_TYPE, ValType::I32, ValType::I32],
+            vec![VALUE_TYPE],
+        );
+        program.function_types.push(dispatcher_type);
+        program
+            .bodies
+            .push(closure_dispatcher_body(&layout, &cases, span)?);
+        next += 1;
+    }
+    // The run loop of a module with resumable units, which its entries and resume call.
+    let run = match &resumable {
+        Some(resumable) => {
+            let mut steps: Vec<_> = resumable.steps.values().copied().collect();
+            steps.sort_by_key(|step| step.step);
+            let indices: Vec<u32> = steps.iter().map(|step| step.index).collect();
+            let run_type = program.type_index(Vec::new(), vec![ValType::I32]);
+            program.function_types.push(run_type);
+            program.bodies.push(layout.run(&indices, span)?);
+            next += 1;
+            Some(next - 1)
+        }
+        None => None,
+    };
+    let start_type = program.type_index(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
+    let mut entries = String::new();
+    for unit in &reached {
+        let function = unit.declaration;
+        if function.visibility != FunctionVisibility::Public || unit.key.contains("::") {
+            continue;
+        }
+        let info = infos
+            .get(&function.name.name)
+            .ok_or_else(|| error("E0999", span, "missing entry signature".to_owned()))?;
+        program.function_types.push(start_type);
+        let step = resumable
+            .as_ref()
+            .and_then(|resumable| resumable.steps.get(&unit.key).copied());
+        match (step, run) {
+            (Some(step), Some(run)) => {
+                program
+                    .bodies
+                    .push(layout.resumable_start(info, step, run, function.span)?)
+            }
+            _ => program.bodies.push(layout.start(info, function.span)?),
+        }
+        program
+            .exports
+            .push((format!("{START_EXPORT_PREFIX}{}", function.name.name), next));
+        entries.push_str(&format!("entry={}\n", function.name.name));
+        next += 1;
+    }
+    let version_type = program.type_index(Vec::new(), vec![ValType::I32]);
+    let allocate_type = program.type_index(vec![ValType::I32], vec![ValType::I32]);
+    for (name, type_index, body) in [
+        (ABI_VERSION_EXPORT, version_type, EntryLayout::abi_version()),
+        (INPUT_ALLOC_EXPORT, allocate_type, layout.input_alloc(span)?),
+        (VM_EXPORT, version_type, layout.vm_address()),
+        (
+            RESULT_VALUE_EXPORT,
+            program.type_index(Vec::new(), vec![VALUE_TYPE]),
+            layout.result_value(),
+        ),
+    ] {
+        program.function_types.push(type_index);
+        program.bodies.push(body);
+        program.exports.push((name.to_owned(), next));
+        next += 1;
+    }
+    if let Some(run) = run {
+        let resume_type = program.type_index(
+            vec![ValType::I64, ValType::I32, ValType::I32],
+            vec![ValType::I32],
+        );
+        let cancel_type = program.type_index(Vec::new(), Vec::new());
+        for (name, type_index, body) in [
+            (
+                RESUME_HOST_EXPORT,
+                resume_type,
+                layout.resume_host(run, span)?,
+            ),
+            (CANCEL_EXPORT, cancel_type, layout.cancel(span)?),
+        ] {
+            program.function_types.push(type_index);
+            program.bodies.push(body);
+            program.exports.push((name.to_owned(), next));
+            next += 1;
+        }
+    }
+    let mut linker = Linker {
+        program,
+        segments: vec![
+            (statics.base, statics.bytes),
+            (type_table.base, type_table.bytes),
+            (static_keys.base, static_keys.bytes),
+            case_tables.unwrap_or_default(),
+            (positions_base, positions),
+        ],
+        globals: context.next_global.get() - facts.globals,
+    };
+    let mut wasm = WasmModule::new();
+    reencode::utils::parse_core_module(&mut linker, &mut wasm, Parser::new(0), template).map_err(
+        |failure| {
+            error(
+                "E1001",
+                span,
+                format!("could not link the core template: {failure:?}"),
+            )
+        },
+    )?;
     wasm.section(&CustomSection {
         name: MODULE_METADATA_SECTION.into(),
         data: format!("abi={ABI_VERSION}\n{entries}").into_bytes().into(),
     });
     wasm.section(&CustomSection {
         name: SOURCE_MAP_SECTION.into(),
-        data: linker.source_map.encode().into(),
+        data: source_map.encode().into(),
     });
     if options.embed_sources {
         wasm.section(&CustomSection {
             name: SOURCES_SECTION.into(),
-            data: linker.source_map.encode_source(sources).into(),
+            data: source_map.encode_source(sources).into(),
         });
     }
-    let hints = linker.prune_hints();
-    Ok((wasm.finish(), hints))
+    let hints = PruneHints {
+        weak_caller: None,
+        weak_targets: Vec::new(),
+        roots: Vec::new(),
+    };
+    prune_unreachable(&wasm.finish(), &hints).map_err(|message| error("E1001", span, message))
 }
 
-/// Copies closure source bodies and HIR capture data into linker-owned lifted declarations.
-pub(super) fn lifted_functions<'source>(
-    module: &Module<'source>,
-    hir: &HirModule<'_>,
-) -> Vec<LiftedFunction<'source>> {
-    let mut sources = Vec::new();
-    for function in &module.functions {
-        collect_closures_block(&function.body, &mut sources);
-    }
-    for implementation in &module.implementations {
-        for method in &implementation.methods {
-            collect_closures_block(&method.body, &mut sources);
-        }
-    }
-    let metadata = hir.closures().collect::<Vec<_>>();
-    debug_assert_eq!(sources.len(), metadata.len());
-    sources
-        .into_iter()
-        .zip(metadata)
-        .map(|((parameters, body, span), closure)| LiftedFunction {
-            key: format!("$closure:{}", closure.id().0),
-            declaration: FunctionDeclaration {
-                visibility: FunctionVisibility::Private,
-                name: Identifier {
-                    name: format!("$closure:{}", closure.id().0),
-                    span,
-                },
-                parameters: parameters.to_vec(),
-                return_type: None,
-                body: body.clone(),
-                span,
-            },
-            captures: closure
-                .captures()
-                .iter()
-                .map(|capture| capture.name.to_owned())
-                .collect(),
-        })
-        .collect()
+/// Static String and Bytes objects placed between the VM state block and the heap.
+struct StaticStrings {
+    /// Address of the first object.
+    base: u32,
+    /// Encoded objects, 8-byte aligned.
+    bytes: Vec<u8>,
+    /// Raw `ValueRef` of every String literal text.
+    references: HashMap<String, u64>,
+    /// Raw `ValueRef` of every Bytes literal, keyed by its source text.
+    bytes_references: HashMap<String, u64>,
 }
 
-/// Collects closure expressions in the same pre-order traversal used by HIR lowering.
-fn collect_closures_block<'source, 'ast>(
-    block: &'ast Block<'source>,
-    closures: &mut Vec<(
-        &'ast [Parameter<'source>],
-        &'ast Block<'source>,
-        crate::SourceSpan<'source>,
-    )>,
-) {
-    for statement in &block.statements {
-        collect_closures_statement(statement, closures);
-    }
-}
-
-/// Collects closure expressions nested inside one source statement.
-fn collect_closures_statement<'source, 'ast>(
-    statement: &'ast Statement<'source>,
-    closures: &mut Vec<(
-        &'ast [Parameter<'source>],
-        &'ast Block<'source>,
-        crate::SourceSpan<'source>,
-    )>,
-) {
-    match statement {
-        Statement::Let { value, .. }
-        | Statement::Expression {
-            expression: value, ..
-        } => collect_closures_expression(value, closures),
-        Statement::Assign { target, value, .. } => {
-            match target {
-                AssignmentTarget::Variable(_) => {}
-                AssignmentTarget::Index {
-                    receiver, index, ..
-                } => {
-                    collect_closures_expression(receiver, closures);
-                    collect_closures_expression(index, closures);
-                }
-                AssignmentTarget::Property { receiver, .. } => {
-                    collect_closures_expression(receiver, closures);
-                }
-            }
-            collect_closures_expression(value, closures);
-        }
-        Statement::Return { value, .. } => {
-            if let Some(value) = value {
-                collect_closures_expression(value, closures);
-            }
-        }
-        Statement::Block { block, .. } => collect_closures_block(block, closures),
-        Statement::If {
-            condition,
-            then_block,
-            else_branch,
-            ..
-        } => {
-            collect_closures_expression(condition, closures);
-            collect_closures_block(then_block, closures);
-            if let Some(else_branch) = else_branch {
-                match else_branch {
-                    crate::ast::ElseBranch::Block(block) => collect_closures_block(block, closures),
-                    crate::ast::ElseBranch::If(statement) => {
-                        collect_closures_statement(statement, closures)
-                    }
-                }
-            }
-        }
-        Statement::While {
-            condition, body, ..
-        } => {
-            collect_closures_expression(condition, closures);
-            collect_closures_block(body, closures);
-        }
-        Statement::For { iterable, body, .. } => {
-            collect_closures_expression(iterable, closures);
-            collect_closures_block(body, closures);
-        }
-        Statement::Break { .. } | Statement::Continue { .. } => {}
-    }
-}
-
-/// Collects closure expressions nested inside one source expression.
-fn collect_closures_expression<'source, 'ast>(
-    expression: &'ast Expression<'source>,
-    closures: &mut Vec<(
-        &'ast [Parameter<'source>],
-        &'ast Block<'source>,
-        crate::SourceSpan<'source>,
-    )>,
-) {
-    match expression {
-        Expression::Closure {
-            parameters,
-            body,
-            span,
-        } => {
-            closures.push((parameters, body, *span));
-            collect_closures_block(body, closures);
-        }
-        Expression::FormattedString { parts, .. } => {
-            for part in parts {
-                if let crate::ast::FormattedStringPart::Expression(expression) = part {
-                    collect_closures_expression(expression, closures);
-                }
-            }
-        }
-        Expression::ParallelStatic { tasks, .. } => {
-            for task in tasks {
-                collect_closures_expression(task, closures);
-            }
-        }
-        Expression::ParallelDynamic { functions, .. } => {
-            collect_closures_expression(functions, closures);
-        }
-        Expression::IsType { value, .. }
-        | Expression::Propagate { value, .. }
-        | Expression::Unary { operand: value, .. }
-        | Expression::Property {
-            receiver: value, ..
-        } => collect_closures_expression(value, closures),
-        Expression::Binary { left, right, .. }
-        | Expression::Index {
-            receiver: left,
-            index: right,
-            ..
-        } => {
-            collect_closures_expression(left, closures);
-            collect_closures_expression(right, closures);
-        }
-        Expression::Call { arguments, .. } | Expression::StaticMethodCall { arguments, .. } => {
-            for argument in arguments {
-                collect_closures_expression(argument, closures);
-            }
-        }
-        Expression::HostCall {
-            name, arguments, ..
-        } => {
-            collect_closures_expression(name, closures);
-            for argument in arguments {
-                collect_closures_expression(argument, closures);
-            }
-        }
-        Expression::HostStream { arguments, .. } => {
-            for argument in arguments {
-                collect_closures_expression(argument, closures);
-            }
-        }
-        Expression::HostTime { arguments, .. } => {
-            for argument in arguments {
-                collect_closures_expression(argument, closures);
-            }
-        }
-        Expression::MethodCall {
-            receiver,
-            arguments,
-            ..
-        } => {
-            collect_closures_expression(receiver, closures);
-            for argument in arguments {
-                collect_closures_expression(argument, closures);
-            }
-        }
-        Expression::List { elements, .. } => {
-            for element in elements {
-                collect_closures_expression(element, closures);
-            }
-        }
-        Expression::Object { properties, .. } | Expression::TypedObject { properties, .. } => {
-            for property in properties {
-                collect_closures_expression(&property.value, closures);
-            }
-        }
-        Expression::Match { value, arms, .. } => {
-            collect_closures_expression(value, closures);
-            for arm in arms {
-                match &arm.body {
-                    crate::ast::MatchArmBody::Expression(value) => {
-                        collect_closures_expression(value, closures);
-                    }
-                    crate::ast::MatchArmBody::Block(block) => {
-                        collect_closures_block(block, closures);
-                    }
-                }
-            }
-        }
-        Expression::Integer(_, _)
-        | Expression::Float(_, _)
-        | Expression::String(_, _)
-        | Expression::Bytes(_, _)
-        | Expression::Bool(_, _)
-        | Expression::None(_)
-        | Expression::Variable(_) => {}
-    }
-}
-
-/// Reencodes the runtime template while appending generated program sections.
-struct TemplateLinker<'source, 'module> {
-    module: &'module Module<'source>,
-    traits: &'module TraitRegistry<'source>,
-    lifted: Vec<LiftedFunction<'source>>,
-    program_types: Vec<u32>,
-    signatures: Option<HashMap<String, FunctionSignature>>,
-    methods: Option<MethodRegistry>,
-    runtime_functions: HashMap<String, u32>,
-    type_registry: TypeRegistry,
-    entry_names: Vec<String>,
-    start_type: Option<u32>,
-    abi_version_type: Option<u32>,
-    resume_type: Option<u32>,
-    cancel_type: Option<u32>,
-    dispatch_type: Option<u32>,
-    entry_indices: Vec<u32>,
-    abi_version_index: Option<u32>,
-    resume_index: Option<u32>,
-    cancel_index: Option<u32>,
-    dispatch_index: Option<u32>,
-    literals: LiteralPool,
-    source_map: SourceMap<'source>,
-    template_has_data_count: bool,
-    template_has_data_section: bool,
-    template_function_import_count: u32,
-    /// Number of globals imported by the runtime template.
-    template_global_import_count: u32,
-    suspendable_functions: HashSet<String>,
-    frame_layouts: HashMap<String, continuation::FrameLayout>,
-    /// Linear-memory address of the runtime register block.
-    registers_address: u32,
-}
-
-impl<'source, 'module> TemplateLinker<'source, 'module> {
-    /// Creates a linker for one parsed source module.
-    #[allow(clippy::too_many_arguments)] // Keeps the construction inputs explicit and ownership-local.
-    fn new(
-        module: &'module Module<'source>,
-        lifted: Vec<LiftedFunction<'source>>,
-        literals: LiteralPool,
-        template_data: TemplateDataLayout,
-        source_map: SourceMap<'source>,
-        suspendable_functions: HashSet<String>,
-        traits: &'module TraitRegistry<'source>,
-        type_registry: TypeRegistry,
-    ) -> Result<Self, CompileDiagnostics<'source>> {
-        let literal_count = u32::try_from(literals.bytes.len()).map_err(|_| {
-            diagnostics(CompileDiagnostic::new(
-                "E0210",
-                module_span(module),
-                "too many string literals for the Wasm data index space",
-            ))
-        })?;
-        let _total_data_count =
-            template_data
-                .count
-                .checked_add(literal_count)
-                .ok_or_else(|| {
-                    diagnostics(CompileDiagnostic::new(
-                        "E0210",
-                        module_span(module),
-                        "too many data segments for the Wasm data index space",
-                    ))
-                })?;
-        let entry_names = module
-            .functions
-            .iter()
-            .filter(|function| function.visibility == FunctionVisibility::Public)
-            .map(|function| function.name.name.clone())
-            .collect();
-        Ok(Self {
-            module,
-            traits,
-            lifted,
-            program_types: Vec::new(),
-            signatures: None,
-            methods: None,
-            runtime_functions: HashMap::new(),
-            type_registry,
-            entry_names,
-            start_type: None,
-            abi_version_type: None,
-            resume_type: None,
-            cancel_type: None,
-            dispatch_type: None,
-            entry_indices: Vec::new(),
-            abi_version_index: None,
-            resume_index: None,
-            cancel_index: None,
-            dispatch_index: None,
-            literals: literals.with_data_index_base(template_data.count),
-            source_map,
-            template_has_data_count: template_data.has_data_count,
-            template_has_data_section: template_data.has_data_section,
-            registers_address: template_data.registers_address,
-            template_function_import_count: 0,
-            template_global_import_count: 0,
-            suspendable_functions,
-            frame_layouts: HashMap::new(),
-        })
-    }
-
-    /// Returns the functions the pruner must keep although no direct call reaches them.
-    ///
-    /// Suspendable entry points and lifted closures get their frames by function id, so only
-    /// the dispatcher would call their steps; every other step is called directly.
-    fn prune_hints(&self) -> PruneHints {
-        let signature_index = |key: &str| {
-            self.signatures
-                .as_ref()
-                .and_then(|signatures| signatures.get(key))
-                .map(|signature| signature.index)
+impl StaticStrings {
+    /// Lays out one static String object per String literal and one static Bytes object per
+    /// Bytes literal starting at `base`.
+    fn build(literals: &[String], bytes_literals: &[String], base: u32) -> Option<Self> {
+        let base = base.next_multiple_of(8);
+        let mut statics = Self {
+            base,
+            bytes: Vec::new(),
+            references: HashMap::new(),
+            bytes_references: HashMap::new(),
         };
-        let entries = self
-            .entry_names
-            .iter()
-            .filter(|name| self.suspendable_functions.contains(*name))
-            .filter_map(|name| signature_index(name));
-        let closures = self
-            .lifted
-            .iter()
-            .filter_map(|closure| signature_index(&closure.key));
-        let steps = self
-            .frame_layouts
-            .keys()
-            .filter_map(|key| signature_index(key))
-            .collect();
-        PruneHints {
-            weak_caller: self.dispatch_index,
-            weak_targets: steps,
-            roots: entries.chain(closures).collect(),
+        for literal in literals {
+            let reference = statics.push(literal, ObjectKind::String, TYPE_STRING)?;
+            statics.references.insert(literal.clone(), reference);
         }
-    }
-
-    /// Converts an internal linker-state failure into a compiler diagnostic.
-    fn state_error(&self, message: &str) -> reencode::Error<CompileDiagnostics<'source>> {
-        reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-            "E0999",
-            module_span(self.module),
-            message,
-        )))
-    }
-
-    /// Returns the total number of template and compiler literal data segments.
-    fn total_data_count(&self) -> Result<u32, reencode::Error<CompileDiagnostics<'source>>> {
-        let literal_count = u32::try_from(self.literals.bytes.len())
-            .map_err(|_| self.state_error("too many compiler string literals"))?;
-        self.literals
-            .data_index_base
-            .checked_add(literal_count)
-            .ok_or_else(|| self.state_error("too many Wasm data segments"))
-    }
-
-    /// Replaces every resumable frame layout's slot count with its graph's exact slot count.
-    ///
-    /// Graphs only read layout function identifiers, so building them before the counts are
-    /// known is safe. A graph that fails to build keeps a zero count; compiling its body reports
-    /// the same diagnostics.
-    fn assign_frame_slot_counts(
-        &mut self,
-        signatures: &HashMap<String, FunctionSignature>,
-    ) -> Result<(), reencode::Error<CompileDiagnostics<'source>>> {
-        let methods = self
-            .methods
-            .as_ref()
-            .ok_or_else(|| self.state_error("missing implementation methods"))?;
-        let declarations = self
-            .module
-            .functions
-            .iter()
-            .map(|function| (function.name.name.clone(), function))
-            .chain(
-                self.module
-                    .implementations
-                    .iter()
-                    .flat_map(|implementation| {
-                        implementation.methods.iter().map(|method| {
-                            (
-                                format!("{}::{}", implementation.type_name.name, method.name.name),
-                                method,
-                            )
-                        })
-                    }),
-            )
-            .chain(
-                self.lifted
-                    .iter()
-                    .map(|closure| (closure.key.clone(), &closure.declaration)),
-            );
-        let mut counts = Vec::new();
-        for (key, declaration) in declarations {
-            if !self.frame_layouts.contains_key(&key) {
-                continue;
-            }
-            let count = continuation::frame_slot_count(
-                declaration,
-                &key,
-                signatures,
-                &self.frame_layouts,
-                &self.lifted,
-                methods,
-                &self.type_registry,
-            );
-            counts.push((key, count.unwrap_or(0)));
+        for literal in bytes_literals {
+            let reference = statics.push(literal, ObjectKind::Bytes, TYPE_BYTES)?;
+            statics.bytes_references.insert(literal.clone(), reference);
         }
-        for (key, count) in counts {
-            if let Some(layout) = self.frame_layouts.get_mut(&key) {
-                layout.slot_count = count;
-            }
-        }
-        Ok(())
+        Some(statics)
     }
 
-    /// Returns the number of direct and implementation methods linked into this module.
-    fn program_function_count(&self) -> Result<u32, reencode::Error<CompileDiagnostics<'source>>> {
-        let count = self.module.functions.len().checked_add(
-            self.module
-                .implementations
-                .iter()
-                .map(|implementation| implementation.methods.len())
-                .sum::<usize>(),
-        );
-        count
-            .and_then(|count| count.checked_add(self.lifted.len()))
-            .and_then(|count| u32::try_from(count).ok())
-            .ok_or_else(|| self.state_error("too many source functions"))
+    /// Appends one static object of `kind` holding the octets of `literal` and returns its
+    /// reference; Strings record their character count, Bytes none.
+    fn push(&mut self, literal: &str, kind: ObjectKind, type_bit: u32) -> Option<u64> {
+        let address = self
+            .base
+            .checked_add(u32::try_from(self.bytes.len()).ok()?)?;
+        let len = u32::try_from(literal.len()).ok()?;
+        let chars = match kind {
+            ObjectKind::String => u32::try_from(literal.chars().count()).ok()?,
+            _ => 0,
+        };
+        self.bytes.extend([kind as u8, GC_STATIC, 0, 0]);
+        self.bytes.extend(chars.to_le_bytes());
+        self.bytes.extend(len.to_le_bytes());
+        self.bytes.extend(0_u32.to_le_bytes());
+        self.bytes.extend(literal.as_bytes());
+        self.bytes.resize(self.bytes.len().next_multiple_of(8), 0);
+        Some(exs_value::ValueRef::from_parts(type_kind(type_bit), 0, address)?.raw())
+    }
+
+    /// Returns the first address after the static objects.
+    fn end(&self) -> u32 {
+        self.base + self.bytes.len() as u32
     }
 }
 
-impl<'source> Reencode for TemplateLinker<'source, '_> {
-    type Error = CompileDiagnostics<'source>;
+/// Re-encoder that appends the program to the template's sections.
+struct Linker {
+    /// The compiled program.
+    program: Program,
+    /// Address and bytes of every static data segment: the String objects, the type table and
+    /// the Object literal keys.
+    segments: Vec<(u32, Vec<u8>)>,
+    /// Number of mutable `i32` globals the program appends, all initialized to 0.
+    globals: u32,
+}
+
+impl Reencode for Linker {
+    type Error = std::convert::Infallible;
 
     fn parse_type_section(
         &mut self,
@@ -571,72 +607,12 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         section: wasmparser::TypeSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
         reencode::utils::parse_type_section(self, types, section)?;
-        self.program_types = add_program_types(
-            self.module,
-            &self.lifted,
-            types,
-            &self.suspendable_functions,
-        );
-        let start_type = types.len();
-        types
-            .ty()
-            .function([ValType::I32, ValType::I32], [ValType::I32]);
-        let abi_version_type = types.len();
-        types.ty().function([], [ValType::I32]);
-        let resume_type = types.len();
-        types
-            .ty()
-            .function([ValType::I64, ValType::I32, ValType::I32], [ValType::I32]);
-        let dispatch_type = types.len();
-        types.ty().function([], [ValType::I32]);
-        let cancel_type = types.len();
-        types.ty().function([], []);
-        self.start_type = Some(start_type);
-        self.abi_version_type = Some(abi_version_type);
-        self.resume_type = Some(resume_type);
-        self.dispatch_type = Some(dispatch_type);
-        self.cancel_type = Some(cancel_type);
-        Ok(())
-    }
-
-    fn parse_import_section(
-        &mut self,
-        imports: &mut wasm_encoder::ImportSection,
-        section: wasmparser::ImportSectionReader<'_>,
-    ) -> Result<(), reencode::Error<Self::Error>> {
-        let mut function_import_count = 0_u32;
-        let mut global_import_count = 0_u32;
-        for imports in section.clone() {
-            let imports = imports.map_err(|error| {
-                reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                    "E1001",
-                    module_span(self.module),
-                    error.to_string(),
-                )))
-            })?;
-            for import in imports {
-                let (_, import) = import.map_err(|error| {
-                    reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                        "E1001",
-                        module_span(self.module),
-                        error.to_string(),
-                    )))
-                })?;
-                if matches!(import.ty, TypeRef::Func(_) | TypeRef::FuncExact(_)) {
-                    function_import_count = function_import_count
-                        .checked_add(1)
-                        .ok_or_else(|| self.state_error("too many imported runtime functions"))?;
-                }
-                if matches!(import.ty, TypeRef::Global(_)) {
-                    global_import_count = global_import_count
-                        .checked_add(1)
-                        .ok_or_else(|| self.state_error("too many imported runtime globals"))?;
-                }
-            }
+        for (parameters, results) in &self.program.types {
+            types
+                .ty()
+                .function(parameters.iter().copied(), results.iter().copied());
         }
-        self.template_function_import_count = function_import_count;
-        self.template_global_import_count = global_import_count;
-        reencode::utils::parse_import_section(self, imports, section)
+        Ok(())
     }
 
     fn parse_function_section(
@@ -645,114 +621,20 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         section: wasmparser::FunctionSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
         reencode::utils::parse_function_section(self, functions, section)?;
-        let program_base = self
-            .template_function_import_count
-            .checked_add(functions.len())
-            .ok_or_else(|| self.state_error("too many runtime functions"))?;
-        let signatures =
-            build_signatures(self.module, &self.lifted, program_base, &self.type_registry)
-                .map_err(reencode::Error::UserError)?;
-        self.methods = Some(
-            MethodRegistry::build(self.module, self.traits, &self.type_registry, &signatures)
-                .map_err(reencode::Error::UserError)?,
-        );
-        self.signatures = Some(signatures);
-        let signatures = self
-            .signatures
-            .as_ref()
-            .ok_or_else(|| self.state_error("missing program signatures"))?
-            .clone();
-        for function in &self.module.functions {
-            if !self.suspendable_functions.contains(&function.name.name) {
-                continue;
-            }
-            let signature = signatures
-                .get(&function.name.name)
-                .ok_or_else(|| self.state_error("missing suspendable function signature"))?;
-            self.frame_layouts.insert(
-                function.name.name.clone(),
-                continuation::FrameLayout {
-                    function_id: signature.function_id,
-                    slot_count: 0,
-                },
-            );
-        }
-        for implementation in &self.module.implementations {
-            for method in &implementation.methods {
-                let key = format!("{}::{}", implementation.type_name.name, method.name.name);
-                if !self.suspendable_functions.contains(&key) {
-                    continue;
-                }
-                let signature = signatures.get(&key).ok_or_else(|| {
-                    self.state_error("missing suspendable implementation signature")
-                })?;
-                self.frame_layouts.insert(
-                    key,
-                    continuation::FrameLayout {
-                        function_id: signature.function_id,
-                        slot_count: 0,
-                    },
-                );
-            }
-        }
-        for closure in &self.lifted {
-            let signature = signatures
-                .get(&closure.key)
-                .ok_or_else(|| self.state_error("missing lifted closure function signature"))?;
-            self.frame_layouts.insert(
-                closure.key.clone(),
-                continuation::FrameLayout {
-                    function_id: signature.function_id,
-                    slot_count: 0,
-                },
-            );
-        }
-        self.assign_frame_slot_counts(&signatures)?;
-        for type_index in &self.program_types {
+        for type_index in &self.program.function_types {
             functions.function(*type_index);
         }
-        let dispatch_index = program_base + self.program_function_count()?;
-        let has_suspendable_entry = self
-            .entry_names
-            .iter()
-            .any(|name| self.suspendable_functions.contains(name));
-        self.dispatch_index = has_suspendable_entry.then_some(dispatch_index);
-        if has_suspendable_entry {
-            functions.function(
-                self.dispatch_type
-                    .ok_or_else(|| self.state_error("missing dispatcher type"))?,
-            );
-        }
-        let first_entry_index = dispatch_index + u32::from(has_suspendable_entry);
-        let entry_count = u32::try_from(self.entry_names.len())
-            .map_err(|_| self.state_error("too many root functions"))?;
-        self.entry_indices = (0..entry_count)
-            .map(|offset| first_entry_index + offset)
-            .collect();
-        self.abi_version_index = Some(first_entry_index + entry_count);
-        if has_suspendable_entry {
-            self.resume_index = Some(first_entry_index + entry_count + 1);
-            self.cancel_index = Some(first_entry_index + entry_count + 2);
-        }
-        for _ in &self.entry_names {
-            functions.function(
-                self.start_type
-                    .ok_or_else(|| self.state_error("missing start type"))?,
-            );
-        }
-        functions.function(
-            self.abi_version_type
-                .ok_or_else(|| self.state_error("missing ABI version type"))?,
-        );
-        if has_suspendable_entry {
-            functions.function(
-                self.resume_type
-                    .ok_or_else(|| self.state_error("missing resume type"))?,
-            );
-            functions.function(
-                self.cancel_type
-                    .ok_or_else(|| self.state_error("missing cancellation type"))?,
-            );
+        Ok(())
+    }
+
+    fn parse_export_section(
+        &mut self,
+        exports: &mut ExportSection,
+        section: wasmparser::ExportSectionReader<'_>,
+    ) -> Result<(), reencode::Error<Self::Error>> {
+        reencode::utils::parse_export_section(self, exports, section)?;
+        for (name, index) in &self.program.exports {
+            exports.export(name, ExportKind::Func, *index);
         }
         Ok(())
     }
@@ -763,252 +645,15 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         section: wasmparser::GlobalSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
         reencode::utils::parse_global_section(self, globals, section)?;
-        // Append one zero-initialized mutable i64 per string literal; generated code stores the
-        // literal's runtime String there on first use and reuses it afterwards.
-        let global_index_base = self
-            .template_global_import_count
-            .checked_add(globals.len())
-            .ok_or_else(|| self.state_error("too many runtime globals"))?;
-        for _ in 0..self.literals.len() {
+        for _ in 0..self.globals {
             globals.global(
                 GlobalType {
-                    val_type: super::VALUE_TYPE,
+                    val_type: ValType::I32,
                     mutable: true,
                     shared: false,
                 },
-                &ConstExpr::i64_const(0),
+                &ConstExpr::i32_const(0),
             );
-        }
-        self.literals.global_index_base = Some(global_index_base);
-        Ok(())
-    }
-
-    fn parse_export_section(
-        &mut self,
-        exports: &mut ExportSection,
-        section: wasmparser::ExportSectionReader<'_>,
-    ) -> Result<(), reencode::Error<Self::Error>> {
-        for export in section.clone() {
-            let export = export.map_err(|error| {
-                reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                    "E1001",
-                    module_span(self.module),
-                    error.to_string(),
-                )))
-            })?;
-            if export.kind == ExternalKind::Func {
-                self.runtime_functions
-                    .insert(export.name.to_owned(), export.index);
-            }
-        }
-        reencode::utils::parse_export_section(self, exports, section)?;
-        for (name, index) in self.entry_names.iter().zip(&self.entry_indices) {
-            exports.export(&entry_export_name(name), ExportKind::Func, *index);
-        }
-        if let Some(resume_index) = self.resume_index {
-            exports.export(RESUME_HOST_EXPORT, ExportKind::Func, resume_index);
-        }
-        if let Some(cancel_index) = self.cancel_index {
-            exports.export(CANCEL_EXPORT, ExportKind::Func, cancel_index);
-        }
-        exports.export(
-            ABI_VERSION_EXPORT,
-            ExportKind::Func,
-            self.abi_version_index
-                .ok_or_else(|| self.state_error("missing ABI version function index"))?,
-        );
-        Ok(())
-    }
-
-    fn parse_code_section(
-        &mut self,
-        codes: &mut CodeSection,
-        section: wasmparser::CodeSectionReader<'_>,
-    ) -> Result<(), reencode::Error<Self::Error>> {
-        reencode::utils::parse_code_section(self, codes, section)?;
-        let signatures = self
-            .signatures
-            .as_ref()
-            .ok_or_else(|| self.state_error("missing program signatures"))?;
-        let methods = self
-            .methods
-            .as_ref()
-            .ok_or_else(|| self.state_error("missing implementation methods"))?;
-        let mut body_diagnostics = CompileDiagnostics::new();
-        for function in &self.module.functions {
-            let result = if self.suspendable_functions.contains(&function.name.name) {
-                continuation::compile_function(
-                    function,
-                    &function.name.name,
-                    signatures,
-                    &self.runtime_functions,
-                    &self.literals,
-                    &self.source_map,
-                    &self.frame_layouts,
-                    &self.lifted,
-                    methods,
-                    &self.type_registry,
-                    self.registers_address,
-                )
-                .map(|compiled| compiled.function)
-            } else {
-                FunctionCompiler::new(
-                    function,
-                    &function.name.name,
-                    FunctionCompilerContext {
-                        signatures,
-                        runtime: &self.runtime_functions,
-                        literals: &self.literals,
-                        source_map: &self.source_map,
-                        types: &self.type_registry,
-                        methods,
-                        registers_address: self.registers_address,
-                    },
-                )
-                .and_then(|mut compiler| compiler.compile())
-            };
-            match result {
-                Ok(function) => {
-                    codes.function(&function);
-                }
-                Err(function_diagnostics) => body_diagnostics.extend(function_diagnostics),
-            }
-        }
-        for implementation in &self.module.implementations {
-            for method in &implementation.methods {
-                let key = format!("{}::{}", implementation.type_name.name, method.name.name);
-                let result = if self.suspendable_functions.contains(&key) {
-                    continuation::compile_function(
-                        method,
-                        &key,
-                        signatures,
-                        &self.runtime_functions,
-                        &self.literals,
-                        &self.source_map,
-                        &self.frame_layouts,
-                        &self.lifted,
-                        methods,
-                        &self.type_registry,
-                        self.registers_address,
-                    )
-                    .map(|compiled| compiled.function)
-                } else {
-                    FunctionCompiler::new(
-                        method,
-                        &key,
-                        FunctionCompilerContext {
-                            signatures,
-                            runtime: &self.runtime_functions,
-                            literals: &self.literals,
-                            source_map: &self.source_map,
-                            types: &self.type_registry,
-                            methods,
-                            registers_address: self.registers_address,
-                        },
-                    )
-                    .and_then(|mut compiler| compiler.compile())
-                };
-                match result {
-                    Ok(function) => {
-                        codes.function(&function);
-                    }
-                    Err(function_diagnostics) => body_diagnostics.extend(function_diagnostics),
-                }
-            }
-        }
-        for closure in &self.lifted {
-            match continuation::compile_function(
-                &closure.declaration,
-                &closure.key,
-                signatures,
-                &self.runtime_functions,
-                &self.literals,
-                &self.source_map,
-                &self.frame_layouts,
-                &self.lifted,
-                methods,
-                &self.type_registry,
-                self.registers_address,
-            ) {
-                Ok(compiled) => {
-                    codes.function(&compiled.function);
-                }
-                Err(diagnostics) => body_diagnostics.extend(diagnostics),
-            }
-        }
-        if !body_diagnostics.is_empty() {
-            body_diagnostics.sort_by_span();
-            return Err(reencode::Error::UserError(body_diagnostics));
-        }
-        let dispatcher_index = self.dispatch_index;
-        if dispatcher_index.is_some() {
-            let dispatcher = continuation::compile_dispatch(
-                self.module,
-                signatures,
-                &self.frame_layouts,
-                &self.runtime_functions,
-                self.registers_address,
-            )
-            .map_err(reencode::Error::UserError)?;
-            codes.function(&dispatcher);
-        }
-        for name in &self.entry_names {
-            let entry = signatures.get(name).ok_or_else(|| {
-                reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                    "E0999",
-                    module_span(self.module),
-                    format!("missing root function signature for `{name}`"),
-                )))
-            })?;
-            let start = if self.suspendable_functions.contains(name) {
-                let frame_layout = self.frame_layouts.get(name).ok_or_else(|| {
-                    reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                        "E0999",
-                        module_span(self.module),
-                        format!("missing continuation frame layout for `{name}`"),
-                    )))
-                })?;
-                continuation::compile_start(
-                    self.module,
-                    entry,
-                    frame_layout.slot_count,
-                    dispatcher_index.ok_or_else(|| {
-                        reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                            "E0999",
-                            module_span(self.module),
-                            "missing continuation dispatcher index",
-                        )))
-                    })?,
-                    &self.runtime_functions,
-                )
-            } else {
-                compile_start(self.module, entry, &self.runtime_functions)
-            }
-            .map_err(reencode::Error::UserError)?;
-            codes.function(&start);
-        }
-
-        let mut abi_version = Function::new([]);
-        abi_version.instruction(&Instruction::I32Const(ABI_VERSION.cast_signed()));
-        abi_version.instruction(&Instruction::End);
-        codes.function(&abi_version);
-        if dispatcher_index.is_some() {
-            let resume = continuation::compile_resume(
-                self.module,
-                dispatcher_index.ok_or_else(|| {
-                    reencode::Error::UserError(diagnostics(CompileDiagnostic::new(
-                        "E0999",
-                        module_span(self.module),
-                        "missing continuation dispatcher index",
-                    )))
-                })?,
-                &self.runtime_functions,
-            )
-            .map_err(reencode::Error::UserError)?;
-            codes.function(&resume);
-            let cancel = continuation::compile_cancel(self.module, &self.runtime_functions)
-                .map_err(reencode::Error::UserError)?;
-            codes.function(&cancel);
         }
         Ok(())
     }
@@ -1019,44 +664,26 @@ impl<'source> Reencode for TemplateLinker<'source, '_> {
         section: wasmparser::DataSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
         reencode::utils::parse_data_section(self, data, section)?;
-        for literal in &self.literals.bytes {
-            data.passive(literal.iter().copied());
+        for (base, bytes) in &self.segments {
+            if !bytes.is_empty() {
+                data.active(
+                    0,
+                    &ConstExpr::i32_const(base.cast_signed()),
+                    bytes.iter().copied(),
+                );
+            }
         }
         Ok(())
     }
 
-    fn data_count(&mut self, count: u32) -> Result<u32, reencode::Error<Self::Error>> {
-        count
-            .checked_add(
-                u32::try_from(self.literals.bytes.len())
-                    .map_err(|_| self.state_error("too many compiler string literals"))?,
-            )
-            .ok_or_else(|| self.state_error("too many Wasm data segments"))
-    }
-
-    fn intersperse_section_hook(
+    fn parse_code_section(
         &mut self,
-        module: &mut WasmModule,
-        after: Option<SectionId>,
-        before: Option<SectionId>,
+        code: &mut CodeSection,
+        section: wasmparser::CodeSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
-        if self.literals.bytes.is_empty() {
-            return Ok(());
-        }
-        if !self.template_has_data_count && before == Some(SectionId::Code) {
-            module.section(&DataCountSection {
-                count: self.total_data_count()?,
-            });
-        }
-        if !self.template_has_data_section
-            && after == Some(SectionId::Code)
-            && before != Some(SectionId::Data)
-        {
-            let mut data = DataSection::new();
-            for literal in &self.literals.bytes {
-                data.passive(literal.iter().copied());
-            }
-            module.section(&data);
+        reencode::utils::parse_code_section(self, code, section)?;
+        for body in &self.program.bodies {
+            code.function(body);
         }
         Ok(())
     }

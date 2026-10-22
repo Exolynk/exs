@@ -30,7 +30,6 @@ wasm-bindgen-futures = { version = "0.4.56", optional = true }
 jiff = { workspace = true, optional = true, features = ["std", "js", "tz-fat", "tzdb-bundle-always"] }
 
 [dev-dependencies]
-exs-runtime = { path = "../exs-runtime" }
 exs-compiler = { path = "../exs-compiler" }
 exs-value = { path = "../exs-value" }
 

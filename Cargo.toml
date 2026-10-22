@@ -5,7 +5,6 @@ members = [
     "crates/exs-layout",
     "crates/exs-core",
     "crates/exs-core-template",
-    "crates/exs-runtime",
     "crates/exs-guest",
     "crates/exs-compiler",
     "crates/exs-autocomplete",

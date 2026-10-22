@@ -839,7 +839,6 @@ dependencies = [
  "exs-abi",
  "exs-core-template",
  "exs-layout",
- "exs-runtime",
  "exs-value",
  "wasm-encoder 0.245.1",
  "wasmparser 0.245.1",
@@ -906,7 +905,6 @@ dependencies = [
  "exs-abi",
  "exs-compiler",
  "exs-core",
- "exs-runtime",
  "exs-value",
  "jiff",
  "js-sys",
@@ -914,16 +912,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasmtime",
-]
-
-[[package]]
-name = "exs-runtime"
-version = "0.1.0"
-dependencies = [
- "dlmalloc",
- "exs-abi",
- "exs-value",
- "libm",
 ]
 
 [[package]]

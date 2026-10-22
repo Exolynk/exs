@@ -613,13 +613,6 @@ impl TypeRegistry {
             .collect()
     }
 
-    /// Returns an opaque runtime schema for one recursive host-boundary type contract.
-    pub(super) fn wire_schema(&self, contract: &TypeContract) -> String {
-        let mut output = String::new();
-        self.append_wire_contract(&mut output, contract);
-        output
-    }
-
     /// Registers every constructor and payload contract for one enum declaration.
     fn register_enum<'a>(
         &mut self,
@@ -681,86 +674,6 @@ impl TypeRegistry {
             }
         }
     }
-
-    /// Appends one compact, length-prefixed runtime decoder contract.
-    fn append_wire_contract(&self, output: &mut String, contract: &TypeContract) {
-        output.push('C');
-        append_wire_number(output, contract.builtin_mask);
-        match &contract.list_item {
-            Some(item) => {
-                output.push('L');
-                self.append_wire_contract(output, item);
-            }
-            None => output.push('N'),
-        }
-        let objects = contract
-            .nominal_type_ids
-            .iter()
-            .filter_map(|id| self.type_by_id(*id))
-            .filter(|nominal| nominal.kind == NominalKind::Object)
-            .collect::<Vec<_>>();
-        append_wire_number(output, objects.len() as u32);
-        for nominal in objects {
-            output.push('O');
-            append_wire_number(output, nominal.id);
-            self.append_wire_fields(output, &nominal.fields);
-        }
-        let enums = contract
-            .nominal_type_ids
-            .iter()
-            .filter_map(|id| self.type_by_id(*id))
-            .filter(|nominal| nominal.kind == NominalKind::Enum)
-            .collect::<Vec<_>>();
-        append_wire_number(output, enums.len() as u32);
-        for nominal in enums {
-            output.push('E');
-            append_wire_number(output, nominal.id);
-            append_wire_text(output, nominal.enum_type_id.as_deref().unwrap_or_default());
-            let variants = self
-                .enum_variants
-                .values()
-                .filter(|variant| variant.type_id == nominal.id)
-                .collect::<Vec<_>>();
-            append_wire_number(output, variants.len() as u32);
-            for variant in variants {
-                output.push('V');
-                append_wire_text(output, &variant.name);
-                append_wire_number(output, variant.fields.len() as u32);
-                for (name, field) in variant.field_names.iter().zip(&variant.fields) {
-                    output.push('F');
-                    append_wire_text(output, name);
-                    self.append_wire_contract(output, field);
-                }
-            }
-        }
-    }
-
-    /// Appends every named nominal Object field to an opaque runtime schema.
-    fn append_wire_fields(&self, output: &mut String, fields: &[NominalField]) {
-        append_wire_number(output, fields.len() as u32);
-        for field in fields {
-            output.push('F');
-            append_wire_text(output, &field.name);
-            self.append_wire_contract(output, &field.contract);
-        }
-    }
-
-    /// Returns one nominal type by its compiler-owned tag.
-    fn type_by_id(&self, id: u32) -> Option<&NominalType> {
-        self.types.values().find(|nominal| nominal.id == id)
-    }
-}
-
-/// Appends one semicolon-terminated schema number.
-fn append_wire_number(output: &mut String, value: u32) {
-    output.push_str(&value.to_string());
-    output.push(';');
-}
-
-/// Appends one byte-length-prefixed schema text fragment.
-fn append_wire_text(output: &mut String, value: &str) {
-    append_wire_number(output, value.len() as u32);
-    output.push_str(value);
 }
 
 /// Merges one union alternative into an existing recursive type contract.

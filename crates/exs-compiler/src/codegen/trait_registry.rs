@@ -209,22 +209,6 @@ impl TraitOperator {
         }
     }
 
-    /// Returns the runtime fallback export for this operator.
-    pub(crate) const fn runtime_export(self) -> &'static str {
-        match self {
-            Self::Add => "__exs_rt_add",
-            Self::Subtract => "__exs_rt_sub",
-            Self::Multiply => "__exs_rt_mul",
-            Self::Divide => "__exs_rt_div",
-            Self::Equal
-            | Self::NotEqual
-            | Self::LessThan
-            | Self::LessOrEqual
-            | Self::GreaterThan
-            | Self::GreaterOrEqual => "__exs_rt_compare",
-        }
-    }
-
     /// Returns the runtime comparison-test code required after this operator dispatch.
     pub(crate) const fn comparison_test(self) -> Option<i32> {
         match self {

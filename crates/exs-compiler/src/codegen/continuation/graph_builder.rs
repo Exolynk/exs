@@ -3,9 +3,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{AssignmentTarget, Expression, Statement};
+use crate::codegen::declarations::FunctionSignature;
 use crate::codegen::diagnostics;
-use crate::codegen::function::FunctionSignature;
-use crate::codegen::standard::is_unshared_range;
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
 use super::graph::{
@@ -67,7 +66,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     self.operations.push(Operation::WireDecode {
                         source: value,
                         destination: binding,
-                        schema: self.types.wire_schema(&contract),
                         contract,
                         span: *span,
                     });
@@ -198,11 +196,9 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
     ) -> Result<(), CompileDiagnostics<'source>> {
         let condition_span = expression_span(condition);
         let condition = self.lower_expression(condition)?;
-        let checked = self.temporary(span)?;
         // Like synchronous lowering, a non-Bool condition reports itself.
         let branch = self.push(Operation::Branch {
             condition,
-            checked,
             when_true: 0,
             when_false: 0,
             span: condition_span,
@@ -236,11 +232,9 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         let condition_start = self.operations.len();
         let condition_span = expression_span(condition);
         let condition = self.lower_expression(condition)?;
-        let checked = self.temporary(span)?;
         // Like synchronous lowering, a non-Bool condition reports itself.
         let branch = self.push(Operation::Branch {
             condition,
-            checked,
             when_true: 0,
             when_false: 0,
             span: condition_span,
@@ -288,13 +282,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             .types
             .get("Range")
             .map_or(-1, |range| range.id.cast_signed());
-        let unshared_range = is_unshared_range(iterable).then_some(range_type_id);
         let iterable = self.lower_expression(iterable)?;
         let snapshot = self.temporary(span)?;
         self.operations.push(Operation::IterSnapshot {
             iterable,
             destination: snapshot,
-            unshared_range,
             span,
         });
         let condition_start = self.operations.len();
@@ -317,44 +309,12 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 .methods
                 .trait_instance("Iterator", "next")
                 .map_or_else(Vec::new, ToOwned::to_owned),
-            fallback: None,
             destination: step,
             span,
         });
-        let checked = self.temporary(span)?;
-        let type_identity_slot = self.temporary(span)?;
-        let done_variant_slot = self.temporary(span)?;
-        let item_variant_slot = self.temporary(span)?;
-        let done = self
-            .types
-            .enum_variant("IteratorStep::Done")
-            .ok_or_else(|| {
-                diagnostics(CompileDiagnostic::new(
-                    "E0999",
-                    span,
-                    "missing prelude IteratorStep::Done variant",
-                ))
-            })?;
-        let item_variant = self
-            .types
-            .enum_variant("IteratorStep::Item")
-            .ok_or_else(|| {
-                diagnostics(CompileDiagnostic::new(
-                    "E0999",
-                    span,
-                    "missing prelude IteratorStep::Item variant",
-                ))
-            })?;
         let branch = self.push(Operation::IteratorBranch {
             step,
             item,
-            checked,
-            type_identity_slot,
-            done_variant_slot,
-            item_variant_slot,
-            type_identity: done.type_identity.clone(),
-            done_variant: done.name.clone(),
-            item_variant: item_variant.name.clone(),
             when_item: 0,
             when_done: 0,
             span,
@@ -365,7 +325,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             self.operations.push(Operation::WireDecode {
                 source: item,
                 destination: item,
-                schema: self.types.wire_schema(&contract),
                 contract,
                 span: binding.span,
             });
@@ -484,11 +443,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             right,
             targets: self.methods.operator(operator).to_vec(),
             destination: ordering,
-            comparison: Some(ComparisonFallback {
-                test,
-                destination,
-                next,
-            }),
+            comparison: Some(ComparisonFallback { destination, next }),
             span,
         })?;
         self.push(Operation::OrderingTest {

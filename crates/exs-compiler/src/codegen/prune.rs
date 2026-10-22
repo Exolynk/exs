@@ -20,7 +20,7 @@ use wasmparser::{
 };
 
 /// Export-name prefixes of template functions that only the linker resolves: the v1 runtime's
-/// and the v2 core library's.
+/// and the core library's.
 const LINK_EXPORT_PREFIXES: [&str; 2] = ["__exs_rt_", "__exs_core_"];
 
 /// Returns whether one export exists only for linking.

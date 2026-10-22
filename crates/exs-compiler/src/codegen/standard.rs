@@ -16,16 +16,6 @@ pub(crate) fn is_unshared_range(expression: &Expression<'_>) -> bool {
     )
 }
 
-/// Returns whether every key of one Object literal is distinct.
-///
-/// Such a literal can append its properties to a pre-sized Object instead of replacing earlier
-/// entries with the same key.
-pub(crate) fn has_unique_keys<'k>(keys: impl Iterator<Item = &'k str> + Clone) -> bool {
-    keys.clone()
-        .enumerate()
-        .all(|(index, key)| keys.clone().take(index).all(|earlier| earlier != key))
-}
-
 /// Canonical source name for the protocol invoked by the `+` operator.
 pub(crate) const ADD_TRAIT: &str = "Add";
 
@@ -61,9 +51,6 @@ pub(crate) const TO_STRING_TRAIT: &str = "ToString";
 
 /// Required instance-method name for the `ToString` protocol.
 pub(crate) const TO_STRING_METHOD: &str = "to_string";
-
-/// Builder bytes reserved per interpolated value of a formatted string.
-pub(crate) const FORMATTED_VALUE_CAPACITY: usize = 8;
 
 /// Default message for a failed `assert` call without an explicit description.
 pub(crate) const ASSERT_DEFAULT_DESCRIPTION: &str = "assert failed";

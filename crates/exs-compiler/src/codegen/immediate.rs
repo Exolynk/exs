@@ -6,11 +6,10 @@
 //! existing runtime calls and operator dispatch.
 
 use exs_value::ValueRef;
-use exs_value::layout::{BOOL_TAG, EXTRA_SHIFT, KIND_SHIFT, SMALL_INT_TAG, object_tag};
+use exs_value::layout::{BOOL_TAG, EXTRA_SHIFT, KIND_SHIFT, SMALL_INT_TAG};
 use wasm_encoder::{BlockType, Function, Instruction};
 
 use super::VALUE_TYPE;
-use super::trait_registry::TraitOperator;
 use crate::ast::BinaryOperator;
 
 /// Pushes one constant `ValueRef`, such as an immediate literal, as its raw `i64`.
@@ -24,18 +23,6 @@ pub(super) fn type_mask_test(function: &mut Function, mask: u32) {
     function.instruction(&Instruction::I64And);
     function.instruction(&Instruction::I64Const(0));
     function.instruction(&Instruction::I64Ne);
-}
-
-/// Replaces the `ValueRef` on the stack with 1 when it is an Object carrying `type_id`.
-///
-/// Returns `false` without emitting anything when the id is too large for the extra bits; the
-/// caller must then keep the runtime test.
-pub(super) fn object_type_test(function: &mut Function, type_id: u32) -> bool {
-    let Some(tag) = object_tag(type_id) else {
-        return false;
-    };
-    tag_test(function, tag);
-    true
 }
 
 /// Replaces the `ValueRef` on the stack with 1 when it is an immediate Bool.
@@ -104,10 +91,6 @@ pub(super) enum IntOperation {
     GreaterThan,
     /// Greater-than-or-equal.
     GreaterOrEqual,
-    /// Euclidean quotient `div_euclid`, inline only for a non-zero divisor.
-    DivEuclid,
-    /// Euclidean remainder `rem_euclid`, inline only for a non-zero divisor.
-    RemEuclid,
 }
 
 impl IntOperation {
@@ -125,39 +108,6 @@ impl IntOperation {
             BinaryOperator::GreaterOrEqual => Some(Self::GreaterOrEqual),
             BinaryOperator::Divide | BinaryOperator::And | BinaryOperator::Or => None,
         }
-    }
-
-    /// Returns the inline operation for one standard operator trait, if it has one.
-    pub(super) const fn from_trait(operator: TraitOperator) -> Option<Self> {
-        match operator {
-            TraitOperator::Add => Some(Self::Add),
-            TraitOperator::Subtract => Some(Self::Subtract),
-            TraitOperator::Multiply => Some(Self::Multiply),
-            TraitOperator::Equal => Some(Self::Equal),
-            TraitOperator::NotEqual => Some(Self::NotEqual),
-            TraitOperator::LessThan => Some(Self::LessThan),
-            TraitOperator::LessOrEqual => Some(Self::LessOrEqual),
-            TraitOperator::GreaterThan => Some(Self::GreaterThan),
-            TraitOperator::GreaterOrEqual => Some(Self::GreaterOrEqual),
-            TraitOperator::Divide => None,
-        }
-    }
-
-    /// Returns the inline operation for one built-in Int method call, if it has one.
-    pub(super) fn from_method(method: &str, arity: usize) -> Option<Self> {
-        match (method, arity) {
-            ("div_euclid", 1) => Some(Self::DivEuclid),
-            ("rem_euclid", 1) => Some(Self::RemEuclid),
-            _ => None,
-        }
-    }
-
-    /// Returns whether the operation produces a Bool rather than an Int.
-    pub(super) const fn is_comparison(self) -> bool {
-        !matches!(
-            self,
-            Self::Add | Self::Subtract | Self::Multiply | Self::DivEuclid | Self::RemEuclid
-        )
     }
 
     /// Pushes the result `ValueRef` for two `ValueRef` locals that both hold immediate Ints.
@@ -206,38 +156,6 @@ impl IntOperation {
                     Self::Subtract => Instruction::I64Sub,
                     _ => Instruction::I64Mul,
                 });
-                push_int_result(function, temporary, int_new);
-            }
-            Self::DivEuclid | Self::RemEuclid => {
-                // The truncating remainder plus the divisor's magnitude when it is negative is
-                // the Euclidean remainder; dividing out that remainder is then exact. Neither
-                // i32 operand range can overflow `i64` here.
-                payload_as_i64(function, left);
-                payload_as_i64(function, right);
-                function.instruction(&Instruction::I64RemS);
-                function.instruction(&Instruction::LocalTee(temporary));
-                function.instruction(&Instruction::LocalGet(temporary));
-                function.instruction(&Instruction::I64Const(63));
-                function.instruction(&Instruction::I64ShrS);
-                payload_as_i64(function, right);
-                payload_as_i64(function, right);
-                function.instruction(&Instruction::I64Const(63));
-                function.instruction(&Instruction::I64ShrS);
-                function.instruction(&Instruction::I64Xor);
-                payload_as_i64(function, right);
-                function.instruction(&Instruction::I64Const(63));
-                function.instruction(&Instruction::I64ShrS);
-                function.instruction(&Instruction::I64Sub);
-                function.instruction(&Instruction::I64And);
-                function.instruction(&Instruction::I64Add);
-                if matches!(self, Self::DivEuclid) {
-                    function.instruction(&Instruction::LocalSet(temporary));
-                    payload_as_i64(function, left);
-                    function.instruction(&Instruction::LocalGet(temporary));
-                    function.instruction(&Instruction::I64Sub);
-                    payload_as_i64(function, right);
-                    function.instruction(&Instruction::I64DivS);
-                }
                 push_int_result(function, temporary, int_new);
             }
         }

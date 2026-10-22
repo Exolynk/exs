@@ -9,10 +9,10 @@ use crate::layout::{EXTRA_SHIFT, KIND_SHIFT, type_kind};
 /// An opaque 64-bit tagged reference to one `ExS` value.
 ///
 /// Bits 63..48 hold exactly one kind flag, bits 47..32 hold kind-specific extra bits and bits
-/// 31..0 hold the payload: either an immediate scalar or a one-based runtime value-table index.
-/// Because a kind flag is always set, a valid reference is never zero. The layout is defined in
-/// [`crate::layout`]; only `exs-runtime` creates heap references, while compilers and runners pass
-/// references through their internal Wasm ABI as an `i64` and may test the documented bits.
+/// 31..0 hold the payload: either an immediate scalar or the linear-memory address of a heap
+/// object. Because a kind flag is always set, a valid reference is never zero. The layout is
+/// defined in [`crate::layout`]; generated code and the core library create heap references,
+/// and runners read them from module memory as an `i64` and may test the documented bits.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct ValueRef(NonZeroU64);

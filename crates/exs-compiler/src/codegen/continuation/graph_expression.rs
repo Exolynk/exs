@@ -6,8 +6,8 @@ use crate::ast::{
     BinaryOperator, Expression, FormattedStringPart, HostTimeOperation, MatchArmBody, MatchPattern,
     UnaryOperator,
 };
+use crate::codegen::declarations::contains_statements;
 use crate::codegen::diagnostics;
-use crate::codegen::function::contains_statements;
 use crate::codegen::match_arms::{ArmTest, MatchArms, check_bindings};
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
@@ -37,17 +37,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 Ok(destination)
             }
             Expression::FormattedString { parts, span, .. } => {
-                let capacity = parts.iter().fold(0_usize, |total, part| {
-                    total.saturating_add(match part {
-                        FormattedStringPart::Text(value) => value.len(),
-                        FormattedStringPart::Expression(_) => {
-                            crate::codegen::standard::FORMATTED_VALUE_CAPACITY
-                        }
-                    })
-                });
                 let builder = self.temporary(*span)?;
                 self.operations.push(Operation::FormatNew {
-                    capacity: i32::try_from(capacity).unwrap_or(i32::MAX),
                     destination: builder,
                     span: *span,
                 });
@@ -85,7 +76,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                                     method_span: *span,
                                     arguments: Vec::new(),
                                     targets: targets.clone(),
-                                    fallback: None,
                                     destination: rendered,
                                     span: *span,
                                 });
@@ -128,7 +118,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     let destination = self.temporary(identifier.span)?;
                     self.operations.push(Operation::Enum {
                         type_id: variant.type_id,
-                        type_identity: variant.type_identity.clone(),
                         variant: variant.name.clone(),
                         fields: Vec::new(),
                         destination,
@@ -187,22 +176,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let destination = self.temporary(*span)?;
                 self.operations.push(Operation::Closure {
                     layout,
-                    arity: lifted
-                        .declaration
-                        .parameters
-                        .len()
-                        .saturating_sub(usize::from(
-                            lifted
-                                .declaration
-                                .parameters
-                                .last()
-                                .is_some_and(|parameter| parameter.variadic),
-                        )),
-                    variadic: lifted
-                        .declaration
-                        .parameters
-                        .last()
-                        .is_some_and(|parameter| parameter.variadic),
                     captures,
                     destination,
                     span: *span,
@@ -556,7 +529,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     let destination = self.temporary(*span)?;
                     self.operations.push(Operation::Enum {
                         type_id: variant.type_id,
-                        type_identity: variant.type_identity.clone(),
                         variant: variant.name.clone(),
                         fields,
                         destination,
@@ -607,7 +579,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 if let Some(layout) = self.frame_layouts.get(&callee.name).copied() {
                     self.operations.push(Operation::ChildCall {
                         layout,
-                        step: signature.index,
                         arguments: slots,
                         destination,
                         span: *span,
@@ -708,7 +679,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     let destination = self.temporary(*span)?;
                     self.operations.push(Operation::Enum {
                         type_id: variant.type_id,
-                        type_identity: variant.type_identity.clone(),
                         variant: variant.name.clone(),
                         fields,
                         destination,
@@ -755,7 +725,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 if let Some(layout) = self.frame_layouts.get(&key).copied() {
                     self.operations.push(Operation::ChildCall {
                         layout,
-                        step: signature.index,
                         arguments: slots,
                         destination,
                         span: *span,
@@ -779,17 +748,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let receiver = self.lower_operand(receiver, runs_statements(arguments))?;
                 let slots = self.lower_operands(arguments)?;
                 let destination = self.temporary(*span)?;
-                let fallback = crate::prelude::iterator_helper(&method.name)
-                    .map(|key| {
-                        self.signatures.get(key).cloned().ok_or_else(|| {
-                            diagnostics(CompileDiagnostic::new(
-                                "E0999",
-                                method.span,
-                                "missing standard iterable helper",
-                            ))
-                        })
-                    })
-                    .transpose()?;
                 self.operations.push(Operation::InstanceCall {
                     receiver,
                     method: &method.name,
@@ -800,7 +758,6 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         .instance(&method.name)
                         .unwrap_or_default()
                         .to_vec(),
-                    fallback,
                     destination,
                     span: *span,
                 });
@@ -966,10 +923,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         destination: condition,
                         span: *pattern_span,
                     });
-                    let checked = self.temporary(*pattern_span)?;
                     let branch = self.push(Operation::Branch {
                         condition,
-                        checked,
                         when_true: 0,
                         when_false: 0,
                         span: *pattern_span,
@@ -1071,10 +1026,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
     ) -> Result<u32, CompileDiagnostics<'source>> {
         let left = self.lower_expression(left)?;
         let destination = self.temporary(span)?;
-        let checked = self.temporary(span)?;
         let branch = self.push(Operation::Branch {
             condition: left,
-            checked,
             when_true: 0,
             when_false: 0,
             span,
@@ -1083,11 +1036,9 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
         let right_start = self.operations.len();
         let right_span = expression_span(right);
         let right = self.lower_expression(right)?;
-        let right_checked = self.temporary(span)?;
         // Like synchronous lowering, a non-Bool right operand reports itself.
         let right_branch = self.push(Operation::Branch {
             condition: right,
-            checked: right_checked,
             when_true: 0,
             when_false: 0,
             span: right_span,
