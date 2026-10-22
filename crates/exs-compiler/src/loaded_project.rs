@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::ast::Module;
+use crate::ast::{ImportDeclaration, Module};
 use crate::{CompileLimits, ModuleResolver, SourceInput};
 
 /// A fully resolved project source unit.
@@ -58,7 +58,7 @@ impl LoadedProject {
         while index < files.len() {
             let source_id = files[index].source_id.clone();
             let text = files[index].text.clone();
-            let imports = parse_source(&source_id, &text, limits.max_nesting)?.imports;
+            let imports = scan_imports(&source_id, &text)?;
             for import in imports {
                 let resolved = resolver
                     .resolve(&source_id, &import.path)
@@ -144,6 +144,19 @@ impl LoadedProject {
             self.files[0].source_id
         ))
     }
+}
+
+/// Returns the import declarations of one source and renders its lexical diagnostics or the
+/// syntax diagnostics of its imports; the rest of the source is parsed once, later.
+fn scan_imports<'a>(
+    source_id: &'a str,
+    text: &'a str,
+) -> Result<Vec<ImportDeclaration<'a>>, String> {
+    let lexed = crate::lexer::lex(SourceInput { source_id, text });
+    if !lexed.diagnostics.is_empty() {
+        return Err(lexed.diagnostics.render(text));
+    }
+    crate::parser::parse_imports(lexed.tokens).map_err(|error| error.render(text))
 }
 
 /// Parses one non-root source module, nesting at most `max_nesting` levels deep, and renders

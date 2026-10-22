@@ -265,3 +265,39 @@ fn compilation_and_documentation_report_the_same_import_cycle() {
 
     assert_eq!(compilation_error, documentation_error);
 }
+
+/// Finds imports after `use` declarations and still reports syntax errors in the bodies of
+/// imported modules, which the loader no longer parses in full.
+#[test]
+fn reports_syntax_errors_of_imported_modules() {
+    let source = SourceInput {
+        source_id: "./main.exs",
+        text: "import \"./math.exs\"; use math::one; import \"./text.exs\"; fn main() -> Int { ret one(); }",
+    };
+    let resolver = |math: &str| TestResolver {
+        sources: HashMap::from([
+            ("./math.exs".to_owned(), math.to_owned()),
+            (
+                "./text.exs".to_owned(),
+                "fn hello() -> String { ret \"hi\"; }".to_owned(),
+            ),
+        ]),
+    };
+    assert!(
+        compile_with_resolver(
+            source,
+            CompileOptions::default(),
+            &mut resolver("fn one() -> Int { ret 1; }")
+        )
+        .is_ok()
+    );
+    let error = match compile_with_resolver(
+        source,
+        CompileOptions::default(),
+        &mut resolver("fn one() -> Int { ret 1 }"),
+    ) {
+        Ok(_) => panic!("a syntax error in an imported module unexpectedly compiled"),
+        Err(error) => error,
+    };
+    assert!(error.contains("./math.exs"), "{error}");
+}

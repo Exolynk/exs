@@ -21,6 +21,36 @@ mod expressions;
 mod statements;
 mod utilities;
 
+/// Parses only the `import` declarations at the start of a token stream, skipping `use`
+/// declarations between them and stopping at the first other declaration, since imports must
+/// precede every declaration. Errors in the rest of the module are left to the full parse.
+pub fn parse_imports(
+    tokens: Vec<Token<'_>>,
+) -> Result<Vec<ImportDeclaration<'_>>, CompileDiagnostics<'_>> {
+    let mut parser = Parser {
+        tokens,
+        current: 0,
+        type_names: HashSet::new(),
+        diagnostics: CompileDiagnostics::new(),
+        depth: 0,
+        max_nesting: 0,
+    };
+    let mut imports = Vec::new();
+    loop {
+        let declaration = match &parser.peek().kind {
+            TokenKind::Import => parser.import_declaration().map(Some),
+            TokenKind::Use => parser.use_declaration().map(|_| None),
+            _ => break,
+        };
+        match declaration {
+            Ok(Some(import)) => imports.push(import),
+            Ok(None) => {}
+            Err(diagnostic) => return Err(CompileDiagnostics::from(diagnostic)),
+        }
+    }
+    Ok(imports)
+}
+
 /// Parses a token stream into one ExS module within the default nesting limit.
 pub fn parse<'a>(
     source_id: &'a str,
