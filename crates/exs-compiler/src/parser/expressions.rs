@@ -149,6 +149,7 @@ impl<'a> Parser<'a> {
                     span: type_name.span.through(close),
                 };
             } else if self.check(&TokenKind::LeftBrace)
+                && self.object_literal_follows()
                 && matches!(&expression, Expression::Variable(identifier) if self.type_names.contains(&identifier.name) || identifier.name.contains("::"))
             {
                 self.advance();
@@ -419,6 +420,17 @@ impl<'a> Parser<'a> {
             arms,
             span: start.through(end),
         })
+    }
+
+    /// Reports whether the `{` at the current token opens Object literal fields: `}` or a
+    /// field name and `:` follow. A `match` body or block after a type or variant name, as in
+    /// `match Color::Red { ... }`, does not.
+    fn object_literal_follows(&self) -> bool {
+        let next = self.tokens.get(self.current + 1).map(|token| &token.kind);
+        let after = self.tokens.get(self.current + 2).map(|token| &token.kind);
+        matches!(next, Some(TokenKind::RightBrace))
+            || (matches!(next, Some(TokenKind::Identifier(_) | TokenKind::String(_)))
+                && matches!(after, Some(TokenKind::Colon)))
     }
 
     /// Parses one qualified variant, literal, or wildcard match pattern.

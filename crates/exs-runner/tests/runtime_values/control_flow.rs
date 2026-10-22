@@ -163,3 +163,33 @@ fn matches_literal_patterns() {
         assert_eq!(execute_source(source, ExsValue::None), expected);
     }
 }
+
+/// Reads `Name {` as a typed Object only when fields or `}` follow, so a match on a variant
+/// literal parses.
+#[test]
+fn matches_variant_literals_and_typed_objects() {
+    assert_eq!(
+        execute_source(
+            r#"
+            enum Choice { First, Second(value: Int) }
+            type Point { x: Int }
+            type Empty {}
+
+            fn main(input) -> List {
+                let first = match Choice::First { Choice::First => 1, Choice::Second(value) => value };
+                let second = match Choice::Second(5) { Choice::Second(value) => value, _ => 0 };
+                let flag = 0;
+                if Point { x: 1 } == Point { x: 1 } { flag = 1; }
+                ret [first, second, flag, Empty {} == Empty {}];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(1),
+            ExsValue::Int(5),
+            ExsValue::Int(1),
+            ExsValue::Bool(true),
+        ]),
+    );
+}
