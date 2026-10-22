@@ -806,3 +806,32 @@ fn rejects_invalid_literal_match_arms() {
         }
     }
 }
+
+/// Compiles closures in functions nothing calls, also `main` when compiling source tests, and
+/// still reports errors inside them.
+#[test]
+fn compiles_closures_in_unreached_functions() {
+    let text = "fn unused() { let f = () => { ret 1; }; ret f(); }\nfn main() { let g = () => { ret 2; }; ret g(); }\ntest \"t\" { assert_eq(1, 1); }";
+    let source = SourceInput {
+        source_id: "./main.exs",
+        text,
+    };
+    assert!(compile(source, CompileOptions::default()).is_ok());
+    let mut resolver = TestResolver {
+        sources: HashMap::new(),
+    };
+    let tests =
+        exs_compiler::compile_tests_with_resolver(source, CompileOptions::default(), &mut resolver);
+    assert!(tests.is_ok(), "{:?}", tests.err());
+    let error = match compile(
+        SourceInput {
+            source_id: "./main.exs",
+            text: "fn unused() { let f = () => { ret missing; }; ret f(); }\nfn main() { ret 1; }",
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(_) => panic!("an unknown binding compiled"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("unknown binding `missing`"), "{error}");
+}

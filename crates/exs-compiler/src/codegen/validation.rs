@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::units::Unit;
 use crate::ast::Module;
-use crate::codegen::continuation::ContinuationGraph;
+use crate::codegen::continuation::{ContinuationGraph, FrameLayout};
 use crate::codegen::declarations::{LiftedFunction, MethodRegistry, build_signatures};
 use crate::codegen::trait_registry::TraitRegistry;
 use crate::codegen::types::TypeRegistry;
@@ -50,7 +50,20 @@ pub(super) fn unreached_diagnostics<'a>(
         Ok(methods) => methods,
         Err(error) => return error,
     };
-    let frame_layouts = HashMap::new();
+    // Closures inside the unreached units need a layout like they would in a resumable unit.
+    let frame_layouts: HashMap<String, FrameLayout> = signatures
+        .iter()
+        .filter(|(key, _)| key.starts_with("$closure:"))
+        .map(|(key, signature)| {
+            (
+                key.clone(),
+                FrameLayout {
+                    function_id: signature.function_id,
+                    slot_count: 0,
+                },
+            )
+        })
+        .collect();
     for unit in unreached {
         let Some(signature) = signatures.get(&unit.key) else {
             continue;
