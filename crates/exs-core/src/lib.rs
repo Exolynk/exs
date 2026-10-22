@@ -17,6 +17,7 @@ extern crate std;
 
 mod access;
 mod allocator;
+mod assertions;
 mod big;
 mod boundary;
 mod bytes;
@@ -50,6 +51,7 @@ mod tests;
 
 pub use access::{index_get, index_set, property_get, property_set};
 pub use allocator::{allocate, init_heap};
+pub use assertions::{assert, assert_eq};
 pub use boundary::{BoundaryError, serialization_message};
 pub use bytes::bytes_object;
 pub use closures::{cell_new, closure_arity_error, closure_new, not_callable, parallel_list_error};

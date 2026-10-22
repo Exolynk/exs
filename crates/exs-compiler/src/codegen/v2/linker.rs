@@ -32,10 +32,11 @@ use super::static_keys::StaticKeys;
 use super::type_table::TypeTable;
 use super::units::{Unit, units};
 use super::used_types::{declared_types, used_types};
+use super::validation::unreached_diagnostics;
 use crate::ast::{FunctionVisibility, Module};
 use crate::codegen::linker::lifted_functions;
 use crate::codegen::prune::{PruneHints, prune_unreachable};
-use crate::codegen::source_map::{SOURCE_MAP_SECTION, SourceMap};
+use crate::codegen::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
 use crate::codegen::trait_registry::TraitRegistry;
 use crate::codegen::types::TypeRegistry;
 use crate::codegen::{VALUE_TYPE, module_span};
@@ -146,9 +147,12 @@ impl Program {
     }
 }
 
-/// Compiles `module` with the v2 backend into a linked, pruned Wasm module.
+/// Compiles `module` with the v2 backend into a linked, pruned Wasm module, embedding
+/// `sources` when `options` ask for it.
 pub(in crate::codegen) fn compile<'a>(
     module: &Module<'a>,
+    sources: &[crate::SourceInput<'a>],
+    options: crate::CompileOptions,
     traits: &TraitRegistry<'a>,
 ) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
     let span = module_span(module);
@@ -176,6 +180,8 @@ pub(in crate::codegen) fn compile<'a>(
     let declared = declared_types(module, &types);
     let reached = reachable_units(&all_units, &dispatch, &closure_keys, &types, &declared);
     let reached_keys: HashSet<&str> = reached.iter().map(|unit| unit.key.as_str()).collect();
+    let mut diagnostics =
+        unreached_diagnostics(module, traits, &types, &lifted, &all_units, &reached_keys);
     let parallel = parallel_units(&reached, &closure_keys);
     let resumable_keys = resumable_units(&hir, &dispatch, &reached_keys, &parallel);
     drop(hir);
@@ -329,21 +335,25 @@ pub(in crate::codegen) fn compile<'a>(
         {
             let type_index = program.type_index(vec![ValType::I32], vec![ValType::I32]);
             program.function_types.push(type_index);
-            program.bodies.push(StepEmitter::compile(
-                &context,
-                resumable,
-                &unit.key,
-                unit.declaration,
-            )?);
+            match StepEmitter::compile(&context, resumable, &unit.key, unit.declaration) {
+                Ok(body) => program.bodies.push(body),
+                Err(error) => diagnostics.extend(error),
+            }
             continue;
         }
         let arity = unit.captures.len() + unit.declaration.parameters.len();
         let type_index = program.type_index(vec![VALUE_TYPE; arity], vec![VALUE_TYPE]);
         program.function_types.push(type_index);
-        program.bodies.push(
-            FunctionCompiler::new(&context, &unit.key, unit.declaration, unit.captures)
-                .compile()?,
-        );
+        // Like v1, every function body reports its errors before the module is rejected.
+        match FunctionCompiler::new(&context, &unit.key, unit.declaration, unit.captures).compile()
+        {
+            Ok(body) => program.bodies.push(body),
+            Err(error) => diagnostics.extend(error),
+        }
+    }
+    if !diagnostics.is_empty() {
+        diagnostics.sort_by_span();
+        return Err(diagnostics);
     }
     let positions: Vec<u8> = context
         .positions
@@ -503,6 +513,12 @@ pub(in crate::codegen) fn compile<'a>(
         name: SOURCE_MAP_SECTION.into(),
         data: source_map.encode().into(),
     });
+    if options.embed_sources {
+        wasm.section(&CustomSection {
+            name: SOURCES_SECTION.into(),
+            data: source_map.encode_source(sources).into(),
+        });
+    }
     let hints = PruneHints {
         weak_caller: None,
         weak_targets: Vec::new(),

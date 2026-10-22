@@ -51,13 +51,10 @@ pub struct CompileOptions {
 /// The code generator and runtime a module is compiled for.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Backend {
-    /// The current backend linked against the stateful `exs-runtime` template.
-    #[default]
+    /// The legacy backend linked against the stateful `exs-runtime` template.
     V1,
-    /// The runtime v2 prototype with compiler-owned values and the stateless core library.
-    ///
-    /// It supports a growing subset of the language and reports everything else as a
-    /// compile error.
+    /// The runtime v2 backend with compiler-owned values and the stateless core library.
+    #[default]
     V2,
 }
 
@@ -122,7 +119,7 @@ pub fn compile<'a>(
     source: SourceInput<'a>,
     options: CompileOptions,
 ) -> Result<CompiledModule, CompileDiagnostics<'a>> {
-    compile_with_backend(source, options, Backend::V1)
+    compile_with_backend(source, options, Backend::V2)
 }
 
 /// Compiles one `ExS` module like [`compile`] for the selected backend.

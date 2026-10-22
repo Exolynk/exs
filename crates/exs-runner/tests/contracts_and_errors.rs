@@ -363,3 +363,43 @@ fn assert_error_kind_with_input(source: &str, input: ExsValue, kind: &str) {
     assert_eq!(error.severity, ErrorSeverity::Recoverable);
     assert_eq!(error.kind, kind);
 }
+
+/// Fails `assert` and `assert_eq` with fatal AssertionFailed Errors, in synchronous code and
+/// in code that suspends on a host call, and passes when they hold.
+#[test]
+fn reports_failed_assertions() {
+    let assertion = |source: &str| match execute_source(source, ExsValue::None) {
+        ExsValue::Error(error) => (error.severity, error.kind, error.message, *error.data),
+        other => panic!("expected an assertion Error, received {other:?}"),
+    };
+    let expected = |message: &str, data: ExsValue| {
+        (
+            ErrorSeverity::Fatal,
+            "AssertionFailed".to_owned(),
+            message.to_owned(),
+            data,
+        )
+    };
+    assert_eq!(
+        assertion("fn main(input) { assert(1 > 2); ret 1; }"),
+        expected("assert failed", ExsValue::Bool(false))
+    );
+    let pair = ExsValue::List(vec![ExsValue::Int(3), ExsValue::String("3".to_owned())]);
+    assert_eq!(
+        assertion(r#"fn main(input) { assert_eq(1 + 2, "3", "sum"); ret 1; }"#),
+        expected("sum", pair.clone())
+    );
+    assert_eq!(
+        assertion(
+            r#"fn main(input) { let ignored = Host::call("missing"); assert_eq(1 + 2, "3", "sum"); ret 1; }"#
+        ),
+        expected("sum", pair)
+    );
+    assert_eq!(
+        execute_source(
+            r#"fn main(input) { assert(true); assert_eq("ab", "a" + "b"); let ignored = Host::call("missing"); assert(true, "ok"); ret 7; }"#,
+            ExsValue::None
+        ),
+        ExsValue::Int(7)
+    );
+}

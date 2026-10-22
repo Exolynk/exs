@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use exs_browser_check::cases::{CASES, GUEST_CASES, add, counter, echo, line};
-use exs_compiler::{Backend, CompileOptions, SourceInput, compile_with_backend};
+use exs_compiler::{CompileOptions, SourceInput};
 use exs_runner::{
     ExecutionCancellation, ExsValue, HostStream, HostStreamFuture, HostStreamItem, ProtectionLevel,
     ServerRunner,
@@ -37,15 +37,14 @@ fn block_on<Output>(future: impl std::future::Future<Output = Output>) -> Output
     }
 }
 
-/// Compiles `source` for `backend`.
-fn compile(source: &str, backend: Backend) -> Result<Vec<u8>, String> {
-    compile_with_backend(
+/// Compiles `source`.
+fn compile(source: &str) -> Result<Vec<u8>, String> {
+    exs_compiler::compile(
         SourceInput {
             source_id: "test.exs",
             text: source,
         },
         CompileOptions::default(),
-        backend,
     )
     .map(|module| module.wasm)
     .map_err(|error| error.to_string())
@@ -94,12 +93,9 @@ fn browser_matches_server() {
     let guest = std::fs::read(guest).expect("Rust guest module");
     let mut browser = browser.lines();
     for case in CASES {
-        for (backend, name) in [(Backend::V1, "v1"), (Backend::V2, "v2")] {
-            let result =
-                compile(case.source, backend).and_then(|wasm| run(&wasm, "main", &(case.inputs)()));
-            let expected = line(case.name, name, &result);
-            assert_eq!(browser.next(), Some(expected.as_str()));
-        }
+        let result = compile(case.source).and_then(|wasm| run(&wasm, "main", &(case.inputs)()));
+        let expected = line(case.name, "exs", &result);
+        assert_eq!(browser.next(), Some(expected.as_str()));
     }
     for case in GUEST_CASES {
         let expected = line(

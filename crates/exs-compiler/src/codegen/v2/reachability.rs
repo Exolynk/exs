@@ -1,5 +1,6 @@
 //! The functions a v2 module must contain.
 
+use super::assertions::Assertion;
 use std::collections::{HashMap, HashSet};
 
 use super::closures::closure_span_key;
@@ -213,6 +214,11 @@ pub(super) fn string_literals<'t>(
             Expression::Call { callee, .. } if is_datetime_parser(&callee.name) => {
                 for key in DATETIME_KEYS {
                     add(key);
+                }
+            }
+            Expression::Call { callee, .. } => {
+                if let Some(assertion) = Assertion::from_callee(&callee.name) {
+                    add(assertion.default_description());
                 }
             }
             Expression::Object { properties, .. } => {

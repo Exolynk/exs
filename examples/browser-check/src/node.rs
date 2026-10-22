@@ -1,7 +1,7 @@
 //! The browser side of the check, run under Node.
 
 use exs_abi::ExsValue;
-use exs_compiler::{Backend, CompileOptions, SourceInput, compile_with_backend};
+use exs_compiler::{CompileOptions, SourceInput};
 use exs_runner::{
     BrowserHostStream, BrowserHostStreamFuture, BrowserHostStreamItem, BrowserRunner,
     BrowserRunnerConfig,
@@ -23,19 +23,17 @@ impl BrowserHostStream for Counter {
     }
 }
 
-/// Runs every case as a v1 and a runtime v2 module, then every entry of the Rust guest
-/// `guest`, and returns one result line per run.
+/// Runs every case, then every entry of the Rust guest `guest`, and returns one result line
+/// per run.
 #[wasm_bindgen(js_name = runCases)]
 pub async fn run_cases(guest: Vec<u8>) -> String {
     let mut lines = Vec::new();
     for case in CASES {
-        for (backend, name) in [(Backend::V1, "v1"), (Backend::V2, "v2")] {
-            let result = match compile(case.source, backend) {
-                Ok(wasm) => run(&wasm, "main", (case.inputs)()).await,
-                Err(error) => Err(error),
-            };
-            lines.push(line(case.name, name, &result));
-        }
+        let result = match compile(case.source) {
+            Ok(wasm) => run(&wasm, "main", (case.inputs)()).await,
+            Err(error) => Err(error),
+        };
+        lines.push(line(case.name, "exs", &result));
     }
     for case in GUEST_CASES {
         let result = run(&guest, case.entry, (case.inputs)()).await;
@@ -44,15 +42,14 @@ pub async fn run_cases(guest: Vec<u8>) -> String {
     lines.join("\n")
 }
 
-/// Compiles `source` for `backend`.
-fn compile(source: &str, backend: Backend) -> Result<Vec<u8>, String> {
-    compile_with_backend(
+/// Compiles `source`.
+fn compile(source: &str) -> Result<Vec<u8>, String> {
+    exs_compiler::compile(
         SourceInput {
             source_id: "test.exs",
             text: source,
         },
         CompileOptions::default(),
-        backend,
     )
     .map(|module| module.wasm)
     .map_err(|error| error.to_string())

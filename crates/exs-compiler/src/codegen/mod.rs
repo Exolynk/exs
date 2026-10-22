@@ -30,7 +30,7 @@ pub fn compile_project_module<'a>(
     sources: &[crate::SourceInput<'a>],
     options: CompileOptions,
 ) -> Result<Vec<u8>, CompileDiagnostics<'a>> {
-    compile_project_module_for(module, sources, options, crate::Backend::V1)
+    compile_project_module_for(module, sources, options, crate::Backend::V2)
 }
 
 /// Compiles a resolved source graph like [`compile_project_module`] for one backend.
@@ -50,7 +50,7 @@ pub(crate) fn compile_project_module_for<'a>(
     }
     traits::apply_defaults(module, &traits_registry);
     if backend == crate::Backend::V2 {
-        return v2::compile(module, &traits_registry);
+        return v2::compile(module, sources, options, &traits_registry);
     }
     let hir = HirModule::lower(module, &traits_registry);
     let mut suspendability = suspension::Suspendability::analyze(&hir);

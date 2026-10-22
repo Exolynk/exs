@@ -84,7 +84,7 @@ pub(crate) fn error_parts(memory: &impl Memory, object: u32) -> ErrorParts {
 /// Creates one Error from the Strings `kind` and `message` with the current origin and trace.
 ///
 /// All three values must be rooted or static; the Error keeps them alive from then on.
-fn error_from_strings(
+pub(crate) fn error_from_strings(
     memory: &mut impl Memory,
     vm: u32,
     fatal: bool,

@@ -11,7 +11,7 @@ use crate::codegen::continuation::{HostTimeField, Operation};
 use crate::codegen::immediate;
 use crate::codegen::types::{NominalType, TypeContract};
 use crate::codegen::v2::collections::value_field;
-use crate::codegen::v2::function::{error, unsupported};
+use crate::codegen::v2::function::error;
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
 /// Byte offset of the first field slot of a typed Object.
@@ -79,7 +79,27 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
                 self.set_slot(*destination);
                 self.ready(next, *span)
             }
-            Operation::Assert { span, .. } => Err(unsupported(*span, "resumable assertions")),
+            Operation::Assert {
+                condition,
+                actual,
+                expected,
+                description,
+                destination,
+                span,
+            } => {
+                let condition = self.load(*condition);
+                let compared = match (actual, expected) {
+                    (Some(actual), Some(expected)) => {
+                        Some((self.load(*actual), self.load(*expected)))
+                    }
+                    _ => None,
+                };
+                let description = self.load(*description);
+                self.compiler
+                    .assert_values(condition, compared, description, *span)?;
+                self.set_slot(*destination);
+                self.ready(next, *span)
+            }
             _ => Err(error(
                 "E0999",
                 self.compiler.declaration.span,

@@ -930,3 +930,34 @@ pub extern "C" fn __exs_core_method_arity_error(
         address(expected),
     ))
 }
+
+/// Evaluates `assert(condition, description)`: None, or the fatal Error of a failed assertion.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_assert(vm: i32, condition: i64, description: i64) -> i64 {
+    value(exs_core::assert(
+        &mut memory(),
+        address(vm),
+        condition.cast_unsigned(),
+        description.cast_unsigned(),
+    ))
+}
+
+/// Evaluates `assert_eq(actual, expected, description)` given the result `comparison` of
+/// `actual == expected`: None, or the fatal Error of a failed assertion.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_assert_eq(
+    vm: i32,
+    comparison: i64,
+    actual: i64,
+    expected: i64,
+    description: i64,
+) -> i64 {
+    value(exs_core::assert_eq(
+        &mut memory(),
+        address(vm),
+        comparison.cast_unsigned(),
+        actual.cast_unsigned(),
+        expected.cast_unsigned(),
+        description.cast_unsigned(),
+    ))
+}

@@ -7,30 +7,17 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use exs_abi::ExsValue;
-use exs_compiler::{Backend, CompileOptions, SourceInput, compile_with_backend};
+use exs_compiler::{CompileOptions, SourceInput, compile};
 use exs_runner::{ExecutionCancellation, ServerRunner};
-
-/// Environment variable selecting the code generator of these tests: `v2` runs every test on
-/// the runtime v2 backend, any other value or none on the default backend.
-const BACKEND_VARIABLE: &str = "EXS_TEST_BACKEND";
-
-/// Returns the code generator selected through [`BACKEND_VARIABLE`].
-fn selected_backend() -> Backend {
-    match std::env::var(BACKEND_VARIABLE) {
-        Ok(value) if value == "v2" => Backend::V2,
-        _ => Backend::V1,
-    }
-}
 
 /// Compiles source text for native runner integration tests.
 pub fn compile_source(source: &str) -> exs_compiler::CompiledModule {
-    match compile_with_backend(
+    match compile(
         SourceInput {
             source_id: "test.exs",
             text: source,
         },
         CompileOptions::default(),
-        selected_backend(),
     ) {
         Ok(module) => module,
         Err(error) => panic!("compilation failed: {error}"),

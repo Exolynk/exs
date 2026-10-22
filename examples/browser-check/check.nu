@@ -1,5 +1,5 @@
-# Runs the browser runner under Node and compares its results with the server runner, for v1
-# and runtime v2 modules and the example Rust guest.
+# Runs the browser runner under Node and compares its results with the server runner, for
+# compiled ExS modules and the example Rust guest.
 #
 # Run from the workspace root: `nu examples/browser-check/check.nu`. The wasm-bindgen CLI must
 # match the locked wasm-bindgen crate; a matching one is installed under target/tools.

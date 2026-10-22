@@ -2,6 +2,7 @@
 
 use wasm_encoder::{BlockType, Instruction};
 
+use super::assertions::Assertion;
 use super::closures::{accepts, arity_description};
 use super::function::{FunctionCompiler, error, unsupported};
 use super::intrinsics::is_datetime_parser;
@@ -220,7 +221,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     /// Evaluates one operand and returns the rooted local holding its value: the binding's own
     /// local for a plain binding when the following operands run no statements that could
     /// reassign it (`stable`), else a new local.
-    fn operand(
+    pub(super) fn operand(
         &mut self,
         operand: &Expression<'a>,
         stable: bool,
@@ -284,7 +285,7 @@ impl<'a> FunctionCompiler<'a, '_> {
 
     /// Emits one binary operator on two rooted operand locals: the implementation of the left
     /// operand's type like v1, else the built-in behavior.
-    fn compile_slow_binary(
+    pub(super) fn compile_slow_binary(
         &mut self,
         operator: BinaryOperator,
         left: u32,
@@ -414,6 +415,9 @@ impl<'a> FunctionCompiler<'a, '_> {
         if is_datetime_parser(callee) {
             return self.compile_datetime_parse(arguments, span);
         }
+        if let Some(assertion) = Assertion::from_callee(callee) {
+            return self.compile_assertion(assertion, arguments, span);
+        }
         if let Some(variant) = self.context.types.enum_variant(callee) {
             return self.compile_enum_variant(variant, arguments, span);
         }
@@ -426,7 +430,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             .get(callee)
             .map(|info| (info.index, info.arity, info.variadic.is_some()))
         else {
-            return Err(unsupported(span, "calls of built-in and prelude functions"));
+            return Err(error("E0207", span, format!("unknown function `{callee}`")));
         };
         if !accepts(arity, variadic, arguments.len()) {
             return Err(error(

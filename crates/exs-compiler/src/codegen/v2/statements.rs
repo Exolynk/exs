@@ -6,7 +6,7 @@ use wasm_encoder::{BlockType, Instruction};
 
 use super::errors::ForBinding;
 use super::expressions::expression_span;
-use super::function::{FunctionCompiler, unsupported};
+use super::function::{FunctionCompiler, error, unsupported};
 use crate::ast::{AssignmentTarget, Block, ElseBranch, Expression, Statement};
 use crate::codegen::immediate;
 use crate::codegen::standard::is_unshared_range;
@@ -155,7 +155,16 @@ impl<'a> FunctionCompiler<'a, '_> {
             }
             Statement::Break { span } | Statement::Continue { span } => {
                 let Some((break_depth, continue_depth)) = self.loops.last().copied() else {
-                    return Err(unsupported(*span, "break and continue outside loops"));
+                    let keyword = if matches!(statement, Statement::Break { .. }) {
+                        "break"
+                    } else {
+                        "continue"
+                    };
+                    return Err(error(
+                        "E0213",
+                        *span,
+                        format!("{keyword} is only valid inside a loop"),
+                    ));
                 };
                 let target = if matches!(statement, Statement::Break { .. }) {
                     break_depth

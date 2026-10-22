@@ -24,41 +24,41 @@ use support::{block_on, compile_source};
 /// Fuel budget of the measuring runner, far above every ceiling.
 const FUEL_BUDGET: u64 = 1_000_000_000;
 /// Fuel ceiling for an empty function, which measures pure ABI and runtime overhead.
-const EMPTY_MAIN_FUEL: u64 = 68_721;
+const EMPTY_MAIN_FUEL: u64 = 17_139;
 /// Fuel ceiling for a show function that only returns `true`.
-const SHOW_TRUE_FUEL: u64 = 68_739;
+const SHOW_TRUE_FUEL: u64 = 17_146;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 76_077;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 26_893;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
-const CONCAT_10_OBJECTS_FUEL: u64 = 126_874;
+const CONCAT_10_OBJECTS_FUEL: u64 = 56_372;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
-const CONCAT_100_OBJECTS_FUEL: u64 = 568_365;
+const CONCAT_100_OBJECTS_FUEL: u64 = 311_453;
 /// Fuel ceiling for 1000 iterations of an integer arithmetic loop.
-const INT_LOOP_1000_FUEL: u64 = 266_620;
+const INT_LOOP_1000_FUEL: u64 = 210_356;
 /// Fuel ceiling for 100 iterations of a resumable `for` loop with a comparison.
-const ASYNC_INT_LOOP_100_FUEL: u64 = 88_929;
+const ASYNC_INT_LOOP_100_FUEL: u64 = 35_578;
 /// Fuel ceiling for 1000 iterations of an empty resumable `while` loop.
-const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 204_743;
+const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 133_035;
 /// Fuel ceiling for 1000 iterations of a resumable integer arithmetic `while` loop.
-const ASYNC_INT_WHILE_1000_FUEL: u64 = 367_762;
+const ASYNC_INT_WHILE_1000_FUEL: u64 = 275_044;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
-const FOR_RANGE_1000_FUEL: u64 = 109_602;
+const FOR_RANGE_1000_FUEL: u64 = 47_378;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
-const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 108_074;
+const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 41_897;
 /// Fuel ceiling for 100 calls of a small function with a `match`.
-const ASYNC_CALL_LOOP_100_FUEL: u64 = 93_547;
+const ASYNC_CALL_LOOP_100_FUEL: u64 = 38_456;
 /// Fuel ceiling for 100 calls of a small resumable function.
-const RESUMABLE_CALL_LOOP_100_FUEL: u64 = 164_417;
+const RESUMABLE_CALL_LOOP_100_FUEL: u64 = 37_356;
 /// Fuel ceiling for 1000 iterations building one formatted line with two Ints.
-const FORMAT_LOOP_1000_FUEL: u64 = 2_201_848;
+const FORMAT_LOOP_1000_FUEL: u64 = 1_736_492;
 /// Fuel ceiling for 6000 short-lived Lists, enough allocations to trigger collections.
-const LIST_CHURN_6000_FUEL: u64 = 7_789_101;
+const LIST_CHURN_6000_FUEL: u64 = 3_385_124;
 /// Fuel ceiling for 1000 calls of a small typed function.
-const SYNC_CALL_LOOP_1000_FUEL: u64 = 292_614;
+const SYNC_CALL_LOOP_1000_FUEL: u64 = 217_356;
 /// Fuel ceiling for parsing and formatting 100 RFC 3339 DateTimes.
-const DATETIME_ROUNDTRIP_100_FUEL: u64 = 5_597_206;
+const DATETIME_ROUNDTRIP_100_FUEL: u64 = 3_159_571;
 /// Fuel ceiling for the Exolynk-style round trip of 20 records.
-const RECORD_ROUNDTRIP_20_FUEL: u64 = 4_255_698;
+const RECORD_ROUNDTRIP_20_FUEL: u64 = 1_882_224;
 
 /// Compiles and executes one scenario with a Winch runner and returns its execution report.
 fn execute_report(scenario: &Scenario) -> ExecutionReport {
