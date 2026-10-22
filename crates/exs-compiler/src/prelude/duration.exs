@@ -64,3 +64,51 @@ impl Duration {
         ret Duration { seconds: value, nanoseconds: 0 };
     }
 }
+
+impl Compare for Duration {
+    /// Orders two Durations by their length; other values have no order with a Duration.
+    fn compare(self, other: Any) -> Ordering {
+        if !(other is Duration) {
+            ret Ordering::Unordered;
+        }
+        if self.seconds != other.seconds {
+            ret self.seconds.compare(other.seconds);
+        }
+        ret self.nanoseconds.compare(other.nanoseconds);
+    }
+}
+
+impl Add for Duration {
+    /// Returns the sum of two Durations.
+    fn add(self, other: Any) -> Any {
+        if !(other is Duration) {
+            ret Error("TypeError", "a Duration can only be added to a Duration", other);
+        }
+        let seconds = (self.seconds + other.seconds)?;
+        let nanoseconds = self.nanoseconds + other.nanoseconds;
+        if nanoseconds >= 1000000000 {
+            seconds = (seconds + 1)?;
+            nanoseconds = nanoseconds - 1000000000;
+        }
+        ret Duration { seconds: seconds, nanoseconds: nanoseconds };
+    }
+}
+
+impl Sub for Duration {
+    /// Returns the difference of two Durations, or ValueError when it would be negative.
+    fn sub(self, other: Any) -> Any {
+        if !(other is Duration) {
+            ret Error("TypeError", "only a Duration can be subtracted from a Duration", other);
+        }
+        let seconds = (self.seconds - other.seconds)?;
+        let nanoseconds = self.nanoseconds - other.nanoseconds;
+        if nanoseconds < 0 {
+            seconds = (seconds - 1)?;
+            nanoseconds = nanoseconds + 1000000000;
+        }
+        if seconds < 0 {
+            ret Error("ValueError", "Duration subtraction must not be negative", other);
+        }
+        ret Duration { seconds: seconds, nanoseconds: nanoseconds };
+    }
+}

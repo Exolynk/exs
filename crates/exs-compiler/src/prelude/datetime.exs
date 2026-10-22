@@ -646,8 +646,12 @@ impl Add for DateTime {
 }
 
 impl Sub for DateTime {
-    /// Subtracts one Duration supplied through the standard arithmetic protocol.
+    /// Subtracts a Duration, giving an earlier DateTime, or an earlier DateTime, giving the
+    /// non-negative Duration between both instants.
     fn sub(self, other: Any) -> Any {
+        if other is DateTime {
+            ret self.duration_since(other);
+        }
         let seconds = other.seconds?;
         let nanoseconds = other.nanoseconds?;
         ret self.subtract_duration(Duration { seconds: seconds, nanoseconds: nanoseconds });
@@ -662,5 +666,19 @@ impl ToString for DateTime {
             ret "<invalid DateTime>";
         }
         ret rendered;
+    }
+}
+
+impl Compare for DateTime {
+    /// Orders two instants independently of their display offsets; other values have no order
+    /// with a DateTime. Equality compares instants as well.
+    fn compare(self, other: Any) -> Ordering {
+        if !(other is DateTime) {
+            ret Ordering::Unordered;
+        }
+        if self.unix_seconds != other.unix_seconds {
+            ret self.unix_seconds.compare(other.unix_seconds);
+        }
+        ret self.nanoseconds.compare(other.nanoseconds);
     }
 }

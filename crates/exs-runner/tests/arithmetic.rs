@@ -1,4 +1,5 @@
-//! The `%` operator, the `Rem` trait and Bools outside arithmetic.
+//! The `%` operator, the `Rem` trait, Bools outside arithmetic, and the operators of
+//! Duration and DateTime.
 
 mod support;
 
@@ -99,6 +100,50 @@ fn keeps_bools_out_of_arithmetic() {
             ExsValue::Bool(true),
             ExsValue::Bool(false),
             ExsValue::String("atrue".to_owned()),
+        ])
+    );
+}
+
+/// Orders and combines Durations and DateTimes.
+#[test]
+fn orders_and_combines_durations_and_datetimes() {
+    let duration = |seconds: i64, nanoseconds: i64| {
+        ExsValue::Object(vec![
+            ("seconds".to_owned(), ExsValue::Int(seconds)),
+            ("nanoseconds".to_owned(), ExsValue::Int(nanoseconds)),
+        ])
+    };
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+                fn main() -> List | Error {
+                    let a = DateTime::from_unix(100, 0, 0, None)?;
+                    let b = DateTime::from_unix(160, 500, 3600, None)?;
+                    ret [
+                        Duration::seconds(1) < Duration::seconds(2),
+                        Duration::milliseconds(1500)? + Duration::milliseconds(700)?,
+                        Duration::seconds(3) - Duration::milliseconds(500)?,
+                        (Duration::seconds(1) - Duration::seconds(2)) is Error,
+                        a < b,
+                        a == DateTime::from_unix(100, 0, 7200, None)?,
+                        b - a,
+                        (a - b) is Error,
+                        a + Duration::seconds(60) == DateTime::from_unix(160, 0, 0, None)?,
+                    ];
+                }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            duration(2, 200_000_000),
+            duration(2, 500_000_000),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            duration(60, 500),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
         ])
     );
 }

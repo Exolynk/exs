@@ -29,7 +29,7 @@ const EMPTY_MAIN_FUEL: u64 = 17_139;
 /// Fuel ceiling for a show function that only returns `true`.
 const SHOW_TRUE_FUEL: u64 = 17_146;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 26_923;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 26_925;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
 const CONCAT_10_OBJECTS_FUEL: u64 = 56_372;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
@@ -57,9 +57,9 @@ const LIST_CHURN_6000_FUEL: u64 = 3_385_124;
 /// Fuel ceiling for 1000 calls of a small typed function.
 const SYNC_CALL_LOOP_1000_FUEL: u64 = 217_356;
 /// Fuel ceiling for parsing and formatting 100 RFC 3339 DateTimes.
-const DATETIME_ROUNDTRIP_100_FUEL: u64 = 3_180_003;
+const DATETIME_ROUNDTRIP_100_FUEL: u64 = 3_189_117;
 /// Fuel ceiling for the Exolynk-style round trip of 20 records.
-const RECORD_ROUNDTRIP_20_FUEL: u64 = 1_887_530;
+const RECORD_ROUNDTRIP_20_FUEL: u64 = 1_889_858;
 
 /// Compiles and executes one scenario with a Winch runner and returns its execution report.
 fn execute_report(scenario: &Scenario) -> ExecutionReport {
