@@ -6,7 +6,7 @@ use exs_browser_check::cases::{CASES, GUEST_CASES, add, counter, echo, line};
 use exs_compiler::{CompileOptions, SourceInput};
 use exs_runner::{
     ExecutionCancellation, ExsValue, HostStream, HostStreamFuture, HostStreamItem, ProtectionLevel,
-    ServerRunner,
+    ServerRunner, ServerRunnerConfig,
 };
 
 /// The host stream `counter` on the server.
@@ -52,12 +52,13 @@ fn compile(source: &str) -> Result<Vec<u8>, String> {
 
 /// Runs the entry `function` of the module `wasm` in the server runner.
 fn run(wasm: &[u8], function: &str, inputs: &[ExsValue]) -> Result<ExsValue, String> {
-    let mut runner = ServerRunner::new(
-        64 << 20,
-        1_000_000_000,
-        Duration::from_secs(60),
-        ProtectionLevel::Standard,
-    );
+    let mut runner = ServerRunner::new(ServerRunnerConfig {
+        max_memory_bytes: 64 << 20,
+        max_fuel: 1_000_000_000,
+        timeout: Duration::from_secs(60),
+        protection: ProtectionLevel::Standard,
+        ..ServerRunnerConfig::default()
+    });
     let registry = runner.registry_mut();
     registry
         .fn_sync_raw("add", |arguments: Vec<ExsValue>| add(&arguments))

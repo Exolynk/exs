@@ -29,7 +29,7 @@ Values live in the module's linear memory in the layout of `exs-layout`. The com
 `exs-runner` keeps the Wasmtime-backed `server` feature enabled by default. A Rust-Wasm browser application uses the browser-only backend without compiling Wasmtime:
 
 ```toml
-exs-runner = { version = "0.1.0", default-features = false, features = ["browser"] }
+exs-runner = { version = "0.2.0", default-features = false, features = ["browser"] }
 ```
 
 ```rust

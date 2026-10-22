@@ -1,5 +1,6 @@
 //! Shared execution-resource limits for native ExS runners.
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use std::time::Duration;
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -74,6 +75,7 @@ pub enum ProtectionLevel {
 }
 
 /// Private runner resource limits derived from the public execution policy.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ExecutionLimits {
     /// Maximum linear-memory bytes available to the Wasm instance.
@@ -112,6 +114,7 @@ pub(crate) struct ExecutionLimits {
     pub(crate) max_collection_entries: usize,
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl ExecutionLimits {
     /// Derives runner-owned limits from the public execution policy.
     #[must_use]
@@ -213,6 +216,7 @@ impl ExecutionLimits {
     }
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl Default for ExecutionLimits {
     /// Creates conservative limits suitable for execution of untrusted ExS source.
     fn default() -> Self {

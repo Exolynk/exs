@@ -17,7 +17,9 @@ mod native {
 
     use exs_abi::ExsValue;
     use exs_compiler::{CompileOptions, SourceInput, compile};
-    use exs_runner::{CompilerStrategy, ExecutionCancellation, ProtectionLevel, ServerRunner};
+    use exs_runner::{
+        CompilerStrategy, ExecutionCancellation, ProtectionLevel, ServerRunner, ServerRunnerConfig,
+    };
 
     use super::scenarios::{ALL, Scenario};
 
@@ -101,13 +103,14 @@ mod native {
 
     /// Creates the runner used for every measurement with one code generator.
     fn measuring_runner(compiler: CompilerStrategy) -> ServerRunner {
-        ServerRunner::new(
-            64 * 1024 * 1024,
-            FUEL_BUDGET,
-            Duration::from_secs(60),
-            ProtectionLevel::Standard,
-        )
-        .with_compiler_strategy(compiler)
+        ServerRunner::new(ServerRunnerConfig {
+            max_memory_bytes: 64 * 1024 * 1024,
+            max_fuel: FUEL_BUDGET,
+            timeout: Duration::from_secs(60),
+            protection: ProtectionLevel::Standard,
+            compiler,
+            ..ServerRunnerConfig::default()
+        })
     }
 
     /// Executes one implementation `TIMING_RUNS` times and returns its median timings.

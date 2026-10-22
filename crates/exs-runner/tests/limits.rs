@@ -6,7 +6,10 @@ use std::time::Duration;
 use std::{sync::mpsc, thread};
 
 use exs_abi::ExsValue;
-use exs_runner::{ExecutionCancellation, LimitKind, ProtectionLevel, RunnerError, ServerRunner};
+use exs_runner::{
+    ExecutionCancellation, LimitKind, ProtectionLevel, RunnerError, ServerRunner,
+    ServerRunnerConfig,
+};
 use support::{block_on, compile_source, runner_test_module};
 
 /// Creates a runner with one explicit public execution policy.
@@ -16,7 +19,13 @@ fn runner(
     timeout: Duration,
     protection: ProtectionLevel,
 ) -> ServerRunner {
-    ServerRunner::new(max_memory_bytes, max_fuel, timeout, protection)
+    ServerRunner::new(ServerRunnerConfig {
+        max_memory_bytes,
+        max_fuel,
+        timeout,
+        protection,
+        ..ServerRunnerConfig::default()
+    })
 }
 
 /// Rejects a module whose initial linear memory exceeds the runner memory budget.

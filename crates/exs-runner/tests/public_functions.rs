@@ -1,7 +1,7 @@
 //! External public-function execution integration tests.
 
 use exs_compiler::{CompileOptions, SourceInput, compile};
-use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
+use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner, ServerRunnerConfig};
 
 /// Executes one future to completion without adding a test-only async dependency.
 fn block_on<Output>(future: impl std::future::Future<Output = Output>) -> Output {
@@ -100,11 +100,17 @@ fn reuses_cached_modules_with_identical_results() {
             ExsValue::String("hi ExS".to_owned()),
         ),
     ];
-    let uncached = ServerRunner::default().with_module_cache_capacity(0);
+    let uncached = ServerRunner::new(ServerRunnerConfig {
+        module_cache_capacity: 0,
+        ..ServerRunnerConfig::default()
+    });
     // A single cache slot makes the alternating modules evict each other every time.
     for runner in [
         ServerRunner::default(),
-        ServerRunner::default().with_module_cache_capacity(1),
+        ServerRunner::new(ServerRunnerConfig {
+            module_cache_capacity: 1,
+            ..ServerRunnerConfig::default()
+        }),
     ] {
         for _ in 0..3 {
             for (wasm, input, expected) in &cases {

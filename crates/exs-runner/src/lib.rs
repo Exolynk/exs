@@ -37,6 +37,8 @@ mod cancellation;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod compiler;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+mod config;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod deadline;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod direct;
@@ -83,6 +85,8 @@ pub use self::cancellation::ExecutionCancellation;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::compiler::CompilerStrategy;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub use self::config::ServerRunnerConfig;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::host_function::{
     AsyncHostFunction, HostCall, HostFuture, HostStream, HostStreamFunction, HostStreamFuture,
     HostStreamItem, SyncHostFunction,
@@ -109,49 +113,21 @@ pub struct ServerRunner {
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl ServerRunner {
-    /// Creates a server runner with one public execution policy and no host functions.
+    /// Creates a server runner with the policy and engine settings of `config` and no host
+    /// functions.
     #[must_use]
-    pub fn new(
-        max_memory_bytes: usize,
-        max_fuel: u64,
-        timeout: std::time::Duration,
-        protection: ProtectionLevel,
-    ) -> Self {
-        Self::with_limits(ExecutionLimits::new(
-            max_memory_bytes,
-            max_fuel,
-            timeout,
-            protection,
-        ))
-    }
-
-    /// Creates a runner from one private, derived resource policy.
-    fn with_limits(limits: ExecutionLimits) -> Self {
+    pub fn new(config: ServerRunnerConfig) -> Self {
         Self {
             registry: HostFunctionRegistry::new(),
-            limits,
-            compiler: CompilerStrategy::default(),
-            module_cache: module_cache::ModuleCache::new(
-                module_cache::DEFAULT_MODULE_CACHE_CAPACITY,
+            limits: ExecutionLimits::new(
+                config.max_memory_bytes,
+                config.max_fuel,
+                config.timeout,
+                config.protection,
             ),
+            compiler: config.compiler,
+            module_cache: module_cache::ModuleCache::new(config.module_cache_capacity),
         }
-    }
-
-    /// Returns this runner configured to compile modules with one code generator.
-    #[must_use]
-    pub fn with_compiler_strategy(mut self, compiler: CompilerStrategy) -> Self {
-        self.compiler = compiler;
-        self
-    }
-
-    /// Returns this runner keeping the compiled artifacts of at most `capacity` modules.
-    ///
-    /// Executing a cached module skips its compilation; 0 disables caching. The default keeps
-    /// 16 modules. Replacing the capacity starts with an empty cache.
-    #[must_use]
-    pub fn with_module_cache_capacity(mut self, capacity: usize) -> Self {
-        self.module_cache = module_cache::ModuleCache::new(capacity);
-        self
     }
 
     /// Returns mutable access to the runner-owned dynamic host-function registry.
@@ -350,9 +326,9 @@ impl ServerRunner {
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl Default for ServerRunner {
-    /// Creates a runner with the standard public execution policy.
+    /// Creates a runner with the standard configuration.
     fn default() -> Self {
-        Self::with_limits(ExecutionLimits::default())
+        Self::new(ServerRunnerConfig::default())
     }
 }
 

@@ -799,14 +799,14 @@ dependencies = [
 
 [[package]]
 name = "exs-abi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "exs-autocomplete"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "birei",
  "exs-compiler",
@@ -814,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "exs-browser-check"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "exs-abi",
  "exs-compiler",
@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "exs-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "exs-compiler",
  "exs-runner",
@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "exs-compiler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "exs-abi",
  "exs-core-template",
@@ -844,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "exs-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "exs-abi",
  "exs-layout",
@@ -853,14 +853,14 @@ dependencies = [
 
 [[package]]
 name = "exs-core-template"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "exs-core",
 ]
 
 [[package]]
 name = "exs-fuel-baseline"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "exs-abi",
  "exs-compiler",
@@ -870,7 +870,7 @@ dependencies = [
 
 [[package]]
 name = "exs-guest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dlmalloc",
  "exs-abi",
@@ -878,11 +878,11 @@ dependencies = [
 
 [[package]]
 name = "exs-layout"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "exs-playground"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "birei",
  "exs-autocomplete",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "exs-runner"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "exs-abi",
  "exs-compiler",
@@ -912,7 +912,7 @@ dependencies = [
 
 [[package]]
 name = "exs-rust-guest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "exs-guest",
  "exs-runner",

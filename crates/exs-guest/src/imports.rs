@@ -40,7 +40,8 @@ unsafe extern "C" {
     fn task_release_import() -> i32;
 }
 
-/// Calls the imported Host ABI start function or a native test stub.
+/// Calls the imported Host ABI start function.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn host_call_start(
     call_id: i64,
     name_pointer: *const u8,
@@ -49,87 +50,100 @@ pub(crate) fn host_call_start(
     request_length: i32,
     source_position: i32,
 ) -> i32 {
-    #[cfg(target_arch = "wasm32")]
+    // SAFETY: the runner reads the name and request from guest memory the caller keeps alive.
     unsafe {
-        return host_call_start_import(
+        host_call_start_import(
             call_id,
             name_pointer,
             name_length,
             request_pointer,
             request_length,
             source_position,
-        );
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ignored = (
-            call_id,
-            name_pointer,
-            name_length,
-            request_pointer,
-            request_length,
-            source_position,
-        );
-        #[cfg(test)]
-        {
-            TEST_HOST_CALL_START_COUNT.fetch_add(1, Ordering::SeqCst);
-            TEST_HOST_CALL_STATUS.load(Ordering::SeqCst)
-        }
-        #[cfg(not(test))]
-        {
-            HOST_CALL_FATAL
-        }
+        )
     }
 }
 
-/// Calls the imported immediate-response length function or a native test stub.
+/// Stands in for the Host ABI start function natively: fatal, or the status tests configure.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn host_call_start(
+    call_id: i64,
+    name_pointer: *const u8,
+    name_length: i32,
+    request_pointer: *const u8,
+    request_length: i32,
+    source_position: i32,
+) -> i32 {
+    let _ignored = (
+        call_id,
+        name_pointer,
+        name_length,
+        request_pointer,
+        request_length,
+        source_position,
+    );
+    #[cfg(test)]
+    {
+        TEST_HOST_CALL_START_COUNT.fetch_add(1, Ordering::SeqCst);
+        TEST_HOST_CALL_STATUS.load(Ordering::SeqCst)
+    }
+    #[cfg(not(test))]
+    {
+        HOST_CALL_FATAL
+    }
+}
+
+/// Calls the imported immediate-response length function.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn host_call_response_len(call_id: i64) -> i32 {
-    #[cfg(target_arch = "wasm32")]
-    unsafe {
-        return host_call_response_len_import(call_id);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ignored = call_id;
-        -1
-    }
+    // SAFETY: the import only reads the runner's response table.
+    unsafe { host_call_response_len_import(call_id) }
 }
 
-/// Calls the imported immediate-response copy function or a native test stub.
+/// Stands in for the immediate-response length function natively: no response.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn host_call_response_len(call_id: i64) -> i32 {
+    let _ignored = call_id;
+    -1
+}
+
+/// Calls the imported immediate-response copy function.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn host_call_response_copy(call_id: i64, pointer: *mut u8, length: i32) -> i32 {
-    #[cfg(target_arch = "wasm32")]
-    unsafe {
-        return host_call_response_copy_import(call_id, pointer, length);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ignored = (call_id, pointer, length);
-        1
-    }
+    // SAFETY: the caller passes a guest buffer of `length` writable bytes.
+    unsafe { host_call_response_copy_import(call_id, pointer, length) }
 }
 
-/// Calls the imported task-acquire function or a native test stub.
+/// Stands in for the immediate-response copy function natively: the copy fails.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn host_call_response_copy(call_id: i64, pointer: *mut u8, length: i32) -> i32 {
+    let _ignored = (call_id, pointer, length);
+    1
+}
+
+/// Calls the imported task-acquire function.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn task_acquire() -> i32 {
-    #[cfg(target_arch = "wasm32")]
-    unsafe {
-        return task_acquire_import();
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        0
-    }
+    // SAFETY: the import only updates the runner's task count.
+    unsafe { task_acquire_import() }
 }
 
-/// Calls the imported task-release function or a native test stub.
+/// Stands in for the task-acquire function natively: always granted.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn task_acquire() -> i32 {
+    0
+}
+
+/// Calls the imported task-release function.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn task_release() -> i32 {
-    #[cfg(target_arch = "wasm32")]
-    unsafe {
-        return task_release_import();
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        0
-    }
+    // SAFETY: the import only updates the runner's task count.
+    unsafe { task_release_import() }
+}
+
+/// Stands in for the task-release function natively: always released.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn task_release() -> i32 {
+    0
 }
 
 /// Configures the native Host ABI stub used by unit tests.

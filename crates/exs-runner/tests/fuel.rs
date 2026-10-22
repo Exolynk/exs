@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use exs_runner::{
     CompilerStrategy, ExecutionCancellation, ExecutionReport, ProtectionLevel, ServerRunner,
+    ServerRunnerConfig,
 };
 use scenarios::Scenario;
 use support::{block_on, compile_source};
@@ -64,13 +65,14 @@ const RECORD_ROUNDTRIP_20_FUEL: u64 = 1_882_224;
 fn execute_report(scenario: &Scenario) -> ExecutionReport {
     let compiled = compile_source(scenario.source);
     // A large budget lets ceilings, not the default budget, catch regressions.
-    let runner = ServerRunner::new(
-        64 * 1024 * 1024,
-        FUEL_BUDGET,
-        Duration::from_secs(60),
-        ProtectionLevel::Standard,
-    )
-    .with_compiler_strategy(CompilerStrategy::Winch);
+    let runner = ServerRunner::new(ServerRunnerConfig {
+        max_memory_bytes: 64 * 1024 * 1024,
+        max_fuel: FUEL_BUDGET,
+        timeout: Duration::from_secs(60),
+        protection: ProtectionLevel::Standard,
+        compiler: CompilerStrategy::Winch,
+        ..ServerRunnerConfig::default()
+    });
     let cancellation = ExecutionCancellation::new();
     let inputs = (scenario.inputs)();
     match block_on(runner.execute_with_report(&compiled.wasm, "main", &inputs, &cancellation)) {

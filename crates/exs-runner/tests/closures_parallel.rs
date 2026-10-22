@@ -8,7 +8,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use exs_abi::{ErrorSeverity, ExsValue};
-use exs_runner::{ExecutionCancellation, ProtectionLevel, ServerRunner};
+use exs_runner::{ExecutionCancellation, ProtectionLevel, ServerRunner, ServerRunnerConfig};
 use support::{block_on, compile_source, execute_source, execute_source_with_inputs};
 
 /// Executes a closure passed through an unparameterized Fn contract.
@@ -64,12 +64,13 @@ fn reuses_parallel_child_frames_within_a_constrained_memory_budget() {
         }
         "#,
     );
-    let runner = ServerRunner::new(
-        2 * 1024 * 1024,
-        u64::MAX,
-        Duration::from_secs(10),
-        ProtectionLevel::Standard,
-    );
+    let runner = ServerRunner::new(ServerRunnerConfig {
+        max_memory_bytes: 2 * 1024 * 1024,
+        max_fuel: u64::MAX,
+        timeout: Duration::from_secs(10),
+        protection: ProtectionLevel::Standard,
+        ..ServerRunnerConfig::default()
+    });
     let result =
         block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
     match result {
