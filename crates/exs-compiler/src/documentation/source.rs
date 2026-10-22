@@ -4,6 +4,7 @@ use super::standard::{
     render_type_automatic_trait_methods, standard_pages,
 };
 use super::*;
+use crate::CompileLimits;
 use crate::loaded_project::{ImportEdge, LoadedProject, LoadedSource, parse_source};
 
 /// Generates Markdown documentation for one root source and its import graph.
@@ -11,7 +12,7 @@ pub(crate) fn generate<R: ModuleResolver>(
     source: SourceInput<'_>,
     resolver: &mut R,
 ) -> Result<Documentation, String> {
-    let project = LoadedProject::load(source, resolver)?;
+    let project = LoadedProject::load(source, resolver, CompileLimits::default())?;
     project.validate_no_cycles()?;
     let files = project.files();
     let edges = project.edges();
@@ -42,7 +43,7 @@ pub(crate) fn generate_llm<R: ModuleResolver>(
     source: SourceInput<'_>,
     resolver: &mut R,
 ) -> Result<String, String> {
-    let project = LoadedProject::load(source, resolver)?;
+    let project = LoadedProject::load(source, resolver, CompileLimits::default())?;
     project.validate_no_cycles()?;
     let files = project.files();
     let modules = project.parse_modules()?;
@@ -331,7 +332,7 @@ fn append_compact_code_comment(
 
 /// Parses one documentation source unit without requiring a root entry point.
 pub(super) fn parse<'a>(source_id: &'a str, text: &'a str) -> Result<Module<'a>, String> {
-    parse_source(source_id, text)
+    parse_source(source_id, text, CompileLimits::default().max_nesting)
 }
 
 /// Renders the project index and concise language overview.

@@ -61,6 +61,7 @@ fn emits_multisource_debug_metadata_for_imports() {
         },
         CompileOptions {
             embed_sources: true,
+            ..CompileOptions::default()
         },
         &mut resolver,
     ) {

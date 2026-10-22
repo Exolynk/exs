@@ -2,7 +2,7 @@ use super::*;
 
 impl<'a> Parser<'a> {
     pub(super) fn expression(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
-        self.or()
+        self.nested(Self::or)
     }
 
     pub(super) fn or(&mut self) -> Result<Expression<'a>, CompileDiagnostic<'a>> {
@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
         };
         if let Some(operator) = operator {
             let start = self.previous().span;
-            let operand = self.unary()?;
+            let operand = self.nested(Self::unary)?;
             let span = start.through(expression_span(&operand));
             return Ok(Expression::Unary {
                 operator,
@@ -391,6 +391,8 @@ impl<'a> Parser<'a> {
                         current: 0,
                         type_names: self.type_names.clone(),
                         diagnostics: CompileDiagnostics::new(),
+                        depth: self.depth,
+                        max_nesting: self.max_nesting,
                     };
                     let expression = parser.expression()?;
                     if !parser.at_end() {

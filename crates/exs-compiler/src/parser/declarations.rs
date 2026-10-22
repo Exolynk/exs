@@ -392,7 +392,7 @@ impl<'a> Parser<'a> {
             span = span.through(member_span);
         }
         let argument = if self.matches(&TokenKind::Less) {
-            let argument = self.type_annotation()?;
+            let argument = self.nested(Self::type_annotation)?;
             let end = self
                 .expect_simple(
                     TokenKind::Greater,

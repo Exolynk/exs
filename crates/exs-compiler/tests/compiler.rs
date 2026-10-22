@@ -20,6 +20,8 @@ mod formatter;
 mod imports;
 #[path = "compiler/language.rs"]
 mod language;
+#[path = "compiler/limits.rs"]
+mod limits;
 
 /// Resolves compiler-test source files from an in-memory canonical source table.
 struct TestResolver {

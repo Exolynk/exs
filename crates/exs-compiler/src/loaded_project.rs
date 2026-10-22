@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::ast::Module;
-use crate::{ModuleResolver, SourceInput};
+use crate::{CompileLimits, ModuleResolver, SourceInput};
 
 /// A fully resolved project source unit.
 pub(crate) struct LoadedSource {
@@ -34,14 +34,19 @@ pub(crate) struct LoadedProject {
     files: Vec<LoadedSource>,
     /// Resolved import edges indexed by importing source.
     edges: Vec<Vec<ImportEdge>>,
+    /// Deepest nesting the parser accepts.
+    max_nesting: usize,
 }
 
 impl LoadedProject {
-    /// Loads every relative import reachable from `source` without applying consumer semantics.
+    /// Loads every relative import reachable from `source` without applying consumer semantics,
+    /// within the size and module limits of `limits`.
     pub(crate) fn load<R: ModuleResolver>(
         source: SourceInput<'_>,
         resolver: &mut R,
+        limits: CompileLimits,
     ) -> Result<Self, String> {
+        let mut total_bytes = check_size(source.source_id, source.text.len(), 0, limits)?;
         let mut files = vec![LoadedSource {
             source_id: source.source_id.to_owned(),
             display_path: root_display_path(source.source_id),
@@ -53,7 +58,7 @@ impl LoadedProject {
         while index < files.len() {
             let source_id = files[index].source_id.clone();
             let text = files[index].text.clone();
-            let imports = parse_source(&source_id, &text)?.imports;
+            let imports = parse_source(&source_id, &text, limits.max_nesting)?.imports;
             for import in imports {
                 let resolved = resolver
                     .resolve(&source_id, &import.path)
@@ -66,6 +71,18 @@ impl LoadedProject {
                 let target = if let Some(target) = indices.get(&resolved.source_id) {
                     *target
                 } else {
+                    if files.len() >= limits.max_modules {
+                        return Err(format!(
+                            "{}: the project exceeds the limit of {} modules",
+                            files[0].source_id, limits.max_modules
+                        ));
+                    }
+                    total_bytes = check_size(
+                        &resolved.source_id,
+                        resolved.text.len(),
+                        total_bytes,
+                        limits,
+                    )?;
                     let target = files.len();
                     indices.insert(resolved.source_id.clone(), target);
                     files.push(LoadedSource {
@@ -87,7 +104,11 @@ impl LoadedProject {
             }
             index += 1;
         }
-        Ok(Self { files, edges })
+        Ok(Self {
+            files,
+            edges,
+            max_nesting: limits.max_nesting,
+        })
     }
 
     /// Returns the loaded sources in deterministic discovery order.
@@ -104,7 +125,7 @@ impl LoadedProject {
     pub(crate) fn parse_modules(&self) -> Result<Vec<Module<'_>>, String> {
         self.files
             .iter()
-            .map(|file| parse_source(&file.source_id, &file.text))
+            .map(|file| parse_source(&file.source_id, &file.text, self.max_nesting))
             .collect()
     }
 
@@ -125,13 +146,43 @@ impl LoadedProject {
     }
 }
 
-/// Parses one non-root source module and renders lexical or syntax diagnostics.
-pub(crate) fn parse_source<'a>(source_id: &'a str, text: &'a str) -> Result<Module<'a>, String> {
+/// Parses one non-root source module, nesting at most `max_nesting` levels deep, and renders
+/// lexical or syntax diagnostics.
+pub(crate) fn parse_source<'a>(
+    source_id: &'a str,
+    text: &'a str,
+    max_nesting: usize,
+) -> Result<Module<'a>, String> {
     let lexed = crate::lexer::lex(SourceInput { source_id, text });
     if !lexed.diagnostics.is_empty() {
         return Err(lexed.diagnostics.render(text));
     }
-    crate::parser::parse(source_id, lexed.tokens, false).map_err(|error| error.render(text))
+    crate::parser::parse_with_nesting(source_id, lexed.tokens, false, max_nesting)
+        .map_err(|error| error.render(text))
+}
+
+/// Checks the `bytes` of source `source_id` against the limits, given the `total` bytes of the
+/// sources loaded before it, and returns the new total.
+fn check_size(
+    source_id: &str,
+    bytes: usize,
+    total: usize,
+    limits: CompileLimits,
+) -> Result<usize, String> {
+    if bytes > limits.max_source_bytes {
+        return Err(format!(
+            "{source_id}: source exceeds the limit of {} bytes",
+            limits.max_source_bytes
+        ));
+    }
+    let total = total.saturating_add(bytes);
+    if total > limits.max_total_source_bytes {
+        return Err(format!(
+            "{source_id}: the project's sources exceed the limit of {} bytes",
+            limits.max_total_source_bytes
+        ));
+    }
+    Ok(total)
 }
 
 /// Derives the default namespace from a relative `.exs` import path.

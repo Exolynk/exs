@@ -9,6 +9,7 @@ mod formatter_trivia;
 mod highlighting;
 mod hir;
 mod lexer;
+mod limits;
 mod loaded_project;
 mod module_graph;
 mod parser;
@@ -31,6 +32,7 @@ pub use highlighting::{
     HighlightKind, HighlightSpan, SourceComment, SourceLex, SourceToken, SourceTokenKind,
     highlight, source_lex, tokens,
 };
+pub use limits::CompileLimits;
 
 /// Immutable source input supplied to the compiler.
 #[derive(Debug, Clone, Copy)]
@@ -46,6 +48,8 @@ pub struct SourceInput<'a> {
 pub struct CompileOptions {
     /// Whether to embed the original source text in the `exs.sources` custom section.
     pub embed_sources: bool,
+    /// Resource limits of the compilation.
+    pub limits: CompileLimits,
 }
 
 /// A linked, executable `ExS` WebAssembly module.
@@ -109,9 +113,25 @@ pub fn compile<'a>(
     source: SourceInput<'a>,
     options: CompileOptions,
 ) -> Result<CompiledModule, CompileDiagnostics<'a>> {
+    if source.text.len() > options.limits.max_source_bytes {
+        return Err(CompileDiagnostics::from(CompileDiagnostic::new(
+            "E0010",
+            SourceSpan::empty(source.source_id),
+            format!(
+                "source exceeds the limit of {} bytes",
+                options.limits.max_source_bytes
+            ),
+        )));
+    }
     let lexed = lexer::lex(source);
     let mut diagnostics = lexed.diagnostics;
-    let mut module = match parser::parse(source.source_id, lexed.tokens, true) {
+    let parsed = parser::parse_with_nesting(
+        source.source_id,
+        lexed.tokens,
+        true,
+        options.limits.max_nesting,
+    );
+    let mut module = match parsed {
         Ok(module) => module,
         Err(parser_diagnostics) => {
             diagnostics.extend(parser_diagnostics);

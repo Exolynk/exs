@@ -46,7 +46,7 @@ fn compile_target<R: ModuleResolver>(
     resolver: &mut R,
     test_target: bool,
 ) -> Result<(CompiledModule, Vec<CompiledTest>), String> {
-    let project = LoadedProject::load(source, resolver)?;
+    let project = LoadedProject::load(source, resolver, options.limits)?;
     validate_import_names(&project)?;
     project.validate_no_cycles()?;
     let files = project.files();

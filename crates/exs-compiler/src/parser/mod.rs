@@ -21,11 +21,27 @@ mod expressions;
 mod statements;
 mod utilities;
 
-/// Parses a token stream into one ExS module.
+/// Parses a token stream into one ExS module within the default nesting limit.
 pub fn parse<'a>(
     source_id: &'a str,
     tokens: Vec<Token<'a>>,
     require_main: bool,
+) -> Result<Module<'a>, CompileDiagnostics<'a>> {
+    parse_with_nesting(
+        source_id,
+        tokens,
+        require_main,
+        crate::CompileLimits::default().max_nesting,
+    )
+}
+
+/// Parses a token stream into one ExS module; expressions, blocks and type annotations may
+/// nest at most `max_nesting` levels deep.
+pub fn parse_with_nesting<'a>(
+    source_id: &'a str,
+    tokens: Vec<Token<'a>>,
+    require_main: bool,
+    max_nesting: usize,
 ) -> Result<Module<'a>, CompileDiagnostics<'a>> {
     let mut type_names: HashSet<_> = tokens
         .windows(2)
@@ -40,6 +56,8 @@ pub fn parse<'a>(
         current: 0,
         type_names,
         diagnostics: CompileDiagnostics::new(),
+        depth: 0,
+        max_nesting,
     };
     let mut imports = Vec::new();
     let mut uses = Vec::new();
@@ -167,11 +185,44 @@ pub fn parse<'a>(
     })
 }
 
+/// The state of one parse.
 struct Parser<'a> {
+    /// The tokens being parsed.
     tokens: Vec<Token<'a>>,
+    /// Index of the next token.
     current: usize,
+    /// Names declared as types, which make `Name {` a typed Object literal.
     type_names: HashSet<String>,
+    /// Diagnostics of declarations and statements the parser recovered from.
     diagnostics: CompileDiagnostics<'a>,
+    /// Current nesting depth of expressions, blocks and type annotations.
+    depth: usize,
+    /// Deepest nesting the parser accepts.
+    max_nesting: usize,
+}
+
+impl<'a> Parser<'a> {
+    /// Runs `parse` one nesting level deeper, rejecting source that nests beyond the limit
+    /// before recursion could exhaust the stack.
+    fn nested<T>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<T, CompileDiagnostic<'a>>,
+    ) -> Result<T, CompileDiagnostic<'a>> {
+        if self.depth >= self.max_nesting {
+            return Err(self.error(
+                self.peek().span,
+                "E0114",
+                format!(
+                    "source nests deeper than the limit of {} levels",
+                    self.max_nesting
+                ),
+            ));
+        }
+        self.depth += 1;
+        let parsed = parse(self);
+        self.depth -= 1;
+        parsed
+    }
 }
 
 fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {

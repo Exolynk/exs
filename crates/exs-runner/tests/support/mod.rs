@@ -10,14 +10,18 @@ use exs_abi::ExsValue;
 use exs_compiler::{CompileOptions, SourceInput, compile};
 use exs_runner::{ExecutionCancellation, ServerRunner};
 
-/// Compiles source text for native runner integration tests.
+/// Compiles source text for native runner integration tests; the sources are trusted, so
+/// only their nesting is limited, not their size.
 pub fn compile_source(source: &str) -> exs_compiler::CompiledModule {
+    let mut options = CompileOptions::default();
+    options.limits.max_source_bytes = usize::MAX;
+    options.limits.max_total_source_bytes = usize::MAX;
     match compile(
         SourceInput {
             source_id: "test.exs",
             text: source,
         },
-        CompileOptions::default(),
+        options,
     ) {
         Ok(module) => module,
         Err(error) => panic!("compilation failed: {error}"),

@@ -175,6 +175,7 @@ fn compile_tests_source(path: &Path) -> Result<exs_compiler::CompiledTests, Stri
         },
         CompileOptions {
             embed_sources: true,
+            ..CompileOptions::default()
         },
         &mut resolver,
     )
@@ -323,6 +324,7 @@ fn run_program(path: &str, function: &str, inputs: &[exs_runner::ExsValue]) -> R
             path,
             CompileOptions {
                 embed_sources: true,
+                ..CompileOptions::default()
             },
         )?
         .wasm

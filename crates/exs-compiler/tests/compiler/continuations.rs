@@ -60,6 +60,7 @@ fn emits_source_map_and_optional_source_sections() {
         },
         CompileOptions {
             embed_sources: true,
+            ..CompileOptions::default()
         },
     ) {
         Ok(compiled) => compiled,

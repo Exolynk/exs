@@ -2,6 +2,11 @@ use super::*;
 
 impl<'a> Parser<'a> {
     pub(super) fn block(&mut self) -> Result<Block<'a>, CompileDiagnostic<'a>> {
+        self.nested(Self::block_body)
+    }
+
+    /// Parses a block's braces and statements.
+    fn block_body(&mut self) -> Result<Block<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::LeftBrace, "expected `{`")?
             .span;
