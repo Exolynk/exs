@@ -1,7 +1,7 @@
 //! Calls in resumable code: direct calls of synchronous functions run inline, calls of
 //! resumable units link a child frame and return to the dispatcher.
 
-use exs_abi::{BuiltinMethod, STATUS_READY};
+use exs_layout::{BuiltinMethod, STATUS_READY};
 use wasm_encoder::{BlockType, Instruction};
 
 use super::layouts::StepInfo;

@@ -4,7 +4,7 @@
 //! message, and a description that is no String or a condition that is no Bool is a fatal
 //! TypeError.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::errors::{error_from_strings, new_error};
 use crate::lists::{allocate_list, list_reference, push_unchecked};

@@ -5,10 +5,10 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::TYPE_LIST;
+use exs_layout::TYPE_LIST;
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{EXTRA_SHIFT, tag, type_kind};
 use exs_layout::{BufferObject, ListObject, ObjectKind};
-use exs_value::ValueRef;
-use exs_value::layout::{EXTRA_SHIFT, tag, type_kind};
 
 use crate::allocator::allocate;
 use crate::memory::Memory;

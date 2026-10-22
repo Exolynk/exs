@@ -4,7 +4,7 @@
 //! by its extra keys, or the keys of an untyped Object. A declared field removed by `delete`
 //! or `clear` holds an empty slot and is no entry until it is set again.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, set_len};
 use crate::memory::Memory;

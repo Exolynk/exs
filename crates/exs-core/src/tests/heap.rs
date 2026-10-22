@@ -2,11 +2,11 @@
 
 use std::vec::Vec;
 
+use exs_layout::ValueRef;
+use exs_layout::value::layout::KIND_CELL;
 use exs_layout::{
     BufferObject, CellObject, ListObject, ObjectKind, PAGE_SIZE, PageKind, RootRange,
 };
-use exs_value::ValueRef;
-use exs_value::layout::KIND_CELL;
 
 use crate::{Memory, allocate, collect, init_heap, set_root_ranges};
 

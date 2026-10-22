@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "crates/exs-value",
     "crates/exs-abi",
     "crates/exs-layout",
     "crates/exs-core",

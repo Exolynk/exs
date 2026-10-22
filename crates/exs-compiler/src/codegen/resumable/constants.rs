@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::ast::Expression;
 use crate::codegen::continuation::Operation;

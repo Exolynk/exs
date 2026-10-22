@@ -6,10 +6,10 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::TYPE_FN;
+use exs_layout::TYPE_FN;
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{KIND_CELL, KIND_SHIFT, type_kind};
 use exs_layout::{CellObject, ClosureObject, ObjectKind};
-use exs_value::ValueRef;
-use exs_value::layout::{KIND_CELL, KIND_SHIFT, type_kind};
 
 use crate::allocator::allocate;
 use crate::errors::recoverable;

@@ -31,7 +31,6 @@ jiff = { workspace = true, optional = true, features = ["std", "js", "tz-fat", "
 
 [dev-dependencies]
 exs-compiler = { path = "../exs-compiler" }
-exs-value = { path = "../exs-value" }
 
 [[bench]]
 name = "basic_script"

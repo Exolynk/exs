@@ -1,13 +1,13 @@
 //! Lowering of method calls on built-in values and of static built-in functions.
 //!
 //! A method call evaluates its receiver and arguments, then calls the core library's built-in
-//! method by its `exs_abi::BuiltinMethod` index. Like v1, a name no built-in provides is a
+//! method by its `exs_layout::BuiltinMethod` index. Like v1, a name no built-in provides is a
 //! MethodNotFound Error and a built-in called with another number of arguments is an
 //! ArityError; both are decided at compile time from the static method name.
 
-use exs_abi::BuiltinMethod;
+use exs_layout::BuiltinMethod;
 use exs_layout::StaticFunction;
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 use wasm_encoder::Instruction;
 
 use super::closures::{accepts, arity_description};

@@ -5,7 +5,7 @@
 //! depth first, a second walk finds whether the first obstacle is a reference cycle or a value
 //! of a type the boundary lacks, such as a closure.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::closures::{cell_object, closure_object};
 use crate::enums::{enum_object, field_address as enum_field, field_count};

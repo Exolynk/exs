@@ -9,7 +9,7 @@
 
 use core::mem::offset_of;
 
-use exs_abi::TYPE_ERROR;
+use exs_layout::TYPE_ERROR;
 use exs_layout::{WireContract, WireEnum, WireField, WireObject, WireVariant};
 
 use crate::enums::{allocate_enum, enum_object, enum_type, field_address as enum_field};
@@ -256,7 +256,7 @@ fn decode_fields(
                     .filter(|values| position < len(memory, *values))
                     .map(|values| memory.load_u64(item_address(memory, values, position)))
             })
-            .unwrap_or(exs_value::ValueRef::NONE.raw());
+            .unwrap_or(exs_layout::ValueRef::NONE.raw());
         match decode(memory, vm, value, contract, depth + 1) {
             Some(decoded) if is_error(decoded) => {
                 outcome = Some(decoded);

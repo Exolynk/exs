@@ -5,10 +5,10 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{TYPE_BYTES, TYPE_ERROR};
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{KIND_SHIFT, type_kind};
 use exs_layout::{ERROR_FATAL, ERROR_RECOVERABLE, ErrorObject, ObjectKind, StringObject};
-use exs_value::ValueRef;
-use exs_value::layout::{KIND_SHIFT, type_kind};
+use exs_layout::{TYPE_BYTES, TYPE_ERROR};
 
 use crate::allocator::allocate;
 use crate::memory::Memory;

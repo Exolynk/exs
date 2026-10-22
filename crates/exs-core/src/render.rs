@@ -1,7 +1,7 @@
 //! Default text of values that formatted strings cannot render like `+` operands.
 
-use exs_abi::{TYPE_ERROR, TYPE_FN, TYPE_LIST, TYPE_NONE, TYPE_OBJECT};
-use exs_value::layout::{KIND_CELL, KIND_SHIFT};
+use exs_layout::value::layout::{KIND_CELL, KIND_SHIFT};
+use exs_layout::{TYPE_ERROR, TYPE_FN, TYPE_LIST, TYPE_NONE, TYPE_OBJECT};
 
 /// Returns v1's default `ToString` text of a value that is no String, Bool, Int or Float.
 pub(crate) fn default_text(raw: u64) -> &'static str {

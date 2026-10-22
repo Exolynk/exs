@@ -6,10 +6,10 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{TYPE_FLOAT, TYPE_INT};
+use exs_layout::value::layout::{INT_BOXED, type_kind};
 use exs_layout::{BigIntObject, FloatObject, ObjectKind};
-use exs_value::layout::{INT_BOXED, type_kind};
-use exs_value::{Immediate, ValueRef};
+use exs_layout::{Immediate, ValueRef};
+use exs_layout::{TYPE_FLOAT, TYPE_INT};
 
 use crate::allocator::allocate;
 use crate::errors::recoverable;

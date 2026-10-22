@@ -2,9 +2,9 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{BuiltinMethod, STATUS_READY, TYPE_LIST};
+use exs_layout::ValueRef;
 use exs_layout::{BufferObject, EnumObject, ListObject, TaskState, VmState};
-use exs_value::ValueRef;
+use exs_layout::{BuiltinMethod, STATUS_READY, TYPE_LIST};
 use wasm_encoder::{BlockType, Instruction, ValType};
 
 use super::step::StepEmitter;

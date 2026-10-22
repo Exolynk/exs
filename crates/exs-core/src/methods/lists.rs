@@ -2,7 +2,7 @@
 //!
 //! Index arguments are checked before the receiver, as in v1.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::access::list_index;
 use crate::errors::recoverable;

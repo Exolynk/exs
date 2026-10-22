@@ -3,10 +3,10 @@
 use std::collections::HashSet;
 use std::vec::Vec;
 
+use exs_layout::ValueRef;
 use exs_layout::{
     GC_STATIC, ObjectKind, PAGE_HEADER_SIZE, PAGE_SIZE, VM_FLAG_COLLECT_EVERY_ALLOCATION,
 };
-use exs_value::ValueRef;
 
 use super::heap::{Heap, ROOT_SLOT_COUNT, VM, reference};
 use crate::{Memory, collection_count, set_heap_flags};

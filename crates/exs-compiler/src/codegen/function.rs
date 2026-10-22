@@ -385,7 +385,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         contract: &TypeContract,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if contract.builtin_mask == exs_abi::TYPE_ANY {
+        if contract.builtin_mask == exs_layout::TYPE_ANY {
             return Ok(());
         }
         self.contract_test(local, contract, span)?;
@@ -468,7 +468,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         }
         self.wrap_captured_parameters(first)?;
         self.compile_block(&self.declaration.body)?;
-        immediate::push(&mut self.function, exs_value::ValueRef::NONE);
+        immediate::push(&mut self.function, exs_layout::ValueRef::NONE);
         self.return_value(self.declaration.span)?;
         self.instruction(Instruction::End);
         let i64_locals = self.next_local - self.parameter_count - 2;

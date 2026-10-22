@@ -7,9 +7,9 @@ use std::collections::HashMap;
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::BuiltinMethod;
+use exs_layout::BuiltinMethod;
+use exs_layout::ValueRef;
 use exs_layout::{BufferObject, CellObject, ListObject};
-use exs_value::ValueRef;
 use wasm_encoder::{BlockType, Instruction};
 
 use super::step::StepEmitter;

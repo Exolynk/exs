@@ -6,8 +6,8 @@ use std::vec;
 use std::vec::Vec;
 
 use exs_abi::{ErrorSeverity, ExsError, ExsStackFrame, ExsValue, SourcePositionId};
+use exs_layout::ValueRef;
 use exs_layout::VmState;
-use exs_value::ValueRef;
 
 use super::execution::Execution;
 use super::heap::VM;

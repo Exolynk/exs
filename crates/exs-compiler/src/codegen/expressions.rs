@@ -12,8 +12,8 @@ use crate::codegen::declarations::contains_statements;
 use crate::codegen::immediate::{self, IntOperation};
 use crate::codegen::trait_registry::TraitOperator;
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
-use exs_abi::{TYPE_FLOAT, TYPE_STRING};
-use exs_value::layout::{KIND_SHIFT, type_kind};
+use exs_layout::value::layout::{KIND_SHIFT, type_kind};
+use exs_layout::{TYPE_FLOAT, TYPE_STRING};
 use wasm_encoder::MemArg;
 
 /// Core code of `-` for `__exs_core_arithmetic`.
@@ -44,9 +44,9 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.compile_formatted(parts, *span)?
             }
             Expression::Bool(value, _) => {
-                immediate::push(&mut self.function, exs_value::ValueRef::boolean(*value));
+                immediate::push(&mut self.function, exs_layout::ValueRef::boolean(*value));
             }
-            Expression::None(_) => immediate::push(&mut self.function, exs_value::ValueRef::NONE),
+            Expression::None(_) => immediate::push(&mut self.function, exs_layout::ValueRef::NONE),
             Expression::Variable(identifier) => {
                 if let Some(variant) = self.context.types.enum_variant(&identifier.name) {
                     return self.compile_unit_variant(variant, identifier.span);
@@ -166,7 +166,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 "integer literal is outside the ExS signed 64-bit range".to_owned(),
             )
         })?;
-        if let Some(immediate) = exs_value::ValueRef::small_int(value) {
+        if let Some(immediate) = exs_layout::ValueRef::small_int(value) {
             immediate::push(&mut self.function, immediate);
             return Ok(());
         }
@@ -377,7 +377,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.condition(span)?;
         self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
         if is_or {
-            immediate::push(&mut self.function, exs_value::ValueRef::TRUE);
+            immediate::push(&mut self.function, exs_layout::ValueRef::TRUE);
         } else {
             self.checked_boolean(right)?;
         }
@@ -385,7 +385,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         if is_or {
             self.checked_boolean(right)?;
         } else {
-            immediate::push(&mut self.function, exs_value::ValueRef::FALSE);
+            immediate::push(&mut self.function, exs_layout::ValueRef::FALSE);
         }
         self.instruction(Instruction::End);
         Ok(())

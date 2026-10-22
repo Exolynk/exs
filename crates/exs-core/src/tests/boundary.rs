@@ -1,7 +1,7 @@
 //! Runner input and result conversion tests.
 
 use exs_abi::{BoundaryLimits, ExsValue};
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use super::heap::{VM, VecMemory};
 use super::walk::walked;

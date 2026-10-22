@@ -11,5 +11,4 @@ workspace = true
 [dependencies]
 exs-abi = { path = "../exs-abi" }
 exs-layout = { path = "../exs-layout" }
-exs-value = { path = "../exs-value" }
 libm = "0.2.15"

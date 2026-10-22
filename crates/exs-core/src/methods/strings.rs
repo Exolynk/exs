@@ -4,7 +4,7 @@
 //! anything is allocated; Strings never move, so offsets stay valid.
 
 use exs_layout::CaseTables;
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::errors::recoverable;
 use crate::lists::{allocate_list, item_address, list_reference, set_len};

@@ -4,10 +4,10 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::TYPE_STRING;
+use exs_layout::TYPE_STRING;
+use exs_layout::value::layout::{KIND_SHIFT, type_kind};
+use exs_layout::{Immediate, ValueRef};
 use exs_layout::{ObjectKind, StringObject};
-use exs_value::layout::{KIND_SHIFT, type_kind};
-use exs_value::{Immediate, ValueRef};
 
 use crate::allocator::allocate;
 use crate::bytes::{bytes_len, bytes_object};

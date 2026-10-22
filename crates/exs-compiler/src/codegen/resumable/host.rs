@@ -1,8 +1,9 @@
 //! Host calls of resumable code: a call either finishes at once or suspends the task until
 //! the runner resumes it, and the results of stream and time calls become prelude values.
 
-use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY, TYPE_ERROR, TYPE_OBJECT};
-use exs_value::ValueRef;
+use exs_abi::{HOST_CALL_PENDING, HOST_CALL_READY};
+use exs_layout::ValueRef;
+use exs_layout::{TYPE_ERROR, TYPE_OBJECT};
 use wasm_encoder::{BlockType, Instruction};
 
 use super::step::StepEmitter;

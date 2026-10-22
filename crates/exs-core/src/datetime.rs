@@ -3,7 +3,7 @@
 //! The prelude's `__exs_datetime_parse_rfc3339_runtime` is an intrinsic: the compiler lowers
 //! its calls to [`datetime_parse`] and builds the Object of raw DateTime fields itself.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::errors::recoverable;
 use crate::memory::Memory;

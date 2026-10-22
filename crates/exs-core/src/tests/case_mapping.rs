@@ -3,9 +3,9 @@
 use std::string::String;
 use std::vec::Vec;
 
-use exs_abi::BuiltinMethod;
+use exs_layout::BuiltinMethod;
 use exs_layout::CASE_TABLES;
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use super::execution::Execution;
 use super::heap::VM;

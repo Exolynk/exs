@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{RANGE_BEGIN_FALLBACK, RANGE_STATE_FINISHED, RANGE_STATE_LAST, TYPE_LIST};
 use exs_layout::{BufferObject, EnumObject, ListObject};
+use exs_layout::{RANGE_BEGIN_FALLBACK, RANGE_STATE_FINISHED, RANGE_STATE_LAST, TYPE_LIST};
 use wasm_encoder::{BlockType, Instruction, ValType};
 
 use super::collections::{u32_field, value_field};

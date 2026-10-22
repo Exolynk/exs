@@ -1,8 +1,8 @@
 //! Unit tests for the `ValueRef` layout and immediate encoding.
 
-use exs_abi::{TYPE_BOOL, TYPE_ERROR, TYPE_INT, TYPE_NONE, TYPE_OBJECT};
+use crate::types::{TYPE_BOOL, TYPE_ERROR, TYPE_INT, TYPE_NONE, TYPE_OBJECT};
 
-use crate::layout::{
+use super::layout::{
     BOOL_TAG, EXTRA_SHIFT, INT_BOXED, KIND_ITERATOR, MAX_INLINE_TYPE_ID, SMALL_INT_TAG, object_tag,
     object_type_extra, type_kind,
 };

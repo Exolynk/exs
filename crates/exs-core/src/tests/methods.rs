@@ -1,8 +1,8 @@
 //! Built-in method and static function tests.
 
-use exs_abi::BuiltinMethod;
+use exs_layout::BuiltinMethod;
 use exs_layout::StaticFunction;
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use super::execution::Execution;
 use super::heap::VM;

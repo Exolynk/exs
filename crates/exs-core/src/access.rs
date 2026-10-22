@@ -3,7 +3,7 @@
 //! Failures are the language's IndexError and TypeError values with v1's messages; every
 //! function returns `None` only when memory is exhausted.
 
-use exs_value::{Immediate, ValueRef};
+use exs_layout::{Immediate, ValueRef};
 
 use crate::errors::recoverable;
 use crate::lists::{item_address, len, list_object};

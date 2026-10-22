@@ -3,10 +3,10 @@
 //! None, Bool and every Int inside the `i32` range are immediates and never allocate. An Int
 //! that fits an `i32` is always immediate, so equal immediates have equal raw references.
 
-use exs_abi::{TYPE_BOOL, TYPE_INT, TYPE_NONE};
+use crate::types::{TYPE_BOOL, TYPE_INT, TYPE_NONE};
 
-use crate::layout::{INT_BOXED, type_kind};
-use crate::reference::ValueRef;
+use super::layout::{INT_BOXED, type_kind};
+use super::reference::ValueRef;
 
 /// The scalar decoded from one immediate reference.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

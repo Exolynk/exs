@@ -4,7 +4,8 @@
 
 use core::mem::offset_of;
 
-use exs_abi::{STATUS_CANCELLED, STATUS_COMPLETE, STATUS_PENDING, STATUS_READY};
+use exs_abi::{STATUS_CANCELLED, STATUS_COMPLETE, STATUS_PENDING};
+use exs_layout::STATUS_READY;
 use exs_layout::VmState;
 use wasm_encoder::{BlockType, Function, Instruction, ValType};
 

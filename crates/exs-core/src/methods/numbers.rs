@@ -2,9 +2,9 @@
 //!
 //! Unlike operators, methods take Int and Float literally: a Bool is neither.
 
-use exs_abi::{TYPE_FLOAT, TYPE_INT};
-use exs_value::ValueRef;
-use exs_value::layout::{KIND_SHIFT, type_kind};
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{KIND_SHIFT, type_kind};
+use exs_layout::{TYPE_FLOAT, TYPE_INT};
 
 use crate::errors::recoverable;
 use crate::memory::Memory;

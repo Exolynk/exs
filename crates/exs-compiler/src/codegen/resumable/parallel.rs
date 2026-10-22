@@ -3,8 +3,8 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{TYPE_FN, TYPE_LIST};
 use exs_layout::{BufferObject, ListObject};
+use exs_layout::{TYPE_FN, TYPE_LIST};
 use wasm_encoder::{BlockType, Instruction};
 
 use super::layouts::ClosureStep;

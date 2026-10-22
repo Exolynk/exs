@@ -4,9 +4,9 @@ use core::mem::{offset_of, size_of};
 use std::vec::Vec;
 
 use exs_abi::ExsValue;
+use exs_layout::ValueRef;
+use exs_layout::value::layout::object_type_extra;
 use exs_layout::{ObjectKind, TypeEntry, TypedObject, VmState};
-use exs_value::ValueRef;
-use exs_value::layout::object_type_extra;
 
 use super::heap::{VM, VecMemory};
 use crate::{
@@ -119,7 +119,7 @@ impl Execution {
             self.memory.store_u64(object + slots + index * 8, *value);
         }
         let raw = ValueRef::from_parts(
-            exs_abi::TYPE_OBJECT as u16,
+            exs_layout::TYPE_OBJECT as u16,
             object_type_extra(Some(0)),
             object,
         )

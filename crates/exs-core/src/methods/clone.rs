@@ -168,7 +168,7 @@ impl Cloner {
             if let Some(copy) = self.existing(memory, source) {
                 return Some(copy);
             }
-            let copy = cell_new(memory, vm, exs_value::ValueRef::NONE.raw())?;
+            let copy = cell_new(memory, vm, exs_layout::ValueRef::NONE.raw())?;
             self.register(memory, vm, source, copy)?;
             let item = memory.load_u64(cell_value_address(object));
             let item = self.value(memory, vm, item)?;

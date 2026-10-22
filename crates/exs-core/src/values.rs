@@ -1,6 +1,6 @@
 //! Equality and ordering across value kinds.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::bytes::{bytes_object, octets};
 use crate::enums::{Order, ordering};
@@ -129,7 +129,7 @@ pub(crate) fn compare_method(
 pub fn ordering_test(memory: &mut impl Memory, vm: u32, ordering: u64, test: u32) -> Option<u64> {
     let order = crate::enums::enum_object(memory, ordering)
         .filter(|object| {
-            crate::enums::enum_type(memory, *object) == exs_abi::STANDARD_ORDERING_TYPE_ID
+            crate::enums::enum_type(memory, *object) == exs_layout::STANDARD_ORDERING_TYPE_ID
         })
         .and_then(|object| match crate::enums::variant(memory, object) {
             0 => Some(Order::Less),
@@ -161,7 +161,7 @@ pub fn ordering_test(memory: &mut impl Memory, vm: u32, ordering: u64, test: u32
         _ => Err("invalid Ordering value or comparison operator"),
     };
     match result {
-        Ok(result) => Some(exs_value::ValueRef::boolean(result).raw()),
+        Ok(result) => Some(exs_layout::ValueRef::boolean(result).raw()),
         Err(message) => crate::errors::recoverable(memory, vm, "TypeError", message, ordering),
     }
 }

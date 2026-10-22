@@ -1,9 +1,9 @@
 //! Bytes values: immutable octet sequences in the String object layout.
 
-use exs_abi::TYPE_BYTES;
 use exs_layout::ObjectKind;
-use exs_value::ValueRef;
-use exs_value::layout::{KIND_SHIFT, type_kind};
+use exs_layout::TYPE_BYTES;
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{KIND_SHIFT, type_kind};
 
 use crate::allocator::allocate;
 use crate::memory::Memory;

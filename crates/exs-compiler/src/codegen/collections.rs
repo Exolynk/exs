@@ -2,9 +2,9 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::TYPE_LIST;
+use exs_layout::TYPE_LIST;
+use exs_layout::value::layout::{EXTRA_SHIFT, SMALL_INT_TAG, tag, type_kind};
 use exs_layout::{BufferObject, ListObject};
-use exs_value::layout::{EXTRA_SHIFT, SMALL_INT_TAG, tag, type_kind};
 use wasm_encoder::{BlockType, Instruction, MemArg};
 
 use super::function::{FunctionCompiler, error};

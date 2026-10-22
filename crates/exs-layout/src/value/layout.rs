@@ -1,11 +1,11 @@
 //! Bit layout shared by the runtime and compiler-generated code.
 //!
 //! A raw `ValueRef` is `kind << 48 | extra << 32 | payload`. The kind field holds exactly one
-//! flag: a source-visible `exs_abi::TYPE_*` bit or one runtime-internal kind above `TYPE_ANY`.
+//! flag: a source-visible `crate::TYPE_*` bit or one runtime-internal kind above `TYPE_ANY`.
 //! Generated code may test the kind and extra bits directly, so these values are part of the
 //! compiler/runtime contract.
 
-use exs_abi::{TYPE_ANY, TYPE_BOOL, TYPE_INT, TYPE_OBJECT};
+use crate::types::{TYPE_ANY, TYPE_BOOL, TYPE_INT, TYPE_OBJECT};
 
 /// Bit position of the 16 type-flag bits inside one raw `ValueRef`.
 pub const KIND_SHIFT: u32 = 48;
@@ -42,7 +42,7 @@ pub const INT_BOXED: u16 = 1;
 /// is untyped or its id is too large, in which case only the heap value is authoritative.
 pub const MAX_INLINE_TYPE_ID: u32 = u16::MAX as u32 - 1;
 
-/// Converts one source-visible `exs_abi::TYPE_*` bit into the 16-bit kind field.
+/// Converts one source-visible `crate::TYPE_*` bit into the 16-bit kind field.
 #[inline]
 #[must_use]
 pub const fn type_kind(type_bit: u32) -> u16 {

@@ -8,9 +8,9 @@ use exs_abi::{
     RESULT_VALUE_EXPORT, START_EXPORT_PREFIX, VM_EXPORT,
 };
 use exs_abi::{CANCEL_EXPORT, RESUME_HOST_EXPORT};
-use exs_abi::{TYPE_BYTES, TYPE_STRING};
+use exs_layout::value::layout::type_kind;
 use exs_layout::{GC_STATIC, ObjectKind, VmState};
-use exs_value::layout::type_kind;
+use exs_layout::{TYPE_BYTES, TYPE_STRING};
 use wasm_encoder::reencode::{self, Reencode};
 use wasm_encoder::{
     CodeSection, ConstExpr, CustomSection, DataSection, ExportKind, ExportSection, Function,
@@ -578,7 +578,7 @@ impl StaticStrings {
         self.bytes.extend(0_u32.to_le_bytes());
         self.bytes.extend(literal.as_bytes());
         self.bytes.resize(self.bytes.len().next_multiple_of(8), 0);
-        Some(exs_value::ValueRef::from_parts(type_kind(type_bit), 0, address)?.raw())
+        Some(exs_layout::ValueRef::from_parts(type_kind(type_bit), 0, address)?.raw())
     }
 
     /// Returns the first address after the static objects.

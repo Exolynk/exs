@@ -84,6 +84,6 @@ pub(super) fn reference(address: u32) -> u64 {
     if address == 0 {
         return 0;
     }
-    exs_value::ValueRef::from_parts(exs_value::layout::KIND_FRAME, 0, address)
-        .map_or(0, exs_value::ValueRef::raw)
+    exs_layout::ValueRef::from_parts(exs_layout::value::layout::KIND_FRAME, 0, address)
+        .map_or(0, exs_layout::ValueRef::raw)
 }

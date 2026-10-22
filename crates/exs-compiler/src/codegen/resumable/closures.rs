@@ -1,7 +1,7 @@
 //! Closure calls in resumable code: a closure that may suspend runs as a child frame, any
 //! other value goes through the synchronous closure call.
 
-use exs_abi::{STATUS_READY, TYPE_FN};
+use exs_layout::{STATUS_READY, TYPE_FN};
 use wasm_encoder::{BlockType, Instruction};
 
 use super::layouts::ClosureStep;

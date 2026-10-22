@@ -7,9 +7,9 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::TYPE_OBJECT;
+use exs_layout::TYPE_OBJECT;
+use exs_layout::value::layout::{tag, type_kind};
 use exs_layout::{BufferObject, ObjectObject};
-use exs_value::layout::{tag, type_kind};
 use wasm_encoder::{BlockType, Instruction};
 
 use super::collections::u32_field;

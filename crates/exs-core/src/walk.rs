@@ -7,7 +7,7 @@
 //! variant names, and Errors their kind, message, data, origin, trace and cause. Closures,
 //! Cells and nesting beyond [`MAX_DEPTH`] cannot cross the boundary.
 
-use exs_value::{Immediate, ValueRef};
+use exs_layout::{Immediate, ValueRef};
 
 use crate::bytes::{bytes_len, bytes_object};
 use crate::enums::{enum_object, field_address as enum_field, names, payload_count};

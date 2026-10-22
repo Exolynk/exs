@@ -47,7 +47,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.core_call("__exs_core_datetime_parse", span)?;
         let parsed = self.store_new();
         self.instruction(Instruction::LocalGet(parsed));
-        immediate::type_mask_test(&mut self.function, exs_abi::TYPE_ERROR);
+        immediate::type_mask_test(&mut self.function, exs_layout::TYPE_ERROR);
         self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
         self.instruction(Instruction::LocalGet(parsed));
         self.instruction(Instruction::Else);

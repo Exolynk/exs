@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 
-use exs_abi::TYPE_OBJECT;
-use exs_value::layout::{EXTRA_SHIFT, HEAP_TYPE_EXTRA, nominal_tag, tag, type_kind};
+use exs_layout::TYPE_OBJECT;
+use exs_layout::value::layout::{EXTRA_SHIFT, HEAP_TYPE_EXTRA, nominal_tag, tag, type_kind};
 use wasm_encoder::{BlockType, Instruction, ValType};
 
 use super::collections::{u32_field, value_field};
@@ -262,7 +262,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             MatchArmBody::Expression(value) => self.compile_expression(value)?,
             MatchArmBody::Block(block) => {
                 self.compile_block(block)?;
-                immediate::push(&mut self.function, exs_value::ValueRef::NONE);
+                immediate::push(&mut self.function, exs_layout::ValueRef::NONE);
             }
         }
         self.store(result);

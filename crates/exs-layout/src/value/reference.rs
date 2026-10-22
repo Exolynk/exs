@@ -2,16 +2,16 @@
 
 use core::num::NonZeroU64;
 
-use exs_abi::TYPE_OBJECT;
+use crate::types::TYPE_OBJECT;
 
-use crate::layout::{EXTRA_SHIFT, KIND_SHIFT, type_kind};
+use super::layout::{EXTRA_SHIFT, KIND_SHIFT, type_kind};
 
 /// An opaque 64-bit tagged reference to one `ExS` value.
 ///
 /// Bits 63..48 hold exactly one kind flag, bits 47..32 hold kind-specific extra bits and bits
 /// 31..0 hold the payload: either an immediate scalar or the linear-memory address of a heap
 /// object. Because a kind flag is always set, a valid reference is never zero. The layout is
-/// defined in [`crate::layout`]; generated code and the core library create heap references,
+/// defined in [`super::layout`]; generated code and the core library create heap references,
 /// and runners read them from module memory as an `i64` and may test the documented bits.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -76,14 +76,14 @@ impl ValueRef {
         self.0.get() as u32
     }
 
-    /// Returns the source-visible `exs_abi::TYPE_*` mask of this value, 0 for internal kinds.
+    /// Returns the source-visible `crate::TYPE_*` mask of this value, 0 for internal kinds.
     #[inline]
     #[must_use]
     pub const fn type_mask(self) -> u32 {
-        self.kind() as u32 & exs_abi::TYPE_ANY
+        self.kind() as u32 & crate::TYPE_ANY
     }
 
-    /// Returns whether this value's type is one of the `exs_abi::TYPE_*` bits in `mask`.
+    /// Returns whether this value's type is one of the `crate::TYPE_*` bits in `mask`.
     #[inline]
     #[must_use]
     pub const fn has_type(self, mask: u32) -> bool {
@@ -93,7 +93,7 @@ impl ValueRef {
     /// Returns the nominal type id encoded in an Object's extra bits.
     ///
     /// `None` means the value is no Object, an untyped Object, or an Object whose id exceeds
-    /// [`crate::layout::MAX_INLINE_TYPE_ID`] and is only known to the heap value.
+    /// [`super::layout::MAX_INLINE_TYPE_ID`] and is only known to the heap value.
     #[inline]
     #[must_use]
     pub const fn inline_type_id(self) -> Option<u32> {

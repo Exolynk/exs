@@ -10,7 +10,7 @@ use exs_abi::image::{
     RECORD_FLOAT, RECORD_HEADER_SIZE, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT,
     RECORD_STRING,
 };
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::boundary::BoundaryError;
 use crate::bytes::new_bytes;

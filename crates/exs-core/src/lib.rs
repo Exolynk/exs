@@ -63,7 +63,7 @@ pub use errors::{
     nominal_arity_error, not_an_iterator, not_error, type_mismatch, wire_mismatch,
 };
 pub use execution::{init_execution, reserve_input};
-pub use exs_abi::BuiltinMethod;
+pub use exs_layout::BuiltinMethod;
 pub use exs_layout::{ObjectKind, StaticFunction};
 pub use image::{image_arity_error, image_inputs, image_variadic_inputs};
 pub use lists::{for_snapshot, list_add, list_copy, list_new, list_object};

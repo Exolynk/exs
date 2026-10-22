@@ -1,6 +1,6 @@
 //! String concatenation and comparison tests.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use super::heap::{Heap, VM};
 use crate::{Memory, Ordering, compare, concat, equal, float_value, int_value, string_object};

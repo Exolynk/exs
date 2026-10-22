@@ -1,6 +1,6 @@
 //! Numeric operation tests.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use super::heap::{Heap, VM};
 use crate::{

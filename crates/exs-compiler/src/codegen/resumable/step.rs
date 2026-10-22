@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{STATUS_READY, TYPE_ERROR};
 use exs_layout::FrameObject;
+use exs_layout::{STATUS_READY, TYPE_ERROR};
 use wasm_encoder::{BlockType, Function, Instruction};
 
 use super::constants::{constant, constant_slots};

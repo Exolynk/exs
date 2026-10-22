@@ -8,8 +8,8 @@
 
 use core::mem::offset_of;
 
-use exs_abi::{TYPE_ERROR, TYPE_NONE};
 use exs_layout::{ERROR_FATAL, VmState};
+use exs_layout::{TYPE_ERROR, TYPE_NONE};
 use wasm_encoder::{BlockType, Function, Instruction, MemArg};
 
 use super::collections::u32_field;

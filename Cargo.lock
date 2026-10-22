@@ -838,7 +838,6 @@ dependencies = [
  "exs-abi",
  "exs-core-template",
  "exs-layout",
- "exs-value",
  "wasm-encoder 0.245.1",
  "wasmparser 0.245.1",
 ]
@@ -849,7 +848,6 @@ version = "0.1.0"
 dependencies = [
  "exs-abi",
  "exs-layout",
- "exs-value",
  "libm",
 ]
 
@@ -904,7 +902,6 @@ dependencies = [
  "exs-abi",
  "exs-compiler",
  "exs-core",
- "exs-value",
  "jiff",
  "js-sys",
  "serde",
@@ -919,13 +916,6 @@ version = "0.1.0"
 dependencies = [
  "exs-guest",
  "exs-runner",
-]
-
-[[package]]
-name = "exs-value"
-version = "0.1.0"
-dependencies = [
- "exs-abi",
 ]
 
 [[package]]

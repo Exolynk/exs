@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use exs_abi::STANDARD_ORDERING_TYPE_ID;
+use exs_layout::STANDARD_ORDERING_TYPE_ID;
 
 use super::units::Unit;
 use crate::ast::{

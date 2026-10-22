@@ -11,10 +11,10 @@
 
 use core::mem::size_of;
 
-use exs_abi::TYPE_OBJECT;
+use exs_layout::TYPE_OBJECT;
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{nominal_extra, nominal_tag, tag, type_kind};
 use exs_layout::{ObjectKind, TypedObject};
-use exs_value::ValueRef;
-use exs_value::layout::{nominal_extra, nominal_tag, tag, type_kind};
 use wasm_encoder::{BlockType, Instruction};
 
 use super::collections::{u32_field, value_field};

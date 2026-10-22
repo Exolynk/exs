@@ -1,6 +1,6 @@
 //! Compiler-owned declarations for globally available standard protocols.
 
-use exs_abi::{TYPE_ANY, TYPE_BOOL, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_STRING};
+use exs_layout::{TYPE_ANY, TYPE_BOOL, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_STRING};
 
 use crate::ast::Expression;
 

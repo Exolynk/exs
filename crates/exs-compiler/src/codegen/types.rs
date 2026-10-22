@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use exs_abi::{
+use exs_layout::{
     STANDARD_ORDERING_TYPE_ID, STANDARD_ORDERING_TYPE_IDENTITY, TYPE_ANY, TYPE_BOOL, TYPE_ERROR,
     TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE, TYPE_OBJECT, TYPE_STRING,
 };
@@ -722,7 +722,7 @@ fn builtin_mask(name: &str) -> Option<u32> {
         "Int" => Some(TYPE_INT),
         "Float" => Some(TYPE_FLOAT),
         "String" => Some(TYPE_STRING),
-        "Bytes" => Some(exs_abi::TYPE_BYTES),
+        "Bytes" => Some(exs_layout::TYPE_BYTES),
         "List" => Some(TYPE_LIST),
         "Object" => Some(TYPE_OBJECT),
         "Fn" => Some(TYPE_FN),

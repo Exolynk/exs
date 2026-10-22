@@ -6,9 +6,6 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-pub use builtin_method::BuiltinMethod;
-
-mod builtin_method;
 pub mod image;
 #[cfg(feature = "serde")]
 mod serde;
@@ -61,41 +58,6 @@ pub use value::{
 /// module memory, and no longer as CBOR.
 pub const ABI_VERSION: u32 = 26;
 
-/// Runtime type-mask bit for None.
-pub const TYPE_NONE: u32 = 1 << 0;
-/// Runtime type-mask bit for Error.
-pub const TYPE_ERROR: u32 = 1 << 1;
-/// Runtime type-mask bit for Bool.
-pub const TYPE_BOOL: u32 = 1 << 2;
-/// Runtime type-mask bit for Int.
-pub const TYPE_INT: u32 = 1 << 3;
-/// Runtime type-mask bit for Float.
-pub const TYPE_FLOAT: u32 = 1 << 4;
-/// Runtime type-mask bit for String.
-pub const TYPE_STRING: u32 = 1 << 5;
-/// Runtime type-mask bit for List.
-pub const TYPE_LIST: u32 = 1 << 6;
-/// Runtime type-mask bit for Object.
-pub const TYPE_OBJECT: u32 = 1 << 7;
-/// Runtime type-mask bit for callable closure values.
-pub const TYPE_FN: u32 = 1 << 8;
-/// Runtime type-mask bit for immutable byte sequences.
-pub const TYPE_BYTES: u32 = 1 << 9;
-/// Runtime type-mask accepting every current source-visible value type.
-pub const TYPE_ANY: u32 = TYPE_NONE
-    | TYPE_ERROR
-    | TYPE_BOOL
-    | TYPE_INT
-    | TYPE_FLOAT
-    | TYPE_STRING
-    | TYPE_LIST
-    | TYPE_OBJECT
-    | TYPE_FN
-    | TYPE_BYTES;
-/// Reserved nominal type tag used by the compiler-owned `std::Ordering` enum.
-pub const STANDARD_ORDERING_TYPE_ID: u32 = 0;
-/// Stable host-boundary identity used by the compiler-owned `std::Ordering` enum.
-pub const STANDARD_ORDERING_TYPE_IDENTITY: &str = "std::Ordering";
 /// Stable host-boundary identity used by the compiler-owned `IteratorStep` enum.
 pub const STANDARD_ITERATOR_STEP_TYPE_IDENTITY: &str = "<std>/iterator.exs::IteratorStep";
 /// Runner-internal host name used by the built-in `Host::sleep` operation.
@@ -213,19 +175,11 @@ pub const CANCEL_EXPORT: &str = "__exs_cancel";
 
 /// A successfully completed execution.
 pub const STATUS_COMPLETE: i32 = 2;
-/// A runnable execution that needs another runner turn.
-pub const STATUS_READY: i32 = 0;
 /// A root execution suspended while waiting for a host-call completion.
 pub const STATUS_PENDING: i32 = 1;
 /// A root execution was cancelled before its pending host call completed.
 pub const STATUS_CANCELLED: i32 = 3;
 
-/// Returned by the core library's Range start when a for loop must iterate the Range Object itself.
-pub const RANGE_BEGIN_FALLBACK: i64 = 0x8000_0000;
-/// Inline Range loop state after the last item was yielded.
-pub const RANGE_STATE_LAST: i64 = 1;
-/// Inline Range loop state after another item was requested past the last one.
-pub const RANGE_STATE_FINISHED: i64 = 2;
 /// A host call completed synchronously and has a response available to the runtime.
 pub const HOST_CALL_READY: i32 = 0;
 /// A host call is pending and will be resumed by the runner.

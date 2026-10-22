@@ -5,10 +5,10 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{STANDARD_ORDERING_TYPE_ID, TYPE_OBJECT};
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{KIND_SHIFT, nominal_extra, type_kind};
 use exs_layout::{EnumObject, HOST_ENUM_VARIANT, ObjectKind};
-use exs_value::ValueRef;
-use exs_value::layout::{KIND_SHIFT, nominal_extra, type_kind};
+use exs_layout::{STANDARD_ORDERING_TYPE_ID, TYPE_OBJECT};
 
 use crate::allocator::allocate;
 use crate::memory::Memory;

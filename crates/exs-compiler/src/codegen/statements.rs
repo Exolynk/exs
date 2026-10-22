@@ -84,7 +84,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             Statement::Return { value, span } => {
                 match value {
                     Some(value) => self.compile_expression(value)?,
-                    None => immediate::push(&mut self.function, exs_value::ValueRef::NONE),
+                    None => immediate::push(&mut self.function, exs_layout::ValueRef::NONE),
                 }
                 self.return_value(*span)?;
             }

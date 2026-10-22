@@ -2,9 +2,9 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::TYPE_OBJECT;
+use exs_layout::TYPE_OBJECT;
+use exs_layout::value::layout::{KIND_SHIFT, type_kind};
 use exs_layout::{ObjectKind, TypeEntry, TypedObject};
-use exs_value::layout::{KIND_SHIFT, type_kind};
 
 use crate::memory::Memory;
 use crate::strings::{string_object, strings_equal};
@@ -135,7 +135,7 @@ pub(crate) fn allocate_typed(
     let object = crate::allocator::allocate(memory, vm, size, ObjectKind::TypedObject)?;
     memory.store_u32(object + TYPE_ID, type_id);
     memory.store_u32(object + SLOT_COUNT, slots);
-    let extra = exs_value::layout::nominal_extra(type_id);
-    exs_value::ValueRef::from_parts(type_kind(TYPE_OBJECT), extra, object)
-        .map(exs_value::ValueRef::raw)
+    let extra = exs_layout::value::layout::nominal_extra(type_id);
+    exs_layout::ValueRef::from_parts(type_kind(TYPE_OBJECT), extra, object)
+        .map(exs_layout::ValueRef::raw)
 }

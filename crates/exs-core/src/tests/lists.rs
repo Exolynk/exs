@@ -2,7 +2,7 @@
 
 use exs_abi::ExsValue;
 use exs_layout::VM_FLAG_COLLECT_EVERY_ALLOCATION;
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use super::execution::Execution;
 use super::heap::VM;

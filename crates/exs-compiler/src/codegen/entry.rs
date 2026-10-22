@@ -4,9 +4,10 @@ use std::collections::HashMap;
 
 use core::mem::offset_of;
 
-use exs_abi::{ABI_VERSION, STATUS_COMPLETE, TYPE_FLOAT, TYPE_INT};
+use exs_abi::{ABI_VERSION, STATUS_COMPLETE};
+use exs_layout::value::layout::{EXTRA_SHIFT, INT_BOXED, KIND_SHIFT, type_kind};
 use exs_layout::{FreeCell, ObjectKind, VmState};
-use exs_value::layout::{EXTRA_SHIFT, INT_BOXED, KIND_SHIFT, type_kind};
+use exs_layout::{TYPE_FLOAT, TYPE_INT};
 use wasm_encoder::{BlockType, Function, Instruction, MemArg, ValType};
 
 use crate::codegen::{VALUE_TYPE, immediate};

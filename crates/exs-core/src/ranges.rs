@@ -5,9 +5,9 @@
 //! instead; any other Range, and a step that would overflow or leave the immediate range,
 //! falls back to `Range::next`, which then reports what the prelude reports.
 
-use exs_abi::{RANGE_BEGIN_FALLBACK, RANGE_STATE_FINISHED, RANGE_STATE_LAST};
-use exs_value::ValueRef;
-use exs_value::layout::{EXTRA_SHIFT, SMALL_INT_TAG};
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{EXTRA_SHIFT, SMALL_INT_TAG};
+use exs_layout::{RANGE_BEGIN_FALLBACK, RANGE_STATE_FINISHED, RANGE_STATE_LAST};
 
 use crate::memory::Memory;
 use crate::typed::{slot_address, slot_count, type_id, typed_object};

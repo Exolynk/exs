@@ -10,11 +10,11 @@
 
 use core::mem::{offset_of, size_of};
 
+use exs_layout::ValueRef;
 use exs_layout::{
     GC_MARK, GC_STATIC, ObjectKind, PAGE_HEADER_SIZE, PAGE_SIZE, PageKind, RootRange, SIZE_CLASSES,
     ValueSlots, trace_layout,
 };
-use exs_value::ValueRef;
 
 use crate::allocator::{
     INITIAL_COLLECTION_THRESHOLD, LARGE_CLASS, page_of, used_cells, write_free_cell,

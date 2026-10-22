@@ -1,6 +1,6 @@
 //! Bytes methods and constructors with v1's results, Errors and order of checks.
 
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 use crate::bytes::{bytes_len, bytes_object, new_bytes, octets};
 use crate::errors::recoverable;

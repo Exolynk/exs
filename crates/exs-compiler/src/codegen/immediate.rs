@@ -5,8 +5,8 @@
 //! helper reproduces the runtime result exactly; operands that are not immediates keep using the
 //! existing runtime calls and operator dispatch.
 
-use exs_value::ValueRef;
-use exs_value::layout::{BOOL_TAG, EXTRA_SHIFT, KIND_SHIFT, SMALL_INT_TAG};
+use exs_layout::ValueRef;
+use exs_layout::value::layout::{BOOL_TAG, EXTRA_SHIFT, KIND_SHIFT, SMALL_INT_TAG};
 use wasm_encoder::{BlockType, Function, Instruction};
 
 use super::VALUE_TYPE;

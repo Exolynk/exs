@@ -8,7 +8,7 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::TYPE_FN;
+use exs_layout::TYPE_FN;
 use exs_layout::{CellObject, ClosureObject};
 use wasm_encoder::{BlockType, Function, Instruction};
 
@@ -227,7 +227,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         contract: &crate::codegen::types::TypeContract,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if contract.builtin_mask == exs_abi::TYPE_ANY {
+        if contract.builtin_mask == exs_layout::TYPE_ANY {
             return Ok(());
         }
         let index = self.scalar_local();

@@ -2,7 +2,8 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{STATUS_COMPLETE, STATUS_READY};
+use exs_abi::STATUS_COMPLETE;
+use exs_layout::STATUS_READY;
 use exs_layout::{FRAME_UNTRACED, FrameObject, ObjectKind};
 
 use super::host::Host;

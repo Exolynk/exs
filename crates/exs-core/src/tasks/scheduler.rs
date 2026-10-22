@@ -7,7 +7,8 @@
 
 use core::mem::{offset_of, size_of};
 
-use exs_abi::{STATUS_PENDING, STATUS_READY};
+use exs_abi::STATUS_PENDING;
+use exs_layout::STATUS_READY;
 use exs_layout::{FRAME_UNTRACED, FrameObject, ObjectKind, TaskObject};
 
 use super::host::Host;

@@ -1,6 +1,6 @@
-//! Dispatch of built-in receiver methods by their `exs_abi::BuiltinMethod` index.
+//! Dispatch of built-in receiver methods by their `exs_layout::BuiltinMethod` index.
 
-use exs_abi::BuiltinMethod;
+use exs_layout::BuiltinMethod;
 
 use crate::bytes::bytes_object;
 use crate::lists::list_object;
@@ -18,7 +18,7 @@ use crate::methods::values::{ErrorPart, error_part, is_empty, length, operator, 
 use crate::methods::{bytes, lists, objects, strings};
 use crate::numbers::Arithmetic;
 use crate::strings::string_object;
-use exs_value::ValueRef;
+use exs_layout::ValueRef;
 
 /// Calls the built-in method `method` on `receiver` with up to two arguments, like v1's
 /// `call_builtin`; all three values must be rooted.
