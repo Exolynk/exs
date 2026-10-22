@@ -16,7 +16,7 @@ use crate::objects::{
 use crate::shapes::{key, key_count};
 use crate::strings::string_object;
 use crate::typed::{
-    extra, ordered_slot, set_extra, slot_address, slot_count, type_entry, type_id, typed_object,
+    extra, ordered_slot, slot_address, slot_count, type_entry, type_id, typed_object,
 };
 use crate::vm::Vm;
 
@@ -195,35 +195,25 @@ pub(crate) fn delete(memory: &mut impl Memory, vm: u32, raw: u64, name_raw: u64)
     )) {
         Receiver::Enum => None,
         Receiver::Untyped(object) => object_remove(memory, vm, object, name)?,
-        Receiver::Typed(object) => {
-            match crate::typed::field_address(memory, vm, object, name_raw) {
-                Some(slot) => {
-                    let value = memory.load_u64(slot);
-                    memory.store_u64(slot, 0);
-                    (value != 0).then_some(value)
-                }
-                None => match extra(memory, object) {
-                    0 => None,
-                    keys => object_remove(memory, vm, keys, name)?,
-                },
-            }
+        Receiver::Typed(_) => {
+            return type_error(memory, vm, NOMINAL_FIELDS_FIXED, raw);
         }
     };
     Some(removed.unwrap_or(ValueRef::NONE.raw()))
 }
 
-/// Removes every entry of an Object receiver.
-pub(crate) fn clear(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<()> {
+/// Message of the TypeError for removing the fields of a nominal value.
+const NOMINAL_FIELDS_FIXED: &str = "the fields of a nominal value cannot be removed";
+
+/// Removes every entry of an Object receiver and returns None, or the TypeError for a nominal
+/// value, whose fields cannot be removed.
+pub(crate) fn clear(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
     match object(memory, raw)? {
-        Receiver::Enum => Some(()),
-        Receiver::Untyped(object) => object_clear(memory, vm, object),
-        Receiver::Typed(object) => {
-            let declared = slot_count(memory, object);
-            memory.fill(slot_address(object, 0), declared * 8, 0);
-            set_extra(memory, object, 0);
-            Some(())
-        }
+        Receiver::Enum => {}
+        Receiver::Untyped(object) => object_clear(memory, vm, object)?,
+        Receiver::Typed(_) => return type_error(memory, vm, NOMINAL_FIELDS_FIXED, raw),
     }
+    Some(ValueRef::NONE.raw())
 }
 
 /// Returns whether `raw` is an Object.

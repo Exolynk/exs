@@ -9,9 +9,9 @@ use crate::errors::recoverable;
 use crate::lists::{item_address, len, list_object};
 use crate::memory::Memory;
 use crate::numbers::{Number, number, reference};
-use crate::objects::{empty_object, object_get, object_set, untyped_object};
+use crate::objects::{object_get, object_set, untyped_object};
 use crate::strings::string_object;
-use crate::typed::{extra, field_address, set_extra, typed_object};
+use crate::typed::{field_address, typed_object};
 
 /// Message of the TypeError for an Object key that is no String.
 const KEY_NOT_STRING: &str = "Object keys and method names require a String value";
@@ -70,8 +70,8 @@ enum KeyOwner {
     Field(u32),
     /// The keys of an untyped Object.
     Untyped(u32),
-    /// The extra keys of the typed Object at this address.
-    Extra(u32),
+    /// A key the type of a typed Object does not declare.
+    Undeclared,
     /// An enum, an Object without keys.
     Enum,
 }
@@ -81,7 +81,7 @@ fn key_owner(memory: &impl Memory, vm: u32, receiver: u64, name: u64) -> Option<
     if let Some(object) = typed_object(memory, receiver) {
         return Some(match field_address(memory, vm, object, name) {
             Some(slot) => KeyOwner::Field(slot),
-            None => KeyOwner::Extra(object),
+            None => KeyOwner::Undeclared,
         });
     }
     if crate::enums::enum_object(memory, receiver).is_some() {
@@ -114,25 +114,28 @@ pub fn index_get(memory: &mut impl Memory, vm: u32, receiver: u64, index: u64) -
         return recoverable(memory, vm, "TypeError", KEY_NOT_STRING, index);
     };
     Some(match owner {
-        // A declared field removed by `delete` or `clear` reads as None.
+        // An empty declared slot reads as None.
         KeyOwner::Field(slot) => match memory.load_u64(slot) {
             0 => ValueRef::NONE.raw(),
             value => value,
         },
         KeyOwner::Untyped(object) => object_get(memory, object, name),
-        KeyOwner::Enum => ValueRef::NONE.raw(),
-        KeyOwner::Extra(typed) => match extra(memory, typed) {
-            0 => ValueRef::NONE.raw(),
-            keys => object_get(memory, keys, name),
-        },
+        KeyOwner::Enum => return recoverable(memory, vm, "TypeError", NO_ENUM_FIELDS, index),
+        KeyOwner::Undeclared => return recoverable(memory, vm, "TypeError", NO_SUCH_FIELD, index),
     })
 }
+
+/// Message of the TypeError for a field the type of a nominal value does not declare.
+const NO_SUCH_FIELD: &str = "the nominal type declares no such field";
+
+/// Message of the TypeError for a property of an enum, whose payload `match` binds.
+const NO_ENUM_FIELDS: &str = "enum values have no properties; bind their payload with match";
 
 /// Evaluates `receiver[index] = value` for Lists and Objects and returns `value`, or the Error
 /// the assignment produced.
 ///
-/// Typed Objects keep keys their type does not declare in an untyped extra Object. All values
-/// must be rooted, because adding a key may allocate.
+/// Nominal values only have their declared fields. All values must be rooted, because adding a
+/// key to an untyped Object may allocate.
 pub fn index_set(
     memory: &mut impl Memory,
     vm: u32,
@@ -163,25 +166,12 @@ pub fn index_set(
     }
     let object = match owner {
         KeyOwner::Field(slot) => {
-            // A removed declared field would have to come back after all other keys, an order
-            // the fixed slots cannot express, so restoring it is refused.
-            if memory.load_u64(slot) == 0 {
-                return None;
-            }
             memory.store_u64(slot, value);
             return Some(value);
         }
         KeyOwner::Untyped(object) => object,
-        // Keys on enums could only be seen through Object methods, so they are refused.
-        KeyOwner::Enum => return None,
-        KeyOwner::Extra(typed) => match extra(memory, typed) {
-            0 => {
-                let created = empty_object(memory, vm, 0)?;
-                set_extra(memory, typed, created);
-                created
-            }
-            keys => keys,
-        },
+        KeyOwner::Enum => return recoverable(memory, vm, "TypeError", NO_ENUM_FIELDS, index),
+        KeyOwner::Undeclared => return recoverable(memory, vm, "TypeError", NO_SUCH_FIELD, index),
     };
     object_set(memory, vm, object, index, value)?;
     Some(value)

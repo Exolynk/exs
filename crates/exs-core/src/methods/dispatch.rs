@@ -136,7 +136,7 @@ pub fn call_builtin(
             if let Some(list) = list_object(receiver) {
                 lists::clear(memory, list);
             } else if objects::is_object(memory, receiver) {
-                objects::clear(memory, vm, receiver)?;
+                return objects::clear(memory, vm, receiver);
             } else {
                 return type_error(
                     memory,

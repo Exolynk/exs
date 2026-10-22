@@ -20,8 +20,7 @@ fn keeps_typed_object_field_order() {
             fn main(input) -> List {
                 let point = Point { z: 3, x: 1 };
                 point.y = 2;
-                point.extra = 4;
-                ret [point.keys(), point.y, point.extra];
+                ret [point.keys(), point.y];
             }
         "#,
             ExsValue::None,
@@ -31,10 +30,39 @@ fn keeps_typed_object_field_order() {
                 ExsValue::String("z".to_owned()),
                 ExsValue::String("x".to_owned()),
                 ExsValue::String("y".to_owned()),
-                ExsValue::String("extra".to_owned()),
             ]),
             ExsValue::Int(2),
-            ExsValue::Int(4),
+        ]),
+    );
+}
+
+/// Refuses reading fields a nominal type does not declare and removing declared fields.
+#[test]
+fn refuses_undeclared_and_removed_nominal_fields() {
+    assert_eq!(
+        execute_source(
+            r#"
+            type Point { x: Int }
+            enum Color { Red }
+            fn main(input) -> List {
+                let point = Point { x: 1 };
+                ret [
+                    (point.y) is Error,
+                    point.delete("x") is Error,
+                    point.clear() is Error,
+                    (Color::Red.name) is Error,
+                    point.x,
+                ];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Int(1),
         ]),
     );
 }

@@ -97,14 +97,14 @@ fn accesses_list_elements_and_fields() {
     );
     let memory = &mut execution.memory;
     assert_eq!(property_get(memory, VM, point, x), Some(one));
-    assert_eq!(
-        property_get(memory, VM, point, z),
-        Some(ValueRef::NONE.raw())
-    );
     assert_eq!(property_set(memory, VM, point, y, two), Some(two));
     assert_eq!(index_get(memory, VM, point, y), Some(two));
-    assert_eq!(property_set(memory, VM, point, z, two), Some(two));
-    assert_eq!(property_get(memory, VM, point, z), Some(two));
+    // Nominal values only have their declared fields.
+    let error = property_get(&mut execution.memory, VM, point, z).expect("room");
+    assert_eq!(execution.error_kind(error), "TypeError");
+    let error = property_set(&mut execution.memory, VM, point, z, two).expect("room");
+    assert_eq!(execution.error_kind(error), "TypeError");
+    let memory = &mut execution.memory;
     let error = property_get(memory, VM, point, one).expect("room");
     assert_eq!(
         execution.error(error).2,

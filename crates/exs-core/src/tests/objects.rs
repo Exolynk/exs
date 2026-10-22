@@ -114,20 +114,15 @@ fn builds_objects_while_collecting_at_every_allocation() {
     );
 }
 
-/// Encodes extra keys of typed Objects after the declared fields.
+/// Refuses keys a nominal type does not declare and encodes only the declared fields.
 #[test]
-fn encodes_extra_keys_of_typed_objects() {
+fn refuses_undeclared_keys_of_typed_objects() {
     let mut execution = Execution::new();
     let point = execution.typed_object(&["x"], &[Execution::int(1)]);
     let label = execution.string("label");
-    property_set(&mut execution.memory, VM, point, label, label).expect("room");
-    assert_eq!(
-        execution.encoded(point),
-        object(&[
-            ("x", ExsValue::Int(1)),
-            ("label", ExsValue::String("label".into())),
-        ])
-    );
+    let error = property_set(&mut execution.memory, VM, point, label, label).expect("room");
+    assert_eq!(execution.error_kind(error), "TypeError");
+    assert_eq!(execution.encoded(point), object(&[("x", ExsValue::Int(1))]));
 }
 
 /// Rejects Objects with repeated keys.
