@@ -277,6 +277,17 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
         /// Source location for this match pattern.
         span: SourceSpan<'source>,
     },
+    /// Tests whether one value equals a literal `match` pattern.
+    LiteralMatches {
+        /// Frame slot holding the value under test.
+        value: u32,
+        /// The literal pattern.
+        literal: &'function Expression<'source>,
+        /// Frame slot receiving the Boolean test result.
+        destination: u32,
+        /// Source location for this match pattern.
+        span: SourceSpan<'source>,
+    },
     /// Reads one payload field from an enum value selected by a preceding match test.
     EnumField {
         value: u32,
@@ -747,6 +758,7 @@ pub(in crate::codegen) fn operation_span<'source>(
         | Operation::TypedObject { span, .. }
         | Operation::Enum { span, .. }
         | Operation::EnumMatches { span, .. }
+        | Operation::LiteralMatches { span, .. }
         | Operation::EnumField { span, .. }
         | Operation::MatchError { span, .. }
         | Operation::IsType { span, .. }

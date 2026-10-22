@@ -322,5 +322,6 @@ pub(crate) fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a>
 fn match_pattern_span<'a>(pattern: &MatchPattern<'a>) -> SourceSpan<'a> {
     match pattern {
         MatchPattern::Variant { span, .. } | MatchPattern::Wildcard(span) => *span,
+        MatchPattern::Literal(literal) => expression_span(literal),
     }
 }

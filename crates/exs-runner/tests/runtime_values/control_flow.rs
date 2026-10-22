@@ -111,3 +111,55 @@ fn reads_variable_operands_before_later_rebinding() {
         assert_eq!(execute_source(source, ExsValue::None), expected);
     }
 }
+
+/// Matches literal patterns of every literal kind, in direct and resumable functions.
+#[test]
+fn matches_literal_patterns() {
+    let source = r#"
+        fn describe(value) -> String {
+            ret match value {
+                0 => "zero",
+                -1 => "minus one",
+                1.5 => "one and a half",
+                "admin" => "administrator",
+                true => "yes",
+                None => "nothing",
+                b"x" => "bytes",
+                _ => "other",
+            };
+        }
+
+        fn strict(value) {
+            ret match value { 1 => "one", 2 => "two" };
+        }
+
+        fn main(input) -> List {
+            ret [
+                describe(0), describe(-1), describe(1.5), describe("admin"), describe(true),
+                describe(None), describe(b"x"), describe(7), describe(0.0), strict(2),
+                strict(3) is Error,
+            ];
+        }
+    "#;
+    let expected = ExsValue::List(vec![
+        ExsValue::String("zero".to_owned()),
+        ExsValue::String("minus one".to_owned()),
+        ExsValue::String("one and a half".to_owned()),
+        ExsValue::String("administrator".to_owned()),
+        ExsValue::String("yes".to_owned()),
+        ExsValue::String("nothing".to_owned()),
+        ExsValue::String("bytes".to_owned()),
+        ExsValue::String("other".to_owned()),
+        ExsValue::String("zero".to_owned()),
+        ExsValue::String("two".to_owned()),
+        ExsValue::Bool(true),
+    ]);
+    let resumable = source.replace(
+        "ret match value {\n                0",
+        "Host::sleep(Duration::milliseconds(0));\n            ret match value {\n                0",
+    );
+    assert_ne!(resumable, source);
+    for source in [source, resumable.as_str()] {
+        assert_eq!(execute_source(source, ExsValue::None), expected);
+    }
+}

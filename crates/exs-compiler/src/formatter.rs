@@ -857,7 +857,7 @@ fn formatted_string(
     format!("{prefix}{hashes}\"{body}\"{hashes}")
 }
 
-/// Renders one enum-variant or fallback match pattern.
+/// Renders one enum-variant, literal, or fallback match pattern.
 fn render_match_pattern(pattern: &crate::ast::MatchPattern<'_>) -> String {
     match pattern {
         crate::ast::MatchPattern::Variant {
@@ -882,6 +882,7 @@ fn render_match_pattern(pattern: &crate::ast::MatchPattern<'_>) -> String {
                 .join(", ")
         ),
         crate::ast::MatchPattern::Wildcard(_) => "_".to_owned(),
+        crate::ast::MatchPattern::Literal(literal) => render_expression(literal),
     }
 }
 

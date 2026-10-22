@@ -387,6 +387,9 @@ impl<'a> SourceMap<'a> {
                             }
                         }
                         crate::ast::MatchPattern::Wildcard(span) => self.insert(*span),
+                        crate::ast::MatchPattern::Literal(literal) => {
+                            self.collect_expression(literal);
+                        }
                     }
                     match &arm.body {
                         crate::ast::MatchArmBody::Expression(value) => {

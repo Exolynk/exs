@@ -561,6 +561,7 @@ fn highlight_expression(
                         }
                     }
                     MatchPattern::Wildcard(..) => {}
+                    MatchPattern::Literal(literal) => highlight_expression(literal, spans, len),
                 }
                 match &arm.body {
                     MatchArmBody::Expression(expression) => {

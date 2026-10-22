@@ -407,8 +407,25 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses one qualified variant or wildcard match pattern.
+    /// Parses one qualified variant, literal, or wildcard match pattern.
     pub(super) fn match_pattern(&mut self) -> Result<MatchPattern<'a>, CompileDiagnostic<'a>> {
+        let literal = match &self.peek().kind {
+            TokenKind::Integer(_)
+            | TokenKind::Float(_)
+            | TokenKind::String(_)
+            | TokenKind::Bytes(_)
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::None => true,
+            TokenKind::Minus => matches!(
+                self.tokens.get(self.current + 1).map(|token| &token.kind),
+                Some(TokenKind::Integer(_) | TokenKind::Float(_))
+            ),
+            _ => false,
+        };
+        if literal {
+            return self.unary().map(MatchPattern::Literal);
+        }
         let first = self.identifier("expected match pattern")?;
         if first.name == "_" {
             return Ok(MatchPattern::Wildcard(first.span));

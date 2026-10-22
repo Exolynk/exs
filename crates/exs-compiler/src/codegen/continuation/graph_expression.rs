@@ -912,6 +912,43 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                         span: arm.span,
                     })?);
                 }
+                ArmTest::Literal => {
+                    let MatchPattern::Literal(literal) = &arm.pattern else {
+                        return Err(diagnostics(CompileDiagnostic::new(
+                            "E0999",
+                            arm.span,
+                            "literal arm without a literal pattern",
+                        )));
+                    };
+                    let span = expression_span(literal);
+                    let condition = self.temporary(span)?;
+                    self.operations.push(Operation::LiteralMatches {
+                        value,
+                        literal,
+                        destination: condition,
+                        span,
+                    });
+                    let branch = self.push(Operation::Branch {
+                        condition,
+                        when_true: 0,
+                        when_false: 0,
+                        span,
+                    })?;
+                    let arm_start = self.operations.len();
+                    let arm_value = self.lower_match_arm(value, arm, &[])?;
+                    self.operations.push(Operation::Copy {
+                        source: arm_value,
+                        destination,
+                        span: arm.span,
+                    });
+                    exits.push(self.push(Operation::Goto {
+                        target: 0,
+                        checkpoint: false,
+                        span: arm.span,
+                    })?);
+                    let next_arm = self.operations.len();
+                    self.set_branch_targets(branch, arm_start, next_arm, span)?;
+                }
                 ArmTest::Variant {
                     type_identity,
                     variant,

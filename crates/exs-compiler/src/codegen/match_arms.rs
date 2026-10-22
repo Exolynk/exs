@@ -14,6 +14,8 @@ use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 pub(super) enum ArmTest {
     /// The wildcard fallback, which always matches.
     Wildcard,
+    /// A literal, which matches values equal to it.
+    Literal,
     /// One enum variant, whose payload fields bind in declaration order.
     Variant {
         /// Stable host-boundary identity of the enum type.
@@ -35,6 +37,8 @@ pub(super) struct MatchArms<'registry> {
     enum_type_name: Option<String>,
     /// Whether a wildcard arm was seen.
     fallback: bool,
+    /// Source spellings of the literals already covered by an arm.
+    literals: HashSet<String>,
 }
 
 impl<'registry> MatchArms<'registry> {
@@ -46,6 +50,7 @@ impl<'registry> MatchArms<'registry> {
             enum_identity: None,
             enum_type_name: None,
             fallback: false,
+            literals: HashSet::new(),
         }
     }
 
@@ -65,6 +70,27 @@ impl<'registry> MatchArms<'registry> {
             MatchPattern::Wildcard(_) => {
                 self.fallback = true;
                 return Ok(ArmTest::Wildcard);
+            }
+            MatchPattern::Literal(literal) => {
+                let span = crate::parser::expression_span(literal);
+                if self.enum_identity.is_some() {
+                    return Err(diagnostics(CompileDiagnostic::new(
+                        "E0231",
+                        span,
+                        "match arms must all be enum variants or all literals",
+                    )));
+                }
+                if !self
+                    .literals
+                    .insert(crate::formatter::render_expression(literal))
+                {
+                    return Err(diagnostics(CompileDiagnostic::new(
+                        "E0231",
+                        span,
+                        "duplicate match literal arm",
+                    )));
+                }
+                return Ok(ArmTest::Literal);
             }
             MatchPattern::Variant {
                 type_name,
@@ -89,6 +115,13 @@ impl<'registry> MatchArms<'registry> {
                     "enum pattern `{key}` expects {} bindings",
                     variant_data.fields.len()
                 ),
+            )));
+        }
+        if !self.literals.is_empty() {
+            return Err(diagnostics(CompileDiagnostic::new(
+                "E0231",
+                pattern_span,
+                "match arms must all be enum variants or all literals",
             )));
         }
         let type_identity = variant_data.type_identity.clone();
@@ -126,10 +159,14 @@ impl<'registry> MatchArms<'registry> {
             return Ok(false);
         }
         let Some(type_name) = self.enum_type_name else {
+            // Values no literal arm matches produce the MatchError.
+            if !self.literals.is_empty() {
+                return Ok(true);
+            }
             return Err(diagnostics(CompileDiagnostic::new(
                 "E0232",
                 span,
-                "match requires at least one enum variant or a wildcard arm",
+                "match requires at least one enum variant, literal, or wildcard arm",
             )));
         };
         let missing = self

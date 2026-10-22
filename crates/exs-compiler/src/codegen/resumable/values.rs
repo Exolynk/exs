@@ -294,6 +294,25 @@ impl<'a> StepEmitter<'a, '_> {
                 destination,
                 span,
             } => self.enum_matches(*value, type_identity, variant, *destination, *span)?,
+            Operation::LiteralMatches {
+                value,
+                literal,
+                destination,
+                span,
+            } => {
+                self.compiler.compile_expression(literal)?;
+                let expected = self.compiler.store_new();
+                self.compiler.push_vm();
+                self.get_slot(*value);
+                self.instruction(Instruction::LocalGet(expected));
+                self.compiler.core_call("__exs_core_equal", *span)?;
+                self.instruction(Instruction::I32Const(
+                    exs_layout::EQUALITY_SAME.cast_signed(),
+                ));
+                self.instruction(Instruction::I32Eq);
+                immediate::bool_from_condition(&mut self.compiler.function);
+                self.set_slot(*destination);
+            }
             Operation::EnumField {
                 value,
                 index,

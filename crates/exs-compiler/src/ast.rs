@@ -426,9 +426,12 @@ pub enum MatchArmBody<'a> {
     Block(Block<'a>),
 }
 
-/// One enum-variant or wildcard `match` pattern.
+/// One enum-variant, literal, or wildcard `match` pattern.
 #[derive(Debug, Clone)]
 pub enum MatchPattern<'a> {
+    /// A literal of None, Bool, Int, Float, String or Bytes, or a negated number literal,
+    /// which matches equal values.
+    Literal(Expression<'a>),
     /// A qualified enum variant and its ordered payload bindings.
     Variant {
         /// Qualified enum type name.

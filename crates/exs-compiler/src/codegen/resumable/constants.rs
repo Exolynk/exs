@@ -97,6 +97,7 @@ fn written_slots(operation: &Operation<'_, '_>) -> Vec<u32> {
         | Operation::TypedObject { destination, .. }
         | Operation::Enum { destination, .. }
         | Operation::EnumMatches { destination, .. }
+        | Operation::LiteralMatches { destination, .. }
         | Operation::EnumField { destination, .. }
         | Operation::MatchError { destination, .. }
         | Operation::IsType { destination, .. }

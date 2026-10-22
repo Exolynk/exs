@@ -170,6 +170,29 @@ impl<'a> FunctionCompiler<'a, '_> {
                     self.compile_match_arm(subject, arm, &[], result)?;
                     self.branch_to(done);
                 }
+                ArmTest::Literal => {
+                    let MatchPattern::Literal(literal) = &arm.pattern else {
+                        return Err(error(
+                            "E0999",
+                            arm.span,
+                            "literal arm without a literal pattern".to_owned(),
+                        ));
+                    };
+                    self.compile_expression(literal)?;
+                    let expected = self.store_new();
+                    self.push_vm();
+                    self.instruction(Instruction::LocalGet(subject));
+                    self.instruction(Instruction::LocalGet(expected));
+                    self.core_call("__exs_core_equal", arm.span)?;
+                    self.instruction(Instruction::I32Const(
+                        exs_layout::EQUALITY_SAME.cast_signed(),
+                    ));
+                    self.instruction(Instruction::I32Eq);
+                    self.instruction(Instruction::If(BlockType::Empty));
+                    self.compile_match_arm(subject, arm, &[], result)?;
+                    self.branch_to(done);
+                    self.instruction(Instruction::End);
+                }
                 ArmTest::Variant { .. } => {
                     let MatchPattern::Variant {
                         type_name,

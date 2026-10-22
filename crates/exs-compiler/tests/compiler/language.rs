@@ -780,3 +780,29 @@ fn rejects_removed_pub_function_modifier() {
         })
     );
 }
+
+/// Rejects duplicate literal arms and arms mixing literals with enum variants.
+#[test]
+fn rejects_invalid_literal_match_arms() {
+    for (text, message) in [
+        (
+            "fn main() { ret match 1 { 1 => 1, 1 => 2 }; }",
+            "duplicate match literal arm",
+        ),
+        (
+            "enum C { A } fn main() { let c = C::A; ret match c { C::A => 1, 2 => 2 }; }",
+            "match arms must all be enum variants or all literals",
+        ),
+    ] {
+        match compile(
+            SourceInput {
+                source_id: "main.exs",
+                text,
+            },
+            CompileOptions::default(),
+        ) {
+            Ok(_) => panic!("{text} unexpectedly compiled"),
+            Err(error) => assert!(error.to_string().contains(message), "{text}\n{error}"),
+        }
+    }
+}
