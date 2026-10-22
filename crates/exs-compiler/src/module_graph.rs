@@ -3,8 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BinaryOperator, Block, Expression, FunctionDeclaration, FunctionVisibility, Identifier, Module,
-    Parameter, Statement, TestDeclaration, TypeAnnotation,
+    BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module, Parameter,
+    Statement, TestDeclaration, TypeAnnotation, Visibility,
 };
 use crate::loaded_project::{ImportEdge, LoadedProject};
 use crate::{
@@ -92,7 +92,7 @@ fn compile_target<R: ModuleResolver>(
                 .find(|function| function.name.name == "main")
             {
                 function.name.name = PROGRAM_MAIN.to_owned();
-                function.visibility = FunctionVisibility::Private;
+                function.entry = false;
                 bindings.insert("main".to_owned(), PROGRAM_MAIN.to_owned());
             }
             for test in &mut root_tests {
@@ -102,7 +102,7 @@ fn compile_target<R: ModuleResolver>(
         rewrite_module(&mut modules[index], index, &bindings);
         if index != 0 {
             for function in &mut modules[index].functions {
-                function.visibility = FunctionVisibility::Private;
+                function.entry = false;
             }
         }
         combined.types.append(&mut modules[index].types);
@@ -182,7 +182,8 @@ fn append_test_functions<'a>(
     }
     for (index, test) in tests.iter().enumerate() {
         module.functions.push(FunctionDeclaration {
-            visibility: FunctionVisibility::Private,
+            visibility: Visibility::Private,
+            entry: false,
             name: Identifier {
                 name: test_function_name(index),
                 span: test.span,
@@ -245,7 +246,8 @@ fn append_test_functions<'a>(
         span,
     });
     module.functions.push(FunctionDeclaration {
-        visibility: FunctionVisibility::Public,
+        visibility: Visibility::Public,
+        entry: true,
         name: Identifier {
             name: TEST_MAIN.to_owned(),
             span,

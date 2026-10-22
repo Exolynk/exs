@@ -9,7 +9,7 @@ use super::intrinsics::{DATETIME_KEYS, is_datetime_parser};
 use super::units::Unit;
 use crate::ast::{
     AssignmentTarget, Block, ElseBranch, Expression, FormattedStringPart, FunctionDeclaration,
-    FunctionVisibility, HostTimeOperation, MatchArmBody, ObjectProperty, Statement,
+    HostTimeOperation, MatchArmBody, ObjectProperty, Statement,
 };
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::TypeRegistry;
@@ -32,9 +32,7 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
     let mut reached = HashSet::new();
     let mut pending: Vec<String> = units
         .iter()
-        .filter(|unit| {
-            unit.declaration.visibility == FunctionVisibility::Public && !unit.key.contains("::")
-        })
+        .filter(|unit| unit.declaration.entry && !unit.key.contains("::"))
         .map(|unit| unit.key.clone())
         .collect();
     // `for` loops over Objects reach the Iterator implementations of the types the program

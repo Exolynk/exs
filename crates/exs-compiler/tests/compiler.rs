@@ -22,6 +22,8 @@ mod imports;
 mod language;
 #[path = "compiler/limits.rs"]
 mod limits;
+#[path = "compiler/visibility.rs"]
+mod visibility;
 
 /// Resolves compiler-test source files from an in-memory canonical source table.
 struct TestResolver {

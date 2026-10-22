@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use crate::SourceInput;
-use crate::ast::{FunctionVisibility, Module};
+use crate::ast::Module;
 use crate::diagnostic::CompileDiagnostics;
 
 /// One named ExS source unit bundled into the global standard prelude.
@@ -116,7 +116,7 @@ fn parse_sources() -> Result<Module<'static>, CompileDiagnostics<'static>> {
         match crate::parser::parse(source.source_id, lexed.tokens, false) {
             Ok(mut module) => {
                 for function in &mut module.functions {
-                    function.visibility = FunctionVisibility::Private;
+                    function.entry = false;
                 }
                 combined.types.append(&mut module.types);
                 combined.enums.append(&mut module.enums);

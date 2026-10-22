@@ -5,7 +5,7 @@ use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, Expression,
     FunctionDeclaration, Identifier, ImplDeclaration, Module, ObjectProperty, Parameter, Statement,
     TestDeclaration, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration,
-    UnaryOperator,
+    UnaryOperator, Visibility,
 };
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 use crate::formatter_trivia::{Trivia, TriviaKind};
@@ -129,10 +129,18 @@ impl Formatter {
     /// Renders one nominal enum declaration.
     fn enum_declaration(&mut self, declaration: &EnumDeclaration<'_>) {
         if declaration.variants.is_empty() {
-            self.line(&format!("enum {} {{}}", declaration.name.name));
+            self.line(&format!(
+                "{}enum {} {{}}",
+                prefix(declaration.visibility),
+                declaration.name.name
+            ));
             return;
         }
-        self.line(&format!("enum {} {{", declaration.name.name));
+        self.line(&format!(
+            "{}enum {} {{",
+            prefix(declaration.visibility),
+            declaration.name.name
+        ));
         self.indentation += 1;
         for variant in &declaration.variants {
             self.trivia_before(variant.span.start_byte as usize);
@@ -163,10 +171,18 @@ impl Formatter {
     /// Renders one nominal type declaration.
     fn type_declaration(&mut self, declaration: &TypeDeclaration<'_>) {
         if declaration.fields.is_empty() {
-            self.line(&format!("type {} {{}}", declaration.name.name));
+            self.line(&format!(
+                "{}type {} {{}}",
+                prefix(declaration.visibility),
+                declaration.name.name
+            ));
             return;
         }
-        self.line(&format!("type {} {{", declaration.name.name));
+        self.line(&format!(
+            "{}type {} {{",
+            prefix(declaration.visibility),
+            declaration.name.name
+        ));
         self.indentation += 1;
         for field in &declaration.fields {
             self.trivia_before(field.span.start_byte as usize);
@@ -183,7 +199,11 @@ impl Formatter {
 
     /// Renders one trait declaration.
     fn trait_declaration(&mut self, declaration: &TraitDeclaration<'_>) {
-        self.line(&format!("trait {} {{", declaration.name.name));
+        self.line(&format!(
+            "{}trait {} {{",
+            prefix(declaration.visibility),
+            declaration.name.name
+        ));
         self.indentation += 1;
         for (index, method) in declaration.methods.iter().enumerate() {
             self.trivia_before(method.span.start_byte as usize);
@@ -238,12 +258,13 @@ impl Formatter {
 
     /// Renders one direct function declaration.
     fn function(&mut self, declaration: &FunctionDeclaration<'_>) {
+        let header = function_header(
+            &declaration.name,
+            &declaration.parameters,
+            declaration.return_type.as_ref(),
+        );
         self.block_after(
-            &function_header(
-                &declaration.name,
-                &declaration.parameters,
-                declaration.return_type.as_ref(),
-            ),
+            &format!("{}{header}", prefix(declaration.visibility)),
             &declaration.body,
         );
     }
@@ -551,6 +572,14 @@ fn statement_span<'source>(statement: &Statement<'source>) -> SourceSpan<'source
         | Statement::Break { span, .. }
         | Statement::Continue { span, .. }
         | Statement::Expression { span, .. } => *span,
+    }
+}
+
+/// Returns the keyword that declares `visibility`, followed by a space, or nothing.
+fn prefix(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Public => "",
+        Visibility::Private => "private ",
     }
 }
 

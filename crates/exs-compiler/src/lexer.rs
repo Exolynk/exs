@@ -74,6 +74,8 @@ pub enum TokenKind {
     Trait,
     /// The `impl` keyword.
     Impl,
+    /// The `private` keyword.
+    Private,
     /// The `let` keyword.
     Let,
     /// The `ret` keyword.
@@ -1148,6 +1150,7 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
         "match" => TokenKind::Match,
         "trait" => TokenKind::Trait,
         "impl" => TokenKind::Impl,
+        "private" => TokenKind::Private,
         "let" => TokenKind::Let,
         "ret" => TokenKind::Ret,
         "if" => TokenKind::If,

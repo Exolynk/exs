@@ -11,7 +11,7 @@ type DateTime {
 }
 
 /// Returns whether `year` is a proleptic Gregorian leap year.
-fn __exs_datetime_is_leap_year(year: Int) -> Bool {
+private fn __exs_datetime_is_leap_year(year: Int) -> Bool {
     if (year.rem_euclid(4)) != 0 {
         ret false;
     }
@@ -22,7 +22,7 @@ fn __exs_datetime_is_leap_year(year: Int) -> Bool {
 }
 
 /// Returns the number of days in one validated proleptic Gregorian month.
-fn __exs_datetime_days_in_month(year: Int, month: Int) -> Int | Error {
+private fn __exs_datetime_days_in_month(year: Int, month: Int) -> Int | Error {
     if month < 1 || month > 12 {
         ret Error("ValueError", "month must be between 1 and 12", month);
     }
@@ -39,7 +39,7 @@ fn __exs_datetime_days_in_month(year: Int, month: Int) -> Int | Error {
 }
 
 /// Converts one civil date to its signed day count relative to 1970-01-01.
-fn __exs_datetime_days_from_civil(year: Int, month: Int, day: Int) -> Int | Error {
+private fn __exs_datetime_days_from_civil(year: Int, month: Int, day: Int) -> Int | Error {
     let adjusted_year = year;
     if month <= 2 {
         adjusted_year = (adjusted_year - 1)?;
@@ -60,7 +60,7 @@ fn __exs_datetime_days_from_civil(year: Int, month: Int, day: Int) -> Int | Erro
 }
 
 /// Calculates all local calendar components using one recorded fixed UTC offset.
-fn __exs_datetime_parts(
+private fn __exs_datetime_parts(
     unix_seconds: Int,
     nanoseconds: Int,
     utc_offset_seconds: Int,
@@ -119,7 +119,7 @@ fn __exs_datetime_parts(
 }
 
 /// Returns one local DateTime component using its recorded fixed UTC offset.
-fn __exs_datetime_part(
+private fn __exs_datetime_part(
     unix_seconds: Int,
     nanoseconds: Int,
     utc_offset_seconds: Int,
@@ -139,7 +139,7 @@ fn __exs_datetime_part(
 }
 
 /// Produces a decimal integer padded with leading zeros to `width` digits.
-fn __exs_datetime_pad(value: Int, width: Int) -> String {
+private fn __exs_datetime_pad(value: Int, width: Int) -> String {
     let digits = value.to_string();
     let result = "";
     while (result.length() + digits.length()) < width {
@@ -149,7 +149,7 @@ fn __exs_datetime_pad(value: Int, width: Int) -> String {
 }
 
 /// Renders one signed UTC offset using RFC 3339's numeric offset spelling.
-fn __exs_datetime_offset_string(offset: Int) -> String | Error {
+private fn __exs_datetime_offset_string(offset: Int) -> String | Error {
     if offset == 0 {
         ret "Z";
     }
@@ -165,7 +165,7 @@ fn __exs_datetime_offset_string(offset: Int) -> String | Error {
 }
 
 /// Validates civil components and constructs a fixed-offset DateTime without zone database access.
-fn __exs_datetime_from_fixed_components(
+private fn __exs_datetime_from_fixed_components(
     year: Int,
     month: Int,
     day: Int,
@@ -207,7 +207,7 @@ fn __exs_datetime_from_fixed_components(
 }
 
 /// Converts one ASCII decimal scalar into its integer value.
-fn __exs_datetime_digit(value: String) -> Int | Error {
+private fn __exs_datetime_digit(value: String) -> Int | Error {
     if value == "0" { ret 0; }
     if value == "1" { ret 1; }
     if value == "2" { ret 2; }
@@ -222,7 +222,7 @@ fn __exs_datetime_digit(value: String) -> Int | Error {
 }
 
 /// Parses RFC3339 calendar timestamps with optional fractional seconds and numeric offsets.
-fn __exs_datetime_parse_rfc3339(value: String) -> DateTime | Error {
+private fn __exs_datetime_parse_rfc3339(value: String) -> DateTime | Error {
     let length = value.length();
     let year = 0;
     let month = 0;
@@ -346,7 +346,7 @@ fn __exs_datetime_parse_rfc3339(value: String) -> DateTime | Error {
 }
 
 /// Compiler-lowered runtime parser that returns raw DateTime fields.
-fn __exs_datetime_parse_rfc3339_runtime(value: String) -> Object | Error {
+private fn __exs_datetime_parse_rfc3339_runtime(value: String) -> Object | Error {
     ret Error("RuntimeError", "DateTime parser intrinsic was not lowered", value);
 }
 

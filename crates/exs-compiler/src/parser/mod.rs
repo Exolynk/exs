@@ -4,11 +4,10 @@ use std::collections::HashSet;
 
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, EnumVariant, Expression,
-    FormattedStringKind, FormattedStringPart, FunctionDeclaration, FunctionVisibility, Identifier,
-    ImplDeclaration, ImportDeclaration, MatchArm, MatchArmBody, MatchPattern, Module,
-    ObjectProperty, Parameter, Statement, TestDeclaration, TraitDeclaration,
-    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator,
-    UseDeclaration, UseItem,
+    FormattedStringKind, FormattedStringPart, FunctionDeclaration, Identifier, ImplDeclaration,
+    ImportDeclaration, MatchArm, MatchArmBody, MatchPattern, Module, ObjectProperty, Parameter,
+    Statement, TestDeclaration, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation,
+    TypeDeclaration, TypeField, TypeName, UnaryOperator, UseDeclaration, UseItem, Visibility,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{
@@ -98,6 +97,23 @@ pub fn parse_with_nesting<'a>(
     let mut functions = Vec::new();
     let mut tests = Vec::new();
     while !parser.at_end() {
+        let visibility = if parser.matches(&TokenKind::Private) {
+            if !matches!(
+                parser.peek().kind,
+                TokenKind::Fn | TokenKind::Type | TokenKind::Enum | TokenKind::Trait
+            ) {
+                parser.diagnostics.push(parser.error(
+                    parser.previous().span,
+                    "E0115",
+                    "`private` must precede `fn`, `type`, `enum`, or `trait`",
+                ));
+                parser.synchronize_declaration();
+                continue;
+            }
+            Visibility::Private
+        } else {
+            Visibility::Public
+        };
         match &parser.peek().kind {
             TokenKind::Import => match parser.import_declaration() {
                 Ok(declaration)
@@ -141,21 +157,21 @@ pub fn parse_with_nesting<'a>(
                     parser.synchronize_declaration();
                 }
             },
-            TokenKind::Type => match parser.type_declaration() {
+            TokenKind::Type => match parser.type_declaration(visibility) {
                 Ok(declaration) => types.push(declaration),
                 Err(diagnostic) => {
                     parser.diagnostics.push(diagnostic);
                     parser.synchronize_declaration();
                 }
             },
-            TokenKind::Enum => match parser.enum_declaration() {
+            TokenKind::Enum => match parser.enum_declaration(visibility) {
                 Ok(declaration) => enums.push(declaration),
                 Err(diagnostic) => {
                     parser.diagnostics.push(diagnostic);
                     parser.synchronize_declaration();
                 }
             },
-            TokenKind::Trait => match parser.trait_declaration() {
+            TokenKind::Trait => match parser.trait_declaration(visibility) {
                 Ok(declaration) => traits.push(declaration),
                 Err(diagnostic) => {
                     parser.diagnostics.push(diagnostic);
@@ -169,7 +185,7 @@ pub fn parse_with_nesting<'a>(
                     parser.synchronize_declaration();
                 }
             },
-            TokenKind::Fn => match parser.function(FunctionVisibility::Public) {
+            TokenKind::Fn => match parser.function(visibility, visibility == Visibility::Public) {
                 Ok(declaration) => functions.push(declaration),
                 Err(diagnostic) => {
                     parser.diagnostics.push(diagnostic);

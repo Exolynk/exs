@@ -1,8 +1,8 @@
 //! Lifting closures into function declarations of their own.
 
 use crate::ast::{
-    AssignmentTarget, Block, Expression, FunctionDeclaration, FunctionVisibility, Identifier,
-    Module, Parameter, Statement,
+    AssignmentTarget, Block, Expression, FunctionDeclaration, Identifier, Module, Parameter,
+    Statement, Visibility,
 };
 use crate::hir::HirModule;
 
@@ -30,7 +30,8 @@ pub(in crate::codegen) fn lifted_functions<'source>(
         .map(|((parameters, body, span), closure)| LiftedFunction {
             key: format!("$closure:{}", closure.id().0),
             declaration: FunctionDeclaration {
-                visibility: FunctionVisibility::Private,
+                visibility: Visibility::Private,
+                entry: false,
                 name: Identifier {
                     name: format!("$closure:{}", closure.id().0),
                     span,

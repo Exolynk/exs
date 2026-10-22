@@ -1,5 +1,5 @@
 /// Maps every iterable item through a callback, stopping at the first callback Error.
-fn __exs_list_map(iterable: Any, callback: Fn) -> List | Error {
+private fn __exs_list_map(iterable: Any, callback: Fn) -> List | Error {
     let result = [];
     for item in iterable {
         let mapped = callback(item);
@@ -12,7 +12,7 @@ fn __exs_list_map(iterable: Any, callback: Fn) -> List | Error {
 }
 
 /// Keeps every iterable item whose callback result is true, stopping at callback Errors.
-fn __exs_list_filter(iterable: Any, callback: Fn) -> List | Error {
+private fn __exs_list_filter(iterable: Any, callback: Fn) -> List | Error {
     let result = [];
     for item in iterable {
         let accepted = callback(item);
@@ -27,7 +27,7 @@ fn __exs_list_filter(iterable: Any, callback: Fn) -> List | Error {
 }
 
 /// Returns the first iterable item whose callback result is true, or None when absent.
-fn __exs_list_find(iterable: Any, callback: Fn) -> Any | None | Error {
+private fn __exs_list_find(iterable: Any, callback: Fn) -> Any | None | Error {
     for item in iterable {
         let accepted = callback(item);
         if accepted is Error {
@@ -41,7 +41,7 @@ fn __exs_list_find(iterable: Any, callback: Fn) -> Any | None | Error {
 }
 
 /// Returns whether any iterable item produces true, stopping at callback Errors.
-fn __exs_list_any(iterable: Any, callback: Fn) -> Bool | Error {
+private fn __exs_list_any(iterable: Any, callback: Fn) -> Bool | Error {
     for item in iterable {
         let accepted = callback(item);
         if accepted is Error {
@@ -55,7 +55,7 @@ fn __exs_list_any(iterable: Any, callback: Fn) -> Bool | Error {
 }
 
 /// Returns whether every iterable item produces true, stopping at callback Errors.
-fn __exs_list_all(iterable: Any, callback: Fn) -> Bool | Error {
+private fn __exs_list_all(iterable: Any, callback: Fn) -> Bool | Error {
     for item in iterable {
         let accepted = callback(item);
         if accepted is Error {
@@ -69,7 +69,7 @@ fn __exs_list_all(iterable: Any, callback: Fn) -> Bool | Error {
 }
 
 /// Invokes a callback for every iterable item, stopping at the first callback Error.
-fn __exs_list_each(iterable: Any, callback: Fn) -> None | Error {
+private fn __exs_list_each(iterable: Any, callback: Fn) -> None | Error {
     for item in iterable {
         let result = callback(item);
         if result is Error {
@@ -80,7 +80,7 @@ fn __exs_list_each(iterable: Any, callback: Fn) -> None | Error {
 }
 
 /// Folds iterable items from an explicit initial accumulator, stopping at callback Errors.
-fn __exs_list_reduce(iterable: Any, initial: Any, callback: Fn) -> Any | Error {
+private fn __exs_list_reduce(iterable: Any, initial: Any, callback: Fn) -> Any | Error {
     let accumulator = initial;
     for item in iterable {
         let result = callback(accumulator, item);
@@ -93,7 +93,7 @@ fn __exs_list_reduce(iterable: Any, initial: Any, callback: Fn) -> Any | Error {
 }
 
 /// Collects every item from an iterable into a new List.
-fn __exs_iterator_collect(iterable: Any) -> List | Error {
+private fn __exs_iterator_collect(iterable: Any) -> List | Error {
     let result = [];
     for item in iterable {
         result.push(item);
@@ -102,7 +102,7 @@ fn __exs_iterator_collect(iterable: Any) -> List | Error {
 }
 
 /// Counts every item produced by an iterable.
-fn __exs_iterator_count(iterable: Any) -> Int | Error {
+private fn __exs_iterator_count(iterable: Any) -> Int | Error {
     let count = 0;
     for item in iterable {
         count = (count + 1)?;
@@ -111,6 +111,6 @@ fn __exs_iterator_count(iterable: Any) -> Int | Error {
 }
 
 /// Collects every iterable item into a new List.
-fn __exs_iterator_to_list(iterable: Any) -> List | Error {
+private fn __exs_iterator_to_list(iterable: Any) -> List | Error {
     ret __exs_iterator_collect(iterable);
 }

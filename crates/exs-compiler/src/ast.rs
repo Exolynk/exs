@@ -57,6 +57,8 @@ pub struct UseDeclaration<'a> {
 /// A nominal Object type with declared field contracts.
 #[derive(Debug, Clone)]
 pub struct TypeDeclaration<'a> {
+    /// Who may name the type.
+    pub visibility: Visibility,
     /// The source-visible type name.
     pub name: Identifier<'a>,
     /// Fields in source order.
@@ -79,6 +81,8 @@ pub struct TypeField<'a> {
 /// A nominal tagged union with named variants.
 #[derive(Debug, Clone)]
 pub struct EnumDeclaration<'a> {
+    /// Who may name the enum.
+    pub visibility: Visibility,
     /// The source-visible enum name.
     pub name: Identifier<'a>,
     /// Variants in source order.
@@ -114,6 +118,8 @@ pub struct ImplDeclaration<'a> {
 /// One named trait with required and default methods.
 #[derive(Debug, Clone)]
 pub struct TraitDeclaration<'a> {
+    /// Who may name the trait.
+    pub visibility: Visibility,
     /// The source-visible trait name.
     pub name: Identifier<'a>,
     /// Required and default trait methods in source order.
@@ -142,7 +148,8 @@ impl<'a> TraitMethodDeclaration<'a> {
     #[must_use]
     pub fn default_implementation(&self) -> Option<FunctionDeclaration<'a>> {
         self.body.clone().map(|body| FunctionDeclaration {
-            visibility: FunctionVisibility::Private,
+            visibility: Visibility::Public,
+            entry: false,
             name: self.name.clone(),
             parameters: self.parameters.clone(),
             return_type: self.return_type.clone(),
@@ -152,20 +159,24 @@ impl<'a> TraitMethodDeclaration<'a> {
     }
 }
 
-/// External visibility of one top-level function declaration.
+/// Who may name one declaration.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum FunctionVisibility {
-    /// The function is available only to ExS code in the linked module.
-    Private,
-    /// The function receives a runner-callable entry wrapper when it is in the root module.
+pub enum Visibility {
+    /// Every module may name the declaration.
     Public,
+    /// Only modules of the declaring library or project may name the declaration; it is
+    /// declared with the `private` keyword.
+    Private,
 }
 
 /// A named function declaration.
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration<'a> {
-    /// Whether this top-level function is callable by an external runner.
-    pub visibility: FunctionVisibility,
+    /// Who may name the function.
+    pub visibility: Visibility,
+    /// Whether the function receives an entry export a runner can call: the public
+    /// top-level functions of the root module.
+    pub entry: bool,
     /// Function name.
     pub name: Identifier<'a>,
     /// Positional parameters with optional type annotations.

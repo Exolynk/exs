@@ -32,6 +32,7 @@ impl<'a> Parser<'a> {
     /// Parses one nominal enum declaration and its zero-or-more-field variants.
     pub(super) fn enum_declaration(
         &mut self,
+        visibility: Visibility,
     ) -> Result<EnumDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::Enum, "expected `enum` at module level")?
@@ -88,6 +89,7 @@ impl<'a> Parser<'a> {
             .expect_simple(TokenKind::RightBrace, "expected `}` after enum variants")?
             .span;
         Ok(EnumDeclaration {
+            visibility,
             name,
             variants,
             span: start.through(end),
@@ -148,12 +150,13 @@ impl<'a> Parser<'a> {
 
     pub(super) fn function(
         &mut self,
-        visibility: FunctionVisibility,
+        visibility: Visibility,
+        entry: bool,
     ) -> Result<FunctionDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::Fn, "expected `fn` at module level")?
             .span;
-        self.function_from_start(start, visibility)
+        self.function_from_start(start, visibility, entry)
     }
 
     /// Parses one named source test declaration.
@@ -184,12 +187,14 @@ impl<'a> Parser<'a> {
     pub(super) fn function_from_start(
         &mut self,
         start: SourceSpan<'a>,
-        visibility: FunctionVisibility,
+        visibility: Visibility,
+        entry: bool,
     ) -> Result<FunctionDeclaration<'a>, CompileDiagnostic<'a>> {
         let (name, parameters, return_type) = self.function_header_from_start()?;
         let body = self.block()?;
         Ok(FunctionDeclaration {
             visibility,
+            entry,
             name,
             parameters,
             return_type,
@@ -246,6 +251,7 @@ impl<'a> Parser<'a> {
     /// Parses one nominal Object type declaration.
     pub(super) fn type_declaration(
         &mut self,
+        visibility: Visibility,
     ) -> Result<TypeDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::Type, "expected `type` at module level")?
@@ -284,6 +290,7 @@ impl<'a> Parser<'a> {
             .expect_simple(TokenKind::RightBrace, "expected `}` after type fields")?
             .span;
         Ok(TypeDeclaration {
+            visibility,
             name,
             fields,
             span: start.through(end),
@@ -293,6 +300,7 @@ impl<'a> Parser<'a> {
     /// Parses one trait declaration with required signatures and default method bodies.
     pub(super) fn trait_declaration(
         &mut self,
+        visibility: Visibility,
     ) -> Result<TraitDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self
             .expect_simple(TokenKind::Trait, "expected `trait` at module level")?
@@ -324,6 +332,7 @@ impl<'a> Parser<'a> {
             .expect_simple(TokenKind::RightBrace, "expected `}` after trait methods")?
             .span;
         Ok(TraitDeclaration {
+            visibility,
             name,
             methods,
             span: start.through(end),
@@ -347,10 +356,15 @@ impl<'a> Parser<'a> {
         self.expect_simple(TokenKind::LeftBrace, "expected `{` after impl type name")?;
         let mut methods = Vec::new();
         while !self.check(&TokenKind::RightBrace) && !self.at_end() {
+            let visibility = if self.matches(&TokenKind::Private) {
+                Visibility::Private
+            } else {
+                Visibility::Public
+            };
             let method_start = self
                 .expect_simple(TokenKind::Fn, "expected `fn` inside impl block")?
                 .span;
-            methods.push(self.function_from_start(method_start, FunctionVisibility::Private)?);
+            methods.push(self.function_from_start(method_start, visibility, false)?);
         }
         let end = self
             .expect_simple(TokenKind::RightBrace, "expected `}` after impl methods")?

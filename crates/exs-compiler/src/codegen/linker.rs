@@ -33,7 +33,7 @@ use super::type_table::TypeTable;
 use super::units::{Unit, units};
 use super::used_types::{declared_types, used_types};
 use super::validation::unreached_diagnostics;
-use crate::ast::{FunctionVisibility, Module};
+use crate::ast::Module;
 use crate::codegen::declarations::lifted_functions;
 use crate::codegen::prune::{PruneHints, prune_unreachable};
 use crate::codegen::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
@@ -423,7 +423,7 @@ pub(in crate::codegen) fn compile<'a>(
     let mut entries = String::new();
     for unit in &reached {
         let function = unit.declaration;
-        if function.visibility != FunctionVisibility::Public || unit.key.contains("::") {
+        if !function.entry || unit.key.contains("::") {
             continue;
         }
         let info = infos
