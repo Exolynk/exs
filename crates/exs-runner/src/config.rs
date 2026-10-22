@@ -1,15 +1,17 @@
 //! The configuration of a server runner.
 
+use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::module_cache::DEFAULT_MODULE_CACHE_CAPACITY;
-use crate::{CompilerStrategy, ProtectionLevel};
+use crate::{CompilerStrategy, ProtectionLevel, RunnerTimer};
 
 /// The execution policy and engine settings of one server runner.
 ///
 /// Every field has a default suited to untrusted ExS source; override the fields an
 /// application needs with struct update syntax.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct ServerRunnerConfig {
     /// Maximum linear-memory bytes of one execution.
     pub max_memory_bytes: usize,
@@ -23,6 +25,10 @@ pub struct ServerRunnerConfig {
     pub compiler: CompilerStrategy,
     /// Compiled modules kept for reuse; 0 disables caching.
     pub module_cache_capacity: usize,
+    /// Timer that wakes `Host::sleep` and executions at their deadline, usually the timer of
+    /// the application's async runtime. Without one, the runner starts a single process-wide
+    /// timer thread on first use.
+    pub timer: Option<Arc<dyn RunnerTimer>>,
 }
 
 impl Default for ServerRunnerConfig {
@@ -36,6 +42,42 @@ impl Default for ServerRunnerConfig {
             protection: ProtectionLevel::Standard,
             compiler: CompilerStrategy::Winch,
             module_cache_capacity: DEFAULT_MODULE_CACHE_CAPACITY,
+            timer: None,
         }
     }
 }
+
+impl fmt::Debug for ServerRunnerConfig {
+    /// Formats every field; the timer shows only whether one is set.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServerRunnerConfig")
+            .field("max_memory_bytes", &self.max_memory_bytes)
+            .field("max_fuel", &self.max_fuel)
+            .field("timeout", &self.timeout)
+            .field("protection", &self.protection)
+            .field("compiler", &self.compiler)
+            .field("module_cache_capacity", &self.module_cache_capacity)
+            .field("timer", &self.timer.as_ref().map(|_| "RunnerTimer"))
+            .finish()
+    }
+}
+
+impl PartialEq for ServerRunnerConfig {
+    /// Compares every field; timers are equal when both are unset or the same instance.
+    fn eq(&self, other: &Self) -> bool {
+        self.max_memory_bytes == other.max_memory_bytes
+            && self.max_fuel == other.max_fuel
+            && self.timeout == other.timeout
+            && self.protection == other.protection
+            && self.compiler == other.compiler
+            && self.module_cache_capacity == other.module_cache_capacity
+            && match (&self.timer, &other.timer) {
+                (None, None) => true,
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                _ => false,
+            }
+    }
+}
+
+impl Eq for ServerRunnerConfig {}

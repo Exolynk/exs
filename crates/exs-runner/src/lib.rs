@@ -11,6 +11,8 @@ use std::future::{Future, poll_fn};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use std::pin::Pin;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+use std::sync::Arc;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use std::task::Poll;
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -96,6 +98,8 @@ pub use self::limits::{LimitKind, ProtectionLevel};
 pub use self::registry::{HostFunctionRegistry, RegistryError};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::report::ExecutionReport;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub use self::timer::RunnerTimer;
 pub use exs_abi::{Bytes, ErrorSeverity, ExsError, ExsValue, SourcePositionId};
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -109,6 +113,8 @@ pub struct ServerRunner {
     compiler: CompilerStrategy,
     /// Compiled artifacts of recently executed modules, shared by clones of this runner.
     module_cache: module_cache::ModuleCache,
+    /// Timer that wakes sleeping and timed-out executions.
+    timer: Arc<dyn RunnerTimer>,
 }
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -127,6 +133,7 @@ impl ServerRunner {
             ),
             compiler: config.compiler,
             module_cache: module_cache::ModuleCache::new(config.module_cache_capacity),
+            timer: config.timer.unwrap_or_else(|| Arc::new(timer::ThreadTimer)),
         }
     }
 
@@ -178,10 +185,7 @@ impl ServerRunner {
             .module(&engine, self.compiler, wasm)
             .map_err(|error| RunnerError::Wasm(error.to_string()))?;
         check_task_metering_imports(&module)?;
-        let deadline = deadline::ExecutionDeadline::new(engine.clone(), self.limits.timeout)
-            .map_err(|error: String| {
-                RunnerError::Wasm(format!("could not start execution deadline: {error}"))
-            })?;
+        let deadline = deadline::ExecutionDeadline::new(self.timer.clone(), self.limits.timeout);
         let mut store = Store::new(
             &engine,
             host_abi::HostAbiState::new(
@@ -189,13 +193,13 @@ impl ServerRunner {
                 self.limits.clone(),
                 execution_started_at,
                 deadline.expires_at(),
+                self.timer.clone(),
             ),
         );
         store.limiter(host_abi::HostAbiState::store_limits);
         store
             .set_fuel(self.limits.max_fuel)
             .map_err(|error| RunnerError::Wasm(error.to_string()))?;
-        store.set_epoch_deadline(1);
         let mut linker = Linker::new(&engine);
         host_abi::define(&mut linker).map_err(|error| RunnerError::Wasm(error.to_string()))?;
         store
@@ -225,8 +229,7 @@ impl ServerRunner {
             .get_typed_func::<(i32, i32), i32>(&mut store, &entry_export_name(function))
             .map_err(|error| RunnerError::Abi(error.to_string()))?;
         let mut status = {
-            let interruption = cancellation.register_interrupt(engine.clone());
-            if interruption.is_cancelled() {
+            if cancellation.is_cancelled() {
                 return Err(RunnerError::Cancelled);
             }
             guarded(
@@ -291,7 +294,9 @@ impl ServerRunner {
                                     let (call_id, _) = pending.swap_remove(index);
                                     return Poll::Ready(Ok((call_id, response)));
                                 }
-                                Poll::Ready(Err(())) => return Poll::Ready(Err(())),
+                                Poll::Ready(Err(interruption)) => {
+                                    return Poll::Ready(Err(interruption));
+                                }
                                 Poll::Pending => {}
                             }
                         }
@@ -300,10 +305,10 @@ impl ServerRunner {
                     .await
                     {
                         Ok(response) => response,
-                        Err(()) => {
-                            if deadline.is_expired() {
-                                return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
-                            }
+                        Err(cancellation::Interruption::Timeout) => {
+                            return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
+                        }
+                        Err(cancellation::Interruption::Cancelled) => {
                             cancel_execution(&mut store, &instance).await?;
                             return Err(RunnerError::Cancelled);
                         }
@@ -326,8 +331,7 @@ impl ServerRunner {
                         .get_typed_func::<(i64, i32, i32), i32>(&mut store, RESUME_HOST_EXPORT)
                         .map_err(|error| RunnerError::Abi(error.to_string()))?;
                     status = {
-                        let interruption = cancellation.register_interrupt(engine.clone());
-                        if interruption.is_cancelled() {
+                        if cancellation.is_cancelled() {
                             return Err(RunnerError::Cancelled);
                         }
                         guarded(
@@ -363,7 +367,6 @@ fn limited_engine(
     let mut configuration = Config::new();
     configuration.strategy(compiler.wasmtime_strategy());
     configuration.consume_fuel(true);
-    configuration.epoch_interruption(true);
     configuration.max_wasm_stack(limits.max_wasm_stack_bytes);
     // The runner ABI accounts for one linear memory. Threads, function references and
     // exceptions are not compiled into the engine at all.

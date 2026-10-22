@@ -1,5 +1,9 @@
-//! Shared cancellable timers used by native asynchronous host capabilities and execution
-//! deadlines: one process-wide thread serves every execution.
+//! The timer that wakes executions: `Host::sleep` and the wall-clock deadline of executions
+//! that wait for host operations.
+//!
+//! An application passes the timer of its async runtime, such as `tokio::time::sleep_until`,
+//! through [`crate::ServerRunnerConfig::timer`]. Without one, the runner uses its own: a single
+//! process-wide thread, started on first use, that serves every execution.
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -8,31 +12,41 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::task::{Context, Poll, Waker};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Process-wide scheduler used by native Host timers.
 static TIMER: OnceLock<Result<Arc<TimerService>, String>> = OnceLock::new();
 
-/// Starts one sleep on the shared timer service.
-pub(crate) fn sleep(duration: Duration) -> Result<TimerSleep, String> {
-    Ok(service()?.schedule(duration))
+/// Wakes executions at points in time.
+///
+/// Implement it with the timer of the application's async runtime, for example with tokio:
+///
+/// ```ignore
+/// struct TokioTimer;
+///
+/// impl RunnerTimer for TokioTimer {
+///     fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+///         Box::pin(tokio::time::sleep_until(deadline.into()))
+///     }
+/// }
+/// ```
+pub trait RunnerTimer: Send + Sync {
+    /// Returns a future that completes at `deadline`, or at once when it has passed.
+    fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }
 
-/// Runs `action` on the shared timer thread at `deadline`, unless the returned registration
-/// is dropped first.
-pub(crate) fn at(
-    deadline: Instant,
-    action: Box<dyn FnOnce() + Send>,
-) -> Result<TimerAction, String> {
-    let timer = service()?;
-    let completion = Arc::new(TimerCompletion {
-        action: Mutex::new(Some(action)),
-        ..TimerCompletion::default()
-    });
-    let identifier = timer.register(deadline, completion);
-    Ok(TimerAction {
-        _registration: TimerRegistration { timer, identifier },
-    })
+/// The runner's own timer: one process-wide thread, started on first use.
+pub(crate) struct ThreadTimer;
+
+impl RunnerTimer for ThreadTimer {
+    /// Schedules the wake-up on the shared timer thread. When the thread cannot start, the
+    /// future completes at once, which ends waiting early instead of never.
+    fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        match service() {
+            Ok(timer) => Box::pin(timer.schedule(deadline)),
+            Err(_) => Box::pin(std::future::ready(())),
+        }
+    }
 }
 
 /// Returns the shared timer service, starting it on first use.
@@ -45,12 +59,6 @@ fn service() -> Result<Arc<TimerService>, String> {
         Ok(timer) => Ok(Arc::clone(timer)),
         Err(error) => Err(error.clone()),
     }
-}
-
-/// An action scheduled on the shared timer, cancelled when dropped.
-pub(crate) struct TimerAction {
-    /// Registration removed when this action is dropped.
-    _registration: TimerRegistration,
 }
 
 /// One shared timer scheduler backed by a single native thread.
@@ -70,14 +78,9 @@ impl TimerService {
         Ok(Self { state })
     }
 
-    /// Schedules one completion and returns its cancellation-aware future.
-    fn schedule(self: &Arc<Self>, duration: Duration) -> TimerSleep {
+    /// Schedules one completion at `deadline` and returns its cancellation-aware future.
+    fn schedule(self: &Arc<Self>, deadline: Instant) -> TimerSleep {
         let completion = Arc::new(TimerCompletion::default());
-        let deadline = Instant::now().checked_add(duration).unwrap_or_else(|| {
-            Instant::now()
-                .checked_add(Duration::from_secs(365 * 24 * 60 * 60))
-                .unwrap_or_else(Instant::now)
-        });
         let identifier = self.register(deadline, Arc::clone(&completion));
         TimerSleep {
             completion,
@@ -132,29 +135,19 @@ impl Default for TimerState {
     }
 }
 
-/// Shared completion signal, latest blocked executor waker and scheduled action.
+/// Shared completion signal and latest blocked executor waker.
 #[derive(Default)]
 struct TimerCompletion {
     /// Whether the timer has expired and its sleep may complete.
     completed: AtomicBool,
     /// Latest executor waker to notify when the timer expires.
     waker: Mutex<Option<Waker>>,
-    /// Action to run when the timer expires.
-    action: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TimerCompletion {
-    /// Marks the timer as complete, runs its action and wakes its latest poller.
+    /// Marks the timer as complete and wakes its latest poller.
     fn complete(&self) {
         self.completed.store(true, Ordering::Release);
-        let action = self
-            .action
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(action) = action {
-            action();
-        }
         let mut waker = lock_waker(&self.waker);
         if let Some(waker) = waker.take() {
             waker.wake();
@@ -258,7 +251,7 @@ mod tests {
     #[test]
     fn dropping_sleep_cancels_its_timer_registration() {
         let timer = Arc::new(TimerService::new().unwrap());
-        let sleep = timer.schedule(Duration::from_secs(60));
+        let sleep = timer.schedule(Instant::now() + std::time::Duration::from_secs(60));
         let identifier = sleep.registration.as_ref().unwrap().identifier;
         {
             let (lock, _) = &*timer.state;

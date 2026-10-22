@@ -85,7 +85,24 @@ let pages = document_libraries(&mut resolver)?.markdown(&MarkdownOptions {
 
 `ServerRunner::new` takes a `ServerRunnerConfig` with the memory, fuel and wall-clock limits, the protection level for host-side resources, the Wasmtime compiler strategy and the module cache size. Every field has a default suited to untrusted source.
 
-`execute` is an ordinary future that works with any executor. Running guest code yields to the executor every 100,000 fuel, so a busy script does not block the executor thread, and it stops at its wall-clock limit or cancellation. One process-wide timer thread serves the deadlines of all executions and `Host::sleep`; an execution starts no thread of its own.
+`execute` is an ordinary future that works with any executor. Running guest code yields to the executor every 100,000 fuel, so a busy script does not block the executor thread, and it stops at its wall-clock limit or cancellation. `Host::sleep` and the deadline of an execution that waits for a host operation are woken by the runner's timer. An application passes the timer of its async runtime through `ServerRunnerConfig::timer`, implementing `RunnerTimer`:
+
+```rust
+struct TokioTimer;
+
+impl RunnerTimer for TokioTimer {
+    fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(tokio::time::sleep_until(deadline.into()))
+    }
+}
+
+let runner = ServerRunner::new(ServerRunnerConfig {
+    timer: Some(Arc::new(TokioTimer)),
+    ..ServerRunnerConfig::default()
+});
+```
+
+Without a timer, the runner starts one process-wide timer thread on first use, which serves every execution; an execution never starts a thread of its own.
 
 ```rust
 let mut runner = ServerRunner::new(ServerRunnerConfig {

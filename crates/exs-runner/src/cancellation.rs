@@ -1,9 +1,9 @@
 //! Cooperative cancellation for one running ExS execution.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::task::Waker;
-
-use wasmtime::Engine;
+use std::task::{Context, Poll, Waker};
 
 use crate::{ExsValue, HostFuture, deadline::ExecutionDeadline};
 
@@ -22,10 +22,6 @@ struct CancellationState {
     next_waker_id: u64,
     /// Executor wakers currently blocked on cancellable host futures.
     wakers: Vec<(u64, Waker)>,
-    /// Monotonic identifier assigned to one registered Wasm interruption target.
-    next_interrupt_id: u64,
-    /// Wasmtime engines whose active guest executions must be interrupted on cancellation.
-    interrupts: Vec<(u64, Engine)>,
 }
 
 impl Default for CancellationState {
@@ -35,8 +31,6 @@ impl Default for CancellationState {
             cancelled: false,
             next_waker_id: 1,
             wakers: Vec::new(),
-            next_interrupt_id: 1,
-            interrupts: Vec::new(),
         }
     }
 }
@@ -48,22 +42,17 @@ impl ExecutionCancellation {
         Self::default()
     }
 
-    /// Requests cancellation, interrupts guest Wasm, and wakes blocked host-future pollers.
+    /// Requests cancellation and wakes blocked host-future pollers. Running guest code stops
+    /// at its next yield to the executor.
     pub fn cancel(&self) {
-        let (interrupts, wakers) = {
+        let wakers = {
             let mut state = self.state();
             if state.cancelled {
                 return;
             }
             state.cancelled = true;
-            (
-                std::mem::take(&mut state.interrupts),
-                std::mem::take(&mut state.wakers),
-            )
+            std::mem::take(&mut state.wakers)
         };
-        for (_, engine) in interrupts {
-            engine.increment_epoch();
-        }
         for (_, waker) in wakers {
             waker.wake();
         }
@@ -116,75 +105,23 @@ impl ExecutionCancellation {
         }
     }
 
-    /// Registers one engine to interrupt if cancellation occurs during guest execution.
-    pub(crate) fn register_interrupt(&self, engine: Engine) -> CancellationInterrupt<'_> {
-        let mut state = self.state();
-        if state.cancelled {
-            return CancellationInterrupt {
-                cancellation: self,
-                registration: None,
-            };
-        }
-        let identifier = state.next_interrupt_id;
-        let Some(next_identifier) = identifier.checked_add(1) else {
-            return CancellationInterrupt {
-                cancellation: self,
-                registration: None,
-            };
-        };
-        state.next_interrupt_id = next_identifier;
-        state.interrupts.push((identifier, engine));
-        CancellationInterrupt {
-            cancellation: self,
-            registration: Some(identifier),
-        }
-    }
-
-    /// Removes one guest-Wasm interruption target after its execution returns.
-    fn unregister_interrupt(&self, registration: &mut Option<u64>) {
-        let Some(identifier) = registration.take() else {
-            return;
-        };
-        let mut state = self.state();
-        if let Some(position) = state
-            .interrupts
-            .iter()
-            .position(|(registered_id, _)| *registered_id == identifier)
-        {
-            state.interrupts.swap_remove(position);
-        }
-    }
-
     /// Locks the shared cancellation state, recovering consistently after a panic.
     fn state(&self) -> MutexGuard<'_, CancellationState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
-/// Registered guest-Wasm interruption target owned by one runner execution.
-pub(crate) struct CancellationInterrupt<'cancellation> {
-    /// Caller-owned cancellation control for this execution.
-    cancellation: &'cancellation ExecutionCancellation,
-    /// Registered engine identifier removed when execution completes.
-    registration: Option<u64>,
+/// Why a host future ended before its operation completed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Interruption {
+    /// Cancellation was requested.
+    Cancelled,
+    /// The execution deadline was reached.
+    Timeout,
 }
 
-impl CancellationInterrupt<'_> {
-    /// Returns whether cancellation was already requested before registration completed.
-    pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancellation.is_cancelled()
-    }
-}
-
-impl Drop for CancellationInterrupt<'_> {
-    /// Releases the engine interruption target once guest execution has returned.
-    fn drop(&mut self) {
-        self.cancellation
-            .unregister_interrupt(&mut self.registration);
-    }
-}
-
-/// Future wrapper that resolves when its host future completes or cancellation is requested.
+/// Future wrapper that resolves when its host future completes, cancellation is requested, or
+/// the execution deadline is reached.
 pub(crate) struct CancellableHostFuture<'cancellation> {
     /// The runner-owned pending host future.
     future: HostFuture,
@@ -192,14 +129,14 @@ pub(crate) struct CancellableHostFuture<'cancellation> {
     cancellation: &'cancellation ExecutionCancellation,
     /// Runner-owned wall-clock deadline for this root execution.
     deadline: &'cancellation ExecutionDeadline,
+    /// Timer future of the deadline, created once the host future is pending.
+    expiry: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
     /// Registered wake-up slot for this future, when it is pending.
     registration: Option<u64>,
-    /// Registered wake-up slot for the root deadline, when this future is pending.
-    deadline_registration: Option<u64>,
 }
 
 impl<'cancellation> CancellableHostFuture<'cancellation> {
-    /// Wraps one pending host future with the execution cancellation control.
+    /// Wraps one pending host future with the execution cancellation control and deadline.
     pub(crate) fn new(
         future: HostFuture,
         cancellation: &'cancellation ExecutionCancellation,
@@ -209,57 +146,46 @@ impl<'cancellation> CancellableHostFuture<'cancellation> {
             future,
             cancellation,
             deadline,
+            expiry: None,
             registration: None,
-            deadline_registration: None,
         }
+    }
+
+    /// Releases the cancellation waker and reports why the host future ended.
+    fn interrupted(&mut self, interruption: Interruption) -> Poll<Result<ExsValue, Interruption>> {
+        self.cancellation.unregister_waker(&mut self.registration);
+        Poll::Ready(Err(interruption))
     }
 }
 
-impl std::future::Future for CancellableHostFuture<'_> {
-    type Output = Result<ExsValue, ()>;
+impl Future for CancellableHostFuture<'_> {
+    type Output = Result<ExsValue, Interruption>;
 
-    /// Polls the host future while ensuring cancellation wakes and completes this future.
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        context: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
+    /// Polls the host future while cancellation and the deadline wake and complete it.
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         if self.cancellation.is_cancelled() {
-            self.cancellation.unregister_waker(&mut self.registration);
-            self.deadline
-                .unregister_waker(&mut self.deadline_registration);
-            return std::task::Poll::Ready(Err(()));
+            return self.interrupted(Interruption::Cancelled);
         }
         if self.deadline.is_expired() {
-            self.cancellation.unregister_waker(&mut self.registration);
-            self.deadline
-                .unregister_waker(&mut self.deadline_registration);
-            return std::task::Poll::Ready(Err(()));
+            return self.interrupted(Interruption::Timeout);
         }
-        self.cancellation
-            .register_waker(&mut self.registration, context.waker());
-        self.deadline
-            .register_waker(&mut self.deadline_registration, context.waker());
-        if self.cancellation.is_cancelled() {
-            self.cancellation.unregister_waker(&mut self.registration);
-            self.deadline
-                .unregister_waker(&mut self.deadline_registration);
-            return std::task::Poll::Ready(Err(()));
+        let this = &mut *self;
+        this.cancellation
+            .register_waker(&mut this.registration, context.waker());
+        if this.cancellation.is_cancelled() {
+            return this.interrupted(Interruption::Cancelled);
         }
-        if self.deadline.is_expired() {
-            self.cancellation.unregister_waker(&mut self.registration);
-            self.deadline
-                .unregister_waker(&mut self.deadline_registration);
-            return std::task::Poll::Ready(Err(()));
+        if let Poll::Ready(value) = this.future.as_mut().poll(context) {
+            this.cancellation.unregister_waker(&mut this.registration);
+            return Poll::Ready(Ok(value));
         }
-        match self.future.as_mut().poll(context) {
-            std::task::Poll::Ready(value) => {
-                self.cancellation.unregister_waker(&mut self.registration);
-                self.deadline
-                    .unregister_waker(&mut self.deadline_registration);
-                std::task::Poll::Ready(Ok(value))
-            }
-            std::task::Poll::Pending => std::task::Poll::Pending,
+        // The timer is authoritative: it may signal the deadline slightly before the clock.
+        let deadline = this.deadline;
+        let expiry = this.expiry.get_or_insert_with(|| deadline.expiry());
+        if expiry.as_mut().poll(context).is_ready() {
+            return this.interrupted(Interruption::Timeout);
         }
+        Poll::Pending
     }
 }
 
@@ -267,7 +193,5 @@ impl Drop for CancellableHostFuture<'_> {
     /// Releases the registered waker when the runner drops an unfinished execution.
     fn drop(&mut self) {
         self.cancellation.unregister_waker(&mut self.registration);
-        self.deadline
-            .unregister_waker(&mut self.deadline_registration);
     }
 }

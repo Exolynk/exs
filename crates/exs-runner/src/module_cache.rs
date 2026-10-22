@@ -1,8 +1,8 @@
 //! Bounded in-memory cache of compiled module artifacts for the native server runner.
 //!
 //! Compiling a module dominates the wall-clock cost of short executions, while loading a
-//! compiled artifact into a fresh engine is cheap. Each execution keeps its own engine, so its
-//! deadline and cancellation epochs stay isolated; only the compiled artifact is shared.
+//! compiled artifact into a fresh engine is cheap. Each execution keeps its own engine; only the
+//! compiled artifact is shared.
 
 use std::sync::{Arc, Mutex, PoisonError};
 

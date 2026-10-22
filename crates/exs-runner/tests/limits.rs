@@ -305,3 +305,76 @@ fn times_out_many_pending_executions_together() {
     }
     assert_eq!(timeouts, 200);
 }
+
+/// Timer that records every requested deadline and completes at once.
+#[derive(Default)]
+struct ImmediateTimer {
+    /// Deadlines requested so far.
+    deadlines: std::sync::Mutex<Vec<std::time::Instant>>,
+}
+
+impl exs_runner::RunnerTimer for ImmediateTimer {
+    /// Records `deadline` and returns a completed future.
+    fn sleep_until(
+        &self,
+        deadline: std::time::Instant,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        if let Ok(mut deadlines) = self.deadlines.lock() {
+            deadlines.push(deadline);
+        }
+        Box::pin(std::future::ready(()))
+    }
+}
+
+/// Creates a runner with a 10 second timeout that uses `timer`.
+fn runner_with_timer(timer: std::sync::Arc<ImmediateTimer>) -> ServerRunner {
+    ServerRunner::new(ServerRunnerConfig {
+        timeout: Duration::from_secs(10),
+        timer: Some(timer),
+        ..ServerRunnerConfig::default()
+    })
+}
+
+/// Wakes `Host::sleep` with the configured timer, capped at the execution deadline.
+#[test]
+fn host_sleep_uses_the_configured_timer() {
+    let compiled =
+        compile_source("fn main() -> Int { Host::sleep(Duration::seconds(60)); ret 42; }");
+    let timer = std::sync::Arc::new(ImmediateTimer::default());
+    let runner = runner_with_timer(timer.clone());
+    let started = std::time::Instant::now();
+    let report =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    assert!(matches!(report, Ok(ExsValue::Int(42))));
+    let deadlines = timer
+        .deadlines
+        .lock()
+        .map(|d| d.clone())
+        .unwrap_or_default();
+    assert_eq!(deadlines.len(), 1);
+    assert!(deadlines[0] <= started + Duration::from_secs(11));
+}
+
+/// Ends an execution waiting for a host operation when the configured timer signals the
+/// deadline.
+#[test]
+fn configured_timer_signals_the_deadline_of_pending_host_calls() {
+    let compiled = compile_source("fn main() { Host::call(\"wait\"); }");
+    let timer = std::sync::Arc::new(ImmediateTimer::default());
+    let mut runner = runner_with_timer(timer.clone());
+    assert!(
+        runner
+            .registry_mut()
+            .fn_async_raw("wait", |_| std::future::pending::<ExsValue>())
+            .is_ok()
+    );
+    let started = std::time::Instant::now();
+    let result =
+        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    assert!(matches!(
+        result,
+        Err(RunnerError::LimitExceeded(LimitKind::Timeout))
+    ));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(timer.deadlines.lock().map(|d| d.len()).unwrap_or(0), 1);
+}

@@ -1,6 +1,7 @@
 //! Wasmtime imports implementing the dynamic ExS Host ABI.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::Instant;
 
 use exs_abi::{
@@ -15,7 +16,7 @@ use wasmtime::{Caller, Extern, Linker, ResourceLimiter};
 use crate::arguments::{ArgumentsError, decode_arguments};
 use crate::limits::ExecutionLimits;
 use crate::value_reader::ReadError;
-use crate::{HostFunctionRegistry, HostFuture, HostStream, LimitKind, RegistryError};
+use crate::{HostFunctionRegistry, HostFuture, HostStream, LimitKind, RegistryError, RunnerTimer};
 
 /// Runner-owned state accessed by imported host functions for one Wasm instance.
 pub(crate) struct HostAbiState {
@@ -47,6 +48,8 @@ pub(crate) struct HostAbiState {
     execution_started_at: Instant,
     /// Monotonic instant at which this root execution must time out.
     deadline_at: Instant,
+    /// Timer that wakes `Host::sleep`.
+    timer: Arc<dyn RunnerTimer>,
     /// Wasmtime-owned resource limiter for this instance's linear memory.
     store_limits: crate::guest_limiter::GuestLimiter,
     /// The most recent hard-limit violation reported through a Wasm import.
@@ -71,6 +74,7 @@ impl HostAbiState {
         limits: ExecutionLimits,
         execution_started_at: Instant,
         deadline_at: Instant,
+        timer: Arc<dyn RunnerTimer>,
     ) -> Self {
         Self {
             registry,
@@ -88,6 +92,7 @@ impl HostAbiState {
             limits,
             execution_started_at,
             deadline_at,
+            timer,
             limit_violation: None,
             boundary: Boundary::Image,
         }
@@ -135,11 +140,6 @@ impl HostAbiState {
     /// Returns monotonic time elapsed since this root execution began.
     fn elapsed(&self) -> std::time::Duration {
         self.execution_started_at.elapsed()
-    }
-
-    /// Returns the duration for which a host operation may wait before the root deadline.
-    fn remaining_until_deadline(&self) -> std::time::Duration {
-        self.deadline_at.saturating_duration_since(Instant::now())
     }
 
     /// Retains one ready response while enforcing response-count and byte budgets.
@@ -524,7 +524,8 @@ fn dispatch_host_call(
     let call = match builtin_host_operation(name) {
         Some(BuiltinHostOperation::Sleep) => Ok(crate::host_sleep::start(
             arguments,
-            caller.data().remaining_until_deadline(),
+            caller.data().deadline_at,
+            &caller.data().timer,
             origin,
         )),
         Some(BuiltinHostOperation::Now) => Ok(crate::host_time::now(arguments, origin)),
@@ -738,7 +739,13 @@ mod tests {
             ..ExecutionLimits::default()
         };
         let now = Instant::now();
-        HostAbiState::new(HostFunctionRegistry::new(), limits, now, now)
+        HostAbiState::new(
+            HostFunctionRegistry::new(),
+            limits,
+            now,
+            now,
+            Arc::new(crate::timer::ThreadTimer),
+        )
     }
 
     /// Rejects synchronous responses once their retained-count limit is reached.
