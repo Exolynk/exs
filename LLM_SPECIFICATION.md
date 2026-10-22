@@ -95,11 +95,16 @@ application signatures, types, traits, and enum variants.
   empty, and applies its contract to each supplied trailing argument. Normal calls provide all fixed
   arguments. Hosts may omit fixed root-function inputs (they become None); excess inputs to a
   non-variadic root are fatal `ArityError`.
-- Closures use `(parameters) => { ... }`; parameters may be annotated (`(value: Int) => {...}`) and
+- Closures use `(parameters) => { ... }` or `(parameters) => expression` (`(v) => v * 2`; return an
+  Object as `() => ({ a: 1 })`); parameters may be annotated (`(value: Int) => {...}`) and
   are checked on every call. Closures capture, return, store, and call as `Fn` values.
+- Lists also provide `sort()`/`sort(compare)` (in place, stable, under `<` or an Ordering
+  comparator), `sorted()`/`sorted(compare)`, `sum()`, `min()`, `max()` (None when empty),
+  `flatten()` (one level), and `unique()` (under `==`).
 - `type Name { field: Contract }` creates a nominal Object. Every field exists after construction;
-  omitted fields become None only under `Any` or a None-capable contract. Invalid, missing required,
-  unknown, or duplicate fields are `TypeError`. `impl Name` supplies inherent methods; a first bare
+  omitted fields become None only under `Any` or a None-capable contract. `Name {` is a typed
+  Object only when `}` or `field:` follows, so `match Color::Red { ... }` parses. Invalid,
+  missing required, unknown, or duplicate fields are `TypeError`. `impl Name` supplies inherent methods; a first bare
   `self` is an instance method, otherwise static.
 - `enum Name { Variant(field: Contract), Empty }` has qualified constructors. Payloads are checked
   in order. `match` evaluates its input once and only one arm. Variant patterns use one enum and
@@ -179,7 +184,7 @@ typeField       = identifier [ ":" typeUnion ] ;
 traitDecl       = "trait" identifier "{" { traitMethod } "}" ;
 traitMethod     = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] ( ";" | block ) ;
 implDecl        = "impl" identifier [ "for" identifier ] "{" { [ "private" ] functionDecl } "}" ;
-closure         = "(" closureParameters? ")" "=>" block ;
+closure         = "(" closureParameters? ")" "=>" ( block | expression ) ;
 parameters      = parameter { "," parameter } [ "," ] ;
 closureParameters = closureParameter { "," closureParameter } [ "," ] ;
 closureParameter = identifier [ ":" typeUnion ] [ "..." ] ;

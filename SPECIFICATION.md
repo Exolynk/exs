@@ -391,6 +391,13 @@ let later = () => {
 };
 ```
 
+A closure whose body is an expression instead of a block returns that expression. A body starting with `{` is always a block, so a closure returns an Object literal in parentheses:
+
+```exs
+let doubled = values.map((value) => value * 2);
+let make = () => ({ name: "Ada" });
+```
+
 Closure parameters may have type annotations, which every call checks like function parameter contracts:
 
 ```exs
@@ -414,6 +421,8 @@ type User {
 
 let user = User { name: "Ada" };
 ```
+
+`Name {` starts a typed Object only when `}` or a field name and `:` follow the brace, so `match Color::Red { ... }` and `if point == Point { x: 1 } { ... }` parse as expected.
 
 Every declared field is present after construction. An omitted field becomes `None` when its contract permits `None` or is `Any`. Missing required fields, unknown fields, duplicate fields, and contract violations produce the ordinary `TypeError` behavior. A nominal value has only its declared fields; reading or assigning another field is a `TypeError`.
 
@@ -705,6 +714,15 @@ list.slice(start, end)  // new shallow List or IndexError
 list.extend(other)      // mutates and returns the new length
 list.reverse()          // mutates; None
 list.reversed()         // new shallow reversed List
+list.sort()             // sorts in place under `<`, stable; None or Error
+list.sort(compare)      // sorts in place by the Ordering compare(a, b) returns
+list.sorted()           // new List sorted under `<`
+list.sorted(compare)    // new List sorted by compare
+list.sum()              // sum under `+`, 0 when empty
+list.min()              // smallest item under `<`, None when empty
+list.max()              // largest item under `>`, None when empty
+list.flatten()          // new List with nested Lists inlined one level deep
+list.unique()           // new List without repetitions under `==`
 list.contains(value)    // Bool under ExS equality
 list.index_of(value)    // first Int index or None
 list.last_index_of(v)   // final Int index or None
@@ -814,7 +832,7 @@ typeField       = identifier [ ":" typeUnion ] ;
 traitDecl       = "trait" identifier "{" { traitMethod } "}" ;
 traitMethod     = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] ( ";" | block ) ;
 implDecl        = "impl" identifier [ "for" identifier ] "{" { [ "private" ] functionDecl } "}" ;
-closure         = "(" closureParameters? ")" "=>" block ;
+closure         = "(" closureParameters? ")" "=>" ( block | expression ) ;
 parameters      = parameter { "," parameter } [ "," ] ;
 closureParameters = closureParameter { "," closureParameter } [ "," ] ;
 closureParameter = identifier [ ":" typeUnion ] [ "..." ] ;
