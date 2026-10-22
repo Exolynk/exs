@@ -100,10 +100,12 @@ fn compile_target<R: ModuleResolver>(
         traits: Vec::new(),
         implementations: Vec::new(),
         functions: Vec::new(),
+        constants: Vec::new(),
         tests: Vec::new(),
     };
+    let mut all_bindings = Vec::with_capacity(modules.len());
     for index in 0..modules.len() {
-        let mut bindings = bindings_for(
+        all_bindings.push(bindings_for(
             &modules[index],
             index,
             &packages[index],
@@ -112,7 +114,36 @@ fn compile_target<R: ModuleResolver>(
             &libraries,
             &library_bindings,
             &prelude_private,
-        )?;
+        )?);
+    }
+    let constants = crate::constants::Declared::new(&modules, canonical)
+        .resolve(&all_bindings)
+        .map_err(|error| error.to_string())?;
+    for (index, mut bindings) in all_bindings.into_iter().enumerate() {
+        let visible = bindings
+            .iter()
+            .filter_map(|(name, canonical)| {
+                constants
+                    .get(canonical)
+                    .map(|value| (name.clone(), value.clone()))
+            })
+            .collect();
+        let private = bindings
+            .iter()
+            .filter(|(name, canonical)| {
+                canonical.starts_with(PRIVATE_PREFIX)
+                    && library_bindings
+                        .get(*name)
+                        .is_some_and(|binding| constants.contains_key(&binding.canonical))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        crate::constants::inline(&mut modules[index], &visible, &private)
+            .map_err(|error| error.to_string())?;
+        if test_target && index == 0 {
+            crate::constants::inline_tests(&mut root_tests, &visible, &private)
+                .map_err(|error| error.to_string())?;
+        }
         if test_target && index == 0 {
             if let Some(function) = modules[index]
                 .functions
@@ -330,6 +361,12 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<Exports, String>
         .chain(
             module
                 .traits
+                .iter()
+                .map(|item| (&item.name.name, item.visibility)),
+        )
+        .chain(
+            module
+                .constants
                 .iter()
                 .map(|item| (&item.name.name, item.visibility)),
         )

@@ -21,8 +21,8 @@ pub struct ModuleDocs {
     pub origin: ModuleOrigin,
     /// Markdown overview, taken from the module's leading `//!` comment.
     pub description: String,
-    /// Public declarations in declaration order: types, enums, traits, namespaces, then
-    /// functions.
+    /// Public declarations in declaration order: types, enums, traits, namespaces, constants,
+    /// then functions.
     pub items: Vec<ItemDocs>,
 }
 
@@ -67,6 +67,8 @@ pub enum ItemKind {
     Namespace,
     /// A function.
     Function,
+    /// A module constant.
+    Constant,
 }
 
 impl ItemKind {
@@ -79,7 +81,15 @@ impl ItemKind {
             Self::Trait => "Trait",
             Self::Namespace => "Namespace",
             Self::Function => "Function",
+            Self::Constant => "Constant",
         }
+    }
+
+    /// Reports whether the item is documented on its module's page in every layout, as
+    /// functions and constants are.
+    #[must_use]
+    pub fn is_inline(self) -> bool {
+        matches!(self, Self::Function | Self::Constant)
     }
 }
 
@@ -146,13 +156,13 @@ impl ApiDocumentation {
 }
 
 impl ModuleDocs {
-    /// Returns the declaration named `name` other than a function, or the function when
-    /// there is no such declaration.
+    /// Returns the declaration named `name` other than a function or constant, or the
+    /// function or constant when there is no such declaration.
     #[must_use]
     pub fn item(&self, name: &str) -> Option<&ItemDocs> {
         self.items
             .iter()
-            .find(|item| item.name == name && item.kind != ItemKind::Function)
+            .find(|item| item.name == name && !item.kind.is_inline())
             .or_else(|| self.items.iter().find(|item| item.name == name))
     }
 }

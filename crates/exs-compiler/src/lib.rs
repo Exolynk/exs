@@ -2,6 +2,7 @@
 
 mod ast;
 mod codegen;
+mod constants;
 mod diagnostic;
 mod documentation;
 mod formatter;
@@ -159,6 +160,7 @@ pub fn compile<'a>(
         return Err(diagnostics);
     }
     module_graph::hide_prelude_private(&mut module);
+    constants::inline_single(&mut module)?;
     let mut prelude = prelude::parse()?;
     prelude.types.append(&mut module.types);
     prelude.enums.append(&mut module.enums);

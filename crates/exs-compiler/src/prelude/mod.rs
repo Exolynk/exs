@@ -184,6 +184,7 @@ fn parse_sources() -> Result<Module<'static>, CompileDiagnostics<'static>> {
         traits: Vec::new(),
         implementations: Vec::new(),
         functions: Vec::new(),
+        constants: Vec::new(),
         tests: Vec::new(),
     };
     let mut diagnostics = CompileDiagnostics::new();

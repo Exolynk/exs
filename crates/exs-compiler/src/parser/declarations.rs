@@ -204,6 +204,27 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parses one module constant, `const NAME = value;`.
+    pub(super) fn const_declaration(
+        &mut self,
+        visibility: Visibility,
+    ) -> Result<ConstDeclaration<'a>, CompileDiagnostic<'a>> {
+        let start = self.advance().span;
+        let name = self.identifier("expected constant name after `const`")?;
+        self.expect_simple(TokenKind::Equal, "expected `=` after constant name")?;
+        let value = self.expression()?;
+        let end = self.expect_statement_semicolon(
+            expression_span(&value),
+            "expected `;` after constant value",
+        )?;
+        Ok(ConstDeclaration {
+            visibility,
+            name,
+            value,
+            span: start.through(end),
+        })
+    }
+
     /// Parses one function after its `fn` keyword was consumed.
     pub(super) fn function_from_start(
         &mut self,

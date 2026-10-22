@@ -56,6 +56,8 @@ pub(crate) enum SymbolKind {
     Enum,
     /// A trait declaration.
     Trait,
+    /// A module constant.
+    Constant,
 }
 
 /// The editable declaration position inside an incomplete function header.
@@ -123,7 +125,7 @@ pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbol
                     symbols.functions.insert(name, signature);
                 }
             }
-            "fn" | "type" | "enum" | "trait" if depth == 0 => {
+            "fn" | "type" | "enum" | "trait" | "const" if depth == 0 => {
                 let Some((name, end)) = qualified_identifier(tokens, index + 1) else {
                     index += 1;
                     continue;
@@ -133,7 +135,7 @@ pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbol
                     "type" => SymbolKind::Type,
                     "enum" => SymbolKind::Enum,
                     "trait" => SymbolKind::Trait,
-                    _ => unreachable!(),
+                    _ => SymbolKind::Constant,
                 };
                 if is_private_declaration(&name) {
                     index = end;

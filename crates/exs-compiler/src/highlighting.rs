@@ -235,6 +235,7 @@ fn is_keyword(kind: &TokenKind) -> bool {
             | TokenKind::Trait
             | TokenKind::Impl
             | TokenKind::Private
+            | TokenKind::Const
             | TokenKind::Let
             | TokenKind::Ret
             | TokenKind::If

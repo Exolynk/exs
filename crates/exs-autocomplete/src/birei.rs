@@ -148,7 +148,7 @@ fn map_kind(kind: CompletionKind) -> CodeCompletionKind {
         CompletionKind::Snippet => CodeCompletionKind::Snippet,
         CompletionKind::Keyword => CodeCompletionKind::Keyword,
         CompletionKind::Function | CompletionKind::HostMember => CodeCompletionKind::Function,
-        CompletionKind::Variable => CodeCompletionKind::Variable,
+        CompletionKind::Variable | CompletionKind::Constant => CodeCompletionKind::Variable,
         CompletionKind::Module => CodeCompletionKind::Module,
         CompletionKind::Type => CodeCompletionKind::Type,
         CompletionKind::Enum => CodeCompletionKind::Enum,

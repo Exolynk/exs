@@ -8,6 +8,8 @@ use exs_compiler::{
 };
 use wasmparser::{Parser, Payload, Validator};
 
+#[path = "compiler/constants.rs"]
+mod constants;
 #[path = "compiler/continuations.rs"]
 mod continuations;
 #[path = "compiler/core.rs"]

@@ -21,27 +21,30 @@ pub(crate) fn render(documentation: &ApiDocumentation) -> String {
             output.push_str(&module.description);
             output.push_str("\n\n");
         }
-        for item in module
-            .items
-            .iter()
-            .filter(|item| item.kind != ItemKind::Function)
-        {
+        for item in module.items.iter().filter(|item| !item.kind.is_inline()) {
             render_item(&mut output, item);
         }
-        let functions = module
-            .items
-            .iter()
-            .filter(|item| item.kind == ItemKind::Function)
-            .collect::<Vec<_>>();
-        if !functions.is_empty() {
-            output.push_str("### Functions\n\n```exs\n");
-            for (index, function) in functions.iter().enumerate() {
-                if index > 0 {
+        for (kind, heading, suffix) in [
+            (ItemKind::Constant, "Constants", ""),
+            (ItemKind::Function, "Functions", " { ... }"),
+        ] {
+            let items = module
+                .items
+                .iter()
+                .filter(|item| item.kind == kind)
+                .collect::<Vec<_>>();
+            if items.is_empty() {
+                continue;
+            }
+            output.push_str(&format!("### {heading}\n\n```exs\n"));
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 && kind == ItemKind::Function {
                     output.push('\n');
                 }
-                push_comment(&mut output, &function.description, "");
-                output.push_str(&function.declaration);
-                output.push_str(" { ... }\n");
+                push_comment(&mut output, &item.description, "");
+                output.push_str(&item.declaration);
+                output.push_str(suffix);
+                output.push('\n');
             }
             output.push_str("```\n\n");
         }

@@ -304,7 +304,7 @@ impl ModuleResolver for Libraries {
     fn library(&mut self, path: &str) -> Option<ResolvedSource> {
         let text = match path {
             "log" => {
-                "//! Logging.\n/// Logs an informational message.\nfn info(message: String) -> None { ret None; }"
+                "//! Logging.\n/// The default level.\nconst LEVEL = \"info\";\nprivate const HIDDEN = 1;\n/// Logs an informational message.\nfn info(message: String) -> None { ret None; }"
             }
             "exo" => {
                 "//! The Exolynk API.\n/// A stored record.\ntype Record { id: Int }\nprivate fn internal() -> Int { ret 1; }"
@@ -349,7 +349,16 @@ fn documents_listed_libraries() {
     let db = &page(&pages, "exo/db/index.md").markdown;
     assert!(db.contains("fn load(id: Int) -> exo::Record"));
     let log = &page(&pages, "log/index.md").markdown;
-    assert!(log.contains("Logging.\n\n## Functions\n\n### `info`"));
+    assert!(log.contains("Logging.\n\n## Constants\n\n### `LEVEL`\n\nThe default level."));
+    assert!(log.contains("const LEVEL = \"info\";"));
+    assert!(log.contains("## Functions\n\n### `info`"));
+    assert!(!log.contains("HIDDEN"));
+    let llm = documentation.llm();
+    assert!(
+        llm.contains(
+            "### Constants\n\n```exs\n/// The default level.\nconst LEVEL = \"info\";\n```"
+        )
+    );
 }
 
 /// Rejects a listed library the resolver does not provide.

@@ -2,10 +2,10 @@
 
 use crate::SourceInput;
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, Expression,
-    FunctionDeclaration, Identifier, ImplDeclaration, Module, ObjectProperty, Parameter, Statement,
-    TestDeclaration, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation, TypeDeclaration,
-    UnaryOperator, Visibility,
+    AssignmentTarget, BinaryOperator, Block, ConstDeclaration, ElseBranch, EnumDeclaration,
+    Expression, FunctionDeclaration, Identifier, ImplDeclaration, Module, ObjectProperty,
+    Parameter, Statement, TestDeclaration, TraitDeclaration, TraitMethodDeclaration,
+    TypeAnnotation, TypeDeclaration, UnaryOperator, Visibility,
 };
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 use crate::formatter_trivia::{Trivia, TriviaKind};
@@ -90,9 +90,10 @@ impl Formatter {
         }
         let has_prelude = !module.imports.is_empty() || !module.uses.is_empty();
         let declarations = module
-            .types
+            .constants
             .iter()
-            .map(Declaration::Type)
+            .map(Declaration::Const)
+            .chain(module.types.iter().map(Declaration::Type))
             .chain(module.enums.iter().map(Declaration::Enum))
             .chain(module.traits.iter().map(Declaration::Trait))
             .chain(module.implementations.iter().map(Declaration::Impl))
@@ -101,7 +102,11 @@ impl Formatter {
             .collect::<Vec<_>>();
         for (index, declaration) in declarations.iter().enumerate() {
             let declaration_start = declaration.span().start_byte as usize;
-            let needs_separator = (has_prelude && index == 0) || index > 0;
+            // Consecutive constants form one group without blank lines.
+            let grouped = index > 0
+                && matches!(declaration, Declaration::Const(_))
+                && matches!(declarations[index - 1], Declaration::Const(_));
+            let needs_separator = ((has_prelude && index == 0) || index > 0) && !grouped;
             let has_documentation = self.has_documentation_before(declaration_start);
             if has_documentation {
                 if needs_separator {
@@ -115,6 +120,12 @@ impl Formatter {
                 self.blank_line();
             }
             match declaration {
+                Declaration::Const(declaration) => self.line(&format!(
+                    "{}const {} = {};",
+                    prefix(declaration.visibility),
+                    declaration.name.name,
+                    render_expression(&declaration.value)
+                )),
                 Declaration::Type(declaration) => self.type_declaration(declaration),
                 Declaration::Enum(declaration) => self.enum_declaration(declaration),
                 Declaration::Trait(declaration) => self.trait_declaration(declaration),
@@ -530,6 +541,8 @@ impl Formatter {
 
 /// A module declaration viewed without allocating a second AST representation.
 enum Declaration<'a> {
+    /// Module constant.
+    Const(&'a ConstDeclaration<'a>),
     /// Nominal object type.
     Type(&'a TypeDeclaration<'a>),
     /// Nominal enum declaration.
@@ -548,6 +561,7 @@ impl Declaration<'_> {
     /// Returns the full source span of this top-level declaration.
     fn span(&self) -> SourceSpan<'_> {
         match self {
+            Self::Const(declaration) => declaration.span,
             Self::Type(declaration) => declaration.span,
             Self::Enum(declaration) => declaration.span,
             Self::Trait(declaration) => declaration.span,
@@ -650,7 +664,7 @@ fn assignment_target(target: &AssignmentTarget<'_>) -> String {
 }
 
 /// Renders one source expression with canonical parentheses where precedence requires them.
-fn render_expression(expression: &Expression<'_>) -> String {
+pub(crate) fn render_expression(expression: &Expression<'_>) -> String {
     expression_at(expression, 0)
 }
 

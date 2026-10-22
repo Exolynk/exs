@@ -550,6 +550,24 @@ fn source_items(
         items.push(context.trait_item(declaration));
     }
     for declaration in module
+        .constants
+        .iter()
+        .filter(|declaration| declaration.visibility == Visibility::Public)
+    {
+        items.push(ItemDocs {
+            kind: ItemKind::Constant,
+            name: declaration.name.name.clone(),
+            description: context.comment(declaration.span),
+            declaration: format!(
+                "const {} = {};",
+                declaration.name.name,
+                crate::formatter::render_expression(&declaration.value)
+            ),
+            usage: None,
+            sections: Vec::new(),
+        });
+    }
+    for declaration in module
         .functions
         .iter()
         .filter(|declaration| declaration.visibility == Visibility::Public)

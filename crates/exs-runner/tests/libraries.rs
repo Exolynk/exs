@@ -35,6 +35,8 @@ impl ModuleResolver for Libraries {
                     private fn secret(self) -> Int { ret self.id + 1; }
                 }
                 private fn helper(value: Int) -> Int { ret value * 2; }
+                const LIMIT = 10;
+                private const SECRET = 7;
                 "#,
             ),
             (
@@ -42,6 +44,7 @@ impl ModuleResolver for Libraries {
                 r#"
                 fn query(id: Int) -> exo::Record { ret exo::Record::make(exo::helper(id)); }
                 fn secret_of(record: exo::Record) -> Int { ret record.secret(); }
+                fn limit_and_secret() -> Int { ret exo::LIMIT + exo::SECRET; }
                 "#,
             ),
         ])
@@ -87,6 +90,21 @@ fn library_code_uses_its_private_declarations() {
     );
 }
 
+/// Uses library constants by path and through `use`; the library reaches its private ones.
+#[test]
+fn uses_library_constants() {
+    assert_eq!(
+        run(
+            "use exo::LIMIT; fn main() -> Any { ret [exo::LIMIT, LIMIT, exo::db::limit_and_secret()]; }"
+        ),
+        Ok(ExsValue::List(vec![
+            ExsValue::Int(10),
+            ExsValue::Int(10),
+            ExsValue::Int(17),
+        ]))
+    );
+}
+
 /// Rejects naming private functions, types and static methods from outside their library.
 #[test]
 fn rejects_private_names_from_outside() {
@@ -106,6 +124,10 @@ fn rejects_private_names_from_outside() {
         (
             "fn main() -> Any { ret exo::Record::make(1); }",
             "static method `make` is private to its library",
+        ),
+        (
+            "fn main() -> Int { ret exo::SECRET; }",
+            "`exo::SECRET` is private to its library",
         ),
         (
             "fn main() -> Any { let ignored = Host::call(\"x\"); ret exo::Record::make(1); }",

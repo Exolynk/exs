@@ -99,7 +99,7 @@ pub(crate) fn render(
 
 /// Reports whether `item` gets its own page in the per-item layout.
 fn has_own_page(item: &ItemDocs) -> bool {
-    item.kind != ItemKind::Function
+    !item.kind.is_inline()
 }
 
 /// Returns the first sentence of `description`.
@@ -123,7 +123,7 @@ fn anchor(heading: &str) -> String {
 
 /// Returns the heading of `item` on a module page.
 fn item_heading(item: &ItemDocs) -> String {
-    if item.kind == ItemKind::Function {
+    if item.kind.is_inline() {
         format!("`{}`", item.name)
     } else {
         format!("{} `{}`", item.kind.label(), item.name)
@@ -313,24 +313,26 @@ impl Renderer<'_, '_> {
                 }
             }
             PageLayout::PerModule => {
-                for item in module
-                    .items
-                    .iter()
-                    .filter(|item| item.kind != ItemKind::Function)
-                {
+                for item in module.items.iter().filter(|item| !item.kind.is_inline()) {
                     body.push_str(&format!("## {}\n\n", item_heading(item)));
                     self.item_body(&mut body, &path, item, 2);
                 }
             }
         }
-        let functions = module
-            .items
-            .iter()
-            .filter(|item| item.kind == ItemKind::Function)
-            .collect::<Vec<_>>();
-        if !functions.is_empty() {
-            body.push_str("## Functions\n\n");
-            for item in functions {
+        for (kind, heading) in [
+            (ItemKind::Constant, "Constants"),
+            (ItemKind::Function, "Functions"),
+        ] {
+            let items = module
+                .items
+                .iter()
+                .filter(|item| item.kind == kind)
+                .collect::<Vec<_>>();
+            if items.is_empty() {
+                continue;
+            }
+            body.push_str(&format!("## {heading}\n\n"));
+            for item in items {
                 body.push_str(&format!("### {}\n\n", item_heading(item)));
                 self.item_body(&mut body, &path, item, 3);
             }

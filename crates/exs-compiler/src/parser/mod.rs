@@ -3,11 +3,12 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    AssignmentTarget, BinaryOperator, Block, ElseBranch, EnumDeclaration, EnumVariant, Expression,
-    FormattedStringKind, FormattedStringPart, FunctionDeclaration, Identifier, ImplDeclaration,
-    ImportDeclaration, MatchArm, MatchArmBody, MatchPattern, Module, ObjectProperty, Parameter,
-    Statement, TestDeclaration, TraitDeclaration, TraitMethodDeclaration, TypeAnnotation,
-    TypeDeclaration, TypeField, TypeName, UnaryOperator, UseDeclaration, UseItem, Visibility,
+    AssignmentTarget, BinaryOperator, Block, ConstDeclaration, ElseBranch, EnumDeclaration,
+    EnumVariant, Expression, FormattedStringKind, FormattedStringPart, FunctionDeclaration,
+    Identifier, ImplDeclaration, ImportDeclaration, MatchArm, MatchArmBody, MatchPattern, Module,
+    ObjectProperty, Parameter, Statement, TestDeclaration, TraitDeclaration,
+    TraitMethodDeclaration, TypeAnnotation, TypeDeclaration, TypeField, TypeName, UnaryOperator,
+    UseDeclaration, UseItem, Visibility,
 };
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 use crate::lexer::{
@@ -95,17 +96,22 @@ pub fn parse_with_nesting<'a>(
     let mut traits = Vec::new();
     let mut implementations = Vec::new();
     let mut functions = Vec::new();
+    let mut constants = Vec::new();
     let mut tests = Vec::new();
     while !parser.at_end() {
         let visibility = if parser.matches(&TokenKind::Private) {
             if !matches!(
                 parser.peek().kind,
-                TokenKind::Fn | TokenKind::Type | TokenKind::Enum | TokenKind::Trait
+                TokenKind::Fn
+                    | TokenKind::Type
+                    | TokenKind::Enum
+                    | TokenKind::Trait
+                    | TokenKind::Const
             ) {
                 parser.diagnostics.push(parser.error(
                     parser.previous().span,
                     "E0115",
-                    "`private` must precede `fn`, `type`, `enum`, or `trait`",
+                    "`private` must precede `fn`, `type`, `enum`, `trait`, or `const`",
                 ));
                 parser.synchronize_declaration();
                 continue;
@@ -122,6 +128,7 @@ pub fn parse_with_nesting<'a>(
                         && enums.is_empty()
                         && implementations.is_empty()
                         && functions.is_empty()
+                        && constants.is_empty()
                         && tests.is_empty() =>
                 {
                     imports.push(declaration)
@@ -143,6 +150,7 @@ pub fn parse_with_nesting<'a>(
                         && enums.is_empty()
                         && implementations.is_empty()
                         && functions.is_empty()
+                        && constants.is_empty()
                         && tests.is_empty() =>
                 {
                     uses.push(declaration)
@@ -185,6 +193,13 @@ pub fn parse_with_nesting<'a>(
                     parser.synchronize_declaration();
                 }
             },
+            TokenKind::Const => match parser.const_declaration(visibility) {
+                Ok(declaration) => constants.push(declaration),
+                Err(diagnostic) => {
+                    parser.diagnostics.push(diagnostic);
+                    parser.synchronize_declaration();
+                }
+            },
             TokenKind::Fn => match parser.function(visibility, visibility == Visibility::Public) {
                 Ok(declaration) => functions.push(declaration),
                 Err(diagnostic) => {
@@ -203,7 +218,7 @@ pub fn parse_with_nesting<'a>(
                 parser.diagnostics.push(parser.error(
                     parser.peek().span,
                     "E0100",
-                    "expected `type`, `enum`, `trait`, `impl`, `fn`, or `test` at module level",
+                    "expected `type`, `enum`, `trait`, `impl`, `fn`, `const`, or `test` at module level",
                 ));
                 parser.synchronize_declaration();
             }
@@ -227,6 +242,7 @@ pub fn parse_with_nesting<'a>(
         traits,
         implementations,
         functions,
+        constants,
         tests,
     })
 }
@@ -271,7 +287,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
+pub(crate) fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a> {
     match expression {
         Expression::Integer(_, span)
         | Expression::Float(_, span)

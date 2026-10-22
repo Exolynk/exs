@@ -19,6 +19,8 @@ pub struct Module<'a> {
     pub implementations: Vec<ImplDeclaration<'a>>,
     /// Top-level direct function declarations.
     pub functions: Vec<FunctionDeclaration<'a>>,
+    /// Module constants, which compilation substitutes into their references.
+    pub constants: Vec<ConstDeclaration<'a>>,
     /// Source test declarations omitted from normal executable modules.
     pub tests: Vec<TestDeclaration<'a>>,
 }
@@ -190,6 +192,19 @@ pub struct FunctionDeclaration<'a> {
     pub return_type: Option<TypeAnnotation<'a>>,
     /// Function body.
     pub body: Block<'a>,
+    /// Full declaration span.
+    pub span: SourceSpan<'a>,
+}
+
+/// One module constant: `const NAME = value;`.
+#[derive(Debug, Clone)]
+pub struct ConstDeclaration<'a> {
+    /// Who may name the constant.
+    pub visibility: Visibility,
+    /// The constant's name.
+    pub name: Identifier<'a>,
+    /// Its value: a literal, a negated number literal, or another constant.
+    pub value: Expression<'a>,
     /// Full declaration span.
     pub span: SourceSpan<'a>,
 }

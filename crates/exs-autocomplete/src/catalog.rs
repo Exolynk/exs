@@ -71,6 +71,7 @@ pub(crate) fn append_keywords(items: &mut Vec<CompletionItem>, prefix: &str) {
     for (label, detail, insert_text) in [
         ("as", "ExS keyword", "as "),
         ("break", "ExS keyword", "break"),
+        ("const", "Constant declaration", "const "),
         ("continue", "ExS keyword", "continue"),
         ("else", "ExS keyword", "else "),
         ("enum", "Enum declaration", "enum "),

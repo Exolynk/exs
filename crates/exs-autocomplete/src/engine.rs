@@ -376,7 +376,10 @@ fn append_used_items(
             Some(SymbolKind::Type) => ("Library type", CompletionKind::Type),
             Some(SymbolKind::Enum) => ("Library enum", CompletionKind::Enum),
             Some(SymbolKind::Trait) => ("Library trait", CompletionKind::Trait),
-            None => continue,
+            Some(SymbolKind::Constant) if !types_only => {
+                ("Library constant", CompletionKind::Constant)
+            }
+            Some(SymbolKind::Constant) | None => continue,
         };
         push_documented_if_matching(
             items,
@@ -464,6 +467,7 @@ fn append_module_members(
             SymbolKind::Type => ("Library type", CompletionKind::Type),
             SymbolKind::Enum => ("Library enum", CompletionKind::Enum),
             SymbolKind::Trait => ("Library trait", CompletionKind::Trait),
+            SymbolKind::Constant => ("Library constant", CompletionKind::Constant),
             SymbolKind::Function => continue,
         };
         push_documented_if_matching(
@@ -503,7 +507,7 @@ fn append_document_types(
             SymbolKind::Type => ("Source type", CompletionKind::Type),
             SymbolKind::Enum => ("Source enum", CompletionKind::Enum),
             SymbolKind::Trait => ("Source trait", CompletionKind::Trait),
-            SymbolKind::Function => continue,
+            SymbolKind::Function | SymbolKind::Constant => continue,
         };
         push_documented_if_matching(
             items,
@@ -544,6 +548,7 @@ fn append_document_symbols(
             SymbolKind::Type => ("Source type", CompletionKind::Type),
             SymbolKind::Enum => ("Source enum", CompletionKind::Enum),
             SymbolKind::Trait => ("Source trait", CompletionKind::Trait),
+            SymbolKind::Constant => ("Source constant", CompletionKind::Constant),
         };
         push_documented_if_matching(
             items,
@@ -1005,6 +1010,29 @@ mod tests {
             cursor: private_source.len(),
         });
         assert!(private_response.items.is_empty());
+    }
+
+    /// Completes constants of libraries and of the document.
+    #[test]
+    fn completes_constants() {
+        let engine = CompletionEngine::default().with_library(
+            "log",
+            "/// The default level.\nconst LEVEL = \"info\";\nprivate const HIDDEN = 1;",
+        );
+        let response = engine.complete(CompletionRequest {
+            source: "log::",
+            cursor: 5,
+        });
+        let level = item(&response, "LEVEL");
+        assert_eq!(level.kind, CompletionKind::Constant);
+        assert_eq!(level.documentation.as_deref(), Some("The default level."));
+        assert!(!response.items.iter().any(|item| item.label == "HIDDEN"));
+        let source = "const LIMIT = 3;\nfn main() { LIM }";
+        let response = engine.complete(CompletionRequest {
+            source,
+            cursor: source.len() - 2,
+        });
+        assert_eq!(item(&response, "LIMIT").kind, CompletionKind::Constant);
     }
 
     /// Hides the private declarations of a library and keeps the document's own.

@@ -32,6 +32,8 @@ pub enum CompletionKind {
     Variant,
     /// A reserved member of the `host` boundary.
     HostMember,
+    /// A module constant.
+    Constant,
 }
 
 /// One source replacement offered to the user.
