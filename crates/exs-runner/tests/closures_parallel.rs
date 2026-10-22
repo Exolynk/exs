@@ -451,3 +451,32 @@ fn checks_annotated_closure_parameters() {
         ])
     );
 }
+
+/// Returns the expression of a closure written without a block.
+#[test]
+fn evaluates_expression_closures() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            fn main() -> List {
+                let double = (value) => value * 2;
+                let object = () => ({ a: 1 });
+                let add = (x) => (y) => x + y;
+                let add_one = add(1);
+                ret [
+                    [1, 2].map((value) => value * 2), double(4), object().a, add_one(2),
+                    [3, 1, 2].sorted((a, b) => b.compare(a)),
+                ];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![ExsValue::Int(2), ExsValue::Int(4)]),
+            ExsValue::Int(8),
+            ExsValue::Int(1),
+            ExsValue::Int(3),
+            ExsValue::List(vec![ExsValue::Int(3), ExsValue::Int(2), ExsValue::Int(1)]),
+        ])
+    );
+}

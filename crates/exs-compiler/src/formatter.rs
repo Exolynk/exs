@@ -725,11 +725,24 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
         ),
         Expression::Closure {
             parameters, body, ..
-        } => format!(
-            "({}) => {}",
-            render_parameters(parameters),
-            inline_block(body)
-        ),
+        } => match body.statements.as_slice() {
+            // An expression body has the span of its returned expression.
+            [
+                Statement::Return {
+                    value: Some(value),
+                    span,
+                },
+            ] if *span == body.span => format!(
+                "({}) => {}",
+                render_parameters(parameters),
+                render_expression(value)
+            ),
+            _ => format!(
+                "({}) => {}",
+                render_parameters(parameters),
+                inline_block(body)
+            ),
+        },
         Expression::ParallelStatic { tasks, .. } => format!(
             "par {{ {} }}",
             tasks.iter().map(par_task).collect::<Vec<_>>().join(" ")

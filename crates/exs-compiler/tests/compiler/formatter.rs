@@ -193,3 +193,20 @@ fn keeps_declarations_in_source_order() {
         "{formatted}"
     );
 }
+
+/// Keeps closures with an expression body in their short form.
+#[test]
+fn formats_expression_closures() {
+    let formatted = match format(SourceInput {
+        source_id: "./main.exs",
+        text: "fn main(){let f=(v)=>v*2;let g=(v)=>{ret v;};ret f(1);}",
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert!(formatted.contains("let f = (v) => v * 2;"), "{formatted}");
+    assert!(
+        formatted.contains("let g = (v) => { ret v; };"),
+        "{formatted}"
+    );
+}

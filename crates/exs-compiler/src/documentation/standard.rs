@@ -823,7 +823,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
                 StandardMethod {
                     signature: "sort(compare: Fn) -> None | Error",
                     description: "Sorts the List in place by the Ordering `compare(a, b)` returns: `Ordering::Less` puts `a` first. Equal items keep their order; a comparison Error is returned.",
-                    example: "let items = [1, 3, 2];\nitems.sort((a, b) => { ret b.compare(a); }); // [3, 2, 1]",
+                    example: "let items = [1, 3, 2];\nitems.sort((a, b) => b.compare(a)); // [3, 2, 1]",
                 },
                 StandardMethod {
                     signature: "sorted() -> List | Error",
@@ -833,7 +833,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
                 StandardMethod {
                     signature: "sorted(compare: Fn) -> List | Error",
                     description: "Returns a new List of the items ordered by `compare`, like `sort(compare)`, without changing the receiver.",
-                    example: "let newest = [1, 3, 2].sorted((a, b) => { ret b.compare(a); });",
+                    example: "let newest = [1, 3, 2].sorted((a, b) => b.compare(a));",
                 },
                 StandardMethod {
                     signature: "sum() -> Any | Error",

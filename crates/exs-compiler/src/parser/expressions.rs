@@ -303,7 +303,21 @@ impl<'a> Parser<'a> {
                         TokenKind::FatArrow,
                         "expected `=>` after closure parameters",
                     )?;
-                    let body = self.block()?;
+                    // `(value) => value * 2` returns its expression; its block has the
+                    // expression's span, which the formatter keeps as the short form.
+                    let body = if self.check(&TokenKind::LeftBrace) {
+                        self.block()?
+                    } else {
+                        let value = self.nested(Self::expression)?;
+                        let span = expression_span(&value);
+                        Block {
+                            statements: vec![Statement::Return {
+                                value: Some(value),
+                                span,
+                            }],
+                            span,
+                        }
+                    };
                     return Ok(Expression::Closure {
                         parameters,
                         span: token.span.through(body.span),
