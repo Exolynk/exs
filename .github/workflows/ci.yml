@@ -42,7 +42,7 @@ jobs:
       - name: Build core Wasm template
         run: cargo rustc -p exs-core-template --features template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory -C link-arg=-zstack-size=262144
       - name: Install Trunk
-        run: cargo install trunk --locked
+        run: cargo install trunk --version 0.21.14 --locked
       - name: Build playground
         working-directory: examples/playground
         run: trunk build --release --public-url "/${{ github.event.repository.name }}/"
@@ -69,7 +69,7 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
       - name: Install Trunk
-        run: cargo install trunk --locked
+        run: cargo install trunk --version 0.21.14 --locked
       - name: Build playground
         working-directory: examples/playground
         run: trunk build --release --public-url "/${{ github.event.repository.name }}/"
