@@ -89,7 +89,6 @@ macro_rules! export {
 }
 
 /// Boxes one concrete async entry future for storage behind the ABI boundary.
-#[must_use]
 pub fn boxed_future<F>(future: F) -> GuestFuture
 where
     F: Future<Output = ExsValue> + 'static,

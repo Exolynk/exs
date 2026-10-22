@@ -20,8 +20,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Install Rust 1.95.0 toolchain
-        uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install Rust 1.99.1 toolchain
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
@@ -40,9 +40,9 @@ jobs:
       - name: Build no-std Rust guest library
         run: cargo build -p exs-guest --no-default-features --features no-std --target wasm32-unknown-unknown
       - name: Build core Wasm template
-        run: cargo rustc -p exs-core-template --features template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory -C link-arg=-zstack-size=262144
+        run: cargo rustc -p exs-core-template --features template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory -C link-arg=--export=__heap_base -C link-arg=-zstack-size=262144
       - name: Install Trunk
-        run: cargo install trunk --version 0.21.14 --locked
+        run: cargo install trunk --version 0.22.0 --locked
       - name: Build playground
         working-directory: examples/playground
         run: trunk build --release --public-url "/${{ github.event.repository.name }}/"
@@ -62,14 +62,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Install Rust 1.95.0 toolchain
-        uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install Rust 1.99.1 toolchain
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: wasm32-unknown-unknown
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
       - name: Install Trunk
-        run: cargo install trunk --version 0.21.14 --locked
+        run: cargo install trunk --version 0.22.0 --locked
       - name: Build playground
         working-directory: examples/playground
         run: trunk build --release --public-url "/${{ github.event.repository.name }}/"
