@@ -279,14 +279,6 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::Block(BlockType::Empty));
         self.instruction(Instruction::Block(BlockType::Empty));
         self.property_dispatch(object, property, 1, |compiler, offset| {
-            // Like the core, refuse to restore a removed declared field, which would have to
-            // come back after every other key.
-            compiler.push_address(object);
-            compiler.instruction(Instruction::I64Load(value_field(offset)));
-            compiler.instruction(Instruction::I64Eqz);
-            compiler.instruction(Instruction::If(BlockType::Empty));
-            compiler.instruction(Instruction::Unreachable);
-            compiler.instruction(Instruction::End);
             compiler.push_address(object);
             compiler.instruction(Instruction::LocalGet(value));
             compiler.instruction(Instruction::I64Store(value_field(offset)));
@@ -297,14 +289,13 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
         self.fill_inline_cache(object, name, cache, span)?;
-        // The assignment's result, also an Error, is discarded.
         self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(object));
         self.instruction(Instruction::I64Const(name.cast_signed()));
         self.instruction(Instruction::LocalGet(value));
         self.core_call("__exs_core_property_set", span)?;
-        self.instruction(Instruction::Drop);
+        self.return_if_assignment_failed(value, span)?;
         self.instruction(Instruction::End);
         Ok(())
     }

@@ -142,14 +142,30 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I64Store(value_field(SLOTS)));
         self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
-        // The assignment's result, also an Error, is discarded.
         self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(receiver));
         self.instruction(Instruction::LocalGet(index));
         self.instruction(Instruction::LocalGet(value));
         self.core_call("__exs_core_index_set", span)?;
-        self.instruction(Instruction::Drop);
+        self.return_if_assignment_failed(value, span)?;
+        self.instruction(Instruction::End);
+        Ok(())
+    }
+
+    /// Returns the Error on the stack from the function when an assignment of the value in
+    /// `value` produced it instead of the value itself.
+    pub(super) fn return_if_assignment_failed(
+        &mut self,
+        value: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let result = self.store_new();
+        self.instruction(Instruction::LocalGet(result));
+        self.instruction(Instruction::LocalGet(value));
+        self.instruction(Instruction::I64Ne);
+        self.instruction(Instruction::If(BlockType::Empty));
+        self.return_if_error(result, span)?;
         self.instruction(Instruction::End);
         Ok(())
     }

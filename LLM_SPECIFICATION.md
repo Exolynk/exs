@@ -42,7 +42,8 @@ application signatures, types, traits, and enum variants.
 - Contracts apply at function entry and explicit or implicit return. A failure is recoverable
   `TypeError` if the return contract includes `Error` or is omitted; otherwise it is fatal.
 - `let name = value;` makes a mutable lexical binding; `let name;` stores `None`. Inner scopes may
-  shadow. `[private] const NAME = value;` declares a module constant: a literal of None, Bool, Int,
+  shadow. A failed index or property assignment makes the current function return its Error.
+  `[private] const NAME = value;` declares a module constant: a literal of None, Bool, Int,
   Float, String, or Bytes, a negated number, or another constant. Constants are exported, used, and
   kept private like functions; compilation substitutes them where no local binding shadows them,
   and assigning to one is a compile error. Valid assignment targets are local identifiers, Object properties, and List/Object

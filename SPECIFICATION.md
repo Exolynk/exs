@@ -190,7 +190,7 @@ let later;
 
 Bindings are lexical. A binding declared in a block is visible from its declaration to the end of that block. An inner binding may shadow an outer binding.
 
-Assignment targets are local identifiers, Object properties, and List or Object indexes:
+Assignment targets are local identifiers, Object properties, and List or Object indexes. When an index or property assignment fails, for example with an index outside a List or a field the nominal type does not declare, the current function returns the assignment's Error, like an invalid condition:
 
 ```exs
 count = 2;

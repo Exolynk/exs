@@ -249,13 +249,14 @@ fn keeps_indexing_behavior_for_non_object_receivers() {
         panic!("property read on a List did not return an Error");
     };
     assert_eq!(error.kind, "IndexError");
-    assert_eq!(
-        execute_source(
-            "fn main(input) { let list = [1]; list.name = 2; ret list; }",
-            ExsValue::None,
-        ),
-        ExsValue::List(vec![ExsValue::Int(1)]),
-    );
+    // The failed assignment returns its Error from the function.
+    let ExsValue::Error(error) = execute_source(
+        "fn main(input) { let list = [1]; list.name = 2; ret list; }",
+        ExsValue::None,
+    ) else {
+        panic!("property assignment on a List did not return an Error");
+    };
+    assert_eq!(error.kind, "IndexError");
 }
 
 /// Builds Object literals identically whether their keys are distinct or repeated.

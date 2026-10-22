@@ -403,3 +403,37 @@ fn reports_failed_assertions() {
         ExsValue::Int(7)
     );
 }
+
+/// Returns the Error of a failed index or property assignment from the current function,
+/// while an Error value can still be stored.
+#[test]
+fn returns_errors_of_failed_assignments() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            type Point { x: Int }
+
+            fn index_out() { let items = [1]; items[5] = 2; ret "after"; }
+            fn field() { let point = Point { x: 1 }; point.y = 2; ret "after"; }
+            fn stores_error() { let items = [1]; items[0] = Error("Kind", "message", 1); ret items[0].kind(); }
+            fn resumable() {
+                Host::sleep(Duration::milliseconds(0));
+                let items = [1];
+                items[3] = 1;
+                ret "after";
+            }
+
+            fn main() -> List {
+                ret [index_out().kind(), field().kind(), stores_error(), resumable().kind()];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::String("IndexError".to_owned()),
+            ExsValue::String("TypeError".to_owned()),
+            ExsValue::String("Kind".to_owned()),
+            ExsValue::String("IndexError".to_owned()),
+        ])
+    );
+}
