@@ -9,6 +9,8 @@ use exs_abi::cbor::{ExsStackFrame, SourcePositionId};
 use exs_abi::{CborLimits, ErrorSeverity, ExsError, ExsValue};
 use exs_core::{Memory, Visitor, WalkError, walk_value};
 
+/// Size of the pages within which [`Builder::copy`] borrows memory.
+const PAGE_SIZE: u32 = 65_536;
 /// CBOR tag of an ExS Error, whose head the equivalent CBOR size counts.
 const ERROR_TAG: u64 = 60_001;
 /// CBOR tag of an ExS enum, whose head the equivalent CBOR size counts.
@@ -265,15 +267,25 @@ impl Builder {
         Ok(())
     }
 
-    /// Copies the `len` bytes at `address`.
+    /// Copies the `len` bytes at `address` in chunks that stay inside one 64 KiB page, so a
+    /// memory that borrows only within pages still copies whole chunks.
     fn copy<M: Memory>(memory: &M, address: u32, len: u32) -> Vec<u8> {
-        let bytes = memory.bytes(address, len);
-        if bytes.len() == len as usize {
-            return bytes.to_vec();
+        let mut copied = Vec::with_capacity(len as usize);
+        let mut address = address;
+        let mut left = len;
+        while left > 0 {
+            let chunk = left.min(PAGE_SIZE - address % PAGE_SIZE);
+            let bytes = memory.bytes(address, chunk);
+            if bytes.len() == chunk as usize {
+                copied.extend_from_slice(bytes);
+            } else {
+                copied
+                    .extend((0..chunk).map(|offset| memory.load_u8(address.wrapping_add(offset))));
+            }
+            address = address.wrapping_add(chunk);
+            left -= chunk;
         }
-        (0..len)
-            .map(|offset| memory.load_u8(address.wrapping_add(offset)))
-            .collect()
+        copied
     }
 }
 

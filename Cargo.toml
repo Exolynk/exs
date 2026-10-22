@@ -14,6 +14,7 @@ members = [
     "examples/playground",
     "examples/rust-guest",
     "examples/fuel-baseline",
+    "examples/browser-check",
 ]
 resolver = "3"
 

@@ -814,6 +814,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "exs-browser-check"
+version = "0.1.0"
+dependencies = [
+ "exs-abi",
+ "exs-compiler",
+ "exs-runner",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "exs-cli"
 version = "0.1.0"
 dependencies = [

@@ -165,9 +165,9 @@ Because the boundary may change, the guest-side CBOR encoding can go away:
   memory is always treated as untrusted). Inputs are allocated through an exported
   `__exs_alloc` so the guest heap stays the single owner.
 - **Host calls:** the same direct exchange for arguments and results.
-- **Browser runner and `exs-guest`:** both implement the same boundary today. Either they get a
-  JS / Rust implementation of the direct layout, or a stateless runtime pair
-  `encode_cbor` / `decode_cbor` remains as a portable fallback. To be decided in phase 6.
+- **Browser runner and `exs-guest`:** the browser runner uses the same direct boundary, reading
+  module memory page by page through JavaScript; Rust guests exchange every value as an image
+  (phase 6, section 12za). Only v1 modules still use CBOR.
 
 ## 9. Compiler structure
 
@@ -199,14 +199,13 @@ Each phase ends with measurement and an explicit go / no-go.
 | 3 | All built-in methods as stateless helpers over the layout; enums and `match`; closures and cells; iterators; formatted strings | all non-async runtime-value tests green on v2 |
 | 4 | Async: frames as heap objects, scheduler state in memory, host calls, parallel groups, cancellation | done, see sections 12t to 12w |
 | 5 | Host boundary v2 for the Wasmtime runner | done, see section 12x |
-| 6 | Browser runner and `exs-guest` on the new boundary (or CBOR fallback) | all crates green |
+| 6 | Browser runner and `exs-guest` on the new boundary | done, see section 12za |
 | 7 | Switch the default to v2, delete v1 code and `exs-runtime` | one backend left |
 
 ### Later work outside the phases
 
-- **CBOR in the core library.** The template no longer links the CBOR codec; the core keeps
-  it for the browser runner and `exs-guest` (phase 6), but its decoder does not create host
-  enums yet.
+- **CBOR codec.** v2 paths no longer use CBOR; the codec in `exs-abi` and the runner's CBOR
+  paths remain for v1 modules and go with them in phase 7.
 - **Data span.** The uninitialized VM state block (356 bytes) still lies inside the
   initialized data span, because generated code needs its address before the size of the
   program's static data is known (section 12z).
@@ -1127,6 +1126,68 @@ The fuel suite on v2 is unchanged.
 
 Every v2 scenario now costs less fuel than v1, from 21 % (`int_loop_1000`, `format_loop_1000`) to 77 %
 (`resumable_call_loop_100`), and every runner suite passes on v2.
+
+## 12za. Phase 6 results: one boundary for every runner and guest
+
+- **Shared image codec (6a):** the image format and its reader and writer moved to
+  `exs_abi::image`, so the runners, the core library and `exs-guest` share one
+  implementation. The reader checks every offset, length, record kind and UTF-8 and applies
+  the CBOR limits to the size of the equivalent CBOR.
+- **Values built directly (6b):** the core library's CBOR encoder became a walk that reports
+  each part of a value to a visitor (`exs_core::walk_value`); the runner's visitor builds
+  `ExsValue` directly, with the byte budget, nesting, collection and payload limits the CBOR
+  intermediate had, checked in the same order. The core library no longer contains a CBOR
+  codec, which removed about 1,400 lines. Execution times of the boundary report fell
+  slightly: 0.76 instead of 0.78 ms for 200 records as input and result, 0.61 instead of
+  0.67 ms as input only and 1.44 ms through a host call, unchanged.
+- **Browser runner (6c):** the JavaScript glue detects v2 modules by `__exs_result_value`,
+  implements `__exs_host_call_start_value` and hands the runner a reader object for results
+  and host-call arguments. The runner's `PagedMemory` implements `exs_core::Memory` over it:
+  each 64 KiB page is copied out of the module's memory the first time the walk touches it
+  and kept for the rest of the read; reads outside the memory return 0, as on the server.
+  Inputs and host responses are images. Because `catch_unwind` does not help in the
+  browser, the read relies on the walk being panic-free, which the bounds-checked memory and
+  the bounded nesting give.
+- **Template feature:** the core template's `no_std` exports, allocator and panic handler
+  are now behind the `template` feature that `build-template.nu` enables. On wasm32 they
+  collided with `std`, so the v2 compiler could not be built for the browser.
+- **Rust guests (6d):** `exs-guest` reads inputs and host responses as images and writes its
+  result and host-call requests as images. `export!` adds the marker export
+  `__exs_image_boundary`, by which both runners choose images in both directions; the
+  public guest API is unchanged. An image result's limit applies to the size of its
+  equivalent CBOR.
+- **Equivalence (6e):** `examples/browser-check` runs the same programs as v1 and v2 modules
+  and the example Rust guest in the browser runner under Node, and its native test compares
+  every result with the server runner: scalars, inputs of every kind, typed Objects, enums,
+  Errors with origins and traces, a 128 KiB String that spans pages, sync and async host
+  calls, host values of every kind, values that cannot cross the boundary, and the guest's
+  entries including a host stream. Run it with `nu examples/browser-check/check.nu`; the
+  script installs the wasm-bindgen CLI matching `Cargo.lock` under `target/tools`.
+
+Server runner, fuel and best of five runs, including module instantiation:
+
+| Scenario | fuel v1 | fuel v2 | time v1 | time v2 |
+|---|---:|---:|---:|---:|
+| Int result | 68,777 | 17,139 | 4.61 ms | 2.17 ms |
+| 10,000 Objects as result | 50,947,710 | 20,085,024 | 25.63 ms | 12.20 ms |
+| 128 KiB String as result | 78,962 | 38,219 | 6.47 ms | 3.88 ms |
+| 10,000 Objects as input | 39,080,193 | 27,555,449 | 19.82 ms | 14.92 ms |
+| 100 host echoes of 1,000 Objects | 766,738,175 | 236,988,825 | 258.62 ms | 114.75 ms |
+
+Browser runner under Node, best of five runs, including the browser's module compilation:
+
+| Scenario | v1 | v2 |
+|---|---:|---:|
+| Int result | 0.32 ms | 0.20 ms |
+| 10,000 Objects as result | 5.27 ms | 3.92 ms |
+| 128 KiB String as result | 0.50 ms | 0.40 ms |
+| 10,000 Objects as input | 5.10 ms | 4.36 ms |
+| 100 host echoes of 1,000 Objects | 67.33 ms | 50.99 ms |
+
+Strings that span pages are copied in chunks within each page; copied byte by byte they
+took 0.55 ms, slower than v1. The fuel suite on v2 is unchanged except
+`datetime_roundtrip_100` (3,159,571 → 3,157,671) and `record_roundtrip_20` (1,882,224 →
+1,881,844), whose VM state no longer reserves a result buffer.
 
 ## 13. Risks and open questions
 
