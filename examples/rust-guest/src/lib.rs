@@ -1,6 +1,6 @@
 //! A Rust guest that exposes multiple asynchronous functions through the ExS runner ABI.
 
-use std::{format, vec::Vec};
+use std::{format, vec, vec::Vec};
 
 use exs_guest::{ExsValue, host};
 
@@ -22,6 +22,13 @@ async fn add(inputs: Vec<ExsValue>) -> ExsValue {
     ExsValue::Int(value + 8)
 }
 
+/// Sends its inputs to the `echo` host function and returns them with the host's response,
+/// so every value kind crosses the boundary in both directions.
+async fn round_trip(inputs: Vec<ExsValue>) -> ExsValue {
+    let response = host::call("echo", [ExsValue::List(inputs.clone())]).await;
+    ExsValue::List(vec![ExsValue::List(inputs), response])
+}
+
 /// Opens the example counter stream and sums every integer it yields.
 async fn sum_stream(_inputs: Vec<ExsValue>) -> ExsValue {
     let mut stream = match host::stream("counter", [ExsValue::Int(3)]).await {
@@ -39,4 +46,4 @@ async fn sum_stream(_inputs: Vec<ExsValue>) -> ExsValue {
     }
 }
 
-exs_guest::export!(main, add, sum_stream);
+exs_guest::export!(main, add, round_trip, sum_stream);

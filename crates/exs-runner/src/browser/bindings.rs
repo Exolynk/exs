@@ -8,6 +8,10 @@ const HOST_CALL_PENDING = 1;
 const HOST_CALL_UNSUPPORTED = 3;
 const PAGE_SIZE = 65536;
 const RESULT_VALUE_EXPORT = "__exs_result_value";
+const IMAGE_BOUNDARY_EXPORT = "__exs_image_boundary";
+const BOUNDARY_CBOR = 0;
+const BOUNDARY_IMAGE = 1;
+const BOUNDARY_DIRECT = 2;
 const STATUS_COMPLETE = 2;
 const STATUS_PENDING = 1;
 const STATUS_CANCELLED = 3;
@@ -75,10 +79,14 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
     if (typeof release !== "function") {
         throw new TypeError("browser host cleanup callback must be a function");
     }
-    const direct = WebAssembly.Module.exports(module).some((entry) => entry.name === RESULT_VALUE_EXPORT);
+    const exportNames = WebAssembly.Module.exports(module).map((entry) => entry.name);
+    const boundary = exportNames.includes(RESULT_VALUE_EXPORT)
+        ? BOUNDARY_DIRECT
+        : exportNames.includes(IMAGE_BOUNDARY_EXPORT) ? BOUNDARY_IMAGE : BOUNDARY_CBOR;
+    const direct = boundary === BOUNDARY_DIRECT;
     let nextExecutionId = 1;
     return {
-        direct,
+        boundary,
         async execute(functionName, input) {
             if (nextExecutionId > 2_147_483_647) {
                 throw new RangeError("browser execution identity overflow");
@@ -93,7 +101,7 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
                 read(memory, pointer, length, "host function name"),
             );
             const startHostCall = (callId, name, request, sourcePosition) => {
-                const response = host(name, request, sourcePosition, executionId, executionStartedAt);
+                const response = host(name, request, boundary, sourcePosition, executionId, executionStartedAt);
                 if (response === null) {
                     return HOST_CALL_UNSUPPORTED;
                 }
@@ -203,8 +211,8 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
     };
 }
 
-export function browserRunnerDirect(controller) {
-    return Boolean(controller && controller.direct);
+export function browserRunnerBoundary(controller) {
+    return controller ? controller.boundary : BOUNDARY_CBOR;
 }
 
 export function executeBrowserRunner(controller, functionName, input) {
@@ -224,9 +232,10 @@ extern "C" {
         expected_abi_version: i32,
     ) -> Result<Promise, JsValue>;
 
-    /// Returns whether the controller's module uses the direct boundary of runtime v2.
-    #[wasm_bindgen(js_name = browserRunnerDirect)]
-    pub(super) fn browser_runner_direct(controller: &JsValue) -> bool;
+    /// Returns how boundary values cross for the controller's module: 0 for CBOR, 1 for
+    /// images and 2 for the direct boundary of runtime v2.
+    #[wasm_bindgen(js_name = browserRunnerBoundary)]
+    pub(super) fn browser_runner_boundary(controller: &JsValue) -> u32;
 
     /// Executes one isolated ExS instance through the JavaScript controller.
     #[wasm_bindgen(catch, js_name = executeBrowserRunner)]

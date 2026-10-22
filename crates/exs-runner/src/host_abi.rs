@@ -12,6 +12,7 @@ use exs_abi::{
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter};
 
+use crate::cbor::decode_image_arguments;
 use crate::limits::ExecutionLimits;
 use crate::value_reader::ReadError;
 use crate::{
@@ -53,9 +54,19 @@ pub(crate) struct HostAbiState {
     store_limits: crate::guest_limiter::GuestLimiter,
     /// The most recent hard-limit violation reported through a Wasm import.
     limit_violation: Option<LimitKind>,
-    /// Whether the module uses the direct boundary of runtime v2, which takes host responses
-    /// as images instead of CBOR.
-    direct: bool,
+    /// How boundary values cross between the runner and the module.
+    boundary: Boundary,
+}
+
+/// How boundary values cross between the runner and a module.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Boundary {
+    /// CBOR in both directions, as for v1 modules.
+    Cbor,
+    /// Images in both directions, as for Rust guests.
+    Image,
+    /// Images to the module and values read from its memory, as for runtime v2 modules.
+    Direct,
 }
 
 impl HostAbiState {
@@ -83,20 +94,30 @@ impl HostAbiState {
             execution_started_at,
             deadline_at,
             limit_violation: None,
-            direct: false,
+            boundary: Boundary::Cbor,
         }
     }
 
-    /// Returns whether the module uses the direct boundary.
-    pub(crate) const fn is_direct(&self) -> bool {
-        self.direct
+    /// Returns how boundary values cross between the runner and the module.
+    pub(crate) const fn boundary(&self) -> Boundary {
+        self.boundary
+    }
+
+    /// Returns whether the module takes inputs and host responses as images.
+    pub(crate) fn takes_images(&self) -> bool {
+        self.boundary != Boundary::Cbor
     }
 
     /// Makes the module take host responses as images of the direct boundary, and lets its
     /// memory refuse to grow beyond the limit so its collector can reclaim memory first.
     pub(crate) fn use_direct_boundary(&mut self) {
-        self.direct = true;
+        self.boundary = Boundary::Direct;
         self.store_limits.refuse_memory_growth();
+    }
+
+    /// Makes the module exchange every boundary value as an image.
+    pub(crate) fn use_image_boundary(&mut self) {
+        self.boundary = Boundary::Image;
     }
 
     /// Returns whether the module's memory refused to grow beyond the limit.
@@ -431,8 +452,12 @@ fn host_call_start(
         request_length,
         limits.max_cbor_payload_bytes,
     )?;
-    let arguments = decode_arguments_with_limits(&request, limits.cbor_limits())
-        .map_err(|error| host_cbor_error(&mut caller, error))?;
+    let arguments = if caller.data().boundary == Boundary::Image {
+        decode_image_arguments(&request, limits.cbor_limits())
+    } else {
+        decode_arguments_with_limits(&request, limits.cbor_limits())
+    }
+    .map_err(|error| host_cbor_error(&mut caller, error))?;
     dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
 }
 
@@ -691,7 +716,7 @@ fn store_ready_response(
         .max_payload_bytes
         .min(limits.max_cbor_payload_bytes);
     // An image applies the payload limit to the size of the equivalent CBOR itself.
-    let (response, payload_len) = if caller.data().direct {
+    let (response, payload_len) = if caller.data().takes_images() {
         let image = value
             .to_image_with_limits(cbor_limits)
             .map_err(|error| host_cbor_error(caller, HostCborError::Invalid(error)))?;

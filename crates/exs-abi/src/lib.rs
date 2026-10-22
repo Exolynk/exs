@@ -187,6 +187,9 @@ pub const RESULT_LENGTH_EXPORT: &str = "__exs_result_len";
 pub const RESULT_VALUE_EXPORT: &str = "__exs_result_value";
 /// The export of a runtime v2 module returning the address of its VM state block.
 pub const VM_EXPORT: &str = "__exs_vm";
+/// The export marking a module whose boundary values are `image` images instead of CBOR:
+/// inputs, host-call requests and responses, and the result.
+pub const IMAGE_BOUNDARY_EXPORT: &str = "__exs_image_boundary";
 /// The module name containing runner-provided Host ABI imports.
 pub const HOST_IMPORT_MODULE: &str = "exs";
 /// The language-neutral module name containing runner resource-metering imports.

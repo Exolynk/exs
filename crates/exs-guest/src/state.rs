@@ -11,7 +11,7 @@ pub(crate) enum Execution {
     Idle,
     /// One future is suspended or currently being polled by a runner callback.
     Running(GuestFuture),
-    /// One completed CBOR result remains readable by the runner.
+    /// The image of one completed result remains readable by the runner.
     Completed(Vec<u8>),
 }
 

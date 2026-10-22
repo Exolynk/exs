@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use exs_abi::{
-    HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY, STATUS_CANCELLED, STATUS_COMPLETE,
-    STATUS_PENDING,
+    CborLimits, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY, STATUS_CANCELLED,
+    STATUS_COMPLETE, STATUS_PENDING,
 };
 
 use crate::imports::{
@@ -33,7 +33,7 @@ pub fn input_alloc(length: i32) -> i32 {
     pointer
 }
 
-/// Starts one fresh guest execution from the runner-owned CBOR input buffer.
+/// Starts one fresh guest execution from the runner-owned input image.
 pub fn start<Entry>(pointer: i32, length: i32, entry: Entry) -> i32
 where
     Entry: FnOnce(Vec<ExsValue>) -> GuestFuture,
@@ -41,7 +41,7 @@ where
     let Some(input) = take_buffer(pointer, length) else {
         return STATUS_CANCELLED;
     };
-    let Ok(ExsValue::List(inputs)) = ExsValue::from_cbor(&input) else {
+    let Ok(ExsValue::List(inputs)) = read_image(&input) else {
         return STATUS_CANCELLED;
     };
     start_inputs(inputs, entry)
@@ -65,10 +65,7 @@ pub fn resume_host(call_id: i64, pointer: i32, length: i32) -> i32 {
     let Some(response) = take_buffer(pointer, length) else {
         return STATUS_CANCELLED;
     };
-    let response = ExsValue::from_cbor(&response).unwrap_or_else(|_| {
-        guest_error("InvalidHostResponse", "host response is not valid ExS CBOR")
-    });
-    resume_response(call_id, response)
+    resume_response(call_id, host_response(&response))
 }
 
 /// Supplies one decoded host response and resumes the active guest future.
@@ -89,7 +86,7 @@ pub fn cancel() {
     buffers_mut().clear();
 }
 
-/// Returns the linear-memory pointer to the last completed CBOR result.
+/// Returns the linear-memory pointer to the image of the last completed result.
 #[must_use]
 pub fn result_ptr() -> i32 {
     match execution_mut() {
@@ -98,7 +95,7 @@ pub fn result_ptr() -> i32 {
     }
 }
 
-/// Returns the byte length of the last completed CBOR result.
+/// Returns the byte length of the image of the last completed result.
 #[must_use]
 pub fn result_len() -> i32 {
     match execution_mut() {
@@ -114,7 +111,7 @@ pub(crate) fn begin_host_call(
     arguments: &[ExsValue],
 ) -> Option<(i64, Option<ExsValue>)> {
     let call_id = existing.unwrap_or_else(next_host_call_id);
-    let request = ExsValue::List(arguments.to_vec()).to_cbor().ok()?;
+    let request = write_image(&ExsValue::List(arguments.to_vec())).ok()?;
     let status = host_call_start(
         call_id,
         name.as_ptr(),
@@ -178,13 +175,12 @@ fn poll_execution() -> i32 {
 
 /// Encodes and retains one completed guest result for the runner to read.
 fn complete(value: ExsValue) -> i32 {
-    let result = match value.to_cbor() {
+    let result = match write_image(&value) {
         Ok(result) => result,
-        Err(_) => guest_error(
+        Err(_) => write_image(&guest_error(
             "ResultEncodingFailed",
-            "guest result could not be encoded as ExS CBOR",
-        )
-        .to_cbor()
+            "guest result could not be encoded as an ExS image",
+        ))
         .unwrap_or_default(),
     };
     *execution_mut() = Execution::Completed(result);
@@ -204,9 +200,27 @@ fn read_ready_host_response(call_id: i64) -> Option<ExsValue> {
             "runner could not copy host response",
         ));
     }
-    Some(ExsValue::from_cbor(&response).unwrap_or_else(|_| {
-        guest_error("InvalidHostResponse", "host response is not valid ExS CBOR")
-    }))
+    Some(host_response(&response))
+}
+
+/// Decodes one runner host response image, or a fatal Error for an invalid one.
+fn host_response(response: &[u8]) -> ExsValue {
+    read_image(response).unwrap_or_else(|_| {
+        guest_error(
+            "InvalidHostResponse",
+            "host response is not a valid ExS image",
+        )
+    })
+}
+
+/// Decodes one image the runner wrote; the runner already applied its limits.
+fn read_image(bytes: &[u8]) -> Result<ExsValue, exs_abi::CborError> {
+    ExsValue::from_image_with_limits(bytes, CborLimits::unrestricted())
+}
+
+/// Encodes one value the runner reads as an image; the runner applies its limits.
+fn write_image(value: &ExsValue) -> Result<Vec<u8>, exs_abi::CborError> {
+    value.to_image_with_limits(CborLimits::unrestricted())
 }
 
 /// Allocates the next positive identifier for an in-flight host call.

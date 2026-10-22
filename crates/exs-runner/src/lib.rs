@@ -228,6 +228,11 @@ impl ServerRunner {
         check_abi(&mut store, &instance)?;
         if direct::is_direct(&mut store, &instance) {
             store.data_mut().use_direct_boundary();
+        } else if instance
+            .get_func(&mut store, exs_abi::IMAGE_BOUNDARY_EXPORT)
+            .is_some()
+        {
+            store.data_mut().use_image_boundary();
         }
         let compile_time = execution_started_at.elapsed();
         let run_started_at = std::time::Instant::now();
@@ -254,7 +259,7 @@ impl ServerRunner {
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
-                    let result = if direct::is_direct(&mut store, &instance) {
+                    let result = if store.data().boundary() == host_abi::Boundary::Direct {
                         direct::result(&mut store, &instance, &self.limits)?
                     } else {
                         result(&mut store, &instance, &self.limits)?
@@ -508,8 +513,8 @@ fn encode_limited_cbor(
     Ok(bytes)
 }
 
-/// Encodes one runner-owned value for the module: as an image for a module of the direct
-/// boundary, as CBOR otherwise, with the configured limits.
+/// Encodes one runner-owned value for the module: as an image for a module that takes images,
+/// as CBOR otherwise, with the configured limits.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn encode_boundary_value(
     store: &Store<host_abi::HostAbiState>,
@@ -517,7 +522,7 @@ fn encode_boundary_value(
     limits: &ExecutionLimits,
     label: &str,
 ) -> Result<Vec<u8>, RunnerError> {
-    if store.data().is_direct() {
+    if store.data().takes_images() {
         let mut cbor_limits = limits.cbor_limits();
         cbor_limits.max_payload_bytes = cbor_limits
             .max_payload_bytes
@@ -585,7 +590,9 @@ fn result(
         .map_err(|_| RunnerError::Abi("negative result pointer".to_owned()))?;
     let length = usize::try_from(length)
         .map_err(|_| RunnerError::Abi("negative result length".to_owned()))?;
-    if length > limits.max_result_bytes {
+    let image = store.data().boundary() == host_abi::Boundary::Image;
+    // An image's result limit applies to the size of the equivalent CBOR, below.
+    if length > limits.max_result_bytes && !image {
         return Err(RunnerError::LimitExceeded(LimitKind::Result));
     }
     let end = pointer
@@ -595,6 +602,14 @@ fn result(
         .data(&*store)
         .get(pointer..end)
         .ok_or_else(|| RunnerError::Abi("result buffer lies outside linear memory".to_owned()))?;
+    if image {
+        let mut cbor_limits = limits.cbor_limits();
+        cbor_limits.max_payload_bytes = cbor_limits.max_payload_bytes.min(limits.max_result_bytes);
+        return ExsValue::from_image_with_limits(bytes, cbor_limits).map_err(|error| match error {
+            CborError::PayloadLimitExceeded => RunnerError::LimitExceeded(LimitKind::Result),
+            error => cbor_error(error, "invalid result image"),
+        });
+    }
     ExsValue::from_cbor_with_limits(bytes, limits.cbor_limits())
         .map_err(|error| cbor_error(error, "invalid result CBOR"))
 }

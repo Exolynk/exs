@@ -2,7 +2,8 @@
 //!
 //! JavaScript owns the module's memory, so the runner reads a value through a
 //! [`ValueReader`]: the walk fetches the 64 KiB pages it touches on demand and keeps them for
-//! the rest of the read. Inputs and host-call responses cross as images, like on the server.
+//! the rest of the read. Inputs and host-call responses cross as images, like on the server,
+//! and Rust guests exchange every value as an image.
 
 use std::cell::OnceCell;
 
@@ -15,6 +16,33 @@ use crate::value_reader::{ReadError, read_value};
 /// Size of one page JavaScript copies out of the module's memory.
 const PAGE_SIZE: u32 = 65_536;
 
+/// How boundary values cross between the browser runner and a module.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Boundary {
+    /// CBOR in both directions, as for v1 modules.
+    Cbor,
+    /// Images in both directions, as for Rust guests.
+    Image,
+    /// Images to the module and values read from its memory, as for runtime v2 modules.
+    Direct,
+}
+
+impl Boundary {
+    /// Returns the boundary of the JavaScript controller's code.
+    pub(super) const fn from_code(code: u32) -> Self {
+        match code {
+            1 => Self::Image,
+            2 => Self::Direct,
+            _ => Self::Cbor,
+        }
+    }
+
+    /// Returns whether the module takes inputs and host responses as images.
+    pub(super) fn takes_images(self) -> bool {
+        self != Self::Cbor
+    }
+}
+
 /// Reads the value `reader` points at within the default limits, like the browser's CBOR
 /// decoding.
 pub(super) fn read(reader: &ValueReader) -> Result<ExsValue, ReadError> {
@@ -24,7 +52,13 @@ pub(super) fn read(reader: &ValueReader) -> Result<ExsValue, ReadError> {
     read_value(&memory, reader.vm(), raw, limits.max_payload_bytes, limits)
 }
 
-/// Encodes one value the runner passes to a v2 module as an image.
+/// Decodes one image a Rust guest wrote within the default limits, like the browser's CBOR
+/// decoding.
+pub(super) fn read_image(bytes: &[u8]) -> Result<ExsValue, exs_abi::CborError> {
+    ExsValue::from_image_with_limits(bytes, CborLimits::default())
+}
+
+/// Encodes one value the runner passes to a module as an image.
 pub(super) fn image(value: &ExsValue) -> Result<Vec<u8>, String> {
     value
         .to_image_with_limits(CborLimits::unrestricted())

@@ -1,11 +1,13 @@
 use super::bindings::{ValueReader, browser_host_elapsed, browser_host_now, browser_host_sleep};
-use super::direct;
+use super::direct::{self, Boundary};
 use super::*;
+use crate::cbor::decode_image_arguments;
 use crate::host_values::{
     date_time_from_components, date_time_in_timezone, date_time_value_from_parts, duration_parts,
     duration_value, sleep_error, time_error,
 };
 use crate::value_reader::ReadError;
+use exs_abi::CborLimits;
 use exs_abi::{BuiltinHostOperation, builtin_host_operation};
 
 /// Starts one Rust browser host function and converts its result into the JavaScript bridge form.
@@ -14,12 +16,12 @@ pub(super) fn start_host_call(
     execution_id: u32,
     name: &str,
     request: &JsValue,
+    boundary: Boundary,
     source_position: i32,
     execution_started_at: f64,
 ) -> JsValue {
-    // A v1 module sends CBOR; a v2 module its argument List in memory, and takes images.
-    let direct = request.dyn_ref::<Uint8Array>().is_none();
-    let arguments = match request_arguments(request) {
+    let images = boundary.takes_images();
+    let arguments = match request_arguments(request, boundary) {
         Ok(Some(arguments)) => arguments,
         Ok(None) => return JsValue::NULL,
         Err(error) => return rejected_browser_value(&error),
@@ -46,12 +48,12 @@ pub(super) fn start_host_call(
         None => registry.start(name, arguments),
     };
     match call {
-        Ok(BrowserHostCall::Ready(value)) => match browser_response(&value, direct) {
+        Ok(BrowserHostCall::Ready(value)) => match browser_response(&value, images) {
             Ok(value) => value,
             Err(error) => rejected_browser_value(&error),
         },
         Ok(BrowserHostCall::Pending(future)) => future_to_promise(async move {
-            browser_response(&future.await, direct).map_err(|error| JsError::new(&error).into())
+            browser_response(&future.await, images).map_err(|error| JsError::new(&error).into())
         })
         .into(),
         Ok(BrowserHostCall::StreamPending { future, stream_id }) => {
@@ -71,12 +73,12 @@ pub(super) fn start_host_call(
                         fields: Vec::new(),
                     },
                 };
-                browser_response(&value, direct).map_err(|error| JsError::new(&error).into())
+                browser_response(&value, images).map_err(|error| JsError::new(&error).into())
             })
             .into()
         }
         Err(BrowserRegistryError::UnknownName(name)) => {
-            match browser_response(&missing_host_error(name, origin), direct) {
+            match browser_response(&missing_host_error(name, origin), images) {
                 Ok(value) => value,
                 Err(error) => rejected_browser_value(&error),
             }
@@ -310,16 +312,25 @@ pub(super) fn missing_stream_error(name: &str, origin: Option<SourcePositionId>)
     )
 }
 
-/// Returns the arguments of one host-call request: CBOR bytes of a v1 module, or the argument
-/// List a v2 module holds in memory. Returns `None` for arguments that cannot cross the
-/// boundary, which the module turns into a recoverable SerializationError.
-fn request_arguments(request: &JsValue) -> Result<Option<Vec<ExsValue>>, String> {
+/// Returns the arguments of one host-call request: CBOR bytes of a v1 module, an image of a
+/// Rust guest, or the argument List a v2 module holds in memory. Returns `None` for arguments
+/// that cannot cross the boundary, which the module turns into a recoverable
+/// SerializationError.
+fn request_arguments(
+    request: &JsValue,
+    boundary: Boundary,
+) -> Result<Option<Vec<ExsValue>>, String> {
     if let Some(bytes) = request.dyn_ref::<Uint8Array>() {
-        return decode_arguments(&bytes.to_vec())
+        let arguments = if boundary == Boundary::Image {
+            decode_image_arguments(&bytes.to_vec(), CborLimits::default())
+        } else {
+            decode_arguments(&bytes.to_vec())
+        };
+        return arguments
             .map(Some)
             .map_err(|error| format!("invalid host-call request: {error}"));
     }
-    if !request.is_object() {
+    if boundary != Boundary::Direct || !request.is_object() {
         return Err("invalid host-call request".to_owned());
     }
     match direct::read(request.unchecked_ref::<ValueReader>()) {
@@ -331,9 +342,9 @@ fn request_arguments(request: &JsValue) -> Result<Option<Vec<ExsValue>>, String>
 }
 
 /// Encodes one host response into the byte-array value expected by the JavaScript bridge: an
-/// image for a v2 module, CBOR otherwise.
-fn browser_response(value: &ExsValue, direct: bool) -> Result<JsValue, String> {
-    let bytes = if direct {
+/// image for a module that takes images, CBOR otherwise.
+fn browser_response(value: &ExsValue, images: bool) -> Result<JsValue, String> {
+    let bytes = if images {
         direct::image(value)?
     } else {
         encode_result(value).map_err(host_cbor_error)?

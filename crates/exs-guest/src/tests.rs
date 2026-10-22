@@ -22,7 +22,7 @@ fn read_result() -> ExsValue {
     let crate::state::Execution::Completed(bytes) = execution_mut() else {
         panic!("test execution did not complete");
     };
-    match ExsValue::from_cbor(bytes) {
+    match ExsValue::from_image_with_limits(bytes, exs_abi::CborLimits::unrestricted()) {
         Ok(value) => value,
         Err(error) => panic!("test result decoding failed: {error}"),
     }

@@ -1,10 +1,14 @@
 use super::bindings::{
-    ValueReader, browser_runner_direct, create_browser_runner, execute_browser_runner,
+    ValueReader, browser_runner_boundary, create_browser_runner, execute_browser_runner,
 };
-use super::direct;
+use super::direct::{self, Boundary};
 use super::host::{rejected_browser_value, start_host_call};
 use super::*;
 use crate::value_reader::{ReadError, serialization_error};
+
+/// The host callback JavaScript invokes for every host call: name, request, boundary code,
+/// source position, execution identity and execution start time.
+type HostCallback = dyn FnMut(String, JsValue, u32, i32, i32, f64) -> JsValue;
 
 /// Browser-specific configuration used when creating one reusable runner.
 #[derive(Default)]
@@ -30,10 +34,10 @@ impl BrowserRunnerConfig {
 pub struct BrowserRunner {
     /// Browser-compiled module and its JavaScript execution controller.
     controller: JsValue,
-    /// Whether the module uses the direct boundary of runtime v2.
-    direct: bool,
+    /// How boundary values cross between the runner and the module.
+    boundary: Boundary,
     /// Rust callback retained for as long as JavaScript may invoke the Host ABI imports.
-    _host_callback: Closure<dyn FnMut(String, JsValue, i32, i32, f64) -> JsValue>,
+    _host_callback: Closure<HostCallback>,
     /// Rust callback retained for execution-scoped host stream cleanup.
     _release_callback: Closure<dyn FnMut(i32)>,
 }
@@ -51,6 +55,7 @@ impl BrowserRunner {
         let callback = Closure::wrap(Box::new(
             move |name: String,
                   request: JsValue,
+                  boundary: u32,
                   source_position: i32,
                   execution_id: i32,
                   execution_started_at: f64| {
@@ -62,12 +67,12 @@ impl BrowserRunner {
                     execution_id,
                     &name,
                     &request,
+                    Boundary::from_code(boundary),
                     source_position,
                     execution_started_at,
                 )
             },
-        )
-            as Box<dyn FnMut(String, JsValue, i32, i32, f64) -> JsValue>);
+        ) as Box<HostCallback>);
         let release_registry = registry.clone();
         let release = Closure::wrap(Box::new(move |execution_id: i32| {
             if let Ok(execution_id) = u32::try_from(execution_id) {
@@ -81,7 +86,7 @@ impl BrowserRunner {
             .map_err(browser_error)?;
         let controller = JsFuture::from(promise).await.map_err(browser_error)?;
         Ok(Self {
-            direct: browser_runner_direct(&controller),
+            boundary: Boundary::from_code(browser_runner_boundary(&controller)),
             controller,
             _host_callback: callback,
             _release_callback: release,
@@ -100,7 +105,7 @@ impl BrowserRunner {
         inputs: &[ExsValue],
     ) -> Result<ExsValue, RunnerError> {
         let inputs = ExsValue::List(inputs.to_vec());
-        let input = if self.direct {
+        let input = if self.boundary.takes_images() {
             direct::image(&inputs).map_err(RunnerError::Abi)?
         } else {
             inputs.to_cbor().map_err(|error| {
@@ -112,10 +117,15 @@ impl BrowserRunner {
             execute_browser_runner(&self.controller, function, &input).map_err(browser_error)?;
         let result = JsFuture::from(promise).await.map_err(browser_error)?;
         if let Some(result) = result.dyn_ref::<Uint8Array>() {
-            return ExsValue::from_cbor(&result.to_vec())
-                .map_err(|error| RunnerError::Abi(format!("invalid result CBOR: {error}")));
+            return if self.boundary == Boundary::Image {
+                direct::read_image(&result.to_vec())
+                    .map_err(|error| RunnerError::Abi(format!("invalid result image: {error}")))
+            } else {
+                ExsValue::from_cbor(&result.to_vec())
+                    .map_err(|error| RunnerError::Abi(format!("invalid result CBOR: {error}")))
+            };
         }
-        if !self.direct || !result.is_object() {
+        if self.boundary != Boundary::Direct || !result.is_object() {
             return Err(RunnerError::Abi(
                 "browser runner returned a non-byte result".to_owned(),
             ));

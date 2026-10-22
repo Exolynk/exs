@@ -50,6 +50,26 @@ pub fn decode_arguments_with_limits(
     }
 }
 
+/// Decodes the image of one host request of a Rust guest with structural limits, which apply
+/// as if the request were CBOR.
+///
+/// # Errors
+///
+/// Returns an error when the payload is not a valid bounded image of a List.
+#[cfg(any(
+    all(feature = "server", not(target_arch = "wasm32")),
+    all(feature = "browser", target_arch = "wasm32")
+))]
+pub(crate) fn decode_image_arguments(
+    bytes: &[u8],
+    limits: CborLimits,
+) -> Result<Vec<ExsValue>, HostCborError> {
+    match ExsValue::from_image_with_limits(bytes, limits).map_err(HostCborError::Invalid)? {
+        ExsValue::List(arguments) => Ok(arguments),
+        _ => Err(HostCborError::ArgumentsMustBeList),
+    }
+}
+
 /// Encodes one host-function result for delivery back into the runtime.
 ///
 /// # Errors
