@@ -116,8 +116,9 @@ pub(crate) fn push_unchecked(memory: &mut impl Memory, list: u32, value: u64) {
 }
 
 /// Returns what a `for` loop iterates over: a copy of a List, a List of the Unicode
-/// scalars of a String as Strings or of the octets of Bytes as Ints, an Object itself, which
-/// iterates through `Iterator::next`, or the NotIterable Error for other values.
+/// scalars of a String as Strings or of the octets of Bytes as Ints, a List of the
+/// `[key, value]` entries of an untyped Object in insertion order, a nominal value or enum
+/// itself, which iterates through `Iterator::next`, or the NotIterable Error for other values.
 ///
 /// Strings and Bytes never change, so their eager copy yields what the lazy iterators yield.
 /// Returns `None` when memory is exhausted.
@@ -139,6 +140,14 @@ pub fn for_snapshot(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> 
             push_unchecked(memory, list, ValueRef::small_int(i64::from(octet))?.raw());
         }
         return list_reference(list);
+    }
+    if crate::objects::untyped_object(memory, raw).is_some() {
+        return crate::methods::objects::collect(
+            memory,
+            vm,
+            raw,
+            crate::methods::objects::Collect::Entries,
+        );
     }
     if crate::methods::is_object(memory, raw) {
         return Some(raw);

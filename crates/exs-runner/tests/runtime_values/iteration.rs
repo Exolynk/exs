@@ -675,3 +675,36 @@ fn iterates_range_variables_with_prelude_field_semantics() {
     };
     assert_eq!(error.kind, "TypeError");
 }
+
+/// Iterates the `[key, value]` entries of untyped Objects over a snapshot in insertion order.
+#[test]
+fn iterates_object_entries() {
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) -> List {
+                let object = { b: 2, a: 1 };
+                let keys = [];
+                for entry in object {
+                    keys.push(entry[0]);
+                    object.c = 3;
+                }
+                let total = 0;
+                for entry in { x: 1, y: 2 } {
+                    total = total + entry[1];
+                }
+                ret [keys, total, { a: 1 }.map((entry) => { ret entry[0]; })];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::List(vec![
+                ExsValue::String("b".to_owned()),
+                ExsValue::String("a".to_owned()),
+            ]),
+            ExsValue::Int(3),
+            ExsValue::List(vec![ExsValue::String("a".to_owned())]),
+        ]),
+    );
+}
