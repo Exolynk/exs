@@ -48,8 +48,7 @@ impl LoadedProject {
     ///
     /// A library module is loaded when a source names a path the resolver provides as a
     /// library, such as `log` in `log::info` or `exo::db` in `use exo::db::query;`, so
-    /// unused libraries cost nothing. Importing a library by its path is accepted and only
-    /// loads it.
+    /// unused libraries cost nothing. Importing a library by its path is an error.
     pub(crate) fn load<R: ModuleResolver>(
         source: SourceInput<'_>,
         resolver: &mut R,
@@ -160,17 +159,15 @@ impl Loader {
             let text = self.files[index].text.clone();
             let scanned = scan_source(&source_id, &text)?;
             for import in scanned.imports {
-                if let Some(target) = self.library(resolver, &import.path)? {
-                    // A library is visible everywhere; only a different alias needs an edge.
-                    if let Some(alias) = import.alias.filter(|alias| alias.name != import.path) {
-                        self.edges[index].push(ImportEdge {
-                            namespace: alias.name,
-                            start_byte: import.span.start_byte,
-                            end_byte: import.span.end_byte,
-                            target,
-                        });
-                    }
-                    continue;
+                if self.library(resolver, &import.path)?.is_some() {
+                    return Err(format!(
+                        "{}:{}-{}: `{}` is a library and needs no import; remove the import and name it as `{}::...` or bring items into scope with `use`",
+                        source_id,
+                        import.span.start_byte,
+                        import.span.end_byte,
+                        import.path,
+                        import.path
+                    ));
                 }
                 let resolved = resolver
                     .resolve(&source_id, &import.path)
@@ -288,7 +285,7 @@ fn scan_source<'a>(source_id: &'a str, text: &'a str) -> Result<ScannedSource<'a
 }
 
 /// Returns every distinct `name::name...` path of `tokens` whose first name starts with a
-/// lowercase letter.
+/// lowercase letter, and the single names of `use name;` and `use name::{...};`.
 fn qualified_paths(tokens: &[Token<'_>]) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
     collect_paths(tokens, &mut paths);
@@ -327,7 +324,16 @@ fn collect_paths(tokens: &[Token<'_>], paths: &mut Vec<String>) {
             path.push_str(segment);
             next += 2;
         }
-        if next > index + 1
+        // `use exo::{Record};` and `use log;` name a library by a single segment.
+        let names_group = matches!(
+            (
+                tokens.get(next).map(|token| &token.kind),
+                tokens.get(next + 1).map(|token| &token.kind),
+            ),
+            (Some(TokenKind::DoubleColon), Some(TokenKind::LeftBrace))
+        );
+        let used = index > 0 && tokens[index - 1].kind == TokenKind::Use;
+        if (next > index + 1 || names_group || used)
             && first.starts_with(|character: char| character.is_ascii_lowercase())
             && !paths.contains(&path)
         {

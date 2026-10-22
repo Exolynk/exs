@@ -631,7 +631,7 @@ fn main(id: Int) -> None {
 }
 ```
 
-`import "log";` names a library like a file and is accepted without effect; prefer the path or `use`.
+Importing a library like a file (`import "log";`) is a compile error; name it by its path or with `use`.
 
 ## Use declarations
 

@@ -727,7 +727,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
         },
         StandardType {
             name: "List",
-            description: "`List` is a mutable ordered collection. Variables and closure captures preserve List identity, so mutations through one alias are visible through every alias of the same List. Its shared eager iterable methods are documented by the [`Iterator`](../traits/iterator.md) trait.",
+            description: "`List` is a mutable ordered collection. Variables and closure captures preserve List identity, so mutations through one alias are visible through every alias of the same List. Its shared eager iterable methods are documented by the `Iterator` trait.",
             usage: "fn main() -> Int {\n    let items = [\"Ada\", \"Lin\"];\n    ret items.push(\"Mia\");\n}",
             methods: &[
                 StandardMethod {

@@ -75,8 +75,8 @@ fn names_libraries_without_imports() {
         "use exo::Record; fn main() -> Int { ret Record::new(1).id + exo::db::count(); }",
         "use log; fn main() -> Int { ret log::info(4); }",
         "fn main() -> String { ret f\"{log::info(5)}\"; }",
-        // Importing a library by its path is accepted while scripts migrate.
-        "import \"log\"; fn main() -> Int { ret log::info(1); }",
+        "use exo::{Record}; fn main() -> Int { ret Record::new(6).id; }",
+        "use log; fn main() -> Int { ret 7; }",
     ] {
         if let Err(error) = compile_text(text) {
             panic!("{text}\n{error}");
@@ -111,5 +111,20 @@ fn rejects_unknown_library_names() {
         "fn main() -> Int { ret log::missing(1); }",
     ] {
         assert!(compile_text(text).is_err(), "{text} unexpectedly compiled");
+    }
+}
+
+/// Rejects imports of library modules with a hint to name them directly.
+#[test]
+fn rejects_library_imports() {
+    for text in [
+        "import \"log\"; fn main() -> Int { ret log::info(1); }",
+        "import \"exo::db\" as data; fn main() -> Int { ret data::count(); }",
+    ] {
+        let error = compile_text(text).err().unwrap_or_default();
+        assert!(
+            error.contains("is a library and needs no import"),
+            "{text}: {error}"
+        );
     }
 }

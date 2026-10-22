@@ -137,7 +137,7 @@ application signatures, types, traits, and enum variants.
   calls of suspendable code; never rely on the interleaving of shared-state mutations.
 - `import "./path.exs" as namespace;` loads a relative module; the filename supplies an omitted
   namespace. Imports/uses come before declarations and cycles are errors.
-- Embedder libraries such as `log` or `exo::db` need no import: name items by path (`log::info(x)`,
+- Embedder libraries such as `log` or `exo::db` need no import (importing one is an error): name items by path (`log::info(x)`,
   `exo::db::load(id)`, `exo::Record { ... }`). `use log::info;`, `use exo::db::{load, save as
   store};`, and `use exo::db;` (then `db::load(id)`) create read-only names; this also works for
   imported files (`use math::{add as plus};`).
