@@ -78,7 +78,7 @@ impl<'registry> MatchArms<'registry> {
             diagnostics(CompileDiagnostic::new(
                 "E0216",
                 pattern_span,
-                format!("unknown enum variant `{key}`"),
+                crate::diagnostic::unknown_name("enum variant", &key),
             ))
         })?;
         if bindings.len() != variant_data.fields.len() {

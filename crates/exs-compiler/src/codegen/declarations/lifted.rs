@@ -14,39 +14,47 @@ pub(in crate::codegen) fn lifted_functions<'source>(
     hir: &HirModule<'_>,
 ) -> Vec<LiftedFunction<'source>> {
     let mut sources = Vec::new();
-    for function in &module.functions {
+    // The package of every closure, which is its enclosing function's.
+    let mut packages: Vec<&str> = Vec::new();
+    let functions = module.functions.iter().chain(
+        module
+            .implementations
+            .iter()
+            .flat_map(|implementation| &implementation.methods),
+    );
+    for function in functions {
         collect_closures_block(&function.body, &mut sources);
-    }
-    for implementation in &module.implementations {
-        for method in &implementation.methods {
-            collect_closures_block(&method.body, &mut sources);
-        }
+        packages.resize(sources.len(), &function.package);
     }
     let metadata = hir.closures().collect::<Vec<_>>();
     debug_assert_eq!(sources.len(), metadata.len());
     sources
         .into_iter()
         .zip(metadata)
-        .map(|((parameters, body, span), closure)| LiftedFunction {
-            key: format!("$closure:{}", closure.id().0),
-            declaration: FunctionDeclaration {
-                visibility: Visibility::Private,
-                entry: false,
-                name: Identifier {
-                    name: format!("$closure:{}", closure.id().0),
+        .zip(packages)
+        .map(
+            |(((parameters, body, span), closure), package)| LiftedFunction {
+                key: format!("$closure:{}", closure.id().0),
+                declaration: FunctionDeclaration {
+                    visibility: Visibility::Private,
+                    entry: false,
+                    package: package.to_owned(),
+                    name: Identifier {
+                        name: format!("$closure:{}", closure.id().0),
+                        span,
+                    },
+                    parameters: parameters.to_vec(),
+                    return_type: None,
+                    body: body.clone(),
                     span,
                 },
-                parameters: parameters.to_vec(),
-                return_type: None,
-                body: body.clone(),
-                span,
+                captures: closure
+                    .captures()
+                    .iter()
+                    .map(|capture| capture.name.to_owned())
+                    .collect(),
             },
-            captures: closure
-                .captures()
-                .iter()
-                .map(|capture| capture.name.to_owned())
-                .collect(),
-        })
+        )
         .collect()
 }
 

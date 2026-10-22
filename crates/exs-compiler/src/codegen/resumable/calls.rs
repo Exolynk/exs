@@ -54,11 +54,12 @@ impl<'a> StepEmitter<'a, '_> {
                 destination,
                 span,
             } => {
+                let key = self.key_of(signature.function_id, *span)?;
+                self.compiler.check_static_access(key, *span)?;
                 if let Some(callee) = self.step_of(signature.function_id) {
                     self.child_call(next, callee, arguments, *destination, *span)?;
                     return Ok(true);
                 }
-                let key = self.key_of(signature.function_id, *span)?;
                 let index = self.sync_index(key, *span)?;
                 for argument in arguments {
                     self.get_slot(*argument);
@@ -74,6 +75,8 @@ impl<'a> StepEmitter<'a, '_> {
                 span,
                 ..
             } => {
+                let key = self.key_of(layout.function_id, *span)?;
+                self.compiler.check_static_access(key, *span)?;
                 let callee = self
                     .step_of(layout.function_id)
                     .ok_or_else(|| error("E0999", *span, "missing resumable callee".to_owned()))?;
@@ -281,7 +284,8 @@ impl<'a> StepEmitter<'a, '_> {
         }
         let locals: Vec<u32> = (0..count).map(|offset| block + offset).collect();
         let context = self.compiler.context;
-        for target in context.dispatch.instance(method) {
+        let package = &self.compiler.declaration.package;
+        for target in context.dispatch.instance(method, package) {
             self.instruction(Instruction::LocalGet(receiver_local));
             self.compiler.type_tag_test(target.type_id, span)?;
             self.instruction(Instruction::If(BlockType::Empty));

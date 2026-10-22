@@ -151,6 +151,7 @@ impl<'a> TraitMethodDeclaration<'a> {
         self.body.clone().map(|body| FunctionDeclaration {
             visibility: Visibility::Public,
             entry: false,
+            package: String::new(),
             name: self.name.clone(),
             parameters: self.parameters.clone(),
             return_type: self.return_type.clone(),
@@ -178,6 +179,9 @@ pub struct FunctionDeclaration<'a> {
     /// Whether the function receives an entry export a runner can call: the public
     /// top-level functions of the root module.
     pub entry: bool,
+    /// The library the function belongs to, such as `exo`; `std` for the prelude and empty
+    /// for the project's own functions. Private declarations are visible within it.
+    pub package: String,
     /// Function name.
     pub name: Identifier<'a>,
     /// Positional parameters with optional type annotations.

@@ -430,8 +430,13 @@ impl<'a> FunctionCompiler<'a, '_> {
             .get(callee)
             .map(|info| (info.index, info.arity, info.variadic.is_some()))
         else {
-            return Err(error("E0207", span, format!("unknown function `{callee}`")));
+            return Err(error(
+                "E0207",
+                span,
+                crate::diagnostic::unknown_name("function", callee),
+            ));
         };
+        self.check_static_access(callee, span)?;
         if !accepts(arity, variadic, arguments.len()) {
             return Err(error(
                 "E0208",

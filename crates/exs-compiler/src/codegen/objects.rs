@@ -50,7 +50,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             error(
                 "E0216",
                 type_name.span,
-                format!("unknown type `{}`", type_name.name),
+                crate::diagnostic::unknown_name("type", &type_name.name),
             )
         })?;
         if nominal.kind != NominalKind::Object {

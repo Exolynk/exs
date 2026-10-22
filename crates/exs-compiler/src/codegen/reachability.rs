@@ -84,7 +84,7 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
                     pending.push(key);
                 }
                 Expression::MethodCall { method, .. } => {
-                    targets(dispatch.instance(&method.name), &mut pending);
+                    targets(dispatch.instance_all(&method.name), &mut pending);
                     if let Some(helper) = crate::prelude::iterator_helper(&method.name) {
                         pending.push(helper.to_owned());
                     }

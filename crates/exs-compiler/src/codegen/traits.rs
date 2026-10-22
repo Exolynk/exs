@@ -38,7 +38,7 @@ pub(super) fn validate<'a>(
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
                 trait_name.span,
-                format!("unknown trait `{}`", trait_name.name),
+                crate::diagnostic::unknown_name("trait", &trait_name.name),
             ));
             continue;
         };
@@ -65,7 +65,7 @@ pub(super) fn validate<'a>(
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
                 implementation.type_name.span,
-                format!("unknown type `{}`", implementation.type_name.name),
+                crate::diagnostic::unknown_name("type", &implementation.type_name.name),
             ));
         }
         validate_implementation(module, definition, implementation, &mut diagnostics);

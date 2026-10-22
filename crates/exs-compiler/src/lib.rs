@@ -151,6 +151,7 @@ pub fn compile<'a>(
         diagnostics.sort_by_span();
         return Err(diagnostics);
     }
+    module_graph::hide_prelude_private(&mut module);
     let mut prelude = prelude::parse()?;
     prelude.types.append(&mut module.types);
     prelude.enums.append(&mut module.enums);

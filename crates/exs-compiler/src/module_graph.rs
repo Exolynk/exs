@@ -6,7 +6,7 @@ use crate::ast::{
     BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module, Parameter,
     Statement, TestDeclaration, TypeAnnotation, Visibility,
 };
-use crate::loaded_project::{ImportEdge, LoadedProject};
+use crate::loaded_project::{ImportEdge, LoadedProject, LoadedSource};
 use crate::{
     CompileOptions, CompiledModule, CompiledTest, CompiledTests, ModuleResolver, SourceInput,
 };
@@ -72,7 +72,20 @@ fn compile_target<R: ModuleResolver>(
         .enumerate()
         .filter_map(|(index, file)| file.library.as_deref().map(|path| (path, index)))
         .collect();
-    let library_bindings = library_bindings(&libraries, &exports);
+    let packages = packages(files, edges);
+    let library_bindings = library_bindings(&libraries, &exports, &packages);
+    let prelude_private = crate::prelude::private_functions();
+    for (module, package) in modules.iter_mut().zip(&packages) {
+        let functions = module.functions.iter_mut().chain(
+            module
+                .implementations
+                .iter_mut()
+                .flat_map(|implementation| &mut implementation.methods),
+        );
+        for function in functions {
+            function.package.clone_from(package);
+        }
+    }
     let mut root_tests = if test_target {
         std::mem::take(&mut modules[0].tests)
     } else {
@@ -93,10 +106,12 @@ fn compile_target<R: ModuleResolver>(
         let mut bindings = bindings_for(
             &modules[index],
             index,
+            &packages[index],
             &edges[index],
             &exports,
             &libraries,
             &library_bindings,
+            &prelude_private,
         )?;
         if test_target && index == 0 {
             if let Some(function) = modules[index]
@@ -197,6 +212,7 @@ fn append_test_functions<'a>(
         module.functions.push(FunctionDeclaration {
             visibility: Visibility::Private,
             entry: false,
+            package: String::new(),
             name: Identifier {
                 name: test_function_name(index),
                 span: test.span,
@@ -261,6 +277,7 @@ fn append_test_functions<'a>(
     module.functions.push(FunctionDeclaration {
         visibility: Visibility::Public,
         entry: true,
+        package: String::new(),
         name: Identifier {
             name: TEST_MAIN.to_owned(),
             span,
@@ -282,17 +299,44 @@ fn test_function_name(index: usize) -> String {
     format!("$exs_test_{index}")
 }
 
+/// The declarations of one module with their canonical names, and which are private.
+struct Exports {
+    /// Canonical name of every declaration and enum variant by its name in the module.
+    names: HashMap<String, String>,
+    /// Names of the private declarations and the variants of private enums.
+    private: HashSet<String>,
+}
+
 /// Collects direct declarations that another module may import.
-fn collect_exports(module: &Module<'_>, index: usize) -> Result<HashMap<String, String>, String> {
+fn collect_exports(module: &Module<'_>, index: usize) -> Result<Exports, String> {
     let mut exports = HashMap::new();
-    for name in module
+    let mut private = HashSet::new();
+    for (name, visibility) in module
         .functions
         .iter()
-        .map(|item| &item.name.name)
-        .chain(module.types.iter().map(|item| &item.name.name))
-        .chain(module.enums.iter().map(|item| &item.name.name))
-        .chain(module.traits.iter().map(|item| &item.name.name))
+        .map(|item| (&item.name.name, item.visibility))
+        .chain(
+            module
+                .types
+                .iter()
+                .map(|item| (&item.name.name, item.visibility)),
+        )
+        .chain(
+            module
+                .enums
+                .iter()
+                .map(|item| (&item.name.name, item.visibility)),
+        )
+        .chain(
+            module
+                .traits
+                .iter()
+                .map(|item| (&item.name.name, item.visibility)),
+        )
     {
+        if visibility == Visibility::Private {
+            private.insert(name.clone());
+        }
         if name == "Self" {
             return Err("`Self` is reserved for trait type annotations".to_owned());
         }
@@ -307,13 +351,47 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<HashMap<String, 
     for declaration in &module.enums {
         for variant in &declaration.variants {
             let name = format!("{}::{}", declaration.name.name, variant.name.name);
+            if declaration.visibility == Visibility::Private {
+                private.insert(name.clone());
+            }
             let canonical = canonical(index, &name);
             if exports.insert(name.clone(), canonical).is_some() {
                 return Err(format!("duplicate exported declaration `{name}`"));
             }
         }
     }
-    Ok(exports)
+    Ok(Exports {
+        names: exports,
+        private,
+    })
+}
+
+/// Returns the package of every loaded source: its library's name for a library module,
+/// such as `exo` for `exo::db`, else the package of the source importing it, empty for the
+/// project.
+fn packages(files: &[LoadedSource], edges: &[Vec<ImportEdge>]) -> Vec<String> {
+    let mut packages: Vec<Option<String>> = files
+        .iter()
+        .map(|file| {
+            file.library
+                .as_deref()
+                .map(|path| path.split("::").next().unwrap_or(path).to_owned())
+        })
+        .collect();
+    if let Some(root) = packages.first_mut() {
+        root.get_or_insert_with(String::new);
+    }
+    // Sources are discovered after the sources importing them.
+    for (index, targets) in edges.iter().enumerate() {
+        let package = packages[index].clone().unwrap_or_default();
+        for edge in targets {
+            packages[edge.target].get_or_insert_with(|| package.clone());
+        }
+    }
+    packages
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect()
 }
 
 /// Returns the qualified name of every declaration of the library modules `libraries`, by
@@ -321,34 +399,88 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<HashMap<String, 
 /// name them.
 fn library_bindings(
     libraries: &HashMap<&str, usize>,
-    exports: &[HashMap<String, String>],
-) -> HashMap<String, String> {
+    exports: &[Exports],
+    packages: &[String],
+) -> HashMap<String, LibraryBinding> {
     let mut bindings = HashMap::new();
     for (path, index) in libraries {
-        for (name, canonical) in &exports[*index] {
-            bindings.insert(format!("{path}::{name}"), canonical.clone());
+        let module = &exports[*index];
+        for (name, canonical) in &module.names {
+            bindings.insert(
+                format!("{path}::{name}"),
+                LibraryBinding {
+                    canonical: canonical.clone(),
+                    private_to: module
+                        .private
+                        .contains(name)
+                        .then(|| packages[*index].clone()),
+                },
+            );
         }
     }
     bindings
 }
 
+/// One declaration of a library module as other modules see it.
+struct LibraryBinding {
+    /// Its canonical name.
+    canonical: String,
+    /// The package it is private to, if it is private.
+    private_to: Option<String>,
+}
+
+/// Prefix of the binding of a name the module may not use because it is private elsewhere.
+pub(crate) const PRIVATE_PREFIX: &str = "$private:";
+
+/// Hides the prelude's private functions from the single source `module`, which neither
+/// declares them nor belongs to the prelude.
+pub(crate) fn hide_prelude_private(module: &mut Module<'_>) {
+    let declared: HashSet<&str> = module
+        .functions
+        .iter()
+        .map(|function| function.name.name.as_str())
+        .collect();
+    let bindings = crate::prelude::private_functions()
+        .into_iter()
+        .filter(|name| !declared.contains(name))
+        .map(|name| (name.to_owned(), hidden(name)))
+        .collect::<HashMap<_, _>>();
+    rewrite_module(module, 0, &bindings);
+}
+
+/// Returns the binding of `name`, private to another package, which diagnostics name.
+fn hidden(name: &str) -> String {
+    format!("{PRIVATE_PREFIX}{name}")
+}
+
 /// Builds canonical name lookups visible from one source module: its own declarations,
 /// every library module's declarations by their path, its import namespaces and its `use`
 /// declarations.
+#[allow(clippy::too_many_arguments)] // The module, its package and the project's names.
 fn bindings_for(
     module: &Module<'_>,
     index: usize,
+    package: &str,
     edges: &[ImportEdge],
-    exports: &[HashMap<String, String>],
+    exports: &[Exports],
     libraries: &HashMap<&str, usize>,
-    library_bindings: &HashMap<String, String>,
+    library_bindings: &HashMap<String, LibraryBinding>,
+    prelude_private: &[&str],
 ) -> Result<HashMap<String, String>, String> {
-    let mut bindings = collect_exports(module, index)?;
-    bindings.extend(
-        library_bindings
-            .iter()
-            .map(|(name, canonical)| (name.clone(), canonical.clone())),
-    );
+    let mut bindings = collect_exports(module, index)?.names;
+    for (name, binding) in library_bindings {
+        let canonical = match &binding.private_to {
+            Some(owner) if owner != package => hidden(name),
+            _ => binding.canonical.clone(),
+        };
+        bindings.insert(name.clone(), canonical);
+    }
+    // The prelude's private functions stay callable only by the prelude itself.
+    for name in prelude_private {
+        bindings
+            .entry((*name).to_owned())
+            .or_insert_with(|| hidden(name));
+    }
     let mut namespaces: HashMap<&str, HashSet<&str>> = HashMap::new();
     for edge in edges {
         let alias = &edge.namespace;
@@ -364,7 +496,7 @@ fn bindings_for(
             ));
         }
         let names = namespaces.entry(alias).or_default();
-        for (name, canonical) in &exports[edge.target] {
+        for (name, canonical) in &exports[edge.target].names {
             if !names.insert(name) {
                 return Err(format!(
                     "duplicate export `{name}` in merged namespace `{alias}`"
@@ -389,6 +521,12 @@ fn bindings_for(
                     .map_err(|error| format!("{}: {error}", declaration.span.source_id))?;
                 continue;
             };
+            if canonical.starts_with(PRIVATE_PREFIX) {
+                return Err(format!(
+                    "{}: `{source}` is private to its library",
+                    declaration.span.source_id
+                ));
+            }
             if bindings.insert(local.clone(), canonical).is_some() {
                 return Err(format!(
                     "{}: used name `{local}` collides with an existing declaration",

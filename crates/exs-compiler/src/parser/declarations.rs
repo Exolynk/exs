@@ -216,6 +216,7 @@ impl<'a> Parser<'a> {
         Ok(FunctionDeclaration {
             visibility,
             entry,
+            package: String::new(),
             name,
             parameters,
             return_type,
@@ -385,6 +386,13 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         while !self.check(&TokenKind::RightBrace) && !self.at_end() {
             let visibility = if self.matches(&TokenKind::Private) {
+                if trait_name.is_some() {
+                    return Err(self.error(
+                        self.previous().span,
+                        "E0117",
+                        "trait implementations are public; `private` cannot apply to their methods",
+                    ));
+                }
                 Visibility::Private
             } else {
                 Visibility::Public

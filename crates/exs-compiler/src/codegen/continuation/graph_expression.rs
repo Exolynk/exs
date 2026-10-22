@@ -558,7 +558,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     diagnostics(CompileDiagnostic::new(
                         "E0207",
                         callee.span,
-                        format!("unknown function `{}`", callee.name),
+                        crate::diagnostic::unknown_name("function", &callee.name),
                     ))
                 })?;
                 if !signature.accepts_arity(arguments.len()) {
@@ -1102,7 +1102,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             diagnostics(CompileDiagnostic::new(
                 "E0216",
                 type_name.span,
-                format!("unknown type `{}`", type_name.name),
+                crate::diagnostic::unknown_name("type", &type_name.name),
             ))
         })?;
         if nominal.kind != NominalKind::Object {

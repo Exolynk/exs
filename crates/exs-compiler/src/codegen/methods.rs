@@ -109,7 +109,9 @@ impl<'a> FunctionCompiler<'a, '_> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let context = self.context;
-        let targets = context.dispatch.instance(&method.name);
+        let targets = context
+            .dispatch
+            .instance(&method.name, &self.declaration.package);
         let builtin = BuiltinMethod::from_name(&method.name);
         // Receivers no implementation accepts fall back to built-in behavior the backend may
         // not support yet; without implementations that is a compile error, with them a trap.
@@ -134,7 +136,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             self.store(block + offset);
         }
         let arguments: Vec<u32> = (0..count).map(|offset| block + offset).collect();
-        self.dispatch_chain(targets, receiver, &arguments, span, |compiler| {
+        self.dispatch_chain(&targets, receiver, &arguments, span, |compiler| {
             // The prelude's eager iterator helpers come before built-in methods.
             if let Some(helper) = helper {
                 return compiler.call_method(helper, receiver, &arguments, span);
@@ -233,6 +235,25 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.core_call("__exs_core_call_static", span)
     }
 
+    /// Rejects a call of `key` when it is a static method private to another package.
+    pub(super) fn check_static_access(
+        &self,
+        key: &str,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        match self.context.dispatch.static_private_to(key) {
+            Some(owner) if owner != self.declaration.package => Err(error(
+                "E0118",
+                span,
+                format!(
+                    "static method `{}` is private to its library",
+                    key.rsplit("::").next().unwrap_or(key)
+                ),
+            )),
+            _ => Ok(()),
+        }
+    }
+
     /// Compiles a call of the static implementation method `key`, with the diagnostics for
     /// unknown types, unknown methods, instance methods and argument counts.
     fn compile_user_static_call(
@@ -253,7 +274,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             return Err(error(
                 "E0216",
                 type_name.span,
-                format!("unknown type `{}`", type_name.name),
+                crate::diagnostic::unknown_name("type", &type_name.name),
             ));
         }
         let Some((index, arity, variadic)) = self
@@ -271,6 +292,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 ),
             ));
         };
+        self.check_static_access(key, method.span)?;
         if !self.context.dispatch.is_static(key) {
             return Err(error(
                 "E0225",

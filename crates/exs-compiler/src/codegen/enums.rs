@@ -192,7 +192,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                             error(
                                 "E0216",
                                 *pattern_span,
-                                format!("unknown enum variant `{key}`"),
+                                crate::diagnostic::unknown_name("enum variant", &key),
                             )
                         })?;
                     self.instruction(Instruction::LocalGet(subject));

@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use crate::SourceInput;
-use crate::ast::Module;
+use crate::ast::{Module, Visibility};
 use crate::diagnostic::CompileDiagnostics;
 
 /// One named ExS source unit bundled into the global standard prelude.
@@ -86,12 +86,35 @@ pub(crate) fn source_inputs<'a>() -> Vec<SourceInput<'a>> {
         .collect()
 }
 
+/// The package of the prelude's declarations.
+pub(crate) const STD_PACKAGE: &str = "std";
+
 /// Returns the combined bundled prelude units; they are parsed once per process and cloned
 /// for every compilation, which modifies its copy.
 pub(crate) fn parse() -> Result<Module<'static>, CompileDiagnostics<'static>> {
+    parsed().clone()
+}
+
+/// Returns the names of the prelude's private functions, which only the prelude may call.
+pub(crate) fn private_functions() -> Vec<&'static str> {
+    parsed().as_ref().map_or_else(
+        |_| Vec::new(),
+        |module| {
+            module
+                .functions
+                .iter()
+                .filter(|function| function.visibility == Visibility::Private)
+                .map(|function| function.name.name.as_str())
+                .collect()
+        },
+    )
+}
+
+/// Returns the prelude, parsed on first use.
+fn parsed() -> &'static Result<Module<'static>, CompileDiagnostics<'static>> {
     static PRELUDE: OnceLock<Result<Module<'static>, CompileDiagnostics<'static>>> =
         OnceLock::new();
-    PRELUDE.get_or_init(parse_sources).clone()
+    PRELUDE.get_or_init(parse_sources)
 }
 
 /// Parses and combines all bundled prelude units without requiring a root entry point.
@@ -117,6 +140,14 @@ fn parse_sources() -> Result<Module<'static>, CompileDiagnostics<'static>> {
             Ok(mut module) => {
                 for function in &mut module.functions {
                     function.entry = false;
+                    function.package = STD_PACKAGE.to_owned();
+                }
+                for method in module
+                    .implementations
+                    .iter_mut()
+                    .flat_map(|implementation| &mut implementation.methods)
+                {
+                    method.package = STD_PACKAGE.to_owned();
                 }
                 combined.types.append(&mut module.types);
                 combined.enums.append(&mut module.enums);

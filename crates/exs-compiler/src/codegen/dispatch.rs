@@ -4,13 +4,13 @@
 //! type-tag tests over every type implementing the method, in declaration order, before the
 //! built-in behavior.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use wasm_encoder::{BlockType, Instruction};
 
 use super::closures::accepts;
 use super::function::{FunctionCompiler, error};
-use crate::ast::Module;
+use crate::ast::{Module, Visibility};
 use crate::codegen::VALUE_TYPE;
 use crate::codegen::standard::{self, TO_STRING_METHOD, TO_STRING_TRAIT};
 use crate::codegen::trait_registry::{TraitOperator, TraitRegistry};
@@ -29,6 +29,17 @@ pub(super) struct Target {
     pub(super) type_id: u32,
     /// Function key of the method, `Type::method`.
     pub(super) key: String,
+    /// The package a private method belongs to, `None` for a public one.
+    pub(super) private_to: Option<String>,
+}
+
+impl Target {
+    /// Returns whether code of `package` may call the method.
+    fn visible_from(&self, package: &str) -> bool {
+        self.private_to
+            .as_deref()
+            .is_none_or(|owner| owner == package)
+    }
 }
 
 /// Every implementation method of a module, by the ways calls dispatch to them.
@@ -42,8 +53,8 @@ pub(super) struct Dispatch {
     iterator_next: Vec<Target>,
     /// Implementations selected by each source operator.
     operators: HashMap<TraitOperator, Vec<Target>>,
-    /// Keys of the static methods.
-    statics: HashSet<String>,
+    /// Keys of the static methods, with the package of the private ones.
+    statics: HashMap<String, Option<String>>,
 }
 
 impl Dispatch {
@@ -60,17 +71,20 @@ impl Dispatch {
             };
             for method in &implementation.methods {
                 let key = format!("{}::{}", implementation.type_name.name, method.name.name);
+                let private_to =
+                    (method.visibility == Visibility::Private).then(|| method.package.clone());
                 let is_instance = method
                     .parameters
                     .first()
                     .is_some_and(|parameter| parameter.name.name == "self");
                 if !is_instance {
-                    dispatch.statics.insert(key);
+                    dispatch.statics.insert(key, private_to);
                     continue;
                 }
                 let target = Target {
                     type_id: nominal.id,
                     key,
+                    private_to,
                 };
                 dispatch
                     .instance
@@ -100,9 +114,25 @@ impl Dispatch {
         dispatch
     }
 
-    /// Returns the instance methods named `name`.
-    pub(super) fn instance(&self, name: &str) -> &[Target] {
+    /// Returns every instance method named `name`, private ones included.
+    pub(super) fn instance_all(&self, name: &str) -> &[Target] {
         self.instance.get(name).map_or(&[], Vec::as_slice)
+    }
+
+    /// Returns the instance methods named `name` that code of `package` may call: a call
+    /// outside a private method's package does not dispatch to it, so its receivers fall
+    /// back to the built-in behavior, MethodNotFound for a nominal value.
+    pub(super) fn instance(&self, name: &str, package: &str) -> Vec<Target> {
+        self.instance_all(name)
+            .iter()
+            .filter(|target| target.visible_from(package))
+            .cloned()
+            .collect()
+    }
+
+    /// Returns the package the static method `key` is private to, if it is private.
+    pub(super) fn static_private_to(&self, key: &str) -> Option<&str> {
+        self.statics.get(key).and_then(Option::as_deref)
     }
 
     /// Returns the implementations `operator` dispatches to.
@@ -122,7 +152,7 @@ impl Dispatch {
 
     /// Returns whether `key` names a static method.
     pub(super) fn is_static(&self, key: &str) -> bool {
-        self.statics.contains(key)
+        self.statics.contains_key(key)
     }
 }
 

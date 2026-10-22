@@ -50,7 +50,7 @@ pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostic
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
                 implementation.type_name.span,
-                format!("unknown type `{}`", implementation.type_name.name),
+                crate::diagnostic::unknown_name("type", &implementation.type_name.name),
             ));
         }
         let allows_self = implementation.trait_name.is_some();
@@ -218,7 +218,7 @@ pub(in crate::codegen) fn build_signatures<'a>(
             diagnostics(CompileDiagnostic::new(
                 "E0216",
                 implementation.type_name.span,
-                format!("unknown type `{}`", implementation.type_name.name),
+                crate::diagnostic::unknown_name("type", &implementation.type_name.name),
             ))
         })?;
         for method in &implementation.methods {

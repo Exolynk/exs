@@ -188,7 +188,7 @@ pub(super) fn validate_annotation_with_self<'a>(
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
                 member.span,
-                format!("unknown type `{}`", member.name),
+                crate::diagnostic::unknown_name("type", &member.name),
             ));
         }
         if member.name == "List" {
@@ -567,7 +567,7 @@ impl TypeRegistry {
                 return Err(diagnostics(CompileDiagnostic::new(
                     "E0216",
                     member.span,
-                    format!("unknown type `{}`", member.name),
+                    crate::diagnostic::unknown_name("type", &member.name),
                 )));
             }
         }

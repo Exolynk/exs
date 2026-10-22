@@ -292,3 +292,12 @@ fn line_and_column(source: &str, offset: u32) -> (usize, usize) {
         .map_or(1, |line| line.chars().count() + 1);
     (line, column)
 }
+
+/// Returns the message for an unknown `kind` of name, such as `function`, or for a name the
+/// module may not use because it is private to another library.
+pub(crate) fn unknown_name(kind: &str, name: &str) -> String {
+    match name.strip_prefix(crate::module_graph::PRIVATE_PREFIX) {
+        Some(name) => format!("`{name}` is private to its library"),
+        None => format!("unknown {kind} `{name}`"),
+    }
+}
