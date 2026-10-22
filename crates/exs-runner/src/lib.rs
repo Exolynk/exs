@@ -18,9 +18,9 @@ use self::limits::ExecutionLimits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, BoundaryError, CANCEL_EXPORT, INPUT_ALLOC_EXPORT,
-    RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, RUNNER_IMPORT_MODULE,
-    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, START_EXPORT_PREFIX, STATUS_CANCELLED,
-    STATUS_COMPLETE, STATUS_PENDING,
+    RESULT_IMAGE_EXPORT, RESUME_HOST_EXPORT, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
+    RUNNER_TASK_RELEASE_IMPORT, START_EXPORT_PREFIX, STATUS_CANCELLED, STATUS_COMPLETE,
+    STATUS_PENDING,
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use wasmtime::{Config, Engine, Instance, Linker, Module, Store};
@@ -204,6 +204,14 @@ impl ServerRunner {
         check_abi(&mut store, &instance)?;
         if direct::is_direct(&mut store, &instance) {
             store.data_mut().use_direct_boundary();
+        } else if instance
+            .get_typed_func::<(), i64>(&mut store, RESULT_IMAGE_EXPORT)
+            .is_err()
+        {
+            return Err(RunnerError::Abi(format!(
+                "module exports neither `{}` nor `{RESULT_IMAGE_EXPORT}`",
+                exs_abi::RESULT_VALUE_EXPORT
+            )));
         }
         let compile_time = execution_started_at.elapsed();
         let run_started_at = std::time::Instant::now();
@@ -523,15 +531,13 @@ fn result(
     instance: &Instance,
     limits: &ExecutionLimits,
 ) -> Result<ExsValue, RunnerError> {
-    let pointer = call_result_accessor::<i32>(store, instance, RESULT_POINTER_EXPORT)?;
-    let length = call_result_accessor::<i32>(store, instance, RESULT_LENGTH_EXPORT)?;
+    let location =
+        call_result_accessor::<i64>(store, instance, RESULT_IMAGE_EXPORT)?.cast_unsigned();
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| RunnerError::Abi("missing exported linear memory".to_owned()))?;
-    let pointer = usize::try_from(pointer)
-        .map_err(|_| RunnerError::Abi("negative result pointer".to_owned()))?;
-    let length = usize::try_from(length)
-        .map_err(|_| RunnerError::Abi("negative result length".to_owned()))?;
+    let pointer = (location & u64::from(u32::MAX)) as usize;
+    let length = (location >> 32) as usize;
     let end = pointer
         .checked_add(length)
         .ok_or_else(|| RunnerError::Abi("result buffer range overflow".to_owned()))?;

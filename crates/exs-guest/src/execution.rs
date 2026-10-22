@@ -86,20 +86,20 @@ pub fn cancel() {
     buffers_mut().clear();
 }
 
-/// Returns the linear-memory pointer to the image of the last completed result.
+/// Returns where the image of the last completed result lies: its linear-memory address in
+/// the low 32 bits and its byte length in the high 32 bits, or 0 without a result.
 #[must_use]
-pub fn result_ptr() -> i32 {
+pub fn result_image() -> i64 {
     match execution_mut() {
-        Execution::Completed(result) => i32::try_from(result.as_ptr() as usize).unwrap_or(-1),
-        Execution::Idle | Execution::Running(_) => 0,
-    }
-}
-
-/// Returns the byte length of the image of the last completed result.
-#[must_use]
-pub fn result_len() -> i32 {
-    match execution_mut() {
-        Execution::Completed(result) => i32::try_from(result.len()).unwrap_or(-1),
+        Execution::Completed(result) => {
+            let (Ok(address), Ok(length)) = (
+                u32::try_from(result.as_ptr() as usize),
+                u32::try_from(result.len()),
+            ) else {
+                return 0;
+            };
+            (u64::from(length) << 32 | u64::from(address)).cast_signed()
+        }
         Execution::Idle | Execution::Running(_) => 0,
     }
 }

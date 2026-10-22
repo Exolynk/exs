@@ -56,6 +56,8 @@ pub fn runner_test_module(memory_pages: u32, helper: &str, start_body: &str) -> 
                 i32.const {})
             (func (export "__exs_input_alloc") (param i32) (result i32)
                 i32.const 0)
+            (func (export "__exs_result_image") (result i64)
+                i64.const 0)
             {helper}
             (func (export "__exs_start_main") (param i32 i32) (result i32)
                 {start_body})

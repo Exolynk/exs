@@ -34,7 +34,7 @@ mod tests;
 pub mod host;
 
 pub(crate) use execution::{begin_host_call, guest_error, take_host_response};
-pub use execution::{cancel, input_alloc, result_len, result_ptr, resume_host, start};
+pub use execution::{cancel, input_alloc, result_image, resume_host, start};
 
 use exs_abi::ABI_VERSION;
 
@@ -81,14 +81,9 @@ macro_rules! export {
             $crate::cancel();
         }
         #[unsafe(no_mangle)]
-        #[doc = "Returns the result buffer pointer for a completed execution."]
-        pub extern "C" fn __exs_result_ptr() -> i32 {
-            $crate::result_ptr()
-        }
-        #[unsafe(no_mangle)]
-        #[doc = "Returns the result buffer length for a completed execution."]
-        pub extern "C" fn __exs_result_len() -> i32 {
-            $crate::result_len()
+        #[doc = "Returns the address and length of the result image of a completed execution."]
+        pub extern "C" fn __exs_result_image() -> i64 {
+            $crate::result_image()
         }
     };
 }

@@ -550,6 +550,8 @@ fn reports_pending_execution_without_host_future_as_deadlock() {
                 i32.const {})
             (func (export "__exs_input_alloc") (param i32) (result i32)
                 i32.const 0)
+            (func (export "__exs_result_image") (result i64)
+                i64.const 0)
             (func (export "__exs_start_main") (param i32 i32) (result i32)
                 i32.const 1)
         )

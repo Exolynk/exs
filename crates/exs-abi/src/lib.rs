@@ -142,11 +142,10 @@ pub const START_EXPORT_PREFIX: &str = "__exs_start_";
 pub const ABI_VERSION_EXPORT: &str = "__exs_abi_version";
 /// The runtime export allocating a host-writable input buffer in linear memory.
 pub const INPUT_ALLOC_EXPORT: &str = "__exs_input_alloc";
-/// The export of a Rust guest returning the linear-memory pointer to its result image.
-pub const RESULT_POINTER_EXPORT: &str = "__exs_result_ptr";
-/// The export of a Rust guest returning the byte length of its result image.
-pub const RESULT_LENGTH_EXPORT: &str = "__exs_result_len";
-/// The export of a runtime v2 module returning the completed result as a raw `ValueRef`,
+/// The export of a Rust guest returning where the image of its completed result lies: the
+/// linear-memory address in the low 32 bits and the byte length in the high 32 bits.
+pub const RESULT_IMAGE_EXPORT: &str = "__exs_result_image";
+/// The export of a compiled module returning the completed result as a raw `ValueRef`,
 /// which the runner reads from memory instead of a result image.
 pub const RESULT_VALUE_EXPORT: &str = "__exs_result_value";
 /// The export of a runtime v2 module returning the address of its VM state block.

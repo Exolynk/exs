@@ -8,6 +8,7 @@ const HOST_CALL_PENDING = 1;
 const HOST_CALL_UNSUPPORTED = 3;
 const PAGE_SIZE = 65536;
 const RESULT_VALUE_EXPORT = "__exs_result_value";
+const RESULT_IMAGE_EXPORT = "__exs_result_image";
 const STATUS_COMPLETE = 2;
 const STATUS_PENDING = 1;
 const STATUS_CANCELLED = 3;
@@ -75,7 +76,11 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
     if (typeof release !== "function") {
         throw new TypeError("browser host cleanup callback must be a function");
     }
-    const direct = WebAssembly.Module.exports(module).some((entry) => entry.name === RESULT_VALUE_EXPORT);
+    const exportNames = WebAssembly.Module.exports(module).map((entry) => entry.name);
+    const direct = exportNames.includes(RESULT_VALUE_EXPORT);
+    if (!direct && !exportNames.includes(RESULT_IMAGE_EXPORT)) {
+        throw new TypeError(`module exports neither ${RESULT_VALUE_EXPORT} nor ${RESULT_IMAGE_EXPORT}`);
+    }
     let nextExecutionId = 1;
     return {
         async execute(functionName, input) {
@@ -168,8 +173,6 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
                 throw new TypeError("ExS function name must be a non-empty string");
                 }
                 const start = exportedFunction(instance.exports, `__exs_start_${functionName}`);
-                const resultPointer = () => exportedFunction(instance.exports, "__exs_result_ptr")();
-                const resultLength = () => exportedFunction(instance.exports, "__exs_result_len")();
                 let status = start(inputPointer, inputBytes.length);
                 while (true) {
                 if (status === STATUS_COMPLETE) {
@@ -177,7 +180,8 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
                         const vm = exportedFunction(instance.exports, "__exs_vm")();
                         return valueReader(memory, exportedFunction(instance.exports, RESULT_VALUE_EXPORT)(), vm);
                     }
-                    return read(memory, resultPointer(), resultLength(), "ExS result");
+                    const location = BigInt.asUintN(64, BigInt(exportedFunction(instance.exports, RESULT_IMAGE_EXPORT)()));
+                    return read(memory, Number(location & 0xffffffffn), Number(location >> 32n), "ExS result");
                 }
                 if (status === STATUS_CANCELLED) {
                     throw new Error("ExS execution was cancelled");
