@@ -1,6 +1,6 @@
 # Exolynk Script (ExS) Language Reference
 
-**Language version:** 0.1.0-draft
+**Language version:** 0.2.0-draft
 
 This document defines the ExS source language. It is written for authors of ExS programs: it specifies valid syntax and observable behavior. It deliberately does not describe compiler internals, WebAssembly, runtime layouts, host transport formats, scheduling implementation, or development phases.
 
@@ -23,7 +23,7 @@ This document defines the ExS source language. It is written for authors of ExS 
 
 # 1. Program Structure
 
-An ExS source file is a module. A module has an optional import and `use` prelude followed by declarations. Executable statements and `let` declarations are not permitted at module scope. A module may also declare source tests; normal program compilation omits them.
+An ExS source file is a module. A module has an optional import and `use` prelude followed by declarations, including constants. Executable statements and `let` declarations are not permitted at module scope. A module may also declare source tests; normal program compilation omits them.
 
 The root module must declare exactly one `fn main(...)` function. Imported modules must not declare `main`. Every public root-module function is callable by an external runner; `private` root functions are not (see [Visibility](#visibility)).
 
@@ -50,7 +50,7 @@ Identifiers begin with `_` or an ASCII letter. Later characters may also be ASCI
 The following words are reserved and cannot be used as identifiers:
 
 ```text
-as break continue else enum Error false fn for host if impl import in
+as break const continue else enum Error false fn for if impl import in
 is let match None par private ret trait true type use while
 ```
 
@@ -68,7 +68,7 @@ Integer literals are decimal digits with optional `_` separators:
 
 An `Int` literal must be in the inclusive range `-2^63 .. 2^63 - 1`; an out-of-range literal is a compile error. A leading minus is the unary `-` operator, not part of the literal.
 
-Float literals contain a decimal point, an exponent, or both:
+Float literals contain a decimal point followed by a digit, an exponent, or both, so `7.abs()` calls a method of the Int `7`:
 
 ```exs
 1.0
@@ -87,10 +87,11 @@ Ordinary strings use double quotes and support `\"`, `\\`, `\n`, `\r`, `\t`, `\0
 "smile: \u{1f642}"
 ```
 
-Formatted strings use an `f` prefix and evaluate normal ExS expressions inside `{...}`. Each interpolated value is rendered through `ToString::to_string`. Built-in values have default renderers; nominal types and enums may override them with `impl ToString`. Use `{{` and `}}` for literal braces.
+Formatted strings use an `f` prefix and evaluate normal ExS expressions inside `{...}`. Each interpolated value is rendered through `ToString::to_string` (see [Rendering](#rendering)). Use `{{` and `}}` for literal braces. In a formatted string with quotes, a String literal inside an interpolation may be written with plain or with escaped quotes; inside escaped quotes, its own escapes are escaped as well.
 
 ```exs
 f"Hello {name}; next: {count + 1}"
+f"{user["name"]} and {user[\"name\"]}"
 ```
 
 ### Bytes
@@ -199,6 +200,19 @@ values[0] = 42;
 
 Closures capture referenced outer bindings. A captured binding is shared: assigning through the outer scope or any closure updates the same binding.
 
+## Constants
+
+A module may declare constants. A constant's value is a literal of None, Bool, Int, Float, String, or Bytes, a negated number literal, or the name of another constant:
+
+```exs
+/// The default page size.
+const PAGE_SIZE = 50;
+const DEFAULT_TITLE = "Untitled";
+private const LIMIT = PAGE_SIZE;
+```
+
+Constants are exported, imported, used, and kept private like functions, also from libraries (`log::LEVEL`, `use exo::LIMIT;`). Compilation substitutes a constant's value into every reference that no local binding shadows. Assigning to a constant (`E0120`), a value of another form (`E0119`), constants that refer to each other in a cycle (`E0121`), and a constant named like another declaration are compile errors.
+
 # 5. Expressions
 
 Expressions evaluate left to right unless a rule below specifies short-circuit behavior.
@@ -213,7 +227,7 @@ value.method(argument)
 Type::method(argument)
 ```
 
-List and Bytes indexes must be nonnegative `Int` values. Bytes indexing returns an `Int` from 0 through 255. Object indexes must be Strings. Invalid indexes produce `IndexError`; an invalid receiver or Object key produces `TypeError`. Missing Object properties and keys evaluate to `None`.
+List and Bytes indexes must be nonnegative `Int` values. Bytes indexing returns an `Int` from 0 through 255. Object indexes must be Strings. Invalid indexes produce `IndexError`; an invalid receiver or Object key produces `TypeError`. Missing Object properties and keys evaluate to `None`. Nominal values have only their declared fields: reading or writing another field is a `TypeError`, and so are their `delete` and `clear` methods. Enums have no properties; `match` binds their payload.
 
 String indexing is not supported. Use `for` to iterate a String by Unicode scalar.
 
@@ -224,27 +238,35 @@ Direct calls use a declared function name, an imported function name, or a local
 | Operator | Accepted values | Result |
 | --- | --- | --- |
 | `!` | `Bool` | `Bool` |
-| `-` | `Bool`, `Int`, `Float` | numeric negation |
+| `-` | `Int`, `Float` | numeric negation |
 
-`Bool` converts to `Int` for numeric operations: `false` is `0` and `true` is `1`.
+Bools are not numbers: arithmetic, negation, and ordering with a Bool produce `TypeError`, and `true == 1` is `false`.
 
 ## Arithmetic and comparison
 
-`+`, `-`, and `*` accept numeric values. Integer-only operations produce `Int`; otherwise they produce `Float`. Overflowing an `Int` result produces `IntOverflowError`.
+`+`, `-`, and `*` accept `Int` and `Float` values. Integer-only operations produce `Int`; otherwise they produce `Float`. Overflowing an `Int` result produces `IntOverflowError`.
 
 `/` accepts numeric values and always produces `Float`. Division by zero follows IEEE 754 binary64 behavior.
 
-`%` is not part of ExS 0.1. Exact Int calculations can use `div_euclid(other)` for the Euclidean quotient and `rem_euclid(other)` for the non-negative remainder. Both require an Int receiver and Int divisor, return `DivisionByZeroError` for a zero divisor, and return `IntOverflowError` for the smallest Int divided by `-1`.
+`%` produces the Euclidean remainder, which is never negative: `7 % 3 == 1`, `-1 % 24 == 23`, `7 % -3 == 1`. With two Ints it behaves like `rem_euclid`: a zero divisor produces `DivisionByZeroError` and the smallest Int divided by `-1` produces `IntOverflowError`. With a Float operand the result is a Float and a zero divisor produces NaN. `div_euclid(other)` produces the matching Euclidean quotient.
 
-For nominal types and enums, `+`, `-`, `*`, and `/` first use a matching standard trait method. Built-in behavior applies when no nominal method is selected.
+For nominal types and enums, `+`, `-`, `*`, `/`, and `%` first use a matching standard trait method. Built-in behavior applies when no nominal method is selected.
 
 - `String + String | Bool | Int | Float` produces a concatenated String.
 - `List + value` produces a new shallow List with `value` appended.
 - `List + List` produces a new shallow List containing both lists' elements.
 
-`==` and `!=` compare scalar values by value. Strings compare by contents. Lists, Objects, closures, and Errors compare by identity. Numeric equality applies Bool-to-Int conversion and Float promotion.
+`==` and `!=` compare values by content:
 
-`<`, `<=`, `>`, and `>=` support numeric values and Strings. A comparison involving an unordered Float value, such as NaN, produces `TypeError`. Nominal types and enums may customize all comparison operators through `Compare`.
+- Numbers compare by value with Float promotion; Strings and Bytes compare by contents; None and Bools compare by value.
+- Lists compare element by element, Objects by their entries in any key order, nominal values of one type by their fields, enums by their variant and payload, and Errors by kind, message, data, and cause.
+- Closures and host resources compare by identity.
+- A nominal type or enum with an `Eq` implementation decides its own equality; without one, a `Compare` implementation decides through its Equal result. Both also apply where such values are parts of compared Lists, Objects, fields, or payloads.
+- Values that contain themselves compare without recursing forever: a pair already being compared counts as equal.
+
+`list.contains`, `index_of`, `last_index_of`, and `assert_eq` use the same equality.
+
+`<`, `<=`, `>`, and `>=` order `Int`, `Float`, and `String` values; numbers order numerically and Strings by their UTF-8 bytes. Other built-in values have no order and produce `TypeError`, as does an unordered Float such as NaN. Nominal types and enums define ordering through `Compare`.
 
 ## Logical operators and type tests
 
@@ -256,7 +278,7 @@ if value is Error {
 }
 ```
 
-`value is Error` evaluates to a Bool.
+`value is Type` tests any type contract, such as `value is Int`, `value is Point`, or `value is String | None`, and evaluates to a Bool.
 
 ## Clone and propagation
 
@@ -310,7 +332,7 @@ for item in iterable {
 
 `while` evaluates its Bool condition before every iteration.
 
-`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. Bytes yields one Int octet from 0 through 255. `start..end` creates a half-open Int Range and `start..=end` creates an inclusive Int Range; both infer direction from their endpoints. `Range::step(start, end, step)` is an explicit half-open range, while `Range::step_through(start, end, step)` is inclusive. A step must be non-zero and move toward its endpoint. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
+`for` evaluates `iterable` once and advances it through `Iterator::next() -> IteratorStep | Error`. `IteratorStep::Item(value)` enters the body with `value`; `IteratorStep::Done` exits the loop. A List is iterated over a shallow snapshot, so changes to the original List do not alter the iteration sequence. A String yields one-scalar Strings. Bytes yields one Int octet from 0 through 255. An Object yields its `[key, value]` entries from a snapshot in insertion order. `start..end` creates a half-open Int Range and `start..=end` creates an inclusive Int Range; both infer direction from their endpoints. `Range::step(start, end, step)` is an explicit half-open range, while `Range::step_through(start, end, step)` is inclusive. A step must be non-zero and move toward its endpoint. A user-defined nominal value must implement `Iterator`; any other value produces `NotIterable`. Advancing an Iterator may suspend.
 
 Each loop iteration creates a fresh binding for the loop variable. Closures created in separate iterations therefore capture distinct loop bindings.
 
@@ -369,7 +391,15 @@ let later = () => {
 };
 ```
 
-Closure parameters cannot have type annotations. A closure can be passed to an `Fn` contract, returned, stored in a List or Object, and invoked through its binding.
+Closure parameters may have type annotations, which every call checks like function parameter contracts:
+
+```exs
+let double = (value: Int | Float) => {
+    ret value * 2;
+};
+```
+
+A closure can be passed to an `Fn` contract, returned, stored in a List or Object, and invoked through its binding.
 
 # 8. Nominal Types, Enums, and Traits
 
@@ -385,7 +415,7 @@ type User {
 let user = User { name: "Ada" };
 ```
 
-Every declared field is present after construction. An omitted field becomes `None` when its contract permits `None` or is `Any`. Missing required fields, unknown fields, duplicate fields, and contract violations produce the ordinary `TypeError` behavior.
+Every declared field is present after construction. An omitted field becomes `None` when its contract permits `None` or is `Any`. Missing required fields, unknown fields, duplicate fields, and contract violations produce the ordinary `TypeError` behavior. A nominal value has only its declared fields; reading or assigning another field is a `TypeError`.
 
 An inherent `impl` block declares methods for a type:
 
@@ -427,6 +457,19 @@ Enum constructors are qualified by the enum name. Payload arguments are checked 
 
 A `match` expression evaluates its input once and evaluates only the selected arm. Variant patterns must name variants of the same enum and bind exactly the declared payload count. `_` is an optional fallback and must be last. Without `_`, every declared variant must be covered exactly once.
 
+Literal patterns match values equal to a literal of None, Bool, Int, Float, String, or Bytes, or a negated number:
+
+```exs
+let label = match status {
+    200 => "ok",
+    404 => "not found",
+    -1 => "unknown",
+    _ => "error",
+};
+```
+
+One `match` uses either variant patterns or literal patterns. A literal may appear only once. Without `_`, a value that no literal matches produces `MatchError`.
+
 An arm may use an expression or a statement block. A `ret` in a block returns from the enclosing function; a block that finishes normally has value `None`.
 
 ## Traits and operators
@@ -446,23 +489,46 @@ impl Label for User {
 
 A trait method ending in `;` is required. A trait method with a block is a default implementation. An implementation must provide every required method and may omit defaulted methods. Trait and nominal type names share one namespace.
 
-`Self` is valid only in a trait method signature and a method inside `impl Trait for Type`; it means the implementation target.
+`Self` is valid in trait method signatures and in the method signatures of any `impl` block; it means the implementation target.
 
-The compiler-owned traits `Add`, `Sub`, `Mul`, `Div`, `Compare`, `ToString`, and `Debug` are reserved. A nominal type or enum may implement them with these fixed signatures:
+The compiler-owned traits `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Eq`, `Compare`, `ToString`, and `Debug` are reserved. A nominal type or enum may implement them with these fixed signatures:
 
 ```exs
 fn add(self, other: Any) -> Any
 fn sub(self, other: Any) -> Any
 fn mul(self, other: Any) -> Any
 fn div(self, other: Any) -> Any
+fn rem(self, other: Any) -> Any
+fn eq(self, other: Any) -> Bool
 fn compare(self, other: Any) -> Ordering
 fn to_string(self) -> String
 fn debug(self) -> String
 ```
 
+`Eq` decides `==` and `!=`; `Compare` decides `<`, `<=`, `>`, and `>=`, and equality when the type implements no `Eq`.
+
 `Ordering` is a built-in enum, also available as `std::Ordering`, with variants `Less`, `Equal`, `Greater`, and `Unordered`.
 
-`ToString` is used by formatted string interpolation and may also be called explicitly. `Debug` is an explicit diagnostic renderer. Both have defaults for all runtime value categories: `None` renders as `"None"`, Error as `"Error"`, scalar values use their source spelling, String is unchanged, Bytes renders as `"Bytes(length)"`, List and Object render as `"[]"` and `"{}"`, closures render as `"fn main()"`, and enum values render as their stable `source_id::Type::Variant` identity. An `impl ToString` or `impl Debug` overrides the corresponding default for its nominal type or enum.
+`ToString` is used by formatted string interpolation and may also be called explicitly. `Debug` is an explicit diagnostic renderer. An `impl ToString` or `impl Debug` overrides the corresponding default for its nominal type or enum.
+
+## Rendering
+
+The default `to_string()` and `debug()` render values in ExS literal syntax:
+
+| Value | Rendering |
+| --- | --- |
+| None, Bool, Int, Float | `None`, `true`, `42`, `1.5` |
+| String | the text itself; `debug()` quotes and escapes it: `"a\"b"` |
+| Bytes | `b"hi"`, or `Bytes::from_hex("00ff")` for bytes that are not UTF-8 |
+| List | `[1, "a", [2]]` |
+| Object | `{ name: "Ada", "display-name": "x" }`, `{}` |
+| nominal value | `Point { x: 1, y: 2 }`, `Empty {}` |
+| enum | `Color::Red`, `Color::Rgb(255, 0, 0)` |
+| Error | `Error("Kind", "message", data)` |
+| Range | `0..3`, `1..=5`, `Range::step(0, 10, 2)` |
+| closure | `Fn` |
+
+Parts of Lists, Objects, fields, payloads, and Error data render through their type's `Debug` implementation, else its `ToString` implementation, else the default with quoted Strings. A value that contains itself renders as `...` where it repeats.
 
 # 9. Errors
 
@@ -486,7 +552,7 @@ error.data()      // any value
 error.cause()     // related value or None
 ```
 
-Common Error kinds are `ArityError`, `CloneError`, `EncodingError`, `IndexError`, `IntOverflowError`, `MatchError`, `MethodNotFound`, `MissingValue`, `NotIterable`, `SerializationError`, `TypeError`, `ValueError`, and `HostFunctionNotFound`.
+Common Error kinds are `ArityError`, `CloneError`, `DivisionByZeroError`, `EncodingError`, `IndexError`, `IntOverflowError`, `MatchError`, `MethodNotFound`, `MissingValue`, `NotIterable`, `SerializationError`, `TypeError`, `ValueError`, and `HostFunctionNotFound`.
 
 # 10. Parallel Work with `par`
 
@@ -564,7 +630,7 @@ A `use` declaration names an imported or library declaration, or a library modul
 
 ## Visibility
 
-Declarations are public by default. The `private` keyword before a module-level function, type, enum, or trait, or before a method of an inherent `impl` block, restricts it to its package:
+Declarations are public by default. The `private` keyword before a module-level function, type, enum, trait, or constant, or before a method of an inherent `impl` block, restricts it to its package:
 
 - a library package contains every module of one library, such as `exo` and `exo::db`;
 - the project package contains the root file and every file it imports.
@@ -595,7 +661,7 @@ Naming a private function, type, enum, or trait from another package is a compil
 
 Every value supports `clone()`.
 
-Numeric values support `add(other)`, `sub(other)`, `mul(other)`, and `div(other)`. `Int` also supports `div_euclid(other)` and `rem_euclid(other)` for exact Euclidean calculations. `Int` and `Float` support `abs()`. `Float` also supports `floor()`, `ceil()`, and `round()`.
+Numeric values support `add(other)`, `sub(other)`, `mul(other)`, `div(other)`, and `rem(other)`, which behave like the operators. `Int` also supports `div_euclid(other)` and `rem_euclid(other)` for exact Euclidean calculations. `Int`, `Float`, and `String` support `compare(other)`, which returns an `Ordering`. `Int` and `Float` support `abs()`. `Float` also supports `floor()`, `ceil()`, and `round()`.
 
 `Int::parse(value)` and `Float::parse(value)` perform checked decimal parsing and return `ParseError` for invalid input. Int values additionally provide `signum()`, `is_even()`, `is_odd()`, `min(other)`, `max(other)`, `clamp(minimum, maximum)`, `pow(exponent)`, `gcd(other)`, `lcm(other)`, and `to_float()`. Float values additionally provide `trunc()`, `fract()`, `min(other)`, `max(other)`, `clamp(minimum, maximum)`, `pow(exponent)`, `sqrt()`, `to_int()`, `is_nan()`, `is_finite()`, and `is_infinite()`. Checked operations return `Error` rather than coercing or saturating.
 
@@ -655,7 +721,7 @@ list.count()              // number of yielded items
 list.to_list()            // alias for collect()
 ```
 
-Every iterable supports `map`, `filter`, `find`, `any`, `all`, `each`, `reduce`, `collect`, `count`, and `to_list`. These operations are eager. Callback-based operations return the first Error produced by their callback; Error values already present in the iterable are ordinary items.
+Every iterable, including Objects through their `[key, value]` entries, supports `map`, `filter`, `find`, `any`, `all`, `each`, `reduce`, `collect`, `count`, and `to_list`. These operations are eager. Callback-based operations return the first Error produced by their callback; Error values already present in the iterable are ordinary items.
 
 Objects support:
 
@@ -680,7 +746,7 @@ let retry_after = Duration::seconds(2);
 Host::sleep(retry_after);
 ```
 
-`Duration` is a normal prelude type with `seconds: Int` and `nanoseconds: Int` fields. Valid Duration values have non-negative seconds and a nanosecond field from `0` to `999999999`. `Duration::nanoseconds(value)`, `Duration::microseconds(value)`, `Duration::milliseconds(value)`, and `Duration::seconds(value)` construct normalized values from non-negative Int input. Conversions return `ValueError` for negative input and `IntOverflowError` if an intermediate multiplication exceeds the Int range. `as_seconds()` returns the whole-second component; `as_milliseconds()`, `as_microseconds()`, and `as_nanoseconds()` return truncated total-unit Int values or `IntOverflowError` when that total exceeds the Int range.
+`Duration` is a normal prelude type with `seconds: Int` and `nanoseconds: Int` fields. Durations order by length and support `+` and `-`; a negative difference produces `ValueError`. A `DateTime` plus or minus a Duration is a DateTime, a DateTime minus an earlier DateTime is the Duration between them, and DateTimes order and compare as instants independently of their display offsets. Valid Duration values have non-negative seconds and a nanosecond field from `0` to `999999999`. `Duration::nanoseconds(value)`, `Duration::microseconds(value)`, `Duration::milliseconds(value)`, and `Duration::seconds(value)` construct normalized values from non-negative Int input. Conversions return `ValueError` for negative input and `IntOverflowError` if an intermediate multiplication exceeds the Int range. `as_seconds()` returns the whole-second component; `as_milliseconds()`, `as_microseconds()`, and `as_nanoseconds()` return truncated total-unit Int values or `IntOverflowError` when that total exceeds the Int range.
 
 `Host::sleep(duration)` accepts exactly one normalized Duration and returns `None` after the duration elapses. It may suspend, but it is provided by every ExS runner and does not require an application host-function registration.
 
@@ -735,8 +801,9 @@ useDecl         = "use" qualifiedName [ "as" identifier ] ";"
                 | "use" qualifiedName "::" "{" useItem { "," useItem } [ "," ] "}" ";" ;
 useItem         = identifier [ "as" identifier ] ;
 qualifiedName   = identifier { "::" identifier } ;
-item            = [ "private" ] ( functionDecl | typeDecl | enumDecl | traitDecl )
+item            = [ "private" ] ( functionDecl | typeDecl | enumDecl | traitDecl | constDecl )
                 | testDecl | implDecl ;
+constDecl       = "const" identifier "=" expression ";" ;
 
 functionDecl    = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] block ;
 testDecl        = "test" string block ;
@@ -750,7 +817,7 @@ implDecl        = "impl" identifier [ "for" identifier ] "{" { [ "private" ] fun
 closure         = "(" closureParameters? ")" "=>" block ;
 parameters      = parameter { "," parameter } [ "," ] ;
 closureParameters = closureParameter { "," closureParameter } [ "," ] ;
-closureParameter = identifier [ "..." ] ;
+closureParameter = identifier [ ":" typeUnion ] [ "..." ] ;
 parameter       = identifier [ ":" typeUnion ] [ "..." ] ;
 typeUnion       = typeName { "|" typeName } ;
 typeName        = qualifiedName | "None" | "Error" ;
@@ -774,7 +841,7 @@ equality        = comparison { ( "==" | "!=" ) comparison } ;
 comparison      = range { ( "<" | "<=" | ">" | ">=" | "is" ) range } ;
 range           = term [ ( ".." | "..=" ) term ] ;
 term            = factor { ( "+" | "-" ) factor } ;
-factor          = unary { ( "*" | "/" ) unary } ;
+factor          = unary { ( "*" | "/" | "%" ) unary } ;
 unary           = ( "!" | "-" ) unary | postfix ;
 postfix         = primary { call | index | property | "?" } ;
 call            = "(" arguments? ")" ;
@@ -786,7 +853,9 @@ primary         = literal | qualifiedName | closure | listLiteral | objectLitera
                 | typedObject | matchExpr | parExpr | hostCall | "(" expression ")" ;
 typedObject     = qualifiedName "{" [ objectItems ] "}" ;
 matchExpr       = "match" expression "{" matchArm { "," matchArm } [ "," ] "}" ;
-matchArm        = ( qualifiedName [ "(" identifiers? ")" ] | "_" ) "=>" ( expression | block ) ;
+matchArm        = ( qualifiedName [ "(" identifiers? ")" ] | literalPattern | "_" )
+                  "=>" ( expression | block ) ;
+literalPattern  = [ "-" ] ( integer | float ) | string | bytes | "true" | "false" | "None" ;
 parExpr         = "par" "{" { expression ";" } "}" | "par" "(" expression ")" ;
 hostCall        = "Host" "::" "call" "(" arguments? ")" ;
 listLiteral     = "[" [ arguments ] "]" ;

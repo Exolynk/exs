@@ -412,7 +412,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
         },
         StandardType {
             name: "Bool",
-            description: "`Bool` has exactly the values `true` and `false`. Conditions require Bool explicitly; ExS does not apply implicit truthiness to numbers, strings, collections, or None.",
+            description: "`Bool` has exactly the values `true` and `false`. Conditions require Bool explicitly; ExS does not apply implicit truthiness to numbers, strings, collections, or None. Bools are not numbers: arithmetic and ordering with a Bool return TypeError.",
             usage: "fn main() {\n    let ready = true;\n    if ready {\n        Host::call(\"println\", \"ready\");\n    }\n}",
             methods: &[],
         },
@@ -802,17 +802,17 @@ pub fn standard_library_types() -> Vec<StandardType> {
                 },
                 StandardMethod {
                     signature: "contains(value) -> Bool",
-                    description: "Tests for a value using ExS equality semantics.",
+                    description: "Tests for an item equal to `value` under `==`, which compares composites part by part and uses `Eq` implementations.",
                     example: "let found = items.contains(target);",
                 },
                 StandardMethod {
                     signature: "index_of(value) -> Int | None",
-                    description: "Returns the first matching index, or None when absent.",
+                    description: "Returns the index of the first item equal to `value` under `==`, or None when absent.",
                     example: "let index = items.index_of(target);",
                 },
                 StandardMethod {
                     signature: "last_index_of(value) -> Int | None",
-                    description: "Returns the final matching index, or None when absent.",
+                    description: "Returns the index of the final item equal to `value` under `==`, or None when absent.",
                     example: "let index = items.last_index_of(target);",
                 },
                 StandardMethod {
@@ -824,7 +824,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
         },
         StandardType {
             name: "Object",
-            description: "`Object` is a mutable insertion-ordered mapping from String keys to values. Dot properties and bracket access operate on the same ordered collection.",
+            description: "`Object` is a mutable insertion-ordered mapping from String keys to values. Dot properties and bracket access operate on the same ordered collection, and `for` iterates its `[key, value]` entries.",
             usage: "fn main() -> Object {\n    let user = { name: \"Ada\" };\n    user.role = \"admin\";\n    ret user;\n}",
             methods: &[
                 StandardMethod {
