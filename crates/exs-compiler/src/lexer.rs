@@ -146,6 +146,8 @@ pub enum TokenKind {
     Star,
     /// `/`.
     Slash,
+    /// `%`.
+    Percent,
     /// `!`.
     Bang,
     /// `=`.
@@ -423,6 +425,7 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                     b'-' => TokenKind::Minus,
                     b'*' => TokenKind::Star,
                     b'/' => TokenKind::Slash,
+                    b'%' => TokenKind::Percent,
                     b'!' if bytes.get(index) == Some(&b'=') => {
                         index += 1;
                         TokenKind::BangEqual

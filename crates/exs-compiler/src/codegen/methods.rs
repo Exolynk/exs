@@ -28,6 +28,7 @@ const fn is_supported(method: BuiltinMethod) -> bool {
             | BuiltinMethod::Div
             | BuiltinMethod::DivEuclid
             | BuiltinMethod::RemEuclid
+            | BuiltinMethod::Rem
             | BuiltinMethod::ToString
             | BuiltinMethod::Debug
             | BuiltinMethod::Abs

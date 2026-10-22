@@ -702,6 +702,7 @@ fn binary_operator(kind: &TokenKind) -> Option<(u8, BinaryOperator)> {
         TokenKind::Minus => (TERM, BinaryOperator::Subtract),
         TokenKind::Star => (FACTOR, BinaryOperator::Multiply),
         TokenKind::Slash => (FACTOR, BinaryOperator::Divide),
+        TokenKind::Percent => (FACTOR, BinaryOperator::Remainder),
         _ => return None,
     })
 }

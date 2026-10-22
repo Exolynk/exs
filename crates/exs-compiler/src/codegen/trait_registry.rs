@@ -19,6 +19,8 @@ pub(crate) enum TraitOperator {
     Multiply,
     /// The binary `/` operator.
     Divide,
+    /// The binary `%` operator.
+    Remainder,
     /// The binary `==` operator.
     Equal,
     /// The binary `!=` operator.
@@ -183,6 +185,7 @@ impl TraitOperator {
             BinaryOperator::Subtract => Some(Self::Subtract),
             BinaryOperator::Multiply => Some(Self::Multiply),
             BinaryOperator::Divide => Some(Self::Divide),
+            BinaryOperator::Remainder => Some(Self::Remainder),
             BinaryOperator::Equal => Some(Self::Equal),
             BinaryOperator::NotEqual => Some(Self::NotEqual),
             BinaryOperator::LessThan => Some(Self::LessThan),
@@ -200,6 +203,7 @@ impl TraitOperator {
             Self::Subtract => "$operator:sub",
             Self::Multiply => "$operator:mul",
             Self::Divide => "$operator:div",
+            Self::Remainder => "$operator:rem",
             Self::Equal => "$operator:eq",
             Self::NotEqual => "$operator:ne",
             Self::LessThan => "$operator:lt",
@@ -218,7 +222,7 @@ impl TraitOperator {
             Self::LessOrEqual => Some(3),
             Self::GreaterThan => Some(4),
             Self::GreaterOrEqual => Some(5),
-            Self::Add | Self::Subtract | Self::Multiply | Self::Divide => None,
+            Self::Add | Self::Subtract | Self::Multiply | Self::Divide | Self::Remainder => None,
         }
     }
 }
@@ -296,6 +300,7 @@ impl From<StandardOperator> for TraitOperator {
             StandardOperator::Subtract => Self::Subtract,
             StandardOperator::Multiply => Self::Multiply,
             StandardOperator::Divide => Self::Divide,
+            StandardOperator::Remainder => Self::Remainder,
             StandardOperator::Equal => Self::Equal,
             StandardOperator::NotEqual => Self::NotEqual,
             StandardOperator::LessThan => Self::LessThan,

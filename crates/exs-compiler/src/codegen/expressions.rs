@@ -339,6 +339,13 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.instruction(Instruction::LocalGet(right));
                 self.core_call("__exs_core_divide", span)
             }
+            BinaryOperator::Remainder => {
+                self.set_position(span)?;
+                self.push_vm();
+                self.instruction(Instruction::LocalGet(left));
+                self.instruction(Instruction::LocalGet(right));
+                self.core_call("__exs_core_remainder", span)
+            }
             BinaryOperator::LessThan => comparison(0)(self),
             BinaryOperator::LessOrEqual => comparison(1)(self),
             BinaryOperator::GreaterThan => comparison(2)(self),

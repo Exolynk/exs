@@ -74,7 +74,7 @@ pub use memory::{Memory, SliceMemory};
 pub use methods::{call_builtin, call_static};
 pub use numbers::{
     Arithmetic, Number, NumericError, Ordering, arithmetic, divide, float_value, int_value, negate,
-    number,
+    number, remainder,
 };
 pub use objects::{object_lookup, object_with_shape};
 pub use parts::{equality, parts};

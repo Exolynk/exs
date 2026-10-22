@@ -46,6 +46,7 @@ pub fn call_builtin(
         BuiltinMethod::Div => operator(memory, vm, None, receiver, first),
         BuiltinMethod::DivEuclid => euclidean(memory, vm, receiver, first, false),
         BuiltinMethod::RemEuclid => euclidean(memory, vm, receiver, first, true),
+        BuiltinMethod::Rem => crate::numbers::remainder(memory, vm, receiver, first),
         BuiltinMethod::ToString => render(memory, vm, receiver),
         BuiltinMethod::Debug => match crate::render::debug_text(memory, vm, receiver)? {
             text if text == exs_layout::ValueRef::NONE.raw() => render(memory, vm, receiver),

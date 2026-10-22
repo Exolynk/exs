@@ -175,21 +175,21 @@ fn evaluates_boolean_equality_in_the_runtime() {
     );
 }
 
-/// Promotes mixed arithmetic to Float and treats Bool as its numeric 0 or 1 value.
+/// Promotes mixed Int and Float arithmetic to Float.
 #[test]
-fn executes_mixed_bool_integer_and_float_arithmetic() {
+fn executes_mixed_integer_and_float_arithmetic() {
     assert_eq!(
-        execute_source("fn main(input) { ret true + 2 + 0.5; }", ExsValue::None),
+        execute_source("fn main(input) { ret 1 + 2 + 0.5; }", ExsValue::None),
         ExsValue::Float(3.5)
     );
 }
 
-/// Compares Bool, Int, and Float values through the runtime numeric dispatch.
+/// Compares Int and Float values by value and keeps Bools apart from numbers.
 #[test]
 fn compares_mixed_numeric_values() {
     assert_eq!(
         execute_source(
-            "fn main(input) { ret true == 1.0 && false < 1; }",
+            "fn main(input) { ret 1 == 1.0 && 0 < 1.5 && true != 1; }",
             ExsValue::None,
         ),
         ExsValue::Bool(true)

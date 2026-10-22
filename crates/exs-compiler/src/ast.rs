@@ -678,6 +678,8 @@ pub enum BinaryOperator {
     Multiply,
     /// Numeric division.
     Divide,
+    /// Euclidean remainder.
+    Remainder,
     /// Equality.
     Equal,
     /// Inequality.

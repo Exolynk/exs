@@ -29,10 +29,8 @@ fn represents_small_and_large_ints() {
         assert!(ValueRef::small_int(value).is_none());
         assert_eq!(number(&heap.memory, raw), Some(Number::Int(value)));
     }
-    assert_eq!(
-        number(&heap.memory, ValueRef::TRUE.raw()),
-        Some(Number::Int(1))
-    );
+    // Bools are no numbers.
+    assert_eq!(number(&heap.memory, ValueRef::TRUE.raw()), None);
     assert_eq!(number(&heap.memory, ValueRef::NONE.raw()), None);
 }
 
@@ -48,14 +46,15 @@ fn applies_the_language_arithmetic_rules() {
     assert_eq!(number(&heap.memory, mixed), Some(Number::Float(3.5)));
     let quotient = divide(&mut heap.memory, VM, three, two).expect("numeric");
     assert_eq!(number(&heap.memory, quotient), Some(Number::Float(1.5)));
-    let wrapped = arithmetic(
+    // A Bool operand is no Int 1; this heap has no room for the TypeError it creates.
+    let refused = arithmetic(
         &mut heap.memory,
         VM,
         Arithmetic::Add,
         ValueRef::TRUE.raw(),
         two,
     );
-    assert_eq!(wrapped, Some(three));
+    assert_ne!(refused, Some(three));
     let negated = negate(&mut heap.memory, VM, two).expect("numeric");
     assert_eq!(number(&heap.memory, negated), Some(Number::Int(-2)));
 }
@@ -77,7 +76,7 @@ fn compares_numbers() {
         Err(NumericError::Unordered)
     );
     assert!(equal(&heap.memory, one, one_float));
-    assert!(equal(&heap.memory, ValueRef::TRUE.raw(), one));
+    assert!(!equal(&heap.memory, ValueRef::TRUE.raw(), one));
     assert!(!equal(&heap.memory, nan, nan));
     assert!(equal(
         &heap.memory,

@@ -16,5 +16,6 @@ pub(crate) use bytes::get as bytes_get;
 pub use dispatch::call_builtin;
 #[cfg(test)]
 pub(crate) use float_parse::parse_f64;
+pub(crate) use numbers::euclidean;
 pub(crate) use objects::{field_value, is_object};
 pub use statics::call_static;

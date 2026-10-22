@@ -262,6 +262,7 @@ fn is_operator(kind: &TokenKind) -> bool {
             | TokenKind::Minus
             | TokenKind::Star
             | TokenKind::Slash
+            | TokenKind::Percent
             | TokenKind::Bang
             | TokenKind::Equal
             | TokenKind::EqualEqual

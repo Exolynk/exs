@@ -1,6 +1,6 @@
 //! Compiler-owned declarations for globally available standard protocols.
 
-use exs_layout::{TYPE_ANY, TYPE_BOOL, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_STRING};
+use exs_layout::{TYPE_ANY, TYPE_FLOAT, TYPE_INT, TYPE_LIST, TYPE_STRING};
 
 use crate::ast::Expression;
 
@@ -39,6 +39,12 @@ pub(crate) const DIV_TRAIT: &str = "Div";
 
 /// Required instance-method name for the `Div` protocol.
 pub(crate) const DIV_METHOD: &str = "div";
+
+/// Canonical source name for the protocol invoked by the `%` operator.
+pub(crate) const REM_TRAIT: &str = "Rem";
+
+/// Required instance-method name for the `Rem` protocol.
+pub(crate) const REM_METHOD: &str = "rem";
 
 /// Canonical source name for the protocol invoked by the equality operators.
 pub(crate) const EQ_TRAIT: &str = "Eq";
@@ -85,6 +91,8 @@ pub(crate) enum StandardOperator {
     Multiply,
     /// The binary `/` operator.
     Divide,
+    /// The binary `%` operator.
+    Remainder,
     /// The binary `==` operator.
     Equal,
     /// The binary `!=` operator.
@@ -183,6 +191,8 @@ const SUB_OPERATORS: [StandardOperator; 1] = [StandardOperator::Subtract];
 const MUL_OPERATORS: [StandardOperator; 1] = [StandardOperator::Multiply];
 /// The arithmetic source operator bound to `Div::div`.
 const DIV_OPERATORS: [StandardOperator; 1] = [StandardOperator::Divide];
+/// The arithmetic source operator bound to `Rem::rem`.
+const REM_OPERATORS: [StandardOperator; 1] = [StandardOperator::Remainder];
 /// Source operators bound to `Eq::eq`.
 const EQ_OPERATORS: [StandardOperator; 2] = [StandardOperator::Equal, StandardOperator::NotEqual];
 /// Source operators bound to `Compare::compare`.
@@ -235,6 +245,16 @@ const DIV_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
     description: "Divides the receiver by the evaluated `other` operand. Implementations may return any ExS value, including a recoverable Error. The `/` operator selects this method for matching nominal receivers; built-in numeric implementations expose the same behavior through `value.div(other)`. Built-in division always returns Float and follows IEEE 754 behavior for zero divisors.",
 }];
 
+/// The required `Rem::rem` method declaration.
+const REM_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
+    name: REM_METHOD,
+    has_receiver: true,
+    parameter_types: &ARITHMETIC_PARAMETER_TYPES,
+    return_types: &ARITHMETIC_RETURN_TYPES,
+    signature: "fn rem(self, other: Any) -> Any;",
+    description: "Returns the remainder of dividing the receiver by the evaluated `other` operand. Implementations may return any ExS value, including a recoverable Error. The `%` operator selects this method for matching nominal receivers; built-in numeric implementations expose the same behavior through `value.rem(other)`. The built-in remainder is Euclidean and never negative: Ints follow `rem_euclid` and return DivisionByZeroError for a zero divisor; with a Float operand the result is a Float and a zero divisor gives NaN.",
+}];
+
 /// The required `Eq::eq` method declaration.
 const EQ_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
     name: EQ_METHOD,
@@ -276,42 +296,51 @@ const DEBUG_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
 }];
 
 /// The standard trait declarations shared by validation, contracts, and documentation.
-const STANDARD_TRAITS: [StandardTraitDescriptor; 8] = [
+const STANDARD_TRAITS: [StandardTraitDescriptor; 9] = [
     StandardTraitDescriptor {
         name: ADD_TRAIT,
-        builtin_mask: TYPE_BOOL | TYPE_INT | TYPE_FLOAT | TYPE_STRING | TYPE_LIST,
+        builtin_mask: TYPE_INT | TYPE_FLOAT | TYPE_STRING | TYPE_LIST,
         methods: &ADD_METHODS,
         operators: &ADD_OPERATORS,
-        description: "`Add` is the protocol selected by `left + right` when the left operand is a nominal type or enum with an `impl Add` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Bool, Int, Float, String, and List values implement the same protocol, so `value.add(other)` and `value + other` have identical behavior. String receivers concatenate String, Bool, Int, and Float operands using their normal source spelling.",
+        description: "`Add` is the protocol selected by `left + right` when the left operand is a nominal type or enum with an `impl Add` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Int, Float, String, and List values implement the same protocol, so `value.add(other)` and `value + other` have identical behavior. String receivers concatenate String, Bool, Int, and Float operands using their normal source spelling.",
         usage: "type Vector { value: Int }\n\nimpl Add for Vector {\n    fn add(self, other: Any) -> Any {\n        ret Vector { value: self.value + other.value };\n    }\n}\n\nfn main() -> Int {\n    ret (Vector { value: 20 } + Vector { value: 22 }).value;\n}",
-        implemented_by: &["Bool", "Int", "Float", "String", "List"],
+        implemented_by: &["Int", "Float", "String", "List"],
     },
     StandardTraitDescriptor {
         name: SUB_TRAIT,
-        builtin_mask: TYPE_BOOL | TYPE_INT | TYPE_FLOAT,
+        builtin_mask: TYPE_INT | TYPE_FLOAT,
         methods: &SUB_METHODS,
         operators: &SUB_OPERATORS,
-        description: "`Sub` is the protocol selected by `left - right` when the left operand is a nominal type or enum with an `impl Sub` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Bool, Int, and Float values implement the same protocol, so `value.sub(other)` and `value - other` have identical behavior.",
+        description: "`Sub` is the protocol selected by `left - right` when the left operand is a nominal type or enum with an `impl Sub` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Int and Float values implement the same protocol, so `value.sub(other)` and `value - other` have identical behavior.",
         usage: "type Temperature { value: Float }\n\nimpl Sub for Temperature {\n    fn sub(self, other: Any) -> Any {\n        ret Temperature { value: self.value - other.value };\n    }\n}\n\nfn main() -> Float {\n    ret (Temperature { value: 22.5 } - Temperature { value: 2.5 }).value;\n}",
-        implemented_by: &["Bool", "Int", "Float"],
+        implemented_by: &["Int", "Float"],
     },
     StandardTraitDescriptor {
         name: MUL_TRAIT,
-        builtin_mask: TYPE_BOOL | TYPE_INT | TYPE_FLOAT,
+        builtin_mask: TYPE_INT | TYPE_FLOAT,
         methods: &MUL_METHODS,
         operators: &MUL_OPERATORS,
-        description: "`Mul` is the protocol selected by `left * right` when the left operand is a nominal type or enum with an `impl Mul` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Bool, Int, and Float values implement the same protocol, so `value.mul(other)` and `value * other` have identical behavior.",
+        description: "`Mul` is the protocol selected by `left * right` when the left operand is a nominal type or enum with an `impl Mul` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Int and Float values implement the same protocol, so `value.mul(other)` and `value * other` have identical behavior.",
         usage: "type Scale { value: Int }\n\nimpl Mul for Scale {\n    fn mul(self, other: Any) -> Any {\n        ret Scale { value: self.value * other.value };\n    }\n}\n\nfn main() -> Int {\n    ret (Scale { value: 6 } * Scale { value: 7 }).value;\n}",
-        implemented_by: &["Bool", "Int", "Float"],
+        implemented_by: &["Int", "Float"],
     },
     StandardTraitDescriptor {
         name: DIV_TRAIT,
-        builtin_mask: TYPE_BOOL | TYPE_INT | TYPE_FLOAT,
+        builtin_mask: TYPE_INT | TYPE_FLOAT,
         methods: &DIV_METHODS,
         operators: &DIV_OPERATORS,
-        description: "`Div` is the protocol selected by `left / right` when the left operand is a nominal type or enum with an `impl Div` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Bool, Int, and Float values implement the same protocol, so `value.div(other)` and `value / other` have identical behavior. Built-in division always returns Float and follows IEEE 754 behavior for zero divisors.",
+        description: "`Div` is the protocol selected by `left / right` when the left operand is a nominal type or enum with an `impl Div` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Int and Float values implement the same protocol, so `value.div(other)` and `value / other` have identical behavior. Built-in division always returns Float and follows IEEE 754 behavior for zero divisors.",
         usage: "type Ratio { value: Float }\n\nimpl Div for Ratio {\n    fn div(self, other: Any) -> Any {\n        ret Ratio { value: self.value / other.value };\n    }\n}\n\nfn main() -> Float {\n    ret (Ratio { value: 84.0 } / Ratio { value: 2.0 }).value;\n}",
-        implemented_by: &["Bool", "Int", "Float"],
+        implemented_by: &["Int", "Float"],
+    },
+    StandardTraitDescriptor {
+        name: REM_TRAIT,
+        builtin_mask: TYPE_INT | TYPE_FLOAT,
+        methods: &REM_METHODS,
+        operators: &REM_OPERATORS,
+        description: "`Rem` is the protocol selected by `left % right` when the left operand is a nominal type or enum with an `impl Rem` implementation. The implementation receives the unmodified right operand as `Any` and may return any ExS value, including a recoverable Error. Built-in Int and Float values implement the same protocol, so `value.rem(other)` and `value % other` have identical behavior. The built-in remainder is Euclidean: `-1 % 24` is `23`.",
+        usage: "type Angle { degrees: Int }\n\nimpl Rem for Angle {\n    fn rem(self, other: Any) -> Any {\n        ret Angle { degrees: self.degrees % other };\n    }\n}\n\nfn main() -> Int {\n    ret (Angle { degrees: 450 } % 360).degrees;\n}",
+        implemented_by: &["Int", "Float"],
     },
     StandardTraitDescriptor {
         name: EQ_TRAIT,

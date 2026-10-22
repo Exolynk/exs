@@ -21,6 +21,7 @@ const fn binary_operator(operator: TraitOperator) -> BinaryOperator {
         TraitOperator::Subtract => BinaryOperator::Subtract,
         TraitOperator::Multiply => BinaryOperator::Multiply,
         TraitOperator::Divide => BinaryOperator::Divide,
+        TraitOperator::Remainder => BinaryOperator::Remainder,
         TraitOperator::Equal => BinaryOperator::Equal,
         TraitOperator::NotEqual => BinaryOperator::NotEqual,
         TraitOperator::LessThan => BinaryOperator::LessThan,

@@ -304,6 +304,17 @@ pub extern "C" fn __exs_core_field_names(vm: i32, raw: i64) -> i64 {
     ))
 }
 
+/// Evaluates `left % right`, the Euclidean remainder (see `exs_core::remainder`).
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_remainder(vm: i32, left: i64, right: i64) -> i64 {
+    value(exs_core::remainder(
+        &mut memory(),
+        address(vm),
+        left.cast_unsigned(),
+        right.cast_unsigned(),
+    ))
+}
+
 /// Returns a new List of the parts of a composite value, or None (see `exs_core::parts`).
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_parts(vm: i32, raw: i64) -> i64 {

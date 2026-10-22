@@ -64,7 +64,7 @@ fn reports_numeric_errors_like_v1() {
         (
             false,
             "TypeError".into(),
-            "numeric operations require a Bool, Int, or Float value".into(),
+            "numeric operations require an Int or Float value".into(),
             none
         )
     );
@@ -93,10 +93,7 @@ fn fails_concatenation_steps_like_v1() {
     // "a" + 1 joins, + None fails at step 2, and + 2 adds a number to that Error at step 3.
     let (_, kind, message, inner) = execution.error(result);
     assert_eq!(kind, "TypeError");
-    assert_eq!(
-        message,
-        "numeric operations require a Bool, Int, or Float value"
-    );
+    assert_eq!(message, "numeric operations require an Int or Float value");
     let (_, _, inner_message, inner_data) = execution.error(inner);
     assert_eq!(
         inner_message,

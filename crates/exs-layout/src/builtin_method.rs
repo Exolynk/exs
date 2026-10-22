@@ -162,10 +162,12 @@ pub enum BuiltinMethod {
     Entries,
     /// The `merge` method taking 1 argument.
     Merge,
+    /// The `rem` method taking 1 argument.
+    Rem,
 }
 
 /// Every built-in method in index order.
-const ALL: [BuiltinMethod; 77] = [
+const ALL: [BuiltinMethod; 78] = [
     BuiltinMethod::Add,
     BuiltinMethod::Sub,
     BuiltinMethod::Mul,
@@ -243,6 +245,7 @@ const ALL: [BuiltinMethod; 77] = [
     BuiltinMethod::GetOr,
     BuiltinMethod::Entries,
     BuiltinMethod::Merge,
+    BuiltinMethod::Rem,
 ];
 
 impl BuiltinMethod {
@@ -345,6 +348,7 @@ impl BuiltinMethod {
             Self::GetOr => "get_or",
             Self::Entries => "entries",
             Self::Merge => "merge",
+            Self::Rem => "rem",
         }
     }
 
@@ -423,7 +427,8 @@ impl BuiltinMethod {
             | Self::Remove
             | Self::Has
             | Self::Delete
-            | Self::Merge => 1,
+            | Self::Merge
+            | Self::Rem => 1,
             Self::Clamp | Self::Slice | Self::Replace | Self::Insert | Self::GetOr => 2,
         }
     }

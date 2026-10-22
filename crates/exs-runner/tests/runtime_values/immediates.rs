@@ -110,7 +110,7 @@ fn compares_boxed_and_immediate_ints_by_value() {
         ];
         ",
         &bools(&[
-            true, false, true, true, true, true, false, false, true, true, true, true, true,
+            true, false, true, true, true, true, false, false, true, true, true, false, true,
         ]),
     );
 }

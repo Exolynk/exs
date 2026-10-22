@@ -106,7 +106,10 @@ impl IntOperation {
             BinaryOperator::LessOrEqual => Some(Self::LessOrEqual),
             BinaryOperator::GreaterThan => Some(Self::GreaterThan),
             BinaryOperator::GreaterOrEqual => Some(Self::GreaterOrEqual),
-            BinaryOperator::Divide | BinaryOperator::And | BinaryOperator::Or => None,
+            BinaryOperator::Divide
+            | BinaryOperator::Remainder
+            | BinaryOperator::And
+            | BinaryOperator::Or => None,
         }
     }
 

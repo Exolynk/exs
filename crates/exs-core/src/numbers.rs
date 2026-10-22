@@ -27,7 +27,7 @@ pub enum Number {
 /// Why a numeric operation produced no value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NumericError {
-    /// This operand is not a Bool, Int or Float.
+    /// This operand is not an Int or Float.
     NotNumeric(u64),
     /// Int arithmetic left the signed 64-bit range.
     Overflow,
@@ -77,9 +77,8 @@ pub(crate) fn reference(raw: u64) -> Option<ValueRef> {
 pub fn number(memory: &impl Memory, raw: u64) -> Option<Number> {
     let value = reference(raw)?;
     match value.immediate() {
-        Some(Immediate::Bool(flag)) => Some(Number::Int(i64::from(flag))),
         Some(Immediate::Int(number)) => Some(Number::Int(i64::from(number))),
-        Some(Immediate::None) => None,
+        Some(Immediate::Bool(_) | Immediate::None) => None,
         None if value.kind() == type_kind(TYPE_INT) && value.extra() & INT_BOXED != 0 => {
             Some(Number::Int(
                 memory
@@ -147,7 +146,7 @@ const fn as_float(number: Number) -> f64 {
 }
 
 /// Message of the TypeError for a non-numeric operand.
-const NOT_NUMERIC: &str = "numeric operations require a Bool, Int, or Float value";
+const NOT_NUMERIC: &str = "numeric operations require an Int or Float value";
 
 /// Converts the outcome of a numeric operation into a value, turning failures into the
 /// language's Errors. `overflow` is the IntOverflowError message and `left` its data.
@@ -227,6 +226,27 @@ pub fn divide(memory: &mut impl Memory, vm: u32, left: u64, right: u64) -> Optio
         number_value(memory, vm, Number::Float(as_float(left) / as_float(right)))
     });
     numeric_value(memory, vm, outcome, "", left)
+}
+
+/// Evaluates `left % right`: the Euclidean remainder, which is never negative. Ints follow
+/// `rem_euclid`; with a Float operand both operands are Floats and a zero divisor gives NaN.
+/// Returns `None` when memory is exhausted.
+pub fn remainder(memory: &mut impl Memory, vm: u32, left: u64, right: u64) -> Option<u64> {
+    match operands(memory, left, right) {
+        Ok((Number::Int(_), Number::Int(_))) => {
+            crate::methods::euclidean(memory, vm, left, right, true)
+        }
+        Ok((dividend, divisor)) => {
+            let (dividend, divisor) = (as_float(dividend), as_float(divisor));
+            let mut result = libm::fmod(dividend, divisor);
+            if result < 0.0 {
+                result += divisor.abs();
+            }
+            let outcome = number_value(memory, vm, Number::Float(result));
+            numeric_value(memory, vm, outcome, "", left)
+        }
+        Err(error) => numeric_value(memory, vm, Err(error), "", left),
+    }
 }
 
 /// Negates one numeric reference; failures are TypeError and IntOverflowError values.
