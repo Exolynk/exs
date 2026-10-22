@@ -835,3 +835,22 @@ fn compiles_closures_in_unreached_functions() {
     };
     assert!(error.contains("unknown binding `missing`"), "{error}");
 }
+
+/// Places highlighting inside interpolations with escaped quotes at their source bytes.
+#[test]
+fn highlights_interpolations_with_escaped_quotes() {
+    let text = "fn main(user) { ret f\"{user[\\\"name\\\"]} {user}\"; }";
+    let spans = exs_compiler::highlight(SourceInput {
+        source_id: "./main.exs",
+        text,
+    });
+    let texts = spans
+        .iter()
+        .map(|span| &text[span.start..span.end])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts.iter().filter(|text| **text == "user").count(),
+        3,
+        "{texts:?}"
+    );
+}

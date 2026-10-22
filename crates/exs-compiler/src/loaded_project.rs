@@ -302,8 +302,13 @@ fn collect_paths(tokens: &[Token<'_>], paths: &mut Vec<String>) {
     while index < tokens.len() {
         if let TokenKind::FormattedString(formatted) = &tokens[index].kind {
             for part in &formatted.parts {
-                if let FormattedStringPart::Expression { source, start_byte } = part {
-                    let fragment = crate::lexer::lex_fragment("", source, *start_byte);
+                if let FormattedStringPart::Expression {
+                    source,
+                    start_byte,
+                    merged,
+                } = part
+                {
+                    let fragment = crate::lexer::lex_fragment("", source, *start_byte, merged);
                     collect_paths(&fragment.tokens, paths);
                 }
             }

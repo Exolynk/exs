@@ -29,7 +29,15 @@ pub enum FormattedStringPart {
     /// One decoded literal fragment.
     Text(String),
     /// One expression source fragment plus its absolute source offset.
-    Expression { source: String, start_byte: u32 },
+    Expression {
+        /// The expression's source, with escaped quotes decoded.
+        source: String,
+        /// Source offset of the fragment's first byte.
+        start_byte: u32,
+        /// Positions in `source` of the characters decoded from two source bytes, which
+        /// shift the positions after them.
+        merged: Vec<u32>,
+    },
 }
 
 /// A formatted string token split around interpolation expressions.
@@ -494,9 +502,13 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
     }
 }
 
-/// Lexes an embedded expression fragment and translates all spans into its enclosing source.
-pub fn lex_fragment<'a>(source_id: &'a str, text: &str, offset: u32) -> Lexed<'a> {
+/// Lexes an embedded expression fragment and translates all spans into its enclosing source,
+/// where the characters at the `merged` positions of `text` were two bytes.
+pub fn lex_fragment<'a>(source_id: &'a str, text: &str, offset: u32, merged: &[u32]) -> Lexed<'a> {
     let lexed = lex(SourceInput { source_id, text });
+    let offset_span = |span: SourceSpan<'_>, source_id: &'a str, offset: u32| {
+        offset_span(span, source_id, offset, merged)
+    };
     Lexed {
         tokens: lexed
             .tokens
@@ -536,11 +548,23 @@ pub fn lex_fragment<'a>(source_id: &'a str, text: &str, offset: u32) -> Lexed<'a
 }
 
 /// Reassigns one fragment-relative span to its enclosing source input.
-fn offset_span<'a>(span: SourceSpan<'_>, source_id: &'a str, offset: u32) -> SourceSpan<'a> {
+fn offset_span<'a>(
+    span: SourceSpan<'_>,
+    source_id: &'a str,
+    offset: u32,
+    merged: &[u32],
+) -> SourceSpan<'a> {
+    // Each character decoded from two source bytes before a position moves it one byte on.
+    let position = |position: u32| {
+        let shift = merged.iter().filter(|merged| **merged < position).count();
+        position
+            .saturating_add(u32::try_from(shift).unwrap_or(u32::MAX))
+            .saturating_add(offset)
+    };
     SourceSpan {
         source_id,
-        start_byte: span.start_byte.saturating_add(offset),
-        end_byte: span.end_byte.saturating_add(offset),
+        start_byte: position(span.start_byte),
+        end_byte: position(span.end_byte),
     }
 }
 
@@ -755,11 +779,15 @@ fn formatted_string_literal<'a>(
                 let expression_start = *index + 1;
                 // Standard formatted strings decode `\"` and `\\` inside interpolations, so
                 // nested String literals may be written with or without escapes.
-                let (expression_end, expression) = if hash_count == 0 {
+                let (expression_end, expression, merged) = if hash_count == 0 {
                     escaped_expression_end(source, expression_start)?
                 } else {
                     let end = formatted_expression_end(source, expression_start)?;
-                    (end, source.text[expression_start..end].to_owned())
+                    (
+                        end,
+                        source.text[expression_start..end].to_owned(),
+                        Vec::new(),
+                    )
                 };
                 if expression.trim().is_empty() {
                     return Err(diagnostic(
@@ -773,6 +801,7 @@ fn formatted_string_literal<'a>(
                 parts.push(FormattedStringPart::Expression {
                     source: expression,
                     start_byte: u32::try_from(expression_start).unwrap_or(u32::MAX),
+                    merged,
                 });
                 *index = expression_end + 1;
             }
@@ -938,7 +967,8 @@ enum InterpolationMode {
 }
 
 /// Finds the closing brace of one interpolation of a standard formatted string and returns it
-/// with the interpolation's source.
+/// with the interpolation's source and the positions in it of characters decoded from two
+/// source bytes.
 ///
 /// A nested String literal may be written with plain quotes, `"a\"b"`, or with escaped
 /// quotes like the surrounding text, `\"a\\\"b\"`; the returned source spells both with
@@ -946,13 +976,14 @@ enum InterpolationMode {
 fn escaped_expression_end<'a>(
     source: SourceInput<'a>,
     mut index: usize,
-) -> Result<(usize, String), CompileDiagnostic<'a>> {
+) -> Result<(usize, String, Vec<u32>), CompileDiagnostic<'a>> {
     let text = source.text;
     let bytes = text.as_bytes();
     let start = index.saturating_sub(1);
     let mut expression = String::new();
     let mut depth = 0_usize;
     let mut mode = InterpolationMode::Code;
+    let mut merged = Vec::new();
     while index < bytes.len() {
         let pair = (bytes[index], bytes.get(index + 1).copied());
         let decoded = match (mode, pair) {
@@ -980,7 +1011,9 @@ fn escaped_expression_end<'a>(
                 depth += 1;
                 mode
             }
-            (InterpolationMode::Code, '}') if depth == 0 => return Ok((index, expression)),
+            (InterpolationMode::Code, '}') if depth == 0 => {
+                return Ok((index, expression, merged));
+            }
             (InterpolationMode::Code, '}') => {
                 depth -= 1;
                 mode
@@ -994,6 +1027,9 @@ fn escaped_expression_end<'a>(
             (InterpolationMode::Escaped(false), '"') => InterpolationMode::Code,
             (mode, _) => mode,
         };
+        if decoded.is_some() {
+            merged.push(u32::try_from(expression.len()).unwrap_or(u32::MAX));
+        }
         expression.push(character);
         index += width;
     }

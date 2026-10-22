@@ -350,8 +350,13 @@ impl<'a> Parser<'a> {
                 LexerFormattedStringPart::Text(value) => {
                     parts.push(FormattedStringPart::Text(value));
                 }
-                LexerFormattedStringPart::Expression { source, start_byte } => {
-                    let mut lexed = crate::lexer::lex_fragment(span.source_id, &source, start_byte);
+                LexerFormattedStringPart::Expression {
+                    source,
+                    start_byte,
+                    merged,
+                } => {
+                    let mut lexed =
+                        crate::lexer::lex_fragment(span.source_id, &source, start_byte, &merged);
                     if let Some(diagnostic) = lexed.diagnostics.diagnostics.first_mut() {
                         return Err(diagnostic.clone());
                     }
