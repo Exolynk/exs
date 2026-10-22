@@ -1,5 +1,5 @@
 //! Built-in receiver methods and static functions of built-in types, as stateless helpers
-//! with v1's results, Error kinds and messages.
+//! with the results, Error kinds and messages.
 
 mod bytes;
 mod clone;

@@ -26,7 +26,7 @@ use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 pub(super) struct FunctionInfo {
     /// Wasm function index.
     pub(super) index: u32,
-    /// Identifier recorded in Error traces, the function's position in the module like v1.
+    /// Identifier recorded in Error traces, the function's position in the module.
     pub(super) function_id: u32,
     /// Number of fixed parameters, without captures and a variadic parameter.
     pub(super) arity: u32,
@@ -62,7 +62,7 @@ pub(super) struct Context<'m> {
     pub(super) object_keys: &'m HashMap<Vec<String>, u32>,
     /// Index of the next mutable `i32` global, appended after the template's globals.
     pub(super) next_global: Cell<u32>,
-    /// Source position ids of the module, shared with runtime v1.
+    /// Source position ids of the module.
     pub(super) source_map: &'m SourceMap<'m>,
     /// Address of the 8-byte aligned static `u32` arrays of `+` chain positions, field orders
     /// and wire schemas.
@@ -75,7 +75,7 @@ pub(super) struct Context<'m> {
     pub(super) static_arrays: RefCell<HashMap<Vec<u32>, u32>>,
     /// The module's implementation methods and their dispatch.
     pub(super) dispatch: &'m Dispatch,
-    /// Names of the bindings some closure captures, which live in Cells like v1.
+    /// Names of the bindings some closure captures, which live in Cells.
     pub(super) captured: &'m HashSet<String>,
     /// Every closure expression by its source span.
     pub(super) closures: &'m HashMap<(String, u32, u32), ClosureInfo>,
@@ -93,7 +93,7 @@ pub(super) struct FunctionCompiler<'a, 'm> {
     pub(super) key: &'m str,
     /// Number of leading parameters holding captured Cells.
     captures: u32,
-    /// Spans of the `for` loops over Range variables no source code observes, like v1.
+    /// Spans of the `for` loops over Range variables no source code observes.
     pub(super) unobserved_ranges: Vec<SourceSpan<'a>>,
     /// The source declaration.
     pub(super) declaration: &'m FunctionDeclaration<'a>,
@@ -351,10 +351,10 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         self.instruction(Instruction::I32Const(self.context.vm.cast_signed()));
     }
 
-    /// Pushes 1 when the `ValueRef` in `local` satisfies `contract`, else 0, like v1.
+    /// Pushes 1 when the `ValueRef` in `local` satisfies `contract`, else 0.
     ///
     /// Nominal Object and enum types are tested through the type id in the reference's extra
-    /// bits. Like v1, `List<T>` element types are not checked.
+    /// bits. `List<T>` element types are not checked.
     pub(super) fn contract_test(
         &mut self,
         local: u32,
@@ -378,7 +378,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
     }
 
     /// Returns from the function with the declared-type TypeError unless the `ValueRef` in
-    /// `local` satisfies `contract`, like v1.
+    /// `local` satisfies `contract`.
     pub(super) fn check_contract(
         &mut self,
         local: u32,

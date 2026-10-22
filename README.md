@@ -24,6 +24,32 @@ Values live in the module's linear memory in the layout of `exs-layout`. The com
 - Run `cargo fmt`, `cargo test`, `cargo check`, and `cargo clippy` after Rust changes.
 - Invoke a program with positional values using `exs run app.exs -- 1 Ada "[3, 'four']"`.
 
+### Compiler limits
+
+`CompileOptions::limits` bounds one compilation of untrusted source: 1 MiB per source file, 8 MiB per project, 512 modules and 64 nesting levels of expressions, blocks and type annotations by default. Adjust them with struct update syntax:
+
+```rust
+let mut options = CompileOptions::default();
+options.limits.max_nesting = 32;
+let module = compile(source, options)?;
+```
+
+### Server runner
+
+`ServerRunner::new` takes a `ServerRunnerConfig` with the memory, fuel and wall-clock limits, the protection level for host-side resources, the Wasmtime compiler strategy and the module cache size. Every field has a default suited to untrusted source:
+
+```rust
+let mut runner = ServerRunner::new(ServerRunnerConfig {
+    max_fuel: 50_000_000,
+    timeout: Duration::from_secs(30),
+    ..ServerRunnerConfig::default()
+});
+runner.registry_mut().fn_sync_raw("log", |arguments| ExsValue::None)?;
+let result = runner.execute(&module.wasm, "main", &inputs, &ExecutionCancellation::new()).await?;
+```
+
+The runner executes modules compiled for the current ABI and Rust guests built with the same `exs-guest` version; modules compiled for an earlier ABI version are rejected and must be recompiled.
+
 ### Browser runner
 
 `exs-runner` keeps the Wasmtime-backed `server` feature enabled by default. A Rust-Wasm browser application uses the browser-only backend without compiling Wasmtime:
@@ -34,12 +60,12 @@ exs-runner = { version = "0.2.0", default-features = false, features = ["browser
 
 ```rust
 let mut config = BrowserRunnerConfig::new();
-config.registry_mut().register_sync("log", |arguments| {
+config.registry_mut().fn_sync_raw("log", |arguments| {
     // Call application-owned Rust-Wasm state here.
     ExsValue::None
 })?;
 let runner = BrowserRunner::new(&compiled_wasm, config).await?;
-let result = runner.execute(&inputs).await?;
+let result = runner.execute("main", &inputs).await?;
 ```
 
 The browser feature uses the application's `wasm-bindgen` JavaScript glue to instantiate the separate ExS module with native `WebAssembly` APIs. Each `execute` call receives a fresh ExS instance from one browser-compiled module, preserving execution isolation. Synchronous host callbacks use the ready path; asynchronous Rust futures resolve through browser Promises and resume the ExS task through the existing Host ABI.

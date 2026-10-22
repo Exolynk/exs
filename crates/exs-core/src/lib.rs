@@ -1,6 +1,6 @@
 #![no_std]
 
-//! The stateless core library of ExS runtime v2.
+//! The stateless core library of ExS .
 //!
 //! Every function here works on state that lives in the module's linear memory, laid out by
 //! `exs-layout`, and keeps nothing for itself: no `static` state and no allocator of its own.

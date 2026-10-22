@@ -1,4 +1,4 @@
-//! Native steps of prelude `Range` objects in `for` loops, like v1's fast path.
+//! Native steps of prelude `Range` objects in `for` loops.
 //!
 //! A `for` loop over a Range object calls the prelude's `Range::next`. For a Range whose
 //! fields are immediate Ints and Bools, the core takes the same step on the object's slots
@@ -61,7 +61,7 @@ fn step(memory: &mut impl Memory, raw: u64, range_type: u32) -> Option<u64> {
     Some(item)
 }
 
-/// Starts counting an unobserved Range variable in a `for` loop, like v1.
+/// Starts counting an unobserved Range variable in a `for` loop.
 ///
 /// For a well-formed unit-step Range of immediate fields that is neither done nor exhausted,
 /// returns the current value in the low and the last item in the high 32 bits, both as `i32`.
@@ -91,7 +91,7 @@ fn begin(memory: &impl Memory, raw: u64, range_type: u32) -> Option<u64> {
     Some(u64::from(current.cast_unsigned()) | u64::from(last.cast_unsigned()) << 32)
 }
 
-/// Writes the state of a counted Range variable back once its loop exits, like v1.
+/// Writes the state of a counted Range variable back once its loop exits.
 ///
 /// `cursor` and `state` are the loop's counter and progress: 0 before the last item,
 /// [`RANGE_STATE_LAST`] right after it and [`RANGE_STATE_FINISHED`] once the loop asked for

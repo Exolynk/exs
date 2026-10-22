@@ -1,4 +1,4 @@
-//! Int and Float methods with v1's exact results, kinds and messages.
+//! Int and Float methods with the exact results, kinds and messages.
 //!
 //! Unlike operators, methods take Int and Float literally: a Bool is neither.
 
@@ -81,7 +81,7 @@ pub(crate) fn float_unary(
     }
 }
 
-/// Applies one binary Float operation like v1's `float_pair`, whose messages append
+/// Applies one binary Float operation, whose error messages append
 /// " requires a Float receiver" and " requires a Float argument" to `name`.
 pub(crate) fn float_pair(
     memory: &mut impl Memory,
@@ -269,7 +269,7 @@ pub(crate) fn pow(memory: &mut impl Memory, vm: u32, receiver: u64, exponent: u6
     )
 }
 
-/// Raises `base` to `exponent` by squaring, like v1, failing on any intermediate overflow.
+/// Raises `base` to `exponent` by squaring, failing on any intermediate overflow.
 fn checked_pow(base: i64, mut exponent: u64) -> Option<i64> {
     let (mut result, mut factor) = (1_i64, base);
     while exponent > 0 {

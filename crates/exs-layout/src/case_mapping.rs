@@ -3,7 +3,7 @@
 //! `String::to_lowercase` and `to_uppercase` of the standard library carry about 29 KiB of
 //! tables, and every initialized data byte of a module costs fuel on every execution. These
 //! tables hold the same mappings in about 3.4 KiB of varint records, generated from the
-//! standard library of the toolchain runtime v1 uses, so results stay identical. The compiler
+//! standard library of the toolchain, so results stay identical to Rust's. The compiler
 //! only adds them to programs that change the case of Strings.
 //!
 //! [`CASE_TABLES`] starts with seven `u32` offsets: of the lowercase runs, lowercase

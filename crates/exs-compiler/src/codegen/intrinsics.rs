@@ -1,4 +1,4 @@
-//! Prelude functions the compiler lowers itself, like v1.
+//! Prelude functions the compiler lowers itself.
 
 use wasm_encoder::{BlockType, Instruction};
 
@@ -7,7 +7,7 @@ use crate::ast::Expression;
 use crate::codegen::{VALUE_TYPE, immediate};
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 
-/// Keys of the Object of raw DateTime fields the RFC 3339 parser returns, in v1's order.
+/// Keys of the Object of raw DateTime fields the RFC 3339 parser returns, in order.
 pub(super) const DATETIME_KEYS: [&str; 4] = [
     "unix_seconds",
     "nanoseconds",
@@ -23,7 +23,7 @@ pub(super) fn is_datetime_parser(name: &str) -> bool {
 
 impl<'a> FunctionCompiler<'a, '_> {
     /// Compiles a call of the RFC 3339 parser intrinsic: the core parses the text into raw
-    /// fields, which become an untyped Object like v1's runtime builds.
+    /// fields, which become an untyped Object.
     pub(super) fn compile_datetime_parse(
         &mut self,
         arguments: &[Expression<'a>],

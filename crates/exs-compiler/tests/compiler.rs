@@ -1,4 +1,4 @@
-//! Integration tests for the public Phase-1 compiler API.
+//! Integration tests for the public compiler API.
 
 use std::collections::HashMap;
 

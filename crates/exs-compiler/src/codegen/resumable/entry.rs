@@ -123,7 +123,7 @@ impl EntryLayout<'_> {
                 self.core("__exs_core_adopt_inputs", span)?,
             ));
             function.instruction(&Instruction::LocalSet(count));
-            // Like v1, excess arguments make the result a fatal ArityError instead of a call.
+            // Excess arguments make the result a fatal ArityError instead of a call.
             function.instruction(&Instruction::LocalGet(count));
             function.instruction(&Instruction::I32Const(target.arity.cast_signed()));
             function.instruction(&Instruction::I32GtU);

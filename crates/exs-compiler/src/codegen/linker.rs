@@ -344,7 +344,7 @@ pub(in crate::codegen) fn compile<'a>(
         let arity = unit.captures.len() + unit.declaration.parameters.len();
         let type_index = program.type_index(vec![VALUE_TYPE; arity], vec![VALUE_TYPE]);
         program.function_types.push(type_index);
-        // Like v1, every function body reports its errors before the module is rejected.
+        // Every function body reports its errors before the module is rejected.
         match FunctionCompiler::new(&context, &unit.key, unit.declaration, unit.captures).compile()
         {
             Ok(body) => program.bodies.push(body),

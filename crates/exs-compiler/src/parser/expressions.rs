@@ -228,7 +228,7 @@ impl<'a> Parser<'a> {
                         return Err(self.error(
                             open,
                             "E0110",
-                            "only named function calls are supported in Phase 1",
+                            "only named functions and bindings can be called",
                         ));
                     }
                 };

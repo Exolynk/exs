@@ -1,7 +1,6 @@
 //! Diagnostics for the functions the backend does not compile.
 //!
-//! The backend only compiles units reachable from public entry points, while v1 lowered every
-//! function and reported its errors. To keep reporting errors such as unknown bindings or a
+//! The code generator only compiles units reachable from public entry points. To report errors such as unknown bindings or a
 //! `break` outside a loop in source functions nothing calls yet, those functions are lowered
 //! into continuation graphs, which check the same rules, and only their diagnostics are kept.
 //! The prelude is left out: it is valid, and lowering it would only cost compile time.

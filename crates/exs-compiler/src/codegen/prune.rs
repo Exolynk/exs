@@ -19,9 +19,8 @@ use wasmparser::{
     ConstExpr, ElementItems, ExternalKind, FunctionBody, Name, Operator, Parser, Payload, TypeRef,
 };
 
-/// Export-name prefixes of template functions that only the linker resolves: the v1 runtime's
-/// and the core library's.
-const LINK_EXPORT_PREFIXES: [&str; 2] = ["__exs_rt_", "__exs_core_"];
+/// Export-name prefixes of template functions that only the linker resolves.
+const LINK_EXPORT_PREFIXES: [&str; 1] = ["__exs_core_"];
 
 /// Returns whether one export exists only for linking.
 fn is_link_export(name: &str) -> bool {

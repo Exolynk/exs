@@ -1,4 +1,4 @@
-//! `ExS` Phase-1 source compiler.
+//! `ExS` source compiler.
 
 mod ast;
 mod codegen;

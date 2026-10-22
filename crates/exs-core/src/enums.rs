@@ -1,6 +1,6 @@
 //! Enum values: an `EnumObject` of a nominal enum type, a variant index and payload fields.
 //!
-//! Enums are Objects like in v1: their references carry the Object kind and the enum's type
+//! Enums are Objects: their references carry the Object kind and the enum's type
 //! tag, and they have no keys. The program's type table names their identity and variants.
 
 use core::mem::{offset_of, size_of};
@@ -163,7 +163,7 @@ pub(crate) enum Order {
     Unordered,
 }
 
-/// Creates the `std::Ordering` value of `order`, a new enum like in v1.
+/// Creates the `std::Ordering` value of `order`, a new enum.
 pub(crate) fn ordering(memory: &mut impl Memory, vm: u32, order: Order) -> Option<u64> {
     let index = match order {
         Order::Less => 0,

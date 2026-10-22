@@ -1,4 +1,4 @@
-//! String methods with v1's results, Errors and order of checks.
+//! String methods with the results, Errors and order of checks.
 //!
 //! Indices count characters. Texts are read through short borrows of memory that end before
 //! anything is allocated; Strings never move, so offsets stay valid.
@@ -49,7 +49,7 @@ fn substring(
     })
 }
 
-/// Reads a character index argument of `slice` like v1.
+/// Reads a character index argument of `slice`.
 fn char_index(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<usize, Option<u64>> {
     match exact_int(memory, raw) {
         Some(index) if index >= 0 => {
@@ -191,7 +191,7 @@ pub(crate) fn trim(memory: &mut impl Memory, vm: u32, raw: u64, ends: Trim) -> O
     substring(memory, vm, object, start, end)
 }
 
-/// Reads the non-negative count of `repeat` like v1.
+/// Reads the non-negative count of `repeat`.
 fn repeat_count(memory: &mut impl Memory, vm: u32, raw: u64) -> Result<u32, Option<u64>> {
     match exact_int(memory, raw) {
         Some(count) if count >= 0 => u32::try_from(count).map_err(|_| {

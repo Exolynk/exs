@@ -1,7 +1,7 @@
 //! The resource limiter of one execution.
 //!
 //! Every growth beyond the configured limits traps, so the runner reports the exceeded limit.
-//! A runtime v2 module instead sees its linear memory refuse to grow, like the WebAssembly
+//! A compiled module instead sees its linear memory refuse to grow, as the WebAssembly
 //! specification allows, so its collector can reclaim memory first; the refusal is recorded,
 //! and a later trap is reported as the exceeded memory limit.
 

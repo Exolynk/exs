@@ -169,7 +169,7 @@ fn numeric_value(
 }
 
 /// Applies `+`, `-` or `*` to two numeric references; failures are TypeError and
-/// IntOverflowError values like in v1. Returns `None` when memory is exhausted.
+/// IntOverflowError values. Returns `None` when memory is exhausted.
 pub fn arithmetic(
     memory: &mut impl Memory,
     vm: u32,

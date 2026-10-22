@@ -1,4 +1,4 @@
-//! Language Error tests: v1 kinds and messages, origins, traces and their encoding.
+//! Language Error tests: kinds and messages, origins, traces and their encoding.
 
 use core::mem::offset_of;
 use std::boxed::Box;
@@ -34,7 +34,7 @@ fn push_trace(execution: &mut Execution, function_id: u32, call_site: u32) {
     execution.memory.store_u32(top, entry + 8);
 }
 
-/// Produces v1's numeric TypeError and IntOverflowError values with their data.
+/// Produces the numeric TypeError and IntOverflowError values with their data.
 #[test]
 fn reports_numeric_errors_like_v1() {
     let mut execution = Execution::new();
@@ -77,7 +77,7 @@ fn reports_numeric_errors_like_v1() {
     );
 }
 
-/// Gives every failing `+` step its own origin and adds later operands to the Error, like v1's
+/// Gives every failing `+` step its own origin and adds later operands to the Error, like the
 /// one-`+`-at-a-time evaluation.
 #[test]
 fn fails_concatenation_steps_like_v1() {

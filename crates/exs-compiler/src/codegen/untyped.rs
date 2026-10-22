@@ -97,7 +97,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     /// Compiles an untyped Object literal, evaluating its values left to right.
     ///
     /// A repeated key keeps the position of its first occurrence and the value of its last,
-    /// like v1. The literal's shape is computed on first use and cached in a global.
+    ///. The literal's shape is computed on first use and cached in a global.
     pub(super) fn compile_object(
         &mut self,
         properties: &[ObjectProperty<'a>],

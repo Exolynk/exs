@@ -1,7 +1,6 @@
-//! Results that cannot cross the runner boundary, reported like v1 as a fatal
-//! SerializationError.
+//! Results that cannot cross the runner boundary, reported as a fatal SerializationError.
 //!
-//! The encoder only reports that a result cannot be encoded. Like v1, which converts the result
+//! The encoder only reports that a result cannot be encoded. Which converts the result
 //! depth first, a second walk finds whether the first obstacle is a reference cycle or a value
 //! of a type the boundary lacks, such as a closure.
 
@@ -39,7 +38,7 @@ enum Obstacle {
     UnsupportedValue,
 }
 
-/// Creates v1's SerializationError, fatal for a result and recoverable for host-call
+/// Creates the SerializationError, fatal for a result and recoverable for host-call
 /// arguments, for the value `raw` the encoder rejected.
 pub(crate) fn serialization_error(
     memory: &mut impl Memory,
@@ -56,14 +55,14 @@ pub(crate) fn serialization_error(
         message,
         ValueRef::NONE.raw(),
     )?;
-    // Like v1, only the Error of a result has no origin and trace.
+    // Only the Error of a result has no origin and trace.
     if fatal {
         crate::errors::clear_origin_and_trace(memory, error as u32);
     }
     Some(error)
 }
 
-/// Returns the message of v1's SerializationError for the value `raw` the encoder rejected,
+/// Returns the message of the SerializationError for the value `raw` the encoder rejected,
 /// naming its first obstacle in depth-first order.
 #[must_use]
 pub fn serialization_message(memory: &impl Memory, raw: u64) -> &'static str {

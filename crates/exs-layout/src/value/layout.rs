@@ -19,7 +19,7 @@ pub const KIND_ITERATOR: u16 = 1 << 10;
 pub const KIND_CELL: u16 = 1 << 11;
 /// Runtime-internal kind of the reserved future boxed value shape.
 pub const KIND_FUTURE: u16 = 1 << 12;
-/// Runtime-internal kind of the frames of resumable functions in runtime v2.
+/// Runtime-internal kind of the frames of resumable functions in .
 pub const KIND_FRAME: u16 = 1 << 13;
 
 // Every source-visible type bit must fit the kind field, and internal kinds must never satisfy a
@@ -49,16 +49,16 @@ pub const fn type_kind(type_bit: u32) -> u16 {
     type_bit as u16
 }
 
-/// Runtime v2: the Object extra bits of a typed Object or enum whose nominal type id is too
+/// : the Object extra bits of a typed Object or enum whose nominal type id is too
 /// large to inline, so only its heap header names the type. Unlike extra bits 0, which mark
 /// untyped Objects, they never match an untyped Object's inline tests.
 pub const HEAP_TYPE_EXTRA: u16 = u16::MAX;
 
-/// Runtime v2: the largest nominal type id carried in the extra bits, one below v1's limit,
+/// : the largest nominal type id carried in the extra bits, one below the limit,
 /// as [`HEAP_TYPE_EXTRA`] is reserved.
 pub const NOMINAL_MAX_INLINE_TYPE_ID: u32 = u16::MAX as u32 - 2;
 
-/// Runtime v2: returns the Object extra bits of a value of the nominal type `type_id`.
+/// : returns the Object extra bits of a value of the nominal type `type_id`.
 #[inline]
 #[must_use]
 pub const fn nominal_extra(type_id: u32) -> u16 {
@@ -69,7 +69,7 @@ pub const fn nominal_extra(type_id: u32) -> u16 {
     }
 }
 
-/// Runtime v2: returns the upper 32 bits of every value of the nominal type `type_id`, or
+/// : returns the upper 32 bits of every value of the nominal type `type_id`, or
 /// `None` when the id is not inlined and only the heap header names it.
 #[inline]
 #[must_use]

@@ -2,8 +2,8 @@
 //!
 //! Every task is a heap object linked into the list of live tasks. Runnable tasks wait in a
 //! first-in, first-out run queue; the running task keeps its frame, host call, ready result
-//! and quantum in the VM's task state and saves them into its object when it stops. Like v1,
-//! a task yields to runnable siblings after [`TASK_QUANTUM`] scheduler checkpoints.
+//! and quantum in the VM's task state and saves them into its object when it stops. A task
+//! yields to runnable siblings after [`TASK_QUANTUM`] scheduler checkpoints.
 
 use core::mem::{offset_of, size_of};
 
@@ -18,7 +18,7 @@ use crate::lists;
 use crate::memory::Memory;
 use crate::vm::Vm;
 
-/// Number of scheduler checkpoints a task may pass before it yields, like v1.
+/// Number of scheduler checkpoints a task may pass before it yields.
 pub(super) const TASK_QUANTUM: u64 = 64;
 
 /// Byte offset of the state code in a task's header word.
@@ -153,7 +153,7 @@ pub(super) fn schedule(memory: &mut impl Memory, vm: u32) -> Option<i32> {
 }
 
 /// Rebuilds the Error trace of the task at `task`: the traced frames of the tasks it was
-/// started from, outermost first, then its own. Like v1, the root frame of a `par` child has
+/// started from, outermost first, then its own. The root frame of a `par` child has
 /// no entry.
 fn rebuild_trace(memory: &mut impl Memory, vm: u32, task: u32) -> Option<()> {
     let state = Vm(vm);
@@ -271,7 +271,7 @@ pub fn parallel_new(memory: &mut impl Memory, vm: u32, count: u32) -> Option<u64
 
 /// Starts a `par` child of the running task that completes element `index` of the rooted
 /// result List `group`: its root frame of the step function `step` has `slot_count` empty
-/// slots and no trace entry, like v1's. Returns the frame's address for the arguments.
+/// slots and no trace entry. Returns the frame's address for the arguments.
 pub fn task_spawn(
     memory: &mut impl Memory,
     host: &mut impl Host,

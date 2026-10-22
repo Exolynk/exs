@@ -87,7 +87,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Constructs one enum value after checking each payload against its declared contract
-    /// in source order, like v1.
+    /// in source order.
     pub(super) fn compile_enum_variant(
         &mut self,
         variant: &EnumVariant,
@@ -127,7 +127,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.core_call("__exs_core_enum_new", span)
     }
 
-    /// Compiles a unit variant named by a bare identifier, which v1 resolves before bindings.
+    /// Compiles a unit variant named by a bare identifier, which resolves before bindings.
     pub(super) fn compile_unit_variant(
         &mut self,
         variant: &EnumVariant,
@@ -148,7 +148,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Lowers one `match` into a chain of variant tests inside one Wasm block, validating each
-    /// arm right before it like v1.
+    /// arm right before it.
     ///
     /// Each matching arm stores its value and branches past the remaining arms; when no
     /// wildcard covers unmatched values, they produce the MatchError, which returns.
@@ -225,7 +225,7 @@ impl<'a> FunctionCompiler<'a, '_> {
 
     /// Binds one arm's payload fields in a new scope and stores the arm's value in `result`.
     ///
-    /// A field the matched value lacks binds the MatchError like v1.
+    /// A field the matched value lacks binds the MatchError.
     fn compile_match_arm(
         &mut self,
         subject: u32,

@@ -1,9 +1,9 @@
 //! Language Error lowering: origins, traces and early returns.
 //!
-//! Errors are values; like v1, a function only returns one early where v1 does: for `?`, for a
+//! Errors are values; a function only returns one early for `?`, for a
 //! condition that is no Bool, for a declared-type violation and after a direct call that
 //! produced a fatal Error. Before every core call that may create an Error, generated code
-//! stores the source position v1 reports as its origin, and every function keeps its entry on
+//! stores the source position reported as its origin, and every function keeps its entry on
 //! the trace stack while it runs.
 
 use core::mem::offset_of;
@@ -76,7 +76,7 @@ pub(super) fn emit_push_trace(
 }
 
 impl<'a> FunctionCompiler<'a, '_> {
-    /// Returns the source position id v1 assigns to `span`.
+    /// Returns the source position id of `span`.
     pub(super) fn position(&self, span: SourceSpan<'a>) -> Result<u32, CompileDiagnostics<'a>> {
         self.context.source_map.id(span).ok_or_else(|| {
             error(
@@ -166,7 +166,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Returns the Error in `local`, or the TypeError for it when the return type admits no
-    /// Errors, like v1's `return_if_error`.
+    /// Errors.
     fn return_error(
         &mut self,
         local: u32,
@@ -295,7 +295,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.core_call("__exs_core_error_new", span)
     }
 
-    /// Decodes an annotated binding's value in `local` against `contract` like v1's wire
+    /// Decodes an annotated binding's value in `local` against `contract` like the wire
     /// decoding: an Error returns from the function, a value of another type returns a
     /// WireDecodeError, and Lists, Objects and enums may be converted.
     ///
@@ -331,7 +331,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         Ok(())
     }
 
-    /// Decodes the item in `local` of a `for` loop with an annotated `binding` like v1, at the
+    /// Decodes the item in `local` of a `for` loop with an annotated `binding`, at the
     /// binding's position.
     pub(super) fn check_for_binding(
         &mut self,

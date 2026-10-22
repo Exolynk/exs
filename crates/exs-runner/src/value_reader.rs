@@ -19,7 +19,7 @@ const ENUM_TAG: u64 = 60_005;
 /// Why a value could not be read.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum ReadError {
-    /// The value cannot cross the boundary, with the message of v1's SerializationError.
+    /// The value cannot cross the boundary, with the message of the SerializationError.
     Unsupported(&'static str),
     /// The value exceeds the byte budget.
     TooLarge,
@@ -402,7 +402,7 @@ impl<M: Memory> Visitor<M> for Builder {
     }
 }
 
-/// Returns v1's SerializationError with `message`: fatal for a result, recoverable for
+/// Returns the SerializationError with `message`: fatal for a result, recoverable for
 /// host-call arguments.
 pub(crate) fn serialization_error(message: &str, fatal: bool) -> ExsError {
     ExsError {

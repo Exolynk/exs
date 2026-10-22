@@ -1,4 +1,4 @@
-//! Recursive-descent parser for the Phase-1 `ExS` grammar.
+//! Recursive-descent parser for the `ExS` grammar.
 
 use std::collections::HashSet;
 

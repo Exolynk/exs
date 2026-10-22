@@ -1,8 +1,8 @@
-//! The implementation methods of a module and their dispatch, like v1's method registry.
+//! The implementation methods of a module and their dispatch.
 //!
-//! v1 dispatches method calls, operators and formatted-string parts statically: a chain of
+//! Method calls, operators and formatted-string parts dispatch statically: a chain of
 //! type-tag tests over every type implementing the method, in declaration order, before the
-//! built-in behavior. The code generator emits the same chains.
+//! built-in behavior.
 
 use std::collections::{HashMap, HashSet};
 
@@ -31,7 +31,7 @@ pub(super) struct Target {
     pub(super) key: String,
 }
 
-/// Every implementation method of a module, by the ways v1 dispatches to them.
+/// Every implementation method of a module, by the ways calls dispatch to them.
 #[derive(Default)]
 pub(super) struct Dispatch {
     /// Instance methods by method name.
@@ -47,7 +47,7 @@ pub(super) struct Dispatch {
 }
 
 impl Dispatch {
-    /// Collects the implementation methods of `module` in declaration order, like v1.
+    /// Collects the implementation methods of `module` in declaration order.
     pub(super) fn build(
         module: &Module<'_>,
         traits: &TraitRegistry<'_>,
@@ -152,7 +152,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         Ok(())
     }
 
-    /// Calls the implementation method `key` with `receiver` and `arguments`, or creates v1's
+    /// Calls the implementation method `key` with `receiver` and `arguments`, or creates the
     /// ArityError when it takes a different number of arguments.
     pub(super) fn call_method(
         &mut self,
@@ -192,7 +192,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Calls the compiled function `index` with the arguments on the stack, recording the
-    /// call site and returning fatal Errors like v1, and leaves the result on the stack.
+    /// call site and returning fatal Errors, and leaves the result on the stack.
     pub(super) fn direct_call(
         &mut self,
         index: u32,
@@ -207,7 +207,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Emits `operator` on `left` and `right`: the implementation of the left operand's type
-    /// when it has one, else `fallback`. Comparison results are tested like v1.
+    /// when it has one, else `fallback`. Comparison results are tested.
     pub(super) fn operator_chain(
         &mut self,
         operator: TraitOperator,

@@ -38,7 +38,7 @@ const TYPED_SLOTS: u64 = size_of::<exs_layout::TypedObject>() as u64;
 /// Byte offset of the first payload field of an enum.
 const FIELDS: u64 = size_of::<exs_layout::EnumObject>() as u64;
 
-/// The static functions v1's graph names by their runtime export, by type and method.
+/// The static functions the graph names by their runtime export, by type and method.
 const STATIC_EXPORTS: [(&str, &str, &str); 22] = [
     ("__exs_rt_bytes_from_list", "Bytes", "from_list"),
     ("__exs_rt_bytes_from_utf8", "Bytes", "from_utf8"),
@@ -675,7 +675,7 @@ impl<'a> StepEmitter<'a, '_> {
         Ok(())
     }
 
-    /// Stores payload field `index` of the matched enum in durable slot `value`, or v1's
+    /// Stores payload field `index` of the matched enum in durable slot `value`, or the
     /// MatchError when it lacks the field.
     fn enum_field(
         &mut self,
@@ -705,7 +705,7 @@ impl<'a> StepEmitter<'a, '_> {
         Ok(())
     }
 
-    /// Calls the static function v1's graph names by its runtime `export` with the durable
+    /// Calls the static function the graph names by its runtime `export` with the durable
     /// `values`, leaving the result on the stack.
     fn runtime_static(
         &mut self,

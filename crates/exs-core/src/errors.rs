@@ -1,7 +1,7 @@
 //! Language Errors: creation with origin and trace, and the Errors the language defines.
 //!
 //! Every Error records the VM's current source position as its origin and a copy of the
-//! active trace, innermost function first. Kinds and messages match runtime v1 exactly.
+//! active trace, innermost function first.
 
 use core::mem::{offset_of, size_of};
 
@@ -102,7 +102,7 @@ pub(crate) fn error_from_strings(
         let bytes = entries * 8;
         trace = allocate(memory, vm, BYTES_DATA + bytes, ObjectKind::Bytes)?;
         memory.store_u32(trace + BYTES_LEN, bytes);
-        // Innermost function first, like runtime v1.
+        // Innermost function first.
         for index in 0..entries {
             let entry = memory.load_u64(top - (index + 1) * 8);
             memory.store_u64(trace + BYTES_DATA + index * 8, entry);
@@ -189,7 +189,7 @@ pub(crate) fn new_error(
 }
 
 /// Clears the origin and trace of the new Error at `object`, for Errors of the runner
-/// boundary, which v1 reports without either.
+/// boundary, which carry neither.
 pub(crate) fn clear_origin_and_trace(memory: &mut impl Memory, object: u32) {
     memory.store_u32(object + ORIGIN, 0);
     memory.store_u32(object + TRACE, 0);
@@ -316,7 +316,7 @@ pub fn method_not_found(memory: &mut impl Memory, vm: u32, receiver: u64) -> Opt
 }
 
 /// Creates the NotIterable Error of a `for` loop over an Object that implements no Iterator,
-/// like v1's built-in `next`.
+/// like the built-in `next`.
 pub fn not_an_iterator(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     recoverable(
         memory,
@@ -328,7 +328,7 @@ pub fn not_an_iterator(memory: &mut impl Memory, vm: u32, value: u64) -> Option<
 }
 
 /// Creates the ArityError of an implementation method called with the wrong number of
-/// arguments, like v1.
+/// arguments.
 pub fn nominal_arity_error(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option<u64> {
     recoverable(
         memory,
@@ -340,7 +340,7 @@ pub fn nominal_arity_error(memory: &mut impl Memory, vm: u32, receiver: u64) -> 
 }
 
 /// Creates the ArityError of a built-in method called with the wrong number of arguments,
-/// with the `count` arguments in the rooted slots at `slots` as a List in its data, like v1.
+/// with the `count` arguments in the rooted slots at `slots` as a List in its data.
 pub fn method_arity_error(
     memory: &mut impl Memory,
     vm: u32,

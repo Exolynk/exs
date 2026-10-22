@@ -264,7 +264,7 @@ fn part_size(memory: &impl Memory, part: Part) -> (u32, u32) {
     }
 }
 
-/// Renders `slots[0..count]` into one String like v1's formatted strings: Strings and scalars
+/// Renders `slots[0..count]` into one String like the formatted strings: Strings and scalars
 /// as with `+`, every other value with its default text, so formatting never fails.
 ///
 /// The slots must be rooted. Returns `None` when memory is exhausted.
@@ -301,12 +301,12 @@ fn measure<M: Memory>(
 const NOT_RENDERABLE: &str = "String addition requires a String, Bool, Int, or Float right operand";
 
 /// Evaluates `slots[0] + slots[1] + ... + slots[count - 1]` with the language's `+`, one
-/// step per right operand like v1.
+/// step per right operand.
 ///
 /// While the accumulated value is a String, every following renderable operand is appended and
 /// the whole run is allocated once. A List accumulator builds a new List per operand; other
 /// operands fall back to one numeric `+` at a time. A failing step yields an Error value that
-/// the following steps add to, as in v1. When `positions` is not 0, it addresses one `u32`
+/// the following steps add to. When `positions` is not 0, it addresses one `u32`
 /// source position per step, which becomes the origin of an Error that step creates;
 /// otherwise Errors use the VM's current position.
 ///

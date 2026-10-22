@@ -1,4 +1,4 @@
-//! Phase-1 `ExS` abstract syntax tree.
+//! `ExS` abstract syntax tree.
 
 use crate::diagnostic::SourceSpan;
 
@@ -238,7 +238,7 @@ pub struct Block<'a> {
     pub span: SourceSpan<'a>,
 }
 
-/// A Phase-1 statement.
+/// A statement.
 #[allow(dead_code)] // Every statement keeps its span for later source-map emission.
 #[derive(Debug, Clone)]
 pub enum Statement<'a> {
@@ -413,7 +413,7 @@ pub enum MatchPattern<'a> {
     Wildcard(SourceSpan<'a>),
 }
 
-/// A Phase-1 expression.
+/// An expression.
 #[derive(Debug, Clone)]
 pub enum Expression<'a> {
     /// An integer literal magnitude, validated as an i64 during lowering.
@@ -642,7 +642,7 @@ pub enum FormattedStringPart<'a> {
     Expression(Expression<'a>),
 }
 
-/// A unary operator supported in Phase 1.
+/// A unary operator.
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOperator {
     /// Numeric negation.
@@ -651,7 +651,7 @@ pub enum UnaryOperator {
     Not,
 }
 
-/// A binary operator supported in Phase 1.
+/// A binary operator.
 #[derive(Debug, Clone, Copy)]
 pub enum BinaryOperator {
     /// Numeric addition.

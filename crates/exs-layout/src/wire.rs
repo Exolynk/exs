@@ -1,4 +1,4 @@
-//! Static decode schemas of `let` and `for` type annotations, like v1's wire contracts.
+//! Static decode schemas of `let` and `for` type annotations.
 //!
 //! The compiler lays out one record tree per distinct annotation in a program's static data;
 //! the core library walks it to check or convert a value. Addresses are absolute and 0 marks an
@@ -11,7 +11,7 @@ pub struct WireContract {
     pub mask: u32,
     /// Address of the contract of List elements, or 0 when Lists are not converted.
     pub list: u32,
-    /// Address of the [`WireObject`] a host Object converts to, or 0. Like v1, only the first
+    /// Address of the [`WireObject`] a host Object converts to, or 0. Only the first
     /// nominal Object alternative of a union is used.
     pub object: u32,
     /// Number of [`WireEnum`] alternatives.

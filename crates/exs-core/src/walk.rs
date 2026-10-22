@@ -1,6 +1,6 @@
 //! Walking a value that crosses the runner boundary, for code outside the module.
 //!
-//! The runner reads results and host-call arguments of runtime v2 modules from their memory:
+//! The runner reads results and host-call arguments of compiled modules from their memory:
 //! the walk reports every part of a value to a [`Visitor`] in the order of the runner codec,
 //! so the visitor builds the runner's value directly. Typed Objects are maps of their present
 //! declared fields in entry order followed by their extra keys, enums carry their identity and

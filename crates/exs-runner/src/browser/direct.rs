@@ -1,4 +1,4 @@
-//! The direct boundary of runtime v2 modules in the browser.
+//! The direct boundary of compiled modules in the browser.
 //!
 //! JavaScript owns the module's memory, so the runner reads a value through a
 //! [`ValueReader`]: the walk fetches the 64 KiB pages it touches on demand and keeps them for

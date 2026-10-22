@@ -108,7 +108,7 @@ pub struct ShapeObject {
 /// A host enum, a value of an identity or a variant the program does not declare, has the
 /// variant [`HOST_ENUM_VARIANT`] and two more slots after its payload: its identity and its
 /// variant name as Strings. Its type id is that of the declared enum of the same identity, if
-/// any, so contracts accept it by identity like v1.
+/// any, so contracts accept it by identity.
 #[repr(C)]
 pub struct EnumObject {
     /// Common header.

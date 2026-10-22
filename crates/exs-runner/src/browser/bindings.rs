@@ -234,7 +234,7 @@ extern "C" {
 
 #[wasm_bindgen]
 extern "C" {
-    /// A value in the memory of a runtime v2 module, whose pages JavaScript copies on demand.
+    /// A value in the memory of a compiled module, whose pages JavaScript copies on demand.
     pub(super) type ValueReader;
 
     /// Returns the low 32 bits of the value.

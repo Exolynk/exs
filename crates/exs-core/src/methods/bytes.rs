@@ -1,4 +1,4 @@
-//! Bytes methods and constructors with v1's results, Errors and order of checks.
+//! Bytes methods and constructors with the results, Errors and order of checks.
 
 use exs_layout::ValueRef;
 
@@ -29,7 +29,7 @@ fn receiver(
     bytes_object(raw).ok_or_else(|| type_error(memory, vm, message, raw))
 }
 
-/// Reads a Bytes index like v1; `slice` indexes report their own message.
+/// Reads a Bytes index; `slice` indexes report their own message.
 fn bytes_index(
     memory: &mut impl Memory,
     vm: u32,
@@ -436,7 +436,7 @@ const fn base64_value(symbol: u8) -> Option<u8> {
     }
 }
 
-/// Decodes one four-symbol base64 group like v1, returning its octets and their count.
+/// Decodes one four-symbol base64 group, returning its octets and their count.
 fn base64_group(group: [u8; 4], final_group: bool) -> Option<([u8; 3], u32)> {
     let first = base64_value(group[0])?;
     let second = base64_value(group[1])?;

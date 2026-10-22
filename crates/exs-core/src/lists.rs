@@ -115,11 +115,11 @@ pub(crate) fn push_unchecked(memory: &mut impl Memory, list: u32, value: u64) {
     memory.store_u32(list + LEN, used + 1);
 }
 
-/// Returns what a `for` loop iterates over, like v1: a copy of a List, a List of the Unicode
+/// Returns what a `for` loop iterates over: a copy of a List, a List of the Unicode
 /// scalars of a String as Strings or of the octets of Bytes as Ints, an Object itself, which
 /// iterates through `Iterator::next`, or the NotIterable Error for other values.
 ///
-/// Strings and Bytes never change, so their eager copy yields what v1's lazy iterators yield.
+/// Strings and Bytes never change, so their eager copy yields what the lazy iterators yield.
 /// Returns `None` when memory is exhausted.
 pub fn for_snapshot(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
     if list_object(raw).is_some() {

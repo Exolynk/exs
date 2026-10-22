@@ -1,10 +1,10 @@
 //! Closures, the Cells of captured bindings and variadic arguments.
 //!
-//! Like v1, every binding whose name some closure of the module captures lives in a Cell, so
+//! Every binding whose name some closure of the module captures lives in a Cell, so
 //! closures and their creators share it. A closure is lifted into a function whose leading
 //! parameters are the captured Cells. Calls of a binding go through one generated dispatcher
 //! that selects the closure's function by its dense index, checks the argument count and packs
-//! variadic arguments, so closures run synchronously until phase 4 adds frames.
+//! variadic arguments. Closures that may suspend run as resumable frames instead.
 
 use core::mem::{offset_of, size_of};
 
@@ -32,7 +32,7 @@ pub(super) fn closure_span_key(span: SourceSpan<'_>) -> (String, u32, u32) {
 }
 
 /// Returns whether a callee with `arity` fixed parameters, `variadic` or not, takes `count`
-/// arguments, like v1.
+/// arguments.
 pub(super) const fn accepts(arity: u32, variadic: bool, count: usize) -> bool {
     if variadic {
         count >= arity as usize
@@ -41,7 +41,7 @@ pub(super) const fn accepts(arity: u32, variadic: bool, count: usize) -> bool {
     }
 }
 
-/// Returns v1's description of the arguments a callee takes, such as `2` or `at least 1`.
+/// Returns the description of the arguments a callee takes, such as `2` or `at least 1`.
 pub(super) fn arity_description(arity: u32, variadic: bool) -> String {
     if variadic {
         format!("at least {arity}")
@@ -54,7 +54,7 @@ pub(super) fn arity_description(arity: u32, variadic: bool) -> String {
 pub(super) struct ClosureInfo {
     /// Dense index of the closure among the reached closures, its dispatcher case.
     pub(super) index: u32,
-    /// Names of the captured bindings in v1's capture order.
+    /// Names of the captured bindings in the capture order.
     pub(super) captures: Vec<String>,
 }
 
@@ -152,8 +152,8 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.core_call("__exs_core_closure_new", span)
     }
 
-    /// Calls the closure in the binding `name` with `arguments` like v1: a value that is no
-    /// closure returns v1's TypeError, a wrong argument count v1's ArityError.
+    /// Calls the closure in the binding `name` with `arguments`: a value that is no
+    /// closure returns the TypeError, a wrong argument count the ArityError.
     pub(super) fn compile_closure_call(
         &mut self,
         name: &str,
@@ -168,7 +168,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             self.compile_expression(argument)?;
             self.store(block + offset);
         }
-        // Like v1, the binding is read after the arguments are evaluated.
+        // The binding is read after the arguments are evaluated.
         self.push_binding(name, local);
         let callee = self.store_new();
         self.set_position(span)?;
@@ -219,7 +219,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         Ok(())
     }
 
-    /// Checks every element of the variadic List in `local` against `contract`, like v1's
+    /// Checks every element of the variadic List in `local` against `contract`, like the
     /// parameter validation.
     pub(super) fn check_variadic(
         &mut self,
@@ -291,7 +291,7 @@ const LIST_ITEMS: u64 = offset_of!(exs_layout::ListObject, items) as u64;
 const BUFFER_SLOTS: u64 = size_of::<exs_layout::BufferObject>() as u64;
 
 /// Builds the closure dispatcher `(closure, slots, count) -> value`: it selects the case of
-/// the closure's index, returns v1's ArityError for a wrong argument count, and otherwise
+/// the closure's index, returns the ArityError for a wrong argument count, and otherwise
 /// calls the lifted function with the captured Cells, the fixed arguments from the rooted
 /// `slots` and, for a variadic closure, a new List of the rest.
 pub(super) fn closure_dispatcher<'a>(

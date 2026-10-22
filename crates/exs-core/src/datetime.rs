@@ -1,4 +1,4 @@
-//! Fixed-offset RFC 3339 parsing for the standard DateTime prelude, like v1's runtime.
+//! Fixed-offset RFC 3339 parsing for the standard DateTime prelude.
 //!
 //! The prelude's `__exs_datetime_parse_rfc3339_runtime` is an intrinsic: the compiler lowers
 //! its calls to [`datetime_parse`] and builds the Object of raw DateTime fields itself.
@@ -17,7 +17,7 @@ pub const DATETIME_FIELDS: u32 = 4;
 /// Parses the String `raw` as ExS's strict RFC 3339 spelling.
 ///
 /// On success writes the raw fields into the [`DATETIME_FIELDS`] rooted slots at `slots` and
-/// returns None; otherwise returns v1's TypeError or ParseError. Returns `None` when memory
+/// returns None; otherwise returns the TypeError or ParseError. Returns `None` when memory
 /// is exhausted.
 pub fn datetime_parse(memory: &mut impl Memory, vm: u32, raw: u64, slots: u32) -> Option<u64> {
     let Some(object) = string_object(raw) else {

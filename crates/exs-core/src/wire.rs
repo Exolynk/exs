@@ -1,11 +1,11 @@
-//! Decoding of `let` and `for` bindings against the compiler's static wire schemas, like v1.
+//! Decoding of `let` and `for` bindings against the compiler's static wire schemas.
 //!
 //! An Error passes unchanged. A List under a List element contract becomes a new List of
 //! decoded elements. An enum of a schema's enum type passes unchanged; an Object tagged with
 //! `$variant` becomes that enum, its payload taken by field name or from `$values`. An Object
 //! of the first nominal Object alternative passes unchanged; any other Object becomes one with
 //! its declared fields decoded and its other keys dropped. Every other value must carry one of
-//! the contract's built-in type flags, or decoding returns v1's WireDecodeError.
+//! the contract's built-in type flags, or decoding returns the WireDecodeError.
 
 use core::mem::offset_of;
 
@@ -126,7 +126,7 @@ fn decode_enum(
     contract: u32,
     depth: u32,
 ) -> Option<Option<u64>> {
-    // Like v1, a host enum only passes when its variant is declared, which it never is.
+    // A host enum only passes when its variant is declared, which it never is.
     if let Some(object) = enum_object(memory, raw)
         && crate::enums::variant(memory, object) != exs_layout::HOST_ENUM_VARIANT
         && enum_schema(memory, contract, enum_type(memory, object)).is_some()

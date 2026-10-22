@@ -1,7 +1,7 @@
 //! The test assertions `assert(condition[, description])` and
 //! `assert_eq(actual, expected[, description])`.
 //!
-//! Like v1 they are standard intrinsics: a failed assertion returns a fatal AssertionFailed
+//! They are standard intrinsics: a failed assertion returns a fatal AssertionFailed
 //! Error from the function, and an omitted description is a compiler-provided String.
 
 use wasm_encoder::Instruction;

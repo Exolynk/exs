@@ -1,10 +1,10 @@
-//! `for` loops, like v1's.
+//! `for` loops.
 //!
 //! A loop over a Range literal of immediate Ints counts in locals; a loop over any other value
 //! iterates the core's snapshot, a List copy for Lists, Strings and Bytes. Both have one inline
 //! fast path. When it is exhausted, a loop over an Object, or over a Range literal whose bounds
 //! are no immediate Ints, advances through the `Iterator::next` dispatch and its
-//! `IteratorStep`, like v1's resumable loops. The body is compiled once.
+//! `IteratorStep`, like the resumable loops. The body is compiled once.
 
 use std::collections::HashMap;
 
@@ -105,7 +105,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     ///
     /// Immediate Int bounds count in locals like the prelude `Range::next`: the cursor moves
     /// toward the end by one and an inclusive Range yields its end last. Other bounds create
-    /// the prelude Range, with its contract checks, and iterate it like v1.
+    /// the prelude Range, with its contract checks, and iterate it.
     pub(super) fn compile_range_for(
         &mut self,
         binding: ForBinding<'a, '_>,
@@ -157,7 +157,7 @@ impl<'a> FunctionCompiler<'a, '_> {
 
     /// Compiles a `for` loop over a Range variable no source code observes while it runs.
     ///
-    /// Like v1, a well-formed unit-step Range counts in locals and gets its `current` and
+    /// A well-formed unit-step Range counts in locals and gets its `current` and
     /// `done` fields written back once the loop exits; any other value iterates itself.
     pub(super) fn compile_range_variable_for(
         &mut self,
@@ -179,7 +179,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I64Const(RANGE_BEGIN_FALLBACK));
         self.instruction(Instruction::I64Eq);
         self.instruction(Instruction::If(BlockType::Empty));
-        // Like v1, the fallback iterates the value itself, which must be iterable.
+        // The fallback iterates the value itself, which must be iterable.
         self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(counter.range));
@@ -312,11 +312,11 @@ impl<'a> FunctionCompiler<'a, '_> {
         Ok(())
     }
 
-    /// Advances the Object in `iterator` through `Iterator::next` like v1 and pushes the
+    /// Advances the Object in `iterator` through `Iterator::next` and pushes the
     /// item, or leaves the loop at `break_depth` on `IteratorStep::Done`.
     ///
     /// An Error returns from the function, an Object without an Iterator implementation
-    /// yields v1's NotIterable Error, and a value that is no `IteratorStep` its MatchError.
+    /// yields the NotIterable Error, and a value that is no `IteratorStep` its MatchError.
     fn iterator_next(
         &mut self,
         iterator: u32,
@@ -324,7 +324,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let context = self.context;
-        // Like v1, well-formed prelude Ranges step natively; others call `Range::next`.
+        // Well-formed prelude Ranges step natively; others call `Range::next`.
         let range = context
             .types
             .get("Range")

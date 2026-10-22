@@ -60,7 +60,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.compile_expression(value)?;
                 self.assign_binding(&identifier.name, local);
             }
-            // Like v1, assignments report the span of their target.
+            // Assignments report the span of their target.
             Statement::Assign {
                 target:
                     AssignmentTarget::Index {

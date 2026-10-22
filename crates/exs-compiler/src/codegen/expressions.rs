@@ -65,7 +65,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 operand,
                 span,
             } => {
-                // Like v1, a negated Int literal is one constant, which also admits i64::MIN.
+                // A negated Int literal is one constant, which also admits i64::MIN.
                 if matches!(operator, UnaryOperator::Negate)
                     && let Expression::Integer(value, operand_span) = operand.as_ref()
                 {
@@ -187,7 +187,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             return self.compile_logical(operator, left, right, span);
         }
         if matches!(operator, BinaryOperator::Add) {
-            // Each `+` keeps the span of its own Binary node, the origin v1 reports for it.
+            // Each `+` keeps the span of its own Binary node, the origin reported for it.
             let mut operands = vec![right];
             let mut spans = vec![span];
             let mut leftmost = left;
@@ -284,7 +284,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Emits one binary operator on two rooted operand locals: the implementation of the left
-    /// operand's type like v1, else the built-in behavior.
+    /// operand's type, else the built-in behavior.
     pub(super) fn compile_slow_binary(
         &mut self,
         operator: BinaryOperator,
@@ -363,7 +363,7 @@ impl<'a> FunctionCompiler<'a, '_> {
 
     /// Compiles short-circuiting `&&` or `||`; both operands must be Bools.
     ///
-    /// Like v1, the left condition reports the whole expression's span and the right one its
+    /// The left condition reports the whole expression's span and the right one its
     /// own span.
     fn compile_logical(
         &mut self,
@@ -453,7 +453,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.direct_call(index, span)
     }
 
-    /// Compiles a formatted string like v1: text parts and expression parts in order, every
+    /// Compiles a formatted string: text parts and expression parts in order, every
     /// value rendered with its default text, which never fails.
     fn compile_formatted(
         &mut self,

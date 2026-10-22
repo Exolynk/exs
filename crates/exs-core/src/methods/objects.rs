@@ -1,4 +1,4 @@
-//! Object methods with v1's results, Errors and order of checks.
+//! Object methods with the results, Errors and order of checks.
 //!
 //! An Object's entries are, in order, the present declared fields of a typed Object followed
 //! by its extra keys, or the keys of an untyped Object. A declared field removed by `delete`

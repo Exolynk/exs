@@ -1,4 +1,4 @@
-//! The linked context of resumable units: v1's signatures, method registry and frame
+//! The linked context of resumable units: the signatures, method registry and frame
 //! layouts, which its continuation graph builder needs, and the step function of every
 //! resumable unit.
 
@@ -44,13 +44,13 @@ pub(in crate::codegen) struct ClosureStep {
 pub(in crate::codegen) struct Resumable<'l, 'a> {
     /// Every resumable unit by key.
     pub(in crate::codegen) steps: HashMap<String, StepInfo>,
-    /// The key of every unit by its trace id, which v1's graph names callees by.
+    /// The key of every unit by its trace id, which the graph names callees by.
     pub(in crate::codegen) keys: HashMap<u32, String>,
-    /// v1's signature of every function, method and lifted closure.
+    /// the signature of every function, method and lifted closure.
     pub(in crate::codegen) signatures: HashMap<String, FunctionSignature>,
-    /// v1's implementation-method registry.
+    /// the implementation-method registry.
     pub(in crate::codegen) methods: MethodRegistry,
-    /// The layouts v1's graph builder sees: resumable units and every lifted closure.
+    /// The layouts the graph builder sees: resumable units and every lifted closure.
     pub(in crate::codegen) frame_layouts: HashMap<String, FrameLayout>,
     /// The functions lifted from closures.
     pub(in crate::codegen) lifted: &'l [LiftedFunction<'a>],

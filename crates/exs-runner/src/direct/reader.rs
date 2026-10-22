@@ -1,4 +1,4 @@
-//! Reading results and host-call arguments from a runtime v2 module's memory.
+//! Reading results and host-call arguments from a compiled module's memory.
 //!
 //! The runner walks the value with the core library on a bounds-checked view of the memory and
 //! builds the value directly, so a corrupted heap can neither read outside the memory nor make
@@ -58,7 +58,7 @@ fn vm_address(
 
 /// Reads the completed result of the direct-boundary module of `instance`.
 ///
-/// Like v1, a result that cannot cross the boundary becomes a fatal SerializationError
+/// A result that cannot cross the boundary becomes a fatal SerializationError
 /// without origin and trace.
 pub(crate) fn result(
     store: &mut Store<host_abi::HostAbiState>,

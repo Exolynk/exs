@@ -48,7 +48,7 @@ fn with_slots<M: Memory>(
     result
 }
 
-/// Evaluates `to_string` and `debug`: v1's default text of any value as a String.
+/// Evaluates `to_string` and `debug`: the default text of any value as a String.
 pub(crate) fn render(memory: &mut impl Memory, vm: u32, receiver: u64) -> Option<u64> {
     if string_object(receiver).is_some() {
         // Strings are immutable, so the receiver is its own rendering.

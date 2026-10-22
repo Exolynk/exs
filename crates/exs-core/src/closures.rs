@@ -89,7 +89,7 @@ pub fn cell_new(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     ValueRef::from_parts(KIND_CELL, 0, object).map(ValueRef::raw)
 }
 
-/// Creates the ArityError of a closure called with the wrong number of arguments, like v1.
+/// Creates the ArityError of a closure called with the wrong number of arguments.
 pub fn closure_arity_error(memory: &mut impl Memory, vm: u32) -> Option<u64> {
     recoverable(
         memory,
@@ -100,12 +100,12 @@ pub fn closure_arity_error(memory: &mut impl Memory, vm: u32) -> Option<u64> {
     )
 }
 
-/// Creates the TypeError of a call of a binding that holds no closure, like v1.
+/// Creates the TypeError of a call of a binding that holds no closure.
 pub fn not_callable(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     recoverable(memory, vm, "TypeError", "value is not callable", value)
 }
 
-/// Creates v1's TypeError for a `par` operand `value` that is no List.
+/// Creates the TypeError for a `par` operand `value` that is no List.
 pub fn parallel_list_error(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     recoverable(
         memory,

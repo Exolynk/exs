@@ -1,6 +1,6 @@
 //! Index and property access outside the inline fast paths of generated code.
 //!
-//! Failures are the language's IndexError and TypeError values with v1's messages; every
+//! Failures are the language's IndexError and TypeError values with the messages; every
 //! function returns `None` only when memory is exhausted.
 
 use exs_layout::{Immediate, ValueRef};
@@ -24,7 +24,7 @@ enum ListSlot {
     Error(u64),
 }
 
-/// Reads a List index like v1: a non-negative Int in the supported range, else the IndexError
+/// Reads a List index: a non-negative Int in the supported range, else the IndexError
 /// value (`Err(None)` when memory is exhausted).
 pub(crate) fn list_index(
     memory: &mut impl Memory,
@@ -45,7 +45,7 @@ pub(crate) fn list_index(
     Err(recoverable(memory, vm, "IndexError", message, index))
 }
 
-/// Checks `index` against the List at `list` like v1: first that it is a non-negative Int,
+/// Checks `index` against the List at `list`: first that it is a non-negative Int,
 /// then that it lies inside the List.
 fn list_slot(memory: &mut impl Memory, vm: u32, list: u32, index: u64) -> Option<ListSlot> {
     match list_index(memory, vm, index) {
@@ -163,8 +163,8 @@ pub fn index_set(
     }
     let object = match owner {
         KeyOwner::Field(slot) => {
-            // v1 appends a removed declared field again after all other keys, an order the
-            // fixed slots cannot express; v2 refuses that until it can.
+            // A removed declared field would have to come back after all other keys, an order
+            // the fixed slots cannot express, so restoring it is refused.
             if memory.load_u64(slot) == 0 {
                 return None;
             }
@@ -172,7 +172,7 @@ pub fn index_set(
             return Some(value);
         }
         KeyOwner::Untyped(object) => object,
-        // v1 stores keys on enums that only Object methods can see again; v2 refuses that.
+        // Keys on enums could only be seen through Object methods, so they are refused.
         KeyOwner::Enum => return None,
         KeyOwner::Extra(typed) => match extra(memory, typed) {
             0 => {

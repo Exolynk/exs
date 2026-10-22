@@ -120,7 +120,7 @@ pub fn frame_call(
 ///
 /// The caller receives the value and becomes active, returning `STATUS_READY`. The root
 /// frame of a `par` child completes the child and runs the next runnable task. The root
-/// task's root frame, and like v1 any frame returning a fatal Error, end every task and
+/// task's root frame, and any frame returning a fatal Error, end every task and
 /// complete the execution with `STATUS_COMPLETE`.
 pub fn frame_return(
     memory: &mut impl Memory,

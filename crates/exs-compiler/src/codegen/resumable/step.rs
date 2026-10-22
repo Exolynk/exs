@@ -1,7 +1,7 @@
-//! The step function of one resumable unit: a state machine over v1's continuation graph.
+//! The step function of one resumable unit: a state machine over the continuation graph.
 //!
-//! The body is `loop { block_{n-1} .. block_0 { br_table } state_0 end state_1 .. }` like
-//! v1's: a later state is reached by branching to the end of its block, an earlier one through
+//! The body is `loop { block_{n-1} .. block_0 { br_table } state_0 end state_1 .. }`: a
+//! later state is reached by branching to the end of its block, an earlier one through
 //! the state local and the loop. Durable values live in the frame's slots; every operation
 //! loads what it needs into temporaries of the step function's root frame, which are released
 //! after the operation. The step function returns to the dispatcher only at suspension points,

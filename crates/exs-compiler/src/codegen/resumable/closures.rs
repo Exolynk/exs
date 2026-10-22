@@ -17,7 +17,7 @@ impl<'a> StepEmitter<'a, '_> {
     /// result in `destination` before continuing at `next`.
     ///
     /// The closure's dense index selects a closure that may suspend, which starts a child
-    /// frame; every other value is called like synchronous code, which also creates v1's
+    /// frame; every other value is called like synchronous code, which also creates the
     /// Errors for values that are no closures.
     pub(super) fn closure_call(
         &mut self,
@@ -87,7 +87,7 @@ impl<'a> StepEmitter<'a, '_> {
     }
 
     /// Starts a child frame of the closure `case`, whose value is in the temporary `callee`,
-    /// with its captured Cells and the durable `arguments`, or stores v1's ArityError for a
+    /// with its captured Cells and the durable `arguments`, or stores the ArityError for a
     /// wrong argument count.
     fn suspending_closure(
         &mut self,

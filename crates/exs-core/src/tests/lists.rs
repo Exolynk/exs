@@ -11,7 +11,7 @@ use crate::{
     property_set, reserve_input, set_heap_flags,
 };
 
-/// Builds Lists, adds Lists and values like v1 and copies Lists for iteration.
+/// Builds Lists, adds Lists and values and copies Lists for iteration.
 #[test]
 fn creates_adds_and_copies_lists() {
     let mut execution = Execution::new();
@@ -149,7 +149,7 @@ fn converts_lists_and_typed_objects() {
             ("label".into(), nested),
         ])
     );
-    // A List containing itself cannot cross; the runner reports v1's SerializationError.
+    // A List containing itself cannot cross; the runner reports the SerializationError.
     let cyclic = execution.list(&[0]);
     let slot = list_object(cyclic).map(|list| execution.memory.load_u32(list + 12) + 8);
     execution.memory.store_u64(slot.expect("a List"), cyclic);

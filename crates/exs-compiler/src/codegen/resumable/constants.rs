@@ -1,6 +1,6 @@
 //! Durable slots that only hold one constant.
 //!
-//! v1's graph stores every literal in a temporary slot before an operation reads it. A slot
+//! the graph stores every literal in a temporary slot before an operation reads it. A slot
 //! whose only writer is one constant operation always holds that constant, so its readers use
 //! the constant directly and the writer emits nothing: in a loop, its literals no longer go
 //! through the frame on every iteration.

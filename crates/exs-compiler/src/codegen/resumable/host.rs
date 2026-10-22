@@ -150,13 +150,13 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
         self.compiler.pop_frame();
         self.instruction(Instruction::Return);
         self.instruction(Instruction::End);
-        // Like v1, a fatal runner failure traps.
+        // A fatal runner failure traps.
         self.instruction(Instruction::Unreachable);
         Ok(())
     }
 
     /// Converts the runner's time result in durable slot `value` into the prelude value of
-    /// `type_id`, like v1.
+    /// `type_id`.
     fn host_time(
         &mut self,
         next: u32,
@@ -195,7 +195,7 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
     }
 
     /// Stores the Error in durable slot `value` unchanged, else the prelude Object of
-    /// `type_id` holding the durable `fields` after checking their contracts like v1: the
+    /// `type_id` holding the durable `fields` after checking their contracts: the
     /// first mismatch stores its TypeError instead.
     fn host_object(
         &mut self,

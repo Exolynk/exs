@@ -1,5 +1,5 @@
 //! Static wire schemas of annotated `let` and `for` bindings, the record trees of
-//! `exs_layout::WireContract` the core's decoder walks like v1's schema strings.
+//! `exs_layout::WireContract` the core's decoder walks.
 //!
 //! Records are built children first and shared by content among the static arrays.
 

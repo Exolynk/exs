@@ -1,6 +1,6 @@
-//! List methods with v1's results, Errors and order of checks.
+//! List methods with the results, Errors and order of checks.
 //!
-//! Index arguments are checked before the receiver, as in v1.
+//! Index arguments are checked before the receiver.
 
 use exs_layout::ValueRef;
 

@@ -812,7 +812,7 @@ pub extern "C" fn __exs_core_parallel_wait(vm: i32) -> i32 {
     }
 }
 
-/// Creates v1's TypeError for a `par` operand that is no List.
+/// Creates the TypeError for a `par` operand that is no List.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_parallel_list_error(vm: i32, operand: i64) -> i64 {
     value(exs_core::parallel_list_error(
@@ -849,7 +849,7 @@ pub extern "C" fn __exs_core_arity_error(vm: i32) -> i64 {
     }
 }
 
-/// Renders `slots[0..count]` into one String like v1's formatted strings.
+/// Renders `slots[0..count]` into one String like the formatted strings.
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_format(vm: i32, slots: i32, count: i32) -> i64 {
     value(exs_core::format(

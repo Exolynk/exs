@@ -20,10 +20,10 @@ use crate::numbers::Arithmetic;
 use crate::strings::string_object;
 use exs_layout::ValueRef;
 
-/// Calls the built-in method `method` on `receiver` with up to two arguments, like v1's
-/// `call_builtin`; all three values must be rooted.
+/// Calls the built-in method `method` on `receiver` with up to two arguments; all three
+/// values must be rooted.
 ///
-/// Returns `None` when memory is exhausted or `method` is one the v2 backend does not
+/// Returns `None` when memory is exhausted or `method` is one the core library does not
 /// implement yet, which the compiler never emits.
 pub fn call_builtin(
     memory: &mut impl Memory,

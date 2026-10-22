@@ -61,7 +61,7 @@ pub fn compare(
     })
 }
 
-/// Orders two values like v1's built-in ordering: numbers numerically with Float promotion,
+/// Orders two values like the built-in ordering: numbers numerically with Float promotion,
 /// Strings byte-wise, equal values as Equal and everything else as Unordered.
 pub(crate) fn order(memory: &impl Memory, left: u64, right: u64) -> Order {
     let ordering = if let (Some(left), Some(right)) = (number(memory, left), number(memory, right))
@@ -82,7 +82,7 @@ pub(crate) fn order(memory: &impl Memory, left: u64, right: u64) -> Order {
     }
 }
 
-/// Applies one ordering comparison and returns its Bool, or v1's TypeError, whose data is the
+/// Applies one ordering comparison and returns its Bool, or the TypeError, whose data is the
 /// `std::Ordering::Unordered` value, when the values have no order.
 pub fn compare_value(
     memory: &mut impl Memory,
@@ -122,7 +122,7 @@ pub(crate) fn compare_method(
 }
 
 /// Applies the comparison `test` (0 `==`, 1 `!=`, 2 `<`, 3 `<=`, 4 `>`, 5 `>=`) to the
-/// Ordering a `Compare` implementation returned, like v1.
+/// Ordering a `Compare` implementation returned.
 ///
 /// Returns the Bool, or a TypeError for a value that is no Ordering and for `Unordered`
 /// under an ordering test.

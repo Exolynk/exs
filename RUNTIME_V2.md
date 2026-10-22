@@ -1243,6 +1243,31 @@ Measured the same way after phase 6 with v1 as ExS, scripts needed 1.3 to 5.9 ti
 Rust guest's execution time under Winch; with v2 they need 0.3 to 3.1 times. The fuel suite
 is unchanged since 7a, and the browser check passes for compiled modules and the Rust guest.
 
+## 12zc. After phase 7: crate boundaries and hardening
+
+- **`exs-value` merged into `exs-layout`:** `ValueRef`, `Immediate` and the tag layout live in
+  `exs_layout::value`. The type masks, the standard Ordering type, the ready status, the inline
+  Range states and `BuiltinMethod`, which only the compiler and the core library use, moved
+  from `exs-abi` to `exs-layout`, which depends on no other crate. `exs-abi` keeps the
+  contract with hosts and guests: `ExsValue`, images, export and import names, status codes
+  and host names.
+- **`ServerRunnerConfig`:** `ServerRunner::new` takes one configuration with memory, fuel,
+  timeout, protection level, compiler strategy and module cache size, replacing the positional
+  constructor and two builders. Every crate is at version 0.2.0.
+- **Wasmtime without default features:** only `std`, `runtime`, `cranelift`, `winch` and
+  `parallel-compilation`; the component model, GC, threads, async support, caching,
+  profiling, debugging and WebAssembly text parsing are no longer compiled in.
+- **Compile limits:** `CompileOptions::limits` bounds each source file (1 MiB), a project
+  (8 MiB, 512 modules) and nesting (64 levels, E0114). A nesting level costs the parser and the
+  later passes several kilobytes of stack in an optimized build and far more in a debug build;
+  in measurements a 2 MiB thread overflowed at about 50 nested parentheses in a debug build and
+  near 255 in an optimized one, which set the default.
+- **One result export for Rust guests:** `__exs_result_image` returns the result image's
+  address and length in one `i64`; runners identify compiled modules and guests by
+  `__exs_result_value` or `__exs_result_image` and reject modules with neither.
+- **Comments:** explanations that referred to the removed backend ("like v1") now describe the
+  behavior directly.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.

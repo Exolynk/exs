@@ -57,8 +57,8 @@ pub fn call_static(
         StaticFunction::MathLog10 => {
             unary(memory, libm::log10, "Math::log10 requires a Float argument")
         }
-        // v1 passes the whole sentence as the name of its pair helper, which then appends its
-        // receiver and argument wording; the messages keep that text.
+        // The whole sentence is the name the pair helper appends its receiver and argument
+        // wording to; the messages keep that text.
         StaticFunction::MathAtan2 => float_pair(
             memory,
             vm,
@@ -84,7 +84,7 @@ pub fn call_static(
     }
 }
 
-/// Evaluates `Int::parse(text)` with Rust's base-10 `i64` syntax, like v1.
+/// Evaluates `Int::parse(text)` with Rust's base-10 `i64` syntax.
 fn parse_int(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     let Some(object) = string_object(value) else {
         return type_error(memory, vm, "Int::parse requires a String value", value);
@@ -101,7 +101,7 @@ fn parse_int(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     }
 }
 
-/// Evaluates `Float::parse(text)` with Rust's `f64` syntax and results, like v1.
+/// Evaluates `Float::parse(text)` with Rust's `f64` syntax and results.
 fn parse_float(memory: &mut impl Memory, vm: u32, value: u64) -> Option<u64> {
     let Some(object) = string_object(value) else {
         return type_error(memory, vm, "Float::parse requires a String value", value);

@@ -1,7 +1,7 @@
 //! Lowering of method calls on built-in values and of static built-in functions.
 //!
 //! A method call evaluates its receiver and arguments, then calls the core library's built-in
-//! method by its `exs_layout::BuiltinMethod` index. Like v1, a name no built-in provides is a
+//! method by its `exs_layout::BuiltinMethod` index. A name no built-in provides is a
 //! MethodNotFound Error and a built-in called with another number of arguments is an
 //! ArityError; both are decided at compile time from the static method name.
 
@@ -135,7 +135,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         }
         let arguments: Vec<u32> = (0..count).map(|offset| block + offset).collect();
         self.dispatch_chain(targets, receiver, &arguments, span, |compiler| {
-            // Like v1, the prelude's eager iterator helpers come before built-in methods.
+            // The prelude's eager iterator helpers come before built-in methods.
             if let Some(helper) = helper {
                 return compiler.call_method(helper, receiver, &arguments, span);
             }
@@ -148,7 +148,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     }
 
     /// Calls the built-in method `builtin` of the receiver in `receiver` with the `count`
-    /// arguments in the consecutive locals at `block`, or creates v1's Error for a method
+    /// arguments in the consecutive locals at `block`, or creates the Error for a method
     /// the receiver lacks or an argument count it does not take.
     pub(super) fn builtin_method_call(
         &mut self,
@@ -233,7 +233,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.core_call("__exs_core_call_static", span)
     }
 
-    /// Compiles a call of the static implementation method `key`, with v1's diagnostics for
+    /// Compiles a call of the static implementation method `key`, with the diagnostics for
     /// unknown types, unknown methods, instance methods and argument counts.
     fn compile_user_static_call(
         &mut self,

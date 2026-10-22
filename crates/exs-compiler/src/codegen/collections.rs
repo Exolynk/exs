@@ -142,7 +142,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::I64Store(value_field(SLOTS)));
         self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
-        // Like v1, the assignment's result, also an Error, is discarded.
+        // The assignment's result, also an Error, is discarded.
         self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(receiver));

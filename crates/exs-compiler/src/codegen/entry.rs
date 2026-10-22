@@ -78,7 +78,7 @@ impl EntryLayout<'_> {
         ));
         function.instruction(&Instruction::LocalSet(count));
         function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
-        // Like v1, excess arguments make the result a fatal ArityError instead of a call.
+        // Excess arguments make the result a fatal ArityError instead of a call.
         function.instruction(&Instruction::LocalGet(count));
         function.instruction(&Instruction::I32Const(target.arity.cast_signed()));
         function.instruction(&Instruction::I32GtU);
@@ -120,7 +120,7 @@ impl EntryLayout<'_> {
         Ok(function)
     }
 
-    /// Returns the start function of a variadic entry: like v1, the arguments after the
+    /// Returns the start function of a variadic entry: the arguments after the
     /// fixed parameters become a List, so no argument count is too large.
     fn variadic_start<'a>(
         &self,

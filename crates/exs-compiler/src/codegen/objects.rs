@@ -5,7 +5,7 @@
 //! type declaring the property and reads that type's slot inline, then tries the site's inline
 //! cache for untyped Objects; any other receiver goes through the core library.
 //!
-//! Like v1, a literal lists its properties in source order, then the fields it omits in
+//! A literal lists its properties in source order, then the fields it omits in
 //! declaration order. A literal whose order differs from the declaration points its Object at
 //! a static array of slot indices in that order.
 
@@ -60,7 +60,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 format!("enum `{}` requires a variant constructor", type_name.name),
             ));
         }
-        // Like v1, the first undeclared or repeated property returns a TypeError before any
+        // The first undeclared or repeated property returns a TypeError before any
         // property is evaluated.
         let invalid = properties.iter().find(|property| {
             !nominal
@@ -279,8 +279,8 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::Block(BlockType::Empty));
         self.instruction(Instruction::Block(BlockType::Empty));
         self.property_dispatch(object, property, 1, |compiler, offset| {
-            // Like the core, refuse to restore a removed declared field, whose v1 position is
-            // after every other key.
+            // Like the core, refuse to restore a removed declared field, which would have to
+            // come back after every other key.
             compiler.push_address(object);
             compiler.instruction(Instruction::I64Load(value_field(offset)));
             compiler.instruction(Instruction::I64Eqz);
@@ -297,7 +297,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.instruction(Instruction::Br(1));
         self.instruction(Instruction::End);
         self.fill_inline_cache(object, name, cache, span)?;
-        // Like v1, the assignment's result, also an Error, is discarded.
+        // The assignment's result, also an Error, is discarded.
         self.set_position(span)?;
         self.push_vm();
         self.instruction(Instruction::LocalGet(object));

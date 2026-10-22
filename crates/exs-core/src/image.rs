@@ -169,7 +169,7 @@ pub fn image_inputs(
 
 /// Adopts the runner's argument List for an entry with `fixed` parameters and a trailing
 /// variadic one: the first `fixed` arguments into the root slots at `slots`, None for missing
-/// ones, and a List of the rest into the slot after them, like v1.
+/// ones, and a List of the rest into the slot after them.
 ///
 /// # Errors
 ///
@@ -205,7 +205,7 @@ pub fn image_variadic_inputs(
 }
 
 /// Creates the fatal ArityError of an entry that received more arguments than it declares,
-/// with all arguments as a List in its data, like v1.
+/// with all arguments as a List in its data.
 ///
 /// # Errors
 ///

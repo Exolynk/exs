@@ -12,15 +12,15 @@ pub(super) struct Unit<'m, 'a> {
     pub(super) key: String,
     /// The declaration.
     pub(super) declaration: &'m FunctionDeclaration<'a>,
-    /// Identifier recorded in Error traces: like v1, the position among the module's
+    /// Identifier recorded in Error traces: the position among the module's
     /// functions followed by its implementation methods.
     pub(super) function_id: u32,
     /// Names of the bindings a lifted closure captures, its leading parameters.
     pub(super) captures: &'m [String],
 }
 
-/// Returns every function, implementation method and lifted closure of `module` in v1's
-/// trace-id order, rejecting duplicate keys and annotated receivers like v1's linker.
+/// Returns every function, implementation method and lifted closure of `module` in the
+/// trace-id order, rejecting duplicate keys and annotated receivers.
 pub(super) fn units<'m, 'a>(
     module: &'m Module<'a>,
     lifted: &'m [LiftedFunction<'a>],

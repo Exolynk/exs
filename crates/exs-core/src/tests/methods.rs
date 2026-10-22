@@ -14,7 +14,7 @@ fn call(execution: &mut Execution, method: BuiltinMethod, receiver: u64, first: 
     call_builtin(&mut execution.memory, VM, method, receiver, first, none).expect("room")
 }
 
-/// Computes numeric methods like v1 and reports its Errors.
+/// Computes numeric methods and reports its Errors.
 #[test]
 fn evaluates_numeric_methods() {
     let mut execution = Execution::new();
@@ -69,7 +69,7 @@ fn evaluates_numeric_methods() {
     assert_eq!(execution.error_kind(zero), "DivisionByZeroError");
 }
 
-/// Renders, measures and inspects values like v1.
+/// Renders, measures and inspects values.
 #[test]
 fn evaluates_value_methods() {
     let mut execution = Execution::new();
@@ -93,7 +93,7 @@ fn evaluates_value_methods() {
     assert_eq!(data, Execution::int(1));
 }
 
-/// Parses numbers and evaluates Math functions like v1.
+/// Parses numbers and evaluates Math functions.
 #[test]
 fn evaluates_static_functions() {
     let mut execution = Execution::new();

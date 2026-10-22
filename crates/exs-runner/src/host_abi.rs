@@ -442,7 +442,7 @@ fn host_call_start(
     dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
 }
 
-/// Starts one dynamically resolved host call of a runtime v2 module, whose arguments the
+/// Starts one dynamically resolved host call of a compiled module, whose arguments the
 /// runner reads as the List value `arguments` from the module's memory with its VM state
 /// block at `vm`. Returns `HOST_CALL_UNSUPPORTED` without starting the call when the
 /// arguments cannot cross the boundary.

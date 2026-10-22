@@ -17,7 +17,7 @@ use crate::codegen::types::TypeRegistry;
 /// Returns the public functions and every unit they can reach, in trace-id order.
 ///
 /// Calls reach their function, static calls their method, closure expressions their lifted
-/// function, and like v1's dispatch, method calls reach every implementation of the method
+/// function, and like the dispatch, method calls reach every implementation of the method
 /// name and the prelude's iterator helper of that name, operators their implementations and
 /// formatted strings every `ToString` implementation.
 pub(super) fn reachable_units<'u, 'm, 'a>(
@@ -173,7 +173,7 @@ fn statement_contains_for(statement: &Statement<'_>) -> bool {
 ///
 /// Formatted strings start from the empty String, so it is always included.
 /// Returns the runner function a Host time operation calls and the prelude type of its
-/// result, like v1.
+/// result.
 pub(super) const fn host_time_target(operation: HostTimeOperation) -> (&'static str, &'static str) {
     match operation {
         HostTimeOperation::Now => (exs_abi::HOST_NOW_HOST_NAME, "DateTime"),

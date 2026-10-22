@@ -1,6 +1,6 @@
 //! The test assertions `assert` and `assert_eq`.
 //!
-//! Like v1, a failed assertion is a fatal AssertionFailed Error with the description as its
+//! A failed assertion is a fatal AssertionFailed Error with the description as its
 //! message, and a description that is no String or a condition that is no Bool is a fatal
 //! TypeError.
 

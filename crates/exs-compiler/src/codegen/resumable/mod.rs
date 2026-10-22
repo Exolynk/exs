@@ -1,7 +1,7 @@
 //! Resumable functions: the units that may suspend, directly through a host
 //! call or through a resumable callee, compile to step functions over heap frames.
 //!
-//! A step function runs v1's continuation graph of its unit as a state machine over the
+//! A step function runs the continuation graph of its unit as a state machine over the
 //! durable slots of its frame and returns a status to the dispatcher: ready to run the active
 //! frame, pending on a host call, or complete.
 

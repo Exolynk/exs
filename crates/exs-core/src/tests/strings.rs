@@ -41,7 +41,7 @@ fn chain(heap: &mut Heap, values: &[u64]) -> Option<u64> {
     )
 }
 
-/// Renders scalars like v1 and joins whole runs into one String.
+/// Renders scalars and joins whole runs into one String.
 #[test]
 fn concatenates_strings_and_scalars() {
     let mut heap = Heap::new(64);
@@ -107,7 +107,7 @@ fn compares_strings() {
     );
 }
 
-/// Renders every value like v1's formatted strings, using default texts for non-scalars.
+/// Renders every value like the formatted strings, using default texts for non-scalars.
 #[test]
 fn formats_every_value_with_default_texts() {
     let mut execution = super::execution::Execution::new();

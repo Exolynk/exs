@@ -40,9 +40,9 @@ pub trait Host {
     fn release(&mut self);
 }
 
-/// Starts the host call of the function named `name` with the List `arguments`, like v1.
+/// Starts the host call of the function named `name` with the List `arguments`.
 ///
-/// Returns `HOST_CALL_READY` when its result can be taken at once, also for v1's Errors of an
+/// Returns `HOST_CALL_READY` when its result can be taken at once, also for the Errors of an
 /// invalid name, arguments or an argument that cannot cross the boundary; `HOST_CALL_PENDING`
 /// when the task waits for the runner; or the runner's `HOST_CALL_FATAL`. Returns `None` when
 /// memory is exhausted.
@@ -86,7 +86,7 @@ pub fn host_call_start(
         position,
     );
     if status == HOST_CALL_UNSUPPORTED {
-        // Like v1, arguments that cannot cross the boundary are a recoverable Error value.
+        // Arguments that cannot cross the boundary are a recoverable Error value.
         let error = crate::boundary::serialization_error(memory, vm, arguments, false)?;
         return ready(memory, vm, error);
     }

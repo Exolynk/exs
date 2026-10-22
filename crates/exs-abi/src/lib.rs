@@ -148,7 +148,7 @@ pub const RESULT_IMAGE_EXPORT: &str = "__exs_result_image";
 /// The export of a compiled module returning the completed result as a raw `ValueRef`,
 /// which the runner reads from memory instead of a result image.
 pub const RESULT_VALUE_EXPORT: &str = "__exs_result_value";
-/// The export of a runtime v2 module returning the address of its VM state block.
+/// The export of a compiled module returning the address of its VM state block.
 pub const VM_EXPORT: &str = "__exs_vm";
 /// The module name containing runner-provided Host ABI imports.
 pub const HOST_IMPORT_MODULE: &str = "exs";
@@ -156,7 +156,7 @@ pub const HOST_IMPORT_MODULE: &str = "exs";
 pub const RUNNER_IMPORT_MODULE: &str = "runner";
 /// The generic runner import that starts one host call.
 pub const HOST_CALL_START_IMPORT: &str = "__exs_host_call_start";
-/// The runner import of runtime v2 modules that starts one host call with the arguments as a
+/// The runner import of compiled modules that starts one host call with the arguments as a
 /// List value the runner reads from module memory.
 pub const HOST_CALL_START_VALUE_IMPORT: &str = "__exs_host_call_start_value";
 /// The runner import returning one ready host response byte length.

@@ -1,8 +1,6 @@
 //! Which units may suspend, and so run as resumable frames.
 //!
-//! Unlike v1, which makes every function with a `for` loop or a binding call resumable and all
-//! of them once the program has a closure, the code generator only lowers units resumable that can reach a
-//! suspend point: a host operation or a parallel expression, directly or through calls,
+//! Only units that can reach a suspend point are lowered resumable: a host operation or a parallel expression, directly or through calls,
 //! dispatch, closure calls of a resumable closure, or `for` loops over a resumable iterator.
 
 use std::collections::{HashMap, HashSet};

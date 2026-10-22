@@ -1,4 +1,4 @@
-//! Lexer for the Phase-1 `ExS` grammar.
+//! Lexer for the `ExS` grammar.
 
 use crate::SourceInput;
 use crate::diagnostic::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
@@ -41,7 +41,7 @@ pub struct FormattedString {
     pub parts: Vec<FormattedStringPart>,
 }
 
-/// Tokens recognized by the Phase-1 lexer.
+/// Tokens recognized by the lexer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     /// An identifier spelling.

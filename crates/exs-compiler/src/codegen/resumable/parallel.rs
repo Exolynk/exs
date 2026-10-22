@@ -54,7 +54,7 @@ impl<'a> StepEmitter<'a, '_> {
         self.wait(next, span)
     }
 
-    /// Starts every closure of the List in durable slot `functions` like v1's dynamic `par`:
+    /// Starts every closure of the List in durable slot `functions` like the dynamic `par`:
     /// a value that is no List, an element that is no closure or one that takes arguments
     /// returns its Error from the function before any task starts.
     pub(super) fn parallel_dynamic_start(
@@ -134,7 +134,7 @@ impl<'a> StepEmitter<'a, '_> {
         Ok(())
     }
 
-    /// Returns v1's Error from the function unless the value in `item` is a closure that takes
+    /// Returns the Error from the function unless the value in `item` is a closure that takes
     /// no fixed arguments or is variadic.
     fn validate_task(
         &mut self,
@@ -206,7 +206,7 @@ impl<'a> StepEmitter<'a, '_> {
     }
 
     /// Stores the Error on the stack in durable slot `destination` and returns it from the
-    /// function, like v1 completing the frame.
+    /// function, completing the frame.
     fn complete(
         &mut self,
         destination: u32,

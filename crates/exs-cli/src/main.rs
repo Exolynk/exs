@@ -1,4 +1,4 @@
-//! Command-line interface for the Phase-1 `ExS` toolchain.
+//! Command-line interface for the `ExS` toolchain.
 
 mod input;
 
@@ -397,7 +397,7 @@ fn block_on<Output>(future: impl Future<Output = Output>) -> Output {
     }
 }
 
-/// Prints a completed Phase-1 program result in ExS source notation.
+/// Prints a completed program result in ExS source notation.
 fn print_result(result: exs_runner::ExsValue) {
     println!("{}", format_result(&result));
 }

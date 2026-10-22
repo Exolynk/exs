@@ -1,4 +1,4 @@
-//! Deep `clone` with v1's semantics: mutable values (Lists, Objects, Errors) are copied,
+//! Deep `clone` with the semantics: mutable values (Lists, Objects, Errors) are copied,
 //! immutable ones shared, and aliases and cycles of the source reappear in the copy.
 //!
 //! A hash table from source to copy lives in a List rooted on the root stack, so every copy is

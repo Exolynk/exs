@@ -296,7 +296,7 @@ impl<'a> StepEmitter<'a, '_> {
             )?;
             self.instruction(Instruction::End);
         }
-        // Like v1, the prelude's eager iterator helpers come before built-in methods.
+        // The prelude's eager iterator helpers come before built-in methods.
         if let Some(helper) = helper {
             return self.method_target(
                 helper,
@@ -320,7 +320,7 @@ impl<'a> StepEmitter<'a, '_> {
     }
 
     /// Calls the resumable method `key` with the receiver in durable slot `receiver` and the
-    /// durable `arguments` as a child frame, packing variadic arguments, or stores v1's
+    /// durable `arguments` as a child frame, packing variadic arguments, or stores the
     /// ArityError when it takes a different number of arguments.
     #[allow(clippy::too_many_arguments)] // Durable slots and their loaded receiver.
     fn resumable_method(
@@ -367,7 +367,7 @@ impl<'a> StepEmitter<'a, '_> {
 
     /// Advances the Object in durable slot `receiver` of a `for` loop through the
     /// `Iterator::next` dispatch like synchronous code: an Object without an Iterator
-    /// implementation yields v1's NotIterable Error.
+    /// implementation yields the NotIterable Error.
     fn iterator_next(
         &mut self,
         receiver: u32,
