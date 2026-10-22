@@ -19,6 +19,40 @@ fn evaluates_formatted_strings() {
     );
 }
 
+/// Reads String literals inside interpolations written with plain or escaped quotes, and
+/// method calls on Int literals.
+#[test]
+fn reads_quotes_in_interpolations_and_int_methods() {
+    let source = r#"
+        fn main(input) -> List {
+            let user = { name: "Ada", "a{b": 1 };
+            ret [
+                f"{\"a\"}",
+                f"{user[\"name\"]}",
+                f"{user["name"]}",
+                f"{"x\"y"}",
+                f"{\"x\\\"y\"}",
+                f"{user[\"a{b\"]}",
+                7.div_euclid(2),
+                1.5.floor(),
+            ];
+        }
+    "#;
+    assert_eq!(
+        execute_source(source, ExsValue::None),
+        ExsValue::List(vec![
+            ExsValue::String("a".to_owned()),
+            ExsValue::String("Ada".to_owned()),
+            ExsValue::String("Ada".to_owned()),
+            ExsValue::String("x\"y".to_owned()),
+            ExsValue::String("x\"y".to_owned()),
+            ExsValue::String("1".to_owned()),
+            ExsValue::Int(3),
+            ExsValue::Float(1.0),
+        ]),
+    );
+}
+
 /// Uses default renderers and nominal `ToString` and `Debug` implementations.
 #[test]
 fn renders_values_through_to_string_and_debug() {

@@ -149,7 +149,7 @@ fn orders_only_numbers_and_strings() {
                     [1].compare([1]) is Error,
                     1 < 2.5,
                     "a" < "b",
-                    (2).compare(1) == Ordering::Greater,
+                    2.compare(1) == Ordering::Greater,
                 ];
             }
         "#,

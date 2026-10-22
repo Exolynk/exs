@@ -246,7 +246,10 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                 continue;
             }
             let mut is_float = false;
-            if bytes.get(index) == Some(&b'.') && bytes.get(index + 1) != Some(&b'.') {
+            // `7.method()` calls a method of the Int; a fraction starts with a digit.
+            if bytes.get(index) == Some(&b'.')
+                && bytes.get(index + 1).is_some_and(u8::is_ascii_digit)
+            {
                 is_float = true;
                 index += 1;
                 let fraction_start = index;
@@ -745,11 +748,15 @@ fn formatted_string_literal<'a>(
             b'{' => {
                 push_formatted_text(&mut parts, std::mem::take(&mut text));
                 let expression_start = *index + 1;
-                let expression_end = formatted_expression_end(source, expression_start)?;
-                if source.text[expression_start..expression_end]
-                    .trim()
-                    .is_empty()
-                {
+                // Standard formatted strings decode `\"` and `\\` inside interpolations, so
+                // nested String literals may be written with or without escapes.
+                let (expression_end, expression) = if hash_count == 0 {
+                    escaped_expression_end(source, expression_start)?
+                } else {
+                    let end = formatted_expression_end(source, expression_start)?;
+                    (end, source.text[expression_start..end].to_owned())
+                };
+                if expression.trim().is_empty() {
                     return Err(diagnostic(
                         source,
                         *index,
@@ -759,7 +766,7 @@ fn formatted_string_literal<'a>(
                     ));
                 }
                 parts.push(FormattedStringPart::Expression {
-                    source: source.text[expression_start..expression_end].to_owned(),
+                    source: expression,
                     start_byte: u32::try_from(expression_start).unwrap_or(u32::MAX),
                 });
                 *index = expression_end + 1;
@@ -903,6 +910,87 @@ fn formatted_expression_end<'a>(
                 index += character.len_utf8();
             }
         }
+    }
+    Err(diagnostic(
+        source,
+        start,
+        bytes.len(),
+        "E0009",
+        "unterminated formatted string interpolation",
+    ))
+}
+
+/// Where [`escaped_expression_end`] is inside one interpolation.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum InterpolationMode {
+    /// In code.
+    Code,
+    /// In a String literal written with plain quotes, after a backslash when `true`.
+    Plain(bool),
+    /// In a String literal written with escaped quotes, `\"...\"`, whose own escapes are
+    /// written escaped as well; after a decoded backslash when `true`.
+    Escaped(bool),
+}
+
+/// Finds the closing brace of one interpolation of a standard formatted string and returns it
+/// with the interpolation's source.
+///
+/// A nested String literal may be written with plain quotes, `"a\"b"`, or with escaped
+/// quotes like the surrounding text, `\"a\\\"b\"`; the returned source spells both with
+/// plain quotes. String literals may contain braces; comments may not.
+fn escaped_expression_end<'a>(
+    source: SourceInput<'a>,
+    mut index: usize,
+) -> Result<(usize, String), CompileDiagnostic<'a>> {
+    let text = source.text;
+    let bytes = text.as_bytes();
+    let start = index.saturating_sub(1);
+    let mut expression = String::new();
+    let mut depth = 0_usize;
+    let mut mode = InterpolationMode::Code;
+    while index < bytes.len() {
+        let pair = (bytes[index], bytes.get(index + 1).copied());
+        let decoded = match (mode, pair) {
+            (InterpolationMode::Code | InterpolationMode::Escaped(_), (b'\\', Some(b'"'))) => {
+                Some('"')
+            }
+            (InterpolationMode::Escaped(_), (b'\\', Some(b'\\'))) => Some('\\'),
+            _ => None,
+        };
+        let (character, width) = match decoded {
+            Some(character) => (character, 2),
+            None => {
+                let Some(character) = text[index..].chars().next() else {
+                    break;
+                };
+                (character, character.len_utf8())
+            }
+        };
+        mode = match (mode, character) {
+            (InterpolationMode::Code, '"') if decoded.is_some() => {
+                InterpolationMode::Escaped(false)
+            }
+            (InterpolationMode::Code, '"') => InterpolationMode::Plain(false),
+            (InterpolationMode::Code, '{') => {
+                depth += 1;
+                mode
+            }
+            (InterpolationMode::Code, '}') if depth == 0 => return Ok((index, expression)),
+            (InterpolationMode::Code, '}') => {
+                depth -= 1;
+                mode
+            }
+            (InterpolationMode::Code, '\n' | '\r') => break,
+            (InterpolationMode::Plain(true), _) => InterpolationMode::Plain(false),
+            (InterpolationMode::Plain(false), '\\') => InterpolationMode::Plain(true),
+            (InterpolationMode::Plain(false), '"') => InterpolationMode::Code,
+            (InterpolationMode::Escaped(true), _) => InterpolationMode::Escaped(false),
+            (InterpolationMode::Escaped(false), '\\') => InterpolationMode::Escaped(true),
+            (InterpolationMode::Escaped(false), '"') => InterpolationMode::Code,
+            (mode, _) => mode,
+        };
+        expression.push(character);
+        index += width;
     }
     Err(diagnostic(
         source,
