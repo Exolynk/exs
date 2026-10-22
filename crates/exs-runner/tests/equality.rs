@@ -196,3 +196,40 @@ fn resumes_suspending_eq_implementations() {
     };
     assert_eq!(bools(result), [true, false]);
 }
+
+/// Compares and renders values nested deeper than the native walk, which the prelude then
+/// finishes, with the same results.
+#[test]
+fn compares_and_renders_deeply_nested_values() {
+    let result = execute_source_with_inputs(
+        r#"
+            fn nest(depth: Int, leaf: Any) -> List {
+                let value = [leaf];
+                let level = 1;
+                while level < depth {
+                    value = [value];
+                    level = level + 1;
+                }
+                ret value;
+            }
+
+            fn main() -> List {
+                let deep = nest(40, 1);
+                ret [
+                    deep == nest(40, 1),
+                    deep != nest(40, 2),
+                    deep.to_string().length(),
+                ];
+            }
+        "#,
+        &[],
+    );
+    assert_eq!(
+        result,
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::Int(81),
+        ])
+    );
+}

@@ -11,6 +11,14 @@ use exs_layout::TypeEntry;
 
 use crate::codegen::types::{NominalKind, TypeRegistry};
 
+/// The nominal types whose equality or rendering an implementation in the program decides.
+pub(super) struct CustomBehavior {
+    /// Type ids with an `Eq` or `Compare` implementation.
+    pub(super) equality: HashSet<u32>,
+    /// Type ids with a `Debug` or `ToString` implementation.
+    pub(super) rendering: HashSet<u32>,
+}
+
 /// Encoded type table at a fixed address.
 pub(super) struct TypeTable {
     /// Address of the first entry.
@@ -65,6 +73,7 @@ impl TypeTable {
     pub(super) fn build(
         types: &TypeRegistry,
         used: &HashSet<u32>,
+        custom: &CustomBehavior,
         strings: &HashMap<String, u64>,
         base: u32,
     ) -> Option<Self> {
@@ -97,6 +106,13 @@ impl TypeTable {
                         exs_layout::TYPE_ENTRY_OBJECT,
                     ),
                 };
+            let mut kind = kind;
+            if custom.equality.contains(&nominal.id) {
+                kind |= exs_layout::TYPE_ENTRY_CUSTOM_EQUALITY;
+            }
+            if custom.rendering.contains(&nominal.id) {
+                kind |= exs_layout::TYPE_ENTRY_CUSTOM_RENDERING;
+            }
             let address = names_base.checked_add(u32::try_from(names.len()).ok()?)?;
             for name in &listed {
                 names.extend(strings.get(*name)?.to_le_bytes());

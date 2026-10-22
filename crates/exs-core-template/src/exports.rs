@@ -251,11 +251,12 @@ pub extern "C" fn __exs_core_match_error(vm: i32, matched: i64) -> i64 {
     ))
 }
 
-/// Compares two values as far as possible without their parts: 0 different, 1 equal, 2 when
-/// their parts decide (see `exs_core::equality`).
+/// Compares two values natively where no `Eq` or `Compare` implementation takes part: 0
+/// different, 1 equal, 2 when the prelude must compare the parts (see
+/// `exs_core::deep_equality`).
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_equal(vm: i32, left: i64, right: i64) -> i32 {
-    exs_core::equality(
+    exs_core::deep_equality(
         &memory(),
         address(vm),
         left.cast_unsigned(),

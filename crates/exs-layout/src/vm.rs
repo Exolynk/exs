@@ -133,14 +133,21 @@ pub struct TypeEntry {
     pub identity: u64,
     /// The nominal type id the entry describes.
     pub type_id: u32,
-    /// [`TYPE_ENTRY_OBJECT`] or [`TYPE_ENTRY_ENUM`].
+    /// [`TYPE_ENTRY_OBJECT`] or [`TYPE_ENTRY_ENUM`], combined with
+    /// [`TYPE_ENTRY_CUSTOM_EQUALITY`] and [`TYPE_ENTRY_CUSTOM_RENDERING`].
     pub kind: u32,
 }
 
 /// [`TypeEntry::kind`] of a nominal Object type.
 pub const TYPE_ENTRY_OBJECT: u32 = 0;
-/// [`TypeEntry::kind`] of an enum.
+/// [`TypeEntry::kind`] bit of an enum.
 pub const TYPE_ENTRY_ENUM: u32 = 1;
+/// [`TypeEntry::kind`] bit of a type with an `Eq` or `Compare` implementation, whose
+/// equality only the program decides.
+pub const TYPE_ENTRY_CUSTOM_EQUALITY: u32 = 2;
+/// [`TypeEntry::kind`] bit of a type with a `Debug` or `ToString` implementation, whose
+/// rendering only the program decides.
+pub const TYPE_ENTRY_CUSTOM_RENDERING: u32 = 4;
 
 /// The block of execution state at a linker-assigned address.
 #[repr(C)]

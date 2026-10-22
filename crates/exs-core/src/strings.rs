@@ -122,7 +122,7 @@ enum Part {
 
 /// A scalar value that renders as text.
 #[derive(Clone, Copy)]
-enum Scalar {
+pub(crate) enum Scalar {
     /// A Bool.
     Bool(bool),
     /// An Int.
@@ -134,7 +134,7 @@ enum Scalar {
 impl Scalar {
     /// Returns the byte length of the rendered text, which is ASCII and so also its character
     /// count.
-    fn len(self) -> u32 {
+    pub(crate) fn len(self) -> u32 {
         match self {
             Self::Bool(true) => 4,
             Self::Bool(false) => 5,
@@ -148,7 +148,7 @@ impl Scalar {
 
     /// Writes the rendered text at `position` and returns the address after it.
     #[inline(always)]
-    fn write(self, memory: &mut impl Memory, position: u32) -> u32 {
+    pub(crate) fn write(self, memory: &mut impl Memory, position: u32) -> u32 {
         match self {
             Self::Bool(flag) => {
                 write_bytes(memory, position, if flag { b"true" } else { b"false" })
@@ -207,6 +207,14 @@ fn int_text(value: i64, digits: &mut [u8; 20]) -> &[u8] {
         put(&mut position, b'-');
     }
     digits.get(position..).unwrap_or(&[])
+}
+
+/// Returns the Bool, Int or Float `raw` as a renderable scalar, or `None` for other values.
+pub(crate) fn scalar(memory: &impl Memory, raw: u64) -> Option<Scalar> {
+    match part(memory, raw)? {
+        Part::Scalar(scalar) => Some(scalar),
+        _ => None,
+    }
 }
 
 /// Returns how one value renders as the right operand of String `+`, or `None` when it cannot.

@@ -4,12 +4,9 @@
 use exs_layout::value::layout::{KIND_CELL, KIND_SHIFT};
 use exs_layout::{TYPE_ERROR, TYPE_FN, TYPE_LIST, TYPE_NONE, TYPE_OBJECT, ValueRef};
 
-use crate::bytes::{bytes_len, bytes_object};
 use crate::enums::{enum_object, names};
-use crate::errors::error_object;
-use crate::lists::{allocate_list, item_address, list_object, list_reference, set_len};
+use crate::lists::{allocate_list, item_address, list_reference, set_len};
 use crate::memory::Memory;
-use crate::methods::objects::is_object;
 use crate::strings::{DATA, byte_len, char_count, copy_string_object, string_object};
 use crate::typed::{slot_count, type_entry, type_id, typed_object};
 
@@ -34,84 +31,13 @@ pub(crate) fn default_text(raw: u64) -> &'static str {
     }
 }
 
-/// Returns whether `raw` is a composite whose literal spelling the prelude builds from its
-/// parts: a List, an Object of any kind, or an Error.
-pub(crate) fn is_composite(memory: &impl Memory, raw: u64) -> bool {
-    list_object(raw).is_some() || error_object(raw).is_some() || is_object(memory, raw)
-}
-
-/// Returns the ExS literal spelling of a value that is no composite, as `debug` renders it:
-/// Strings quoted with escapes, Bytes as a `b"..."` literal or `Bytes::from_hex(...)`, and
-/// numbers, Bools and None as their source spelling. Returns None for composites and `None`
-/// when memory is exhausted. `raw` must be rooted.
+/// Returns the ExS literal spelling of a value as `debug` renders it: Strings quoted with
+/// escapes, Bytes as a `b"..."` literal or `Bytes::from_hex(...)`, numbers, Bools and None as
+/// their source spelling, and composites part by part. Returns None when the prelude must
+/// render the value, because a part's type implements `Debug` or `ToString` or it nests too
+/// deeply, and `None` when memory is exhausted. `raw` must be rooted.
 pub fn debug_text(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
-    if let Some(object) = string_object(raw) {
-        let source = object + DATA;
-        let len = byte_len(memory, object);
-        let (extra_bytes, extra_chars) = escaped_extra(memory, source, len);
-        return copy_string_object(
-            memory,
-            vm,
-            len + extra_bytes + 2,
-            char_count(memory, object) + extra_chars + 2,
-            |memory, target| {
-                memory.store_u8(target, b'"');
-                let end = write_escaped(memory, source, len, target + 1);
-                memory.store_u8(end, b'"');
-            },
-        );
-    }
-    if let Some(object) = bytes_object(raw) {
-        return bytes_text(memory, vm, object);
-    }
-    if is_composite(memory, raw) {
-        return Some(ValueRef::NONE.raw());
-    }
-    crate::methods::values::render(memory, vm, raw)
-}
-
-/// Returns the literal spelling of the Bytes at `object`: `b"..."` with escapes for UTF-8
-/// contents, `Bytes::from_hex("...")` otherwise.
-fn bytes_text(memory: &mut impl Memory, vm: u32, object: u32) -> Option<u64> {
-    let source = object + DATA;
-    let len = bytes_len(memory, object);
-    if let Ok(text) = core::str::from_utf8(memory.bytes(source, len)) {
-        let chars = u32::try_from(text.chars().count()).ok()?;
-        let (extra_bytes, extra_chars) = escaped_extra(memory, source, len);
-        return copy_string_object(
-            memory,
-            vm,
-            len + extra_bytes + 3,
-            chars + extra_chars + 3,
-            |memory, target| {
-                memory.store_u8(target, b'b');
-                memory.store_u8(target + 1, b'"');
-                let end = write_escaped(memory, source, len, target + 2);
-                memory.store_u8(end, b'"');
-            },
-        );
-    }
-    const PREFIX: &[u8] = b"Bytes::from_hex(\"";
-    const SUFFIX: &[u8] = b"\")";
-    let size = PREFIX.len() as u32 + len * 2 + SUFFIX.len() as u32;
-    copy_string_object(memory, vm, size, size, |memory, target| {
-        let mut position = target;
-        for byte in PREFIX {
-            memory.store_u8(position, *byte);
-            position += 1;
-        }
-        for index in 0..len {
-            let byte = memory.load_u8(source + index);
-            for digit in [byte >> 4, byte & 0xf] {
-                memory.store_u8(position, b"0123456789abcdef"[digit as usize]);
-                position += 1;
-            }
-        }
-        for byte in SUFFIX {
-            memory.store_u8(position, *byte);
-            position += 1;
-        }
-    })
+    crate::literal::literal(memory, vm, raw)
 }
 
 /// Returns the escape of one ASCII byte inside a quoted literal, if it needs one.
@@ -128,7 +54,7 @@ fn escape(byte: u8) -> Option<&'static [u8]> {
 }
 
 /// Returns the bytes and characters escaping adds to the `len` bytes of text at `source`.
-fn escaped_extra(memory: &impl Memory, source: u32, len: u32) -> (u32, u32) {
+pub(crate) fn escaped_extra(memory: &impl Memory, source: u32, len: u32) -> (u32, u32) {
     let mut extra = 0;
     for index in 0..len {
         let byte = memory.load_u8(source + index);
@@ -143,7 +69,7 @@ fn escaped_extra(memory: &impl Memory, source: u32, len: u32) -> (u32, u32) {
 }
 
 /// Writes the `len` bytes of text at `source` to `target` with escapes and returns the end.
-fn write_escaped(memory: &mut impl Memory, source: u32, len: u32, target: u32) -> u32 {
+pub(crate) fn write_escaped(memory: &mut impl Memory, source: u32, len: u32, target: u32) -> u32 {
     let mut position = target;
     let mut put = |memory: &mut _, byte: u8| {
         Memory::store_u8(memory, position, byte);

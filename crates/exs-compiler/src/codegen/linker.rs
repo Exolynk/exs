@@ -29,7 +29,7 @@ use super::reachability::{
 };
 use super::resumable::{ClosureStep, Resumable, StepEmitter, parallel_units, resumable_units};
 use super::static_keys::StaticKeys;
-use super::type_table::TypeTable;
+use super::type_table::{CustomBehavior, TypeTable};
 use super::units::{Unit, units};
 use super::used_types::{declared_types, used_types};
 use super::validation::unreached_diagnostics;
@@ -37,6 +37,7 @@ use crate::ast::Module;
 use crate::codegen::declarations::lifted_functions;
 use crate::codegen::prune::{PruneHints, prune_unreachable};
 use crate::codegen::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
+use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::trait_registry::TraitRegistry;
 use crate::codegen::types::TypeRegistry;
 use crate::codegen::{VALUE_TYPE, module_span};
@@ -199,8 +200,22 @@ pub(in crate::codegen) fn compile<'a>(
             "too many string literals for linear memory".to_owned(),
         )
     })?;
-    let type_table = TypeTable::build(&types, &used, &statics.references, statics.end())
-        .ok_or_else(|| error("E0210", span, "too many types for linear memory".to_owned()))?;
+    let custom = CustomBehavior {
+        equality: dispatch
+            .operator(TraitOperator::Equal)
+            .iter()
+            .map(|target| target.type_id)
+            .collect(),
+        rendering: dispatch
+            .debug()
+            .iter()
+            .chain(dispatch.to_string())
+            .map(|target| target.type_id)
+            .collect(),
+    };
+    let type_table =
+        TypeTable::build(&types, &used, &custom, &statics.references, statics.end())
+            .ok_or_else(|| error("E0210", span, "too many types for linear memory".to_owned()))?;
     let static_keys = StaticKeys::build(
         object_key_lists(&functions),
         &statics.references,

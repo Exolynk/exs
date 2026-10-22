@@ -30,6 +30,7 @@ mod execution;
 mod float_text;
 mod image;
 mod lists;
+mod literal;
 mod memory;
 mod methods;
 mod numbers;
@@ -77,7 +78,7 @@ pub use numbers::{
     number, remainder,
 };
 pub use objects::{object_lookup, object_with_shape};
-pub use parts::{equality, parts};
+pub use parts::{deep_equality, equality, parts};
 pub use ranges::{RANGE_DONE, RANGE_FALLBACK, range_begin, range_finish, range_step};
 pub use render::{debug_text, field_names, key_text, type_name};
 pub use shapes::shape_for;

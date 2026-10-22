@@ -2,7 +2,8 @@
 //! the parts the prelude compares one by one.
 
 use exs_layout::{
-    EQUALITY_DIFFERENT, EQUALITY_SAME, EQUALITY_STRUCTURAL, HOST_ENUM_VARIANT, ValueRef,
+    EQUALITY_DIFFERENT, EQUALITY_SAME, EQUALITY_STRUCTURAL, HOST_ENUM_VARIANT,
+    TYPE_ENTRY_CUSTOM_EQUALITY, ValueRef,
 };
 
 use crate::bytes::{bytes_object, octets};
@@ -12,8 +13,10 @@ use crate::lists::{allocate_list, item_address, len, list_object, list_reference
 use crate::memory::Memory;
 use crate::methods::objects::object_len;
 use crate::numbers::{number, numbers_equal};
+use crate::objects::{find_value, shape, untyped_object, value_address};
+use crate::shapes::{key, key_count};
 use crate::strings::{string_object, strings_equal};
-use crate::typed::{slot_address, slot_count, type_id, typed_object};
+use crate::typed::{slot_address, slot_count, type_entry, type_id, typed_object};
 
 /// Compares two values as far as possible without looking into their parts.
 ///
@@ -59,6 +62,130 @@ pub fn equality(memory: &impl Memory, vm: u32, left: u64, right: u64) -> u32 {
         (Some(left), Some(right)) => structural(left == right),
         _ => EQUALITY_DIFFERENT,
     }
+}
+
+/// Deepest nesting the native comparison follows before it leaves the rest to the prelude,
+/// which also handles cycles.
+const NATIVE_DEPTH: u32 = 32;
+
+/// Compares two values part by part where the core can: like [`equality`], but composites
+/// are compared natively in the prelude's order. Returns [`EQUALITY_STRUCTURAL`] only when
+/// the comparison reaches a value whose type implements `Eq` or `Compare`, or nests too
+/// deeply; the prelude then compares the parts.
+#[must_use]
+pub fn deep_equality(memory: &impl Memory, vm: u32, left: u64, right: u64) -> u32 {
+    deep(memory, vm, left, right, 0)
+}
+
+/// Compares `left` and `right` at nesting `depth`.
+fn deep(memory: &impl Memory, vm: u32, left: u64, right: u64, depth: u32) -> u32 {
+    let outcome = equality(memory, vm, left, right);
+    if outcome != EQUALITY_STRUCTURAL {
+        return outcome;
+    }
+    if depth >= NATIVE_DEPTH || custom_kind(memory, vm, left, TYPE_ENTRY_CUSTOM_EQUALITY) {
+        return EQUALITY_STRUCTURAL;
+    }
+    // Compares the `count` part pairs `part(index)` returns, stopping at the first that is
+    // not equal.
+    let pairs = |count: u32, part: &dyn Fn(u32) -> (u64, u64)| {
+        for index in 0..count {
+            let (left, right) = part(index);
+            let outcome = deep(memory, vm, left, right, depth + 1);
+            if outcome != EQUALITY_SAME {
+                return outcome;
+            }
+        }
+        EQUALITY_SAME
+    };
+    if let (Some(left_list), Some(right_list)) = (list_object(left), list_object(right)) {
+        return pairs(len(memory, left_list), &|index| {
+            (
+                memory.load_u64(item_address(memory, left_list, index)),
+                memory.load_u64(item_address(memory, right_list, index)),
+            )
+        });
+    }
+    if let (Some(left_object), Some(right_object)) =
+        (typed_object(memory, left), typed_object(memory, right))
+    {
+        return pairs(slot_count(memory, left_object), &|index| {
+            (
+                present(memory.load_u64(slot_address(left_object, index))),
+                present(memory.load_u64(slot_address(right_object, index))),
+            )
+        });
+    }
+    if let (Some(left_enum), Some(right_enum)) =
+        (enum_object(memory, left), enum_object(memory, right))
+    {
+        return pairs(payload_count(memory, left_enum), &|index| {
+            (
+                present(memory.load_u64(field_address(left_enum, index))),
+                present(memory.load_u64(field_address(right_enum, index))),
+            )
+        });
+    }
+    if let (Some(left_error), Some(right_error)) = (error_object(left), error_object(right)) {
+        let (left_parts, right_parts) = (
+            error_parts(memory, left_error),
+            error_parts(memory, right_error),
+        );
+        let left_values = [
+            left_parts.kind,
+            left_parts.message,
+            left_parts.data,
+            left_parts.cause,
+        ];
+        let right_values = [
+            right_parts.kind,
+            right_parts.message,
+            right_parts.data,
+            right_parts.cause,
+        ];
+        for (left, right) in left_values.into_iter().zip(right_values) {
+            let outcome = deep(memory, vm, present(left), present(right), depth + 1);
+            if outcome != EQUALITY_SAME {
+                return outcome;
+            }
+        }
+        return EQUALITY_SAME;
+    }
+    if let (Some(left_object), Some(right_object)) =
+        (untyped_object(memory, left), untyped_object(memory, right))
+    {
+        let shape = shape(memory, left_object);
+        for index in 0..key_count(memory, shape) {
+            let Some(name) = string_object(key(memory, shape, index)) else {
+                return EQUALITY_STRUCTURAL;
+            };
+            let Some(position) = find_value(memory, right_object, name) else {
+                return EQUALITY_DIFFERENT;
+            };
+            let outcome = deep(
+                memory,
+                vm,
+                memory.load_u64(value_address(memory, left_object, index)),
+                memory.load_u64(value_address(memory, right_object, position)),
+                depth + 1,
+            );
+            if outcome != EQUALITY_SAME {
+                return outcome;
+            }
+        }
+        return EQUALITY_SAME;
+    }
+    EQUALITY_STRUCTURAL
+}
+
+/// Reports whether `raw` is a nominal value or enum whose type entry has the `flag` bit.
+pub(crate) fn custom_kind(memory: &impl Memory, vm: u32, raw: u64, flag: u32) -> bool {
+    let type_id = typed_object(memory, raw)
+        .map(|object| type_id(memory, object))
+        .or_else(|| enum_object(memory, raw).map(|object| enum_type(memory, object)));
+    type_id
+        .and_then(|type_id| type_entry(memory, vm, type_id))
+        .is_some_and(|entry| entry.kind & flag != 0)
 }
 
 /// Returns [`EQUALITY_STRUCTURAL`] when `candidate` holds, else [`EQUALITY_DIFFERENT`].
@@ -135,7 +262,7 @@ pub fn parts(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
 }
 
 /// Returns `value`, or None for an empty slot.
-fn present(value: u64) -> u64 {
+pub(crate) fn present(value: u64) -> u64 {
     if value == 0 {
         ValueRef::NONE.raw()
     } else {
