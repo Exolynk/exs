@@ -165,7 +165,7 @@ pub(super) fn validate_annotation_with_self<'a>(
             diagnostics.push(CompileDiagnostic::new(
                 "E0216",
                 member.span,
-                "`Self` is valid only in trait declarations and trait implementations",
+                "`Self` is valid only in trait declarations and implementations",
             ));
             continue;
         }

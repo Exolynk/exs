@@ -745,3 +745,26 @@ fn dispatches_inherited_static_trait_default_methods() {
         ExsValue::String("person".to_owned())
     );
 }
+
+/// Resolves `Self` in the signatures of inherent `impl` blocks to the implementation target.
+#[test]
+fn resolves_self_in_inherent_implementations() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            type Point { x: Int }
+
+            impl Point {
+                fn new(x: Int) -> Self { ret Point { x: x }; }
+                fn plus(self, other: Self) -> Self | Error { ret Point { x: self.x + other.x }; }
+            }
+
+            fn main() -> List {
+                ret [Point::new(1).plus(Point::new(2)).x, Point::new(1).plus(3) is Error];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![ExsValue::Int(3), ExsValue::Bool(true)])
+    );
+}

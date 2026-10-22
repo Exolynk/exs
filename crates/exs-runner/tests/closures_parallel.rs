@@ -414,3 +414,40 @@ fn resumes_host_calls_inside_closures() {
     };
     assert_eq!(result, ExsValue::Int(42));
 }
+
+/// Checks the type annotations of closure parameters on every call, in direct and resumable
+/// closures.
+#[test]
+fn checks_annotated_closure_parameters() {
+    assert_eq!(
+        execute_source_with_inputs(
+            r#"
+            type Point { x: Int }
+
+            fn main() -> List {
+                let double = (value: Int | Float) => { ret value * 2; };
+                let named = (point: Point, extra: Int...) => { ret point.x + extra.length(); };
+                let resumable = (value: String) => {
+                    Host::sleep(Duration::milliseconds(0));
+                    ret value;
+                };
+                ret [
+                    double(2), double(1.5), double("a") is Error,
+                    named(Point { x: 1 }, 1, 2), named(1) is Error,
+                    resumable("ok"), resumable(1) is Error,
+                ];
+            }
+            "#,
+            &[],
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(4),
+            ExsValue::Float(3.0),
+            ExsValue::Bool(true),
+            ExsValue::Int(3),
+            ExsValue::Bool(true),
+            ExsValue::String("ok".to_owned()),
+            ExsValue::Bool(true),
+        ])
+    );
+}

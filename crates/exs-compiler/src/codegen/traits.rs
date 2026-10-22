@@ -97,9 +97,6 @@ pub(super) fn apply_defaults<'a>(module: &mut Module<'a>, registry: &TraitRegist
         }
     }
     for implementation in &mut module.implementations {
-        if implementation.trait_name.is_none() {
-            continue;
-        }
         for method in &mut implementation.methods {
             replace_self_annotations(method, &implementation.type_name.name);
         }

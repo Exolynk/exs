@@ -634,7 +634,7 @@ fn rejects_standard_add_trait_redeclaration() {
     );
 }
 
-/// Rejects Self in a function annotation that has no trait implementation context.
+/// Rejects Self in a function annotation outside traits and implementations.
 #[test]
 fn rejects_self_outside_trait_context() {
     let error = match compile(
@@ -648,7 +648,7 @@ fn rejects_self_outside_trait_context() {
         Err(error) => error,
     };
     assert!(error.diagnostics.iter().any(|diagnostic| {
-        diagnostic.message == "`Self` is valid only in trait declarations and trait implementations"
+        diagnostic.message == "`Self` is valid only in trait declarations and implementations"
     }));
 }
 

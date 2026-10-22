@@ -513,7 +513,8 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses a simple closure parameter list only when it is followed by `=>`.
+    /// Parses a closure parameter list, whose parameters may carry type annotations, only
+    /// when it is followed by `=>`.
     pub(super) fn closure_parameters(&mut self) -> Option<Vec<Parameter<'a>>> {
         let start = self.current;
         let mut parameters = Vec::new();
@@ -526,10 +527,19 @@ impl<'a> Parser<'a> {
                     return None;
                 };
                 let span = self.advance().span;
+                let type_annotation = if self.matches(&TokenKind::Colon) {
+                    let Ok(annotation) = self.type_annotation() else {
+                        self.current = start;
+                        return None;
+                    };
+                    Some(annotation)
+                } else {
+                    None
+                };
                 let variadic = self.matches(&TokenKind::Ellipsis);
                 parameters.push(Parameter {
                     name: Identifier { name, span },
-                    type_annotation: None,
+                    type_annotation,
                     variadic,
                 });
                 if self.check(&TokenKind::RightParen) {

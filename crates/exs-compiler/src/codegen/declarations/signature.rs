@@ -53,13 +53,13 @@ pub(in crate::codegen) fn validate<'a>(module: &Module<'a>) -> CompileDiagnostic
                 crate::diagnostic::unknown_name("type", &implementation.type_name.name),
             ));
         }
-        let allows_self = implementation.trait_name.is_some();
+        // `Self` names the implementation target in every `impl` block.
         for method in &implementation.methods {
             validate_function(
                 module,
                 method,
                 nominal,
-                allows_self,
+                true,
                 &mut signatures,
                 &mut diagnostics,
             );
