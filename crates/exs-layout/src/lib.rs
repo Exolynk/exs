@@ -55,6 +55,7 @@ pub use types::{
 pub use value::{Immediate, ValueRef};
 pub use vm::{
     BoundaryState, ErrorState, HeapState, ProgramState, RootRange, RootStack, RootState,
-    TASK_ROOT_COUNT, TaskState, TypeEntry, VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState,
+    TASK_ROOT_COUNT, TYPE_ENTRY_ENUM, TYPE_ENTRY_OBJECT, TaskState, TypeEntry,
+    VM_FLAG_COLLECT_EVERY_ALLOCATION, VmState,
 };
 pub use wire::{WireContract, WireEnum, WireField, WireObject, WireVariant};

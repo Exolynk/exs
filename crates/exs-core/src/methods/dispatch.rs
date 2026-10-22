@@ -46,7 +46,11 @@ pub fn call_builtin(
         BuiltinMethod::Div => operator(memory, vm, None, receiver, first),
         BuiltinMethod::DivEuclid => euclidean(memory, vm, receiver, first, false),
         BuiltinMethod::RemEuclid => euclidean(memory, vm, receiver, first, true),
-        BuiltinMethod::ToString | BuiltinMethod::Debug => render(memory, vm, receiver),
+        BuiltinMethod::ToString => render(memory, vm, receiver),
+        BuiltinMethod::Debug => match crate::render::debug_text(memory, vm, receiver)? {
+            text if text == exs_layout::ValueRef::NONE.raw() => render(memory, vm, receiver),
+            text => Some(text),
+        },
         BuiltinMethod::Abs => abs(memory, vm, receiver),
         BuiltinMethod::Floor => float(memory, libm::floor, "floor requires a Float receiver"),
         BuiltinMethod::Ceil => float(memory, libm::ceil, "ceil requires a Float receiver"),

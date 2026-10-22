@@ -128,13 +128,19 @@ pub struct TypeEntry {
     pub field_count: u32,
     /// Address of `field_count` raw `ValueRef`s of static field-name or variant-name Strings.
     pub field_names: u32,
-    /// Raw `ValueRef` of the static identity String of an enum, 0 for Object types.
+    /// Raw `ValueRef` of the static identity String of an enum, or of the source name of an
+    /// Object type.
     pub identity: u64,
     /// The nominal type id the entry describes.
     pub type_id: u32,
-    /// Reserved, keeps entries 8-byte aligned.
-    pub reserved: u32,
+    /// [`TYPE_ENTRY_OBJECT`] or [`TYPE_ENTRY_ENUM`].
+    pub kind: u32,
 }
+
+/// [`TypeEntry::kind`] of a nominal Object type.
+pub const TYPE_ENTRY_OBJECT: u32 = 0;
+/// [`TypeEntry::kind`] of an enum.
+pub const TYPE_ENTRY_ENUM: u32 = 1;
 
 /// The block of execution state at a linker-assigned address.
 #[repr(C)]

@@ -49,6 +49,8 @@ pub(super) struct Dispatch {
     instance: HashMap<String, Vec<Target>>,
     /// `ToString::to_string` implementations, which formatted strings call.
     to_string: Vec<Target>,
+    /// `Debug::debug` implementations, which the prelude's renderer calls for parts.
+    debug: Vec<Target>,
     /// `Iterator::next` implementations, which `for` loops over Objects call.
     iterator_next: Vec<Target>,
     /// Implementations selected by each source operator.
@@ -108,6 +110,10 @@ impl Dispatch {
                 if trait_name == TO_STRING_TRAIT && method.name.name == TO_STRING_METHOD {
                     dispatch.to_string.push(target.clone());
                 }
+                if trait_name == standard::DEBUG_TRAIT && method.name.name == standard::DEBUG_METHOD
+                {
+                    dispatch.debug.push(target.clone());
+                }
                 if trait_name == ITERATOR_TRAIT && method.name.name == ITERATOR_METHOD {
                     dispatch.iterator_next.push(target);
                 }
@@ -145,6 +151,11 @@ impl Dispatch {
     /// Returns the `ToString` implementations.
     pub(super) fn to_string(&self) -> &[Target] {
         &self.to_string
+    }
+
+    /// Returns the `Debug` implementations.
+    pub(super) fn debug(&self) -> &[Target] {
+        &self.debug
     }
 
     /// Returns the `Iterator::next` implementations.

@@ -20,7 +20,8 @@ fn executes_list_literals_index_assignment_and_push() {
     );
 }
 
-/// Uses identity equality for Lists and exposes the new length from `push`.
+/// Shares one List between aliases, compares Lists by content and exposes the new length
+/// from `push`.
 #[test]
 fn preserves_list_identity_and_returns_push_length() {
     assert_eq!(
@@ -30,7 +31,7 @@ fn preserves_list_identity_and_returns_push_length() {
                 let first = [1];
                 let alias = first;
                 let length = alias.push(2);
-                if first == alias && first != [1, 2] {
+                if first == alias && first == [1, 2] && first != [1] {
                     ret length;
                 }
                 ret 0;

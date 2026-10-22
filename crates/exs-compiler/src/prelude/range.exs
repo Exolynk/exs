@@ -79,3 +79,28 @@ impl Iterator for Range {
         ret IteratorStep::Item(item);
     }
 }
+
+impl Debug for Range {
+    /// Renders the remaining items in range syntax, or with the explicit step factory.
+    fn debug(self) -> String {
+        let operator = "..";
+        let factory = "Range::step";
+        if self.inclusive {
+            operator = "..=";
+            factory = "Range::step_through";
+        }
+        let unit = (self.step == 1 && self.current <= self.end)
+            || (self.step == -1 && self.current >= self.end);
+        if unit {
+            ret f"{self.current}{operator}{self.end}";
+        }
+        ret f"{factory}({self.current}, {self.end}, {self.step})";
+    }
+}
+
+impl ToString for Range {
+    /// Renders the Range like `debug`.
+    fn to_string(self) -> String {
+        ret self.debug();
+    }
+}

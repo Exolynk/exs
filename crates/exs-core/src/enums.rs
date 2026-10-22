@@ -75,6 +75,7 @@ pub(crate) fn host_enum(
     let identity_object = string_object(identity)?;
     let type_id = (0..crate::vm::Vm(vm).program_type_count(memory))
         .filter_map(|index| crate::typed::type_entry_at(memory, vm, index))
+        .filter(|entry| entry.kind == exs_layout::TYPE_ENTRY_ENUM)
         .find(|entry| {
             string_object(entry.identity).is_some_and(|declared| {
                 crate::strings::text(memory, declared)
@@ -209,7 +210,8 @@ pub(crate) fn resolve_enum(
     };
     let count = crate::vm::Vm(vm).program_type_count(memory);
     (0..count).find_map(|index| {
-        let entry = crate::typed::type_entry_at(memory, vm, index)?;
+        let entry = crate::typed::type_entry_at(memory, vm, index)
+            .filter(|entry| entry.kind == exs_layout::TYPE_ENTRY_ENUM)?;
         let type_id = entry.type_id;
         let name = string_object(entry.identity)?;
         if !same(name, identity) {

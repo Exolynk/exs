@@ -10,7 +10,7 @@ mod numbers;
 pub(crate) mod objects;
 mod statics;
 mod strings;
-mod values;
+pub(crate) mod values;
 
 pub(crate) use bytes::get as bytes_get;
 pub use dispatch::call_builtin;

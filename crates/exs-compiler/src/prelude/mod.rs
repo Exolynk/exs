@@ -24,6 +24,11 @@ const SOURCES: &[PreludeSource] = &[
         type_names: &[],
     },
     PreludeSource {
+        source_id: "<std>/render.exs",
+        text: include_str!("render.exs"),
+        type_names: &[],
+    },
+    PreludeSource {
         source_id: "<std>/collections.exs",
         text: include_str!("collections.exs"),
         type_names: &[],
@@ -67,6 +72,16 @@ pub(crate) fn type_names() -> impl Iterator<Item = &'static str> {
 /// the built-in `==`.
 pub(crate) const EQUALITY_HELPER: &str = "__exs_equal";
 
+/// The private prelude function that renders a composite in ExS literal syntax.
+pub(crate) const RENDER_HELPER: &str = "__exs_render";
+
+/// Type mask of the values the prelude renders: composites, built part by part, and Bytes,
+/// whose literal spelling the core escapes.
+pub(crate) const RENDERED: u32 = exs_layout::TYPE_LIST
+    | exs_layout::TYPE_OBJECT
+    | exs_layout::TYPE_ERROR
+    | exs_layout::TYPE_BYTES;
+
 /// A private prelude function implementing a built-in method for some receivers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MethodHelper {
@@ -77,13 +92,19 @@ pub(crate) struct MethodHelper {
 }
 
 /// Returns the private prelude helper implementing the built-in method `method` taking
-/// `arguments` arguments: the eager iterable methods for every receiver, and the List
-/// searches, which compare through `==`, for Lists.
+/// `arguments` arguments: the eager iterable methods for every receiver, the List searches,
+/// which compare through `==`, for Lists, and the rendering of composites.
 pub(crate) fn method_helper(method: &str, arguments: usize) -> Option<MethodHelper> {
     let iterable = |key| {
         Some(MethodHelper {
             key,
             receivers: exs_layout::TYPE_ANY,
+        })
+    };
+    let composite = |key| {
+        (arguments == 0).then_some(MethodHelper {
+            key,
+            receivers: RENDERED,
         })
     };
     let list = |key| {
@@ -106,6 +127,7 @@ pub(crate) fn method_helper(method: &str, arguments: usize) -> Option<MethodHelp
         "contains" => list("__exs_list_contains"),
         "index_of" => list("__exs_list_index_of"),
         "last_index_of" => list("__exs_list_last_index_of"),
+        "to_string" | "debug" => composite(RENDER_HELPER),
         _ => None,
     }
 }

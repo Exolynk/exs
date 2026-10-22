@@ -74,8 +74,12 @@ fn evaluates_numeric_methods() {
 fn evaluates_value_methods() {
     let mut execution = Execution::new();
     let list = execution.list(&[Execution::int(1), Execution::int(2)]);
+    // The prelude renders composites; the core's own text only marks them.
     let rendered = call(&mut execution, BuiltinMethod::ToString, list, 0);
-    assert_eq!(execution.text(rendered), "[]");
+    assert_eq!(execution.text(rendered), "[...]");
+    let quoted = execution.string("a\"b\n");
+    let debug = call(&mut execution, BuiltinMethod::Debug, quoted, 0);
+    assert_eq!(execution.text(debug), "\"a\\\"b\\n\"");
     let text = execution.string("äb");
     assert_eq!(
         call(&mut execution, BuiltinMethod::Length, text, 0),

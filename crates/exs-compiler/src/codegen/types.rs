@@ -252,6 +252,8 @@ pub(super) struct NominalType {
     pub(super) kind: NominalKind,
     /// Stable host-boundary identity when this nominal type is an enum.
     pub(super) enum_type_id: Option<String>,
+    /// Source name without a module prefix, as values render it.
+    pub(super) name: String,
 }
 
 /// The runtime construction category of one nominal type.
@@ -314,6 +316,7 @@ impl TypeRegistry {
                     fields: Vec::new(),
                     kind: NominalKind::Enum,
                     enum_type_id: Some(STANDARD_ORDERING_TYPE_IDENTITY.to_owned()),
+                    name: descriptor.name.to_owned(),
                 },
             );
         }
@@ -343,6 +346,7 @@ impl TypeRegistry {
                     fields: Vec::new(),
                     kind: NominalKind::Object,
                     enum_type_id: None,
+                    name: display_name(&declaration.name.name).to_owned(),
                 },
             );
         }
@@ -371,6 +375,7 @@ impl TypeRegistry {
                     fields: Vec::new(),
                     kind: NominalKind::Enum,
                     enum_type_id: Some(enum_identity(declaration)),
+                    name: display_name(&declaration.name.name).to_owned(),
                 },
             );
         }
@@ -694,6 +699,11 @@ fn merge_contract(target: &mut TypeContract, source: TypeContract) {
         (None, Some(source)) => target.list_item = Some(source),
         _ => {}
     }
+}
+
+/// Returns the source name of a type without the module prefix of its canonical name.
+fn display_name(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
 }
 
 /// Returns the resolver-derived identity used for one enum at the host boundary.

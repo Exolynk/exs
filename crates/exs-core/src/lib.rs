@@ -79,6 +79,7 @@ pub use numbers::{
 pub use objects::{object_lookup, object_with_shape};
 pub use parts::{equality, parts};
 pub use ranges::{RANGE_DONE, RANGE_FALLBACK, range_begin, range_finish, range_step};
+pub use render::{debug_text, field_names, key_text, type_name};
 pub use shapes::shape_for;
 pub use strings::{concat, format, string_object};
 pub use tasks::{

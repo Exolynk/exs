@@ -124,5 +124,5 @@ fn formats_every_value_with_default_texts() {
     let slots = execution.root(&values);
     let formatted =
         crate::format(&mut execution.memory, VM, slots, values.len() as u32).expect("room");
-    assert_eq!(execution.text(formatted), "v: None[]-4false");
+    assert_eq!(execution.text(formatted), "v: None[...]-4false");
 }

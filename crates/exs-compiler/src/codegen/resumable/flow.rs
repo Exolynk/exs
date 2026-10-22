@@ -69,20 +69,22 @@ impl<'a> StepEmitter<'a, '_> {
                 skip,
                 span,
             } => {
-                // Values of a type with a `ToString` implementation continue with its call.
-                if !type_ids.is_empty() {
-                    let local = self.load(*value);
-                    for (index, type_id) in type_ids.iter().enumerate() {
-                        self.instruction(Instruction::LocalGet(local));
-                        self.compiler.type_tag_test(*type_id, *span)?;
-                        if index > 0 {
-                            self.instruction(Instruction::I32Or);
-                        }
-                    }
-                    self.instruction(Instruction::If(BlockType::Empty));
-                    self.ready(next, *span)?;
-                    self.instruction(Instruction::End);
+                // Values of a type with a `ToString` implementation and composites, which the
+                // prelude renders, continue with the `to_string` call.
+                let local = self.load(*value);
+                self.instruction(Instruction::LocalGet(local));
+                crate::codegen::immediate::type_mask_test(
+                    &mut self.compiler.function,
+                    crate::prelude::RENDERED,
+                );
+                for type_id in type_ids {
+                    self.instruction(Instruction::LocalGet(local));
+                    self.compiler.type_tag_test(*type_id, *span)?;
+                    self.instruction(Instruction::I32Or);
                 }
+                self.instruction(Instruction::If(BlockType::Empty));
+                self.ready(next, *span)?;
+                self.instruction(Instruction::End);
                 self.append_slot(*builder, *value, *span)?;
                 self.ready(*skip, *span)?;
             }

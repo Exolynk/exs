@@ -524,10 +524,18 @@ impl<'a> FunctionCompiler<'a, '_> {
             self.store(block + offset);
             let context = self.context;
             let targets = context.dispatch.to_string();
-            if matches!(part, FormattedStringPart::Expression(_)) && !targets.is_empty() {
+            if matches!(part, FormattedStringPart::Expression(_)) {
+                // `ToString` implementations, then the prelude's renderer for composites; the
+                // core formats every other value.
                 let part = block + offset;
                 self.dispatch_chain(targets, part, &[], span, |compiler| {
                     compiler.instruction(Instruction::LocalGet(part));
+                    immediate::type_mask_test(&mut compiler.function, crate::prelude::RENDERED);
+                    compiler.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
+                    compiler.call_method(crate::prelude::RENDER_HELPER, part, &[], span)?;
+                    compiler.instruction(Instruction::Else);
+                    compiler.instruction(Instruction::LocalGet(part));
+                    compiler.instruction(Instruction::End);
                     Ok(())
                 })?;
                 self.store(part);

@@ -264,6 +264,46 @@ pub extern "C" fn __exs_core_equal(vm: i32, left: i64, right: i64) -> i32 {
     .cast_signed()
 }
 
+/// Returns the literal spelling of a value that is no composite, or None (see `exs_core::debug_text`).
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_debug_text(vm: i32, raw: i64) -> i64 {
+    value(exs_core::debug_text(
+        &mut memory(),
+        address(vm),
+        raw.cast_unsigned(),
+    ))
+}
+
+/// Returns an Object key as an Object literal spells it (see `exs_core::key_text`).
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_key_text(vm: i32, raw: i64) -> i64 {
+    value(exs_core::key_text(
+        &mut memory(),
+        address(vm),
+        raw.cast_unsigned(),
+    ))
+}
+
+/// Returns the name a nominal value or enum renders with, or None (see `exs_core::type_name`).
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_type_name(vm: i32, raw: i64) -> i64 {
+    value(exs_core::type_name(
+        &mut memory(),
+        address(vm),
+        raw.cast_unsigned(),
+    ))
+}
+
+/// Returns the field names of a nominal value, or None (see `exs_core::field_names`).
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_field_names(vm: i32, raw: i64) -> i64 {
+    value(exs_core::field_names(
+        &mut memory(),
+        address(vm),
+        raw.cast_unsigned(),
+    ))
+}
+
 /// Returns a new List of the parts of a composite value, or None (see `exs_core::parts`).
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_parts(vm: i32, raw: i64) -> i64 {

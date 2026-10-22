@@ -68,7 +68,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                                 skip: 0,
                                 span: *span,
                             });
-                            if !targets.is_empty() {
+                            {
                                 let rendered = self.temporary(*span)?;
                                 self.operations.push(Operation::InstanceCall {
                                     receiver: value,

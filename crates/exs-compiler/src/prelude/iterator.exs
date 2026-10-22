@@ -22,3 +22,17 @@ impl Iterator for HostStream {
         ret Host::call("__exs.host.stream_next", self.handle);
     }
 }
+
+impl Debug for HostStream {
+    /// Renders the stream without its runner handle.
+    fn debug(self) -> String {
+        ret "HostStream";
+    }
+}
+
+impl ToString for HostStream {
+    /// Renders the stream without its runner handle.
+    fn to_string(self) -> String {
+        ret "HostStream";
+    }
+}

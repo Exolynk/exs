@@ -403,6 +403,9 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 self.reference(identifier.name.as_str(), identifier.span)
             }
             Expression::FormattedString { parts, .. } => {
+                self.calls.push(CallEdge {
+                    key: crate::prelude::RENDER_HELPER.to_owned(),
+                });
                 if let Some(targets) = self.instance_targets.trait_method(
                     crate::codegen::standard::TO_STRING_TRAIT,
                     crate::codegen::standard::TO_STRING_METHOD,

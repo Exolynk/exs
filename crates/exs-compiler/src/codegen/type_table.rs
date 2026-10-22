@@ -31,7 +31,10 @@ impl TypeTable {
         let fields = types
             .nominal_types()
             .filter(|nominal| nominal.kind == NominalKind::Object && used.contains(&nominal.id))
-            .flat_map(|nominal| nominal.fields.iter().map(|field| field.name.as_str()));
+            .flat_map(|nominal| {
+                core::iter::once(nominal.name.as_str())
+                    .chain(nominal.fields.iter().map(|field| field.name.as_str()))
+            });
         let enums = types
             .enum_variants()
             .filter(|variant| used.contains(&variant.type_id))
@@ -77,21 +80,23 @@ impl TypeTable {
         let mut names = Vec::new();
         let names_base = base.checked_add(count.checked_mul(entry_size)?)?;
         for nominal in nominals {
-            let (listed, identity): (Vec<&str>, u64) = match (&nominal.kind, &nominal.enum_type_id)
-            {
-                (NominalKind::Enum, Some(identity)) => (
-                    Self::variant_names(types, nominal.id),
-                    *strings.get(identity)?,
-                ),
-                _ => (
-                    nominal
-                        .fields
-                        .iter()
-                        .map(|field| field.name.as_str())
-                        .collect(),
-                    0,
-                ),
-            };
+            let (listed, identity, kind): (Vec<&str>, u64, u32) =
+                match (&nominal.kind, &nominal.enum_type_id) {
+                    (NominalKind::Enum, Some(identity)) => (
+                        Self::variant_names(types, nominal.id),
+                        *strings.get(identity)?,
+                        exs_layout::TYPE_ENTRY_ENUM,
+                    ),
+                    _ => (
+                        nominal
+                            .fields
+                            .iter()
+                            .map(|field| field.name.as_str())
+                            .collect(),
+                        *strings.get(&nominal.name)?,
+                        exs_layout::TYPE_ENTRY_OBJECT,
+                    ),
+                };
             let address = names_base.checked_add(u32::try_from(names.len()).ok()?)?;
             for name in &listed {
                 names.extend(strings.get(*name)?.to_le_bytes());
@@ -101,15 +106,16 @@ impl TypeTable {
                 address,
                 identity,
                 nominal.id,
+                kind,
             ));
         }
         let mut bytes = Vec::with_capacity(entries.len() * entry_size as usize + names.len());
-        for (field_count, field_names, identity, type_id) in entries {
+        for (field_count, field_names, identity, type_id, kind) in entries {
             bytes.extend(field_count.to_le_bytes());
             bytes.extend(field_names.to_le_bytes());
             bytes.extend(identity.to_le_bytes());
             bytes.extend(type_id.to_le_bytes());
-            bytes.extend(0_u32.to_le_bytes());
+            bytes.extend(kind.to_le_bytes());
         }
         bytes.extend(names);
         Some(Self { base, count, bytes })

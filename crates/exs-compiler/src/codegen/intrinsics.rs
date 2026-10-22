@@ -1,6 +1,6 @@
 //! Prelude functions the compiler lowers itself.
 
-use wasm_encoder::{BlockType, Instruction};
+use wasm_encoder::{BlockType, Instruction, ValType};
 
 use super::function::{FunctionCompiler, error};
 use crate::ast::Expression;
@@ -35,11 +35,33 @@ pub(crate) enum Intrinsic {
     Same,
     /// `__exs_has_eq(value) -> Bool`: whether the value's type implements `Eq` or `Compare`.
     HasEq,
+    /// `__exs_debug_text(value) -> String | None`: the literal spelling of a value that is no
+    /// composite.
+    DebugText,
+    /// `__exs_key_text(key) -> String`: an Object key as an Object literal spells it.
+    KeyText,
+    /// `__exs_type_name(value) -> String | None`: the name a nominal value or enum renders with.
+    TypeName,
+    /// `__exs_field_names(value) -> List | None`: the field names of a nominal value.
+    FieldNames,
+    /// `__exs_custom_render(value) -> Int`: 1 when the value's type implements `Debug`, else 2
+    /// when it implements `ToString`, else 0.
+    CustomRender,
 }
 
 impl Intrinsic {
     /// Every intrinsic.
-    const ALL: [Self; 4] = [Self::Equality, Self::Parts, Self::Same, Self::HasEq];
+    const ALL: [Self; 9] = [
+        Self::Equality,
+        Self::Parts,
+        Self::Same,
+        Self::HasEq,
+        Self::DebugText,
+        Self::KeyText,
+        Self::TypeName,
+        Self::FieldNames,
+        Self::CustomRender,
+    ];
 
     /// Returns the intrinsic a call of `name` names, with or without a module prefix.
     pub(crate) fn from_name(name: &str) -> Option<Self> {
@@ -56,6 +78,11 @@ impl Intrinsic {
             Self::Parts => "__exs_parts",
             Self::Same => "__exs_same",
             Self::HasEq => "__exs_has_eq",
+            Self::DebugText => "__exs_debug_text",
+            Self::KeyText => "__exs_key_text",
+            Self::TypeName => "__exs_type_name",
+            Self::FieldNames => "__exs_field_names",
+            Self::CustomRender => "__exs_custom_render",
         }
     }
 
@@ -63,7 +90,7 @@ impl Intrinsic {
     const fn arity(self) -> usize {
         match self {
             Self::Equality | Self::Same => 2,
-            Self::Parts | Self::HasEq => 1,
+            _ => 1,
         }
     }
 }
@@ -138,11 +165,47 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.instruction(Instruction::LocalSet(equality));
                 immediate::push_small_int(&mut self.function, equality);
             }
-            Intrinsic::Parts => {
+            Intrinsic::Parts
+            | Intrinsic::DebugText
+            | Intrinsic::KeyText
+            | Intrinsic::TypeName
+            | Intrinsic::FieldNames => {
+                let export = match intrinsic {
+                    Intrinsic::Parts => "__exs_core_parts",
+                    Intrinsic::DebugText => "__exs_core_debug_text",
+                    Intrinsic::KeyText => "__exs_core_key_text",
+                    Intrinsic::TypeName => "__exs_core_type_name",
+                    _ => "__exs_core_field_names",
+                };
                 self.set_position(span)?;
                 self.push_vm();
                 self.instruction(Instruction::LocalGet(locals[0]));
-                self.core_call("__exs_core_parts", span)?;
+                self.core_call(export, span)?;
+            }
+            Intrinsic::CustomRender => {
+                let context = self.context;
+                let tested = |compiler: &mut Self, targets: &[super::dispatch::Target]| {
+                    compiler.instruction(Instruction::I32Const(0));
+                    for target in targets {
+                        compiler.instruction(Instruction::LocalGet(locals[0]));
+                        compiler.type_tag_test(target.type_id, span)?;
+                        compiler.instruction(Instruction::I32Or);
+                    }
+                    Ok::<(), CompileDiagnostics<'a>>(())
+                };
+                // 1 for Debug, else 2 for ToString, else 0.
+                tested(self, context.dispatch.debug())?;
+                self.instruction(Instruction::If(BlockType::Result(ValType::I64)));
+                self.instruction(Instruction::I64Const(1));
+                self.instruction(Instruction::Else);
+                tested(self, context.dispatch.to_string())?;
+                self.instruction(Instruction::I64ExtendI32U);
+                self.instruction(Instruction::I64Const(1));
+                self.instruction(Instruction::I64Shl);
+                self.instruction(Instruction::End);
+                let custom = self.scalar_local();
+                self.instruction(Instruction::LocalSet(custom));
+                immediate::push_small_int(&mut self.function, custom);
             }
             Intrinsic::Same => {
                 self.instruction(Instruction::LocalGet(locals[0]));

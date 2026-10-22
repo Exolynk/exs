@@ -110,7 +110,10 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
                         pending.push(crate::prelude::EQUALITY_HELPER.to_owned());
                     }
                 }
-                Expression::FormattedString { .. } => targets(dispatch.to_string(), &mut pending),
+                Expression::FormattedString { .. } => {
+                    targets(dispatch.to_string(), &mut pending);
+                    pending.push(crate::prelude::RENDER_HELPER.to_owned());
+                }
                 _ => {}
             });
         }

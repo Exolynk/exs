@@ -51,15 +51,15 @@ const ASYNC_CALL_LOOP_100_FUEL: u64 = 38_456;
 /// Fuel ceiling for 100 calls of a small resumable function.
 const RESUMABLE_CALL_LOOP_100_FUEL: u64 = 37_356;
 /// Fuel ceiling for 1000 iterations building one formatted line with two Ints.
-const FORMAT_LOOP_1000_FUEL: u64 = 1_736_492;
+const FORMAT_LOOP_1000_FUEL: u64 = 1_772_492;
 /// Fuel ceiling for 6000 short-lived Lists, enough allocations to trigger collections.
 const LIST_CHURN_6000_FUEL: u64 = 3_385_124;
 /// Fuel ceiling for 1000 calls of a small typed function.
 const SYNC_CALL_LOOP_1000_FUEL: u64 = 217_356;
 /// Fuel ceiling for parsing and formatting 100 RFC 3339 DateTimes.
-const DATETIME_ROUNDTRIP_100_FUEL: u64 = 3_159_571;
+const DATETIME_ROUNDTRIP_100_FUEL: u64 = 3_180_003;
 /// Fuel ceiling for the Exolynk-style round trip of 20 records.
-const RECORD_ROUNDTRIP_20_FUEL: u64 = 1_882_864;
+const RECORD_ROUNDTRIP_20_FUEL: u64 = 1_887_530;
 
 /// Compiles and executes one scenario with a Winch runner and returns its execution report.
 fn execute_report(scenario: &Scenario) -> ExecutionReport {

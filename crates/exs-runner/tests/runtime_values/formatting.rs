@@ -73,17 +73,17 @@ fn renders_values_through_to_string_and_debug() {
             ExsValue::String("User(Ada)".to_owned()),
             ExsValue::String("User { name: Ada }".to_owned()),
             ExsValue::String("None".to_owned()),
-            ExsValue::String("Error".to_owned()),
+            ExsValue::String(r#"Error("Example", "message", None)"#.to_owned()),
             ExsValue::String("true".to_owned()),
             ExsValue::String("42".to_owned()),
             ExsValue::String("1.5".to_owned()),
             ExsValue::String("text".to_owned()),
             ExsValue::String("[]".to_owned()),
             ExsValue::String("{}".to_owned()),
-            ExsValue::String("test.exs::State::Ready".to_owned()),
-            ExsValue::String("fn main()".to_owned()),
-            ExsValue::String("{}".to_owned()),
-            ExsValue::String("test.exs::State::Ready".to_owned()),
+            ExsValue::String("State::Ready".to_owned()),
+            ExsValue::String("Fn".to_owned()),
+            ExsValue::String("Plain {}".to_owned()),
+            ExsValue::String("State::Ready".to_owned()),
         ]),
     );
 }
@@ -139,7 +139,7 @@ fn formats_all_value_kinds_in_sync_and_resumable_functions() {
         [
             "",
             "plain",
-            "1|-42|1.5|true|None|s|[]|{}|{}|test.exs::State::Ready|test.exs::State::Busy|Bytes(2)",
+            r#"1|-42|1.5|true|None|s|[1]|{}|Plain {}|State::Ready|State::Busy(2)|b"ab""#,
             "User(Ada) and #7",
             "ab1cd",
         ]
