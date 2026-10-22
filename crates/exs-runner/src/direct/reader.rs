@@ -44,14 +44,15 @@ pub(crate) fn is_direct(store: &mut Store<host_abi::HostAbiState>, instance: &In
 }
 
 /// Returns the address of the VM state block of the direct-boundary module of `instance`.
-fn vm_address(
+async fn vm_address(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
 ) -> Result<u32, RunnerError> {
     let vm = instance
         .get_typed_func::<(), i32>(&mut *store, VM_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?
-        .call(&mut *store, ())
+        .call_async(&mut *store, ())
+        .await
         .map_err(crate::wasmtime_error)?;
     Ok(vm.cast_unsigned())
 }
@@ -60,7 +61,7 @@ fn vm_address(
 ///
 /// A result that cannot cross the boundary becomes a fatal SerializationError
 /// without origin and trace.
-pub(crate) fn result(
+pub(crate) async fn result(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     limits: &ExecutionLimits,
@@ -68,10 +69,11 @@ pub(crate) fn result(
     let raw = instance
         .get_typed_func::<(), i64>(&mut *store, RESULT_VALUE_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?
-        .call(&mut *store, ())
+        .call_async(&mut *store, ())
+        .await
         .map_err(crate::wasmtime_error)?
         .cast_unsigned();
-    let vm = vm_address(store, instance)?;
+    let vm = vm_address(store, instance).await?;
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| RunnerError::Abi("missing exported linear memory".to_owned()))?;

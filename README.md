@@ -83,7 +83,9 @@ let pages = document_libraries(&mut resolver)?.markdown(&MarkdownOptions {
 
 ### Server runner
 
-`ServerRunner::new` takes a `ServerRunnerConfig` with the memory, fuel and wall-clock limits, the protection level for host-side resources, the Wasmtime compiler strategy and the module cache size. Every field has a default suited to untrusted source:
+`ServerRunner::new` takes a `ServerRunnerConfig` with the memory, fuel and wall-clock limits, the protection level for host-side resources, the Wasmtime compiler strategy and the module cache size. Every field has a default suited to untrusted source.
+
+`execute` is an ordinary future that works with any executor. Running guest code yields to the executor every 100,000 fuel, so a busy script does not block the executor thread, and it stops at its wall-clock limit or cancellation. One process-wide timer thread serves the deadlines of all executions and `Host::sleep`; an execution starts no thread of its own.
 
 ```rust
 let mut runner = ServerRunner::new(ServerRunnerConfig {
@@ -123,7 +125,6 @@ Both runners also support runner-registered pull streams through `Host::stream(n
 
 ## Open Points
 
-- One native OS thread is created per execution deadline; concurrent slow executions can exhaust threads. Share one timer or epoch ticker and add a runner-level concurrency limit.
 - CI does not verify that the committed `exs-core-template.wasm` matches its source; builds on macOS and Linux currently differ.
 - The Exolynk embedding still has to move to library modules, `private`, and the documentation options.
 - Optimizations: host-name caching, direct-operation specialization, root-frame reduction, and inlining.

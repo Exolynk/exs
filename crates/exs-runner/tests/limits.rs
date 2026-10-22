@@ -226,3 +226,82 @@ fn rejects_modules_missing_runner_task_metering_imports() {
     let result = block_on(runner.execute(&empty_wasm_module, "main", &[], &cancellation));
     assert!(matches!(result, Err(RunnerError::Abi(message)) if message.contains("task-metering")));
 }
+
+/// Yields to the executor while guest code runs, so a busy loop does not block the thread that
+/// polls it, and still ends at the timeout.
+#[test]
+fn yields_to_the_executor_while_guest_code_runs() {
+    use std::future::Future;
+    use std::pin::pin;
+    use std::task::{Context, Poll, Waker};
+
+    let compiled = compile_source("fn main() { while true {} }");
+    let runner = runner(
+        16 * 1024 * 1024,
+        u64::MAX,
+        Duration::from_millis(200),
+        ProtectionLevel::Standard,
+    );
+    let cancellation = ExecutionCancellation::new();
+    let mut execution = pin!(runner.execute(&compiled.wasm, "main", &[], &cancellation));
+    let mut context = Context::from_waker(Waker::noop());
+    let mut yields = 0_u32;
+    let result = loop {
+        match execution.as_mut().poll(&mut context) {
+            Poll::Ready(result) => break result,
+            Poll::Pending => yields += 1,
+        }
+    };
+    assert!(yields > 1, "the busy loop never yielded");
+    assert!(matches!(
+        result,
+        Err(RunnerError::LimitExceeded(LimitKind::Timeout))
+    ));
+}
+
+/// Times out many executions waiting on host futures at once, which the shared timer wakes
+/// without a thread per execution.
+#[test]
+fn times_out_many_pending_executions_together() {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll, Waker};
+
+    let compiled = compile_source("fn main() { Host::call(\"wait\"); }");
+    let mut runner = runner(
+        16 * 1024 * 1024,
+        10_000_000,
+        Duration::from_millis(50),
+        ProtectionLevel::Standard,
+    );
+    assert!(
+        runner
+            .registry_mut()
+            .fn_async_raw("wait", |_| std::future::pending::<ExsValue>())
+            .is_ok()
+    );
+    let cancellation = ExecutionCancellation::new();
+    let mut executions: Vec<Pin<Box<dyn Future<Output = _>>>> = (0..200)
+        .map(|_| {
+            Box::pin(runner.execute(&compiled.wasm, "main", &[], &cancellation))
+                as Pin<Box<dyn Future<Output = _>>>
+        })
+        .collect();
+    let mut context = Context::from_waker(Waker::noop());
+    let mut timeouts = 0;
+    while !executions.is_empty() {
+        executions.retain_mut(|execution| match execution.as_mut().poll(&mut context) {
+            Poll::Ready(result) => {
+                assert!(matches!(
+                    result,
+                    Err(RunnerError::LimitExceeded(LimitKind::Timeout))
+                ));
+                timeouts += 1;
+                false
+            }
+            Poll::Pending => true,
+        });
+        thread::yield_now();
+    }
+    assert_eq!(timeouts, 200);
+}

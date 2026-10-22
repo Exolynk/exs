@@ -31,11 +31,13 @@ module_name_repetitions = "allow"
 [workspace.dependencies]
 wasm-encoder = { version = "0.245.1", features = ["wasmparser"] }
 wasmparser = "0.245.1"
-# Only the core runtime and the two code generators: no component model, GC, threads, async,
-# caching, profiling or debugging support, and no WebAssembly text parsing.
+# Only the core runtime, async execution and the two code generators: no component model, GC,
+# threads, caching, profiling or debugging support, and no WebAssembly text parsing. Async lets
+# running guest code yield to the executor.
 wasmtime = { version = "47.0.3", default-features = false, features = [
     "std",
     "runtime",
+    "async",
     "cranelift",
     "winch",
     "parallel-compilation",

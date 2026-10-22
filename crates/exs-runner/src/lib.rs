@@ -179,7 +179,7 @@ impl ServerRunner {
             .map_err(|error| RunnerError::Wasm(error.to_string()))?;
         check_task_metering_imports(&module)?;
         let deadline = deadline::ExecutionDeadline::new(engine.clone(), self.limits.timeout)
-            .map_err(|error| {
+            .map_err(|error: String| {
                 RunnerError::Wasm(format!("could not start execution deadline: {error}"))
             })?;
         let mut store = Store::new(
@@ -198,10 +198,14 @@ impl ServerRunner {
         store.set_epoch_deadline(1);
         let mut linker = Linker::new(&engine);
         host_abi::define(&mut linker).map_err(|error| RunnerError::Wasm(error.to_string()))?;
+        store
+            .fuel_async_yield_interval(Some(YIELD_FUEL))
+            .map_err(|error| RunnerError::Wasm(error.to_string()))?;
         let instance = linker
-            .instantiate(&mut store, &module)
+            .instantiate_async(&mut store, &module)
+            .await
             .map_err(wasmtime_error)?;
-        check_abi(&mut store, &instance)?;
+        check_abi(&mut store, &instance).await?;
         if direct::is_direct(&mut store, &instance) {
             store.data_mut().use_direct_boundary();
         } else if instance
@@ -216,7 +220,7 @@ impl ServerRunner {
         let compile_time = execution_started_at.elapsed();
         let run_started_at = std::time::Instant::now();
         let (input_pointer, input_length) =
-            write_input(&mut store, &instance, inputs, &self.limits)?;
+            write_input(&mut store, &instance, inputs, &self.limits).await?;
         let start = instance
             .get_typed_func::<(i32, i32), i32>(&mut store, &entry_export_name(function))
             .map_err(|error| RunnerError::Abi(error.to_string()))?;
@@ -225,7 +229,12 @@ impl ServerRunner {
             if interruption.is_cancelled() {
                 return Err(RunnerError::Cancelled);
             }
-            start.call(&mut store, (input_pointer, input_length))
+            guarded(
+                start.call_async(&mut store, (input_pointer, input_length)),
+                &deadline,
+                cancellation,
+            )
+            .await?
         }
         .map_err(|error| execution_error(&mut store, &deadline, cancellation, error))?;
         let mut pending = Vec::new();
@@ -239,9 +248,9 @@ impl ServerRunner {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
                     let result = if store.data().boundary() == host_abi::Boundary::Direct {
-                        direct::result(&mut store, &instance, &self.limits)?
+                        direct::result(&mut store, &instance, &self.limits).await?
                     } else {
-                        result(&mut store, &instance, &self.limits)?
+                        result(&mut store, &instance, &self.limits).await?
                     };
                     let execution_time = run_started_at.elapsed();
                     if deadline.is_expired() {
@@ -295,7 +304,7 @@ impl ServerRunner {
                             if deadline.is_expired() {
                                 return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                             }
-                            cancel_execution(&mut store, &instance)?;
+                            cancel_execution(&mut store, &instance).await?;
                             return Err(RunnerError::Cancelled);
                         }
                     };
@@ -308,11 +317,11 @@ impl ServerRunner {
                         ));
                     }
                     if cancellation.is_cancelled() {
-                        cancel_execution(&mut store, &instance)?;
+                        cancel_execution(&mut store, &instance).await?;
                         return Err(RunnerError::Cancelled);
                     }
                     let (pointer, length) =
-                        write_response(&mut store, &instance, &response, &self.limits)?;
+                        write_response(&mut store, &instance, &response, &self.limits).await?;
                     let resume = instance
                         .get_typed_func::<(i64, i32, i32), i32>(&mut store, RESUME_HOST_EXPORT)
                         .map_err(|error| RunnerError::Abi(error.to_string()))?;
@@ -321,7 +330,12 @@ impl ServerRunner {
                         if interruption.is_cancelled() {
                             return Err(RunnerError::Cancelled);
                         }
-                        resume.call(&mut store, (call_id, pointer, length))
+                        guarded(
+                            resume.call_async(&mut store, (call_id, pointer, length)),
+                            &deadline,
+                            cancellation,
+                        )
+                        .await?
                     }
                     .map_err(|error| execution_error(&mut store, &deadline, cancellation, error))?;
                 }
@@ -402,14 +416,42 @@ fn entry_export_name(function: &str) -> String {
 
 /// Cancels the active scheduler task in one suspended resumable module.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn cancel_execution(
+async fn cancel_execution(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
 ) -> Result<(), RunnerError> {
     let cancel = instance
         .get_typed_func::<(), ()>(&mut *store, CANCEL_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;
-    cancel.call(&mut *store, ()).map_err(wasmtime_error)
+    cancel
+        .call_async(&mut *store, ())
+        .await
+        .map_err(wasmtime_error)
+}
+
+/// Fuel the guest consumes between two yields to the executor.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+const YIELD_FUEL: u64 = 100_000;
+
+/// Runs one guest call, which yields to the executor every [`YIELD_FUEL`], until it
+/// returns; stops it when the deadline expires or the execution is cancelled.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+async fn guarded<Output>(
+    call: impl Future<Output = wasmtime::Result<Output>>,
+    deadline: &deadline::ExecutionDeadline,
+    cancellation: &ExecutionCancellation,
+) -> Result<wasmtime::Result<Output>, RunnerError> {
+    let mut call = std::pin::pin!(call);
+    poll_fn(|context| {
+        if cancellation.is_cancelled() {
+            return Poll::Ready(Err(RunnerError::Cancelled));
+        }
+        if deadline.is_expired() {
+            return Poll::Ready(Err(RunnerError::LimitExceeded(LimitKind::Timeout)));
+        }
+        call.as_mut().poll(context).map(Ok)
+    })
+    .await
 }
 
 /// Converts a failed native Wasm call into a recorded limit error or technical runner error.
@@ -500,7 +542,7 @@ fn boundary_error(error: BoundaryError, context: &str) -> RunnerError {
 
 /// Encodes one completed asynchronous response into the runtime-owned reusable input buffer.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn write_response(
+async fn write_response(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     response: &ExsValue,
@@ -512,7 +554,10 @@ fn write_response(
     let allocate = instance
         .get_typed_func::<i32, i32>(&mut *store, INPUT_ALLOC_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;
-    let pointer = allocate.call(&mut *store, length).map_err(wasmtime_error)?;
+    let pointer = allocate
+        .call_async(&mut *store, length)
+        .await
+        .map_err(wasmtime_error)?;
     let pointer_usize = usize::try_from(pointer)
         .map_err(|_| RunnerError::Abi("negative response pointer".to_owned()))?;
     let memory = instance
@@ -526,13 +571,14 @@ fn write_response(
 
 /// Decodes the result image of a completed Rust guest.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn result(
+async fn result(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     limits: &ExecutionLimits,
 ) -> Result<ExsValue, RunnerError> {
-    let location =
-        call_result_accessor::<i64>(store, instance, RESULT_IMAGE_EXPORT)?.cast_unsigned();
+    let location = call_result_accessor::<i64>(store, instance, RESULT_IMAGE_EXPORT)
+        .await?
+        .cast_unsigned();
     let memory = instance
         .get_memory(&mut *store, "memory")
         .ok_or_else(|| RunnerError::Abi("missing exported linear memory".to_owned()))?;
@@ -556,7 +602,7 @@ fn result(
 
 /// Encodes ordered main arguments and writes them to the runtime-owned input buffer.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn write_input(
+async fn write_input(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     inputs: &[ExsValue],
@@ -569,7 +615,10 @@ fn write_input(
     let allocate = instance
         .get_typed_func::<i32, i32>(&mut *store, INPUT_ALLOC_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;
-    let pointer = allocate.call(&mut *store, length).map_err(wasmtime_error)?;
+    let pointer = allocate
+        .call_async(&mut *store, length)
+        .await
+        .map_err(wasmtime_error)?;
     let pointer = usize::try_from(pointer)
         .map_err(|_| RunnerError::Abi("negative input pointer".to_owned()))?;
     let memory = instance
@@ -585,31 +634,33 @@ fn write_input(
 
 /// Calls one zero-argument runtime result accessor.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn call_result_accessor<Return>(
+async fn call_result_accessor<Return>(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
     name: &str,
 ) -> Result<Return, RunnerError>
 where
-    Return: wasmtime::WasmResults,
+    Return: wasmtime::WasmResults + Send + Sync,
 {
     instance
         .get_typed_func::<(), Return>(&mut *store, name)
         .map_err(|error| RunnerError::Abi(error.to_string()))?
-        .call(&mut *store, ())
+        .call_async(&mut *store, ())
+        .await
         .map_err(wasmtime_error)
 }
 
 /// Checks the versioned ABI before starting program code.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn check_abi(
+async fn check_abi(
     store: &mut Store<host_abi::HostAbiState>,
     instance: &Instance,
 ) -> Result<(), RunnerError> {
     let version = instance
         .get_typed_func::<(), i32>(&mut *store, ABI_VERSION_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?
-        .call(&mut *store, ())
+        .call_async(&mut *store, ())
+        .await
         .map_err(wasmtime_error)?;
     if version != ABI_VERSION.cast_signed() {
         return Err(RunnerError::Abi(format!(

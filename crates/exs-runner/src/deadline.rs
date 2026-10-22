@@ -1,13 +1,16 @@
 //! Wall-clock deadline coordination for one native runner execution.
+//!
+//! The process-wide timer thread, not a thread of the execution's own, fires the deadline.
 
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::Waker;
-use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use wasmtime::Engine;
 
-/// Shared state observed by the execution thread and its deadline timer.
+use crate::timer::{self, TimerAction};
+
+/// Shared state observed by the execution and its deadline timer.
 struct DeadlineState {
     /// Whether the root execution has completed and the timer may exit.
     completed: bool,
@@ -38,27 +41,24 @@ pub(crate) struct ExecutionDeadline {
     /// Configured duration after which the execution must not report success.
     timeout: Duration,
     /// Shared expiry state and pending host-future wakers.
-    state: Arc<(Mutex<DeadlineState>, Condvar)>,
-    /// Deadline thread joined after the root execution finishes.
-    timer: Option<JoinHandle<()>>,
+    state: Arc<Mutex<DeadlineState>>,
+    /// The expiry scheduled on the shared timer, cancelled when the execution ends.
+    timer: Option<TimerAction>,
 }
 
 impl ExecutionDeadline {
     /// Starts a deadline that interrupts `engine` after `timeout`.
-    pub(crate) fn new(engine: Engine, timeout: Duration) -> std::io::Result<Self> {
+    pub(crate) fn new(engine: Engine, timeout: Duration) -> Result<Self, String> {
         let started_at = Instant::now();
-        let state = Arc::new((Mutex::new(DeadlineState::default()), Condvar::new()));
+        let state = Arc::new(Mutex::new(DeadlineState::default()));
         let timer_state = Arc::clone(&state);
-        let timer = thread::Builder::new()
-            .name("exs-runner-deadline".to_owned())
-            .spawn(move || {
+        let expires_at = started_at.checked_add(timeout).unwrap_or(started_at);
+        let timer = timer::at(
+            expires_at,
+            Box::new(move || {
                 let wakers = {
-                    let (lock, condition) = &*timer_state;
-                    let state = lock_state(lock);
-                    let (mut state, wait) = condition
-                        .wait_timeout_while(state, timeout, |state| !state.completed)
-                        .unwrap_or_else(PoisonError::into_inner);
-                    if state.completed || !wait.timed_out() {
+                    let mut state = lock_state(&timer_state);
+                    if state.completed {
                         return;
                     }
                     state.expired = true;
@@ -68,7 +68,8 @@ impl ExecutionDeadline {
                 for (_, waker) in wakers {
                     waker.wake();
                 }
-            })?;
+            }),
+        )?;
         Ok(Self {
             started_at,
             timeout,
@@ -82,8 +83,7 @@ impl ExecutionDeadline {
         if self.started_at.elapsed() >= self.timeout {
             return true;
         }
-        let (lock, _) = &*self.state;
-        lock_state(lock).expired
+        lock_state(&self.state).expired
     }
 
     /// Returns the monotonic instant at which this execution must time out.
@@ -95,8 +95,7 @@ impl ExecutionDeadline {
 
     /// Registers or refreshes one executor waker while a host future is pending.
     pub(crate) fn register_waker(&self, registration: &mut Option<u64>, waker: &Waker) {
-        let (lock, _) = &*self.state;
-        let mut state = lock_state(lock);
+        let mut state = lock_state(&self.state);
         if state.expired || state.completed {
             return;
         }
@@ -125,8 +124,7 @@ impl ExecutionDeadline {
         let Some(identifier) = registration.take() else {
             return;
         };
-        let (lock, _) = &*self.state;
-        let mut state = lock_state(lock);
+        let mut state = lock_state(&self.state);
         if let Some(position) = state
             .wakers
             .iter()
@@ -138,17 +136,10 @@ impl ExecutionDeadline {
 }
 
 impl Drop for ExecutionDeadline {
-    /// Stops and joins the timer once the root execution has returned.
+    /// Cancels the scheduled expiry once the root execution has returned.
     fn drop(&mut self) {
-        {
-            let (lock, condition) = &*self.state;
-            let mut state = lock_state(lock);
-            state.completed = true;
-            condition.notify_one();
-        }
-        if let Some(timer) = self.timer.take() {
-            let _ = timer.join();
-        }
+        lock_state(&self.state).completed = true;
+        self.timer.take();
     }
 }
 

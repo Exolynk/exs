@@ -1,4 +1,5 @@
-//! Shared cancellable timers used by native asynchronous host capabilities.
+//! Shared cancellable timers used by native asynchronous host capabilities and execution
+//! deadlines: one process-wide thread serves every execution.
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -14,15 +15,42 @@ static TIMER: OnceLock<Result<Arc<TimerService>, String>> = OnceLock::new();
 
 /// Starts one sleep on the shared timer service.
 pub(crate) fn sleep(duration: Duration) -> Result<TimerSleep, String> {
-    let timer = match TIMER.get_or_init(|| {
+    Ok(service()?.schedule(duration))
+}
+
+/// Runs `action` on the shared timer thread at `deadline`, unless the returned registration
+/// is dropped first.
+pub(crate) fn at(
+    deadline: Instant,
+    action: Box<dyn FnOnce() + Send>,
+) -> Result<TimerAction, String> {
+    let timer = service()?;
+    let completion = Arc::new(TimerCompletion {
+        action: Mutex::new(Some(action)),
+        ..TimerCompletion::default()
+    });
+    let identifier = timer.register(deadline, completion);
+    Ok(TimerAction {
+        _registration: TimerRegistration { timer, identifier },
+    })
+}
+
+/// Returns the shared timer service, starting it on first use.
+fn service() -> Result<Arc<TimerService>, String> {
+    match TIMER.get_or_init(|| {
         TimerService::new()
             .map(Arc::new)
             .map_err(|error| error.to_string())
     }) {
-        Ok(timer) => Arc::clone(timer),
-        Err(error) => return Err(error.clone()),
-    };
-    Ok(timer.schedule(duration))
+        Ok(timer) => Ok(Arc::clone(timer)),
+        Err(error) => Err(error.clone()),
+    }
+}
+
+/// An action scheduled on the shared timer, cancelled when dropped.
+pub(crate) struct TimerAction {
+    /// Registration removed when this action is dropped.
+    _registration: TimerRegistration,
 }
 
 /// One shared timer scheduler backed by a single native thread.
@@ -50,18 +78,7 @@ impl TimerService {
                 .checked_add(Duration::from_secs(365 * 24 * 60 * 60))
                 .unwrap_or_else(Instant::now)
         });
-        let identifier = {
-            let (lock, condition) = &*self.state;
-            let mut state = lock_state(lock);
-            let identifier = state.next_identifier;
-            state.next_identifier = state.next_identifier.wrapping_add(1);
-            state.pending.insert(identifier, deadline);
-            state
-                .deadlines
-                .insert((deadline, identifier), Arc::clone(&completion));
-            condition.notify_one();
-            identifier
-        };
+        let identifier = self.register(deadline, Arc::clone(&completion));
         TimerSleep {
             completion,
             registration: Some(TimerRegistration {
@@ -69,6 +86,18 @@ impl TimerService {
                 identifier,
             }),
         }
+    }
+
+    /// Registers `completion` to complete at `deadline` and returns its identifier.
+    fn register(&self, deadline: Instant, completion: Arc<TimerCompletion>) -> u64 {
+        let (lock, condition) = &*self.state;
+        let mut state = lock_state(lock);
+        let identifier = state.next_identifier;
+        state.next_identifier = state.next_identifier.wrapping_add(1);
+        state.pending.insert(identifier, deadline);
+        state.deadlines.insert((deadline, identifier), completion);
+        condition.notify_one();
+        identifier
     }
 
     /// Removes one unfinished timer so its deadline no longer retains state.
@@ -103,19 +132,29 @@ impl Default for TimerState {
     }
 }
 
-/// Shared completion signal and latest blocked executor waker.
+/// Shared completion signal, latest blocked executor waker and scheduled action.
 #[derive(Default)]
 struct TimerCompletion {
     /// Whether the timer has expired and its sleep may complete.
     completed: AtomicBool,
     /// Latest executor waker to notify when the timer expires.
     waker: Mutex<Option<Waker>>,
+    /// Action to run when the timer expires.
+    action: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TimerCompletion {
-    /// Marks the timer as complete and wakes its latest poller.
+    /// Marks the timer as complete, runs its action and wakes its latest poller.
     fn complete(&self) {
         self.completed.store(true, Ordering::Release);
+        let action = self
+            .action
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(action) = action {
+            action();
+        }
         let mut waker = lock_waker(&self.waker);
         if let Some(waker) = waker.take() {
             waker.wake();
