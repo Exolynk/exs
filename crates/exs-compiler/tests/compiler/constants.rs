@@ -53,12 +53,12 @@ fn resolves_constants_across_modules() {
     assert!(compiled.is_ok(), "{:?}", compiled.err());
 }
 
-/// Formats constants as one group before the other declarations.
+/// Formats consecutive constants as one group in their source position.
 #[test]
 fn formats_constants() {
     let formatted = match format(SourceInput {
         source_id: "./main.exs",
-        text: "fn main(){ret A;}\nconst A=1;\nprivate const B=-2;",
+        text: "const A=1;\nprivate const B=-2;\nfn main(){ret A;}",
     }) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),

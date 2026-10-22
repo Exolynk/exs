@@ -100,6 +100,9 @@ impl Formatter {
             .chain(module.functions.iter().map(Declaration::Function))
             .chain(module.tests.iter().map(Declaration::Test))
             .collect::<Vec<_>>();
+        // Declarations keep their source order, so comments stay with their declaration.
+        let mut declarations = declarations;
+        declarations.sort_by_key(|declaration| declaration.span().start_byte);
         for (index, declaration) in declarations.iter().enumerate() {
             let declaration_start = declaration.span().start_byte as usize;
             // Consecutive constants form one group without blank lines.

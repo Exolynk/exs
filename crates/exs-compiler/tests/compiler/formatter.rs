@@ -174,3 +174,22 @@ fn formats_match_block_arms() {
         "enum Color {\n    Transparent,\n}\n\nfn main(value: Color) -> Int {\n    ret match value { Color::Transparent => { ret -1; } };\n}\n"
     );
 }
+
+/// Keeps declarations in source order, so their comments stay with them.
+#[test]
+fn keeps_declarations_in_source_order() {
+    let source = "// Helpers\n/// Helper.\nfn helper() { ret 1; }\n\n// Types\n/// A point.\ntype Point { x: Int }\n\nfn main() { ret helper(); }\n";
+    let formatted = match format(SourceInput {
+        source_id: "./main.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    assert!(
+        formatted.starts_with(
+            "// Helpers\n/// Helper.\nfn helper() {\n    ret 1;\n}\n\n// Types\n/// A point.\ntype Point {"
+        ),
+        "{formatted}"
+    );
+}
