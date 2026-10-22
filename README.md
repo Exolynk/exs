@@ -7,20 +7,20 @@ The Exolynk Script and it's architecture definition is located at [SPECIFICATION
 ## Architecture
 
 ```text
-ExS source -> compiler + embedded exs-runtime.wasm -> final Wasm module
+ExS source -> compiler + embedded exs-core-template.wasm -> final Wasm module
                                                                |
                                                      server or browser runner
                                                                |
                                                               host
 ```
 
-The `exs-runtime` executes inside the final Wasm module. A runner executes outside the module, supplies the Host ABI, and enforces execution limits. The compiler and runtime communicate only through stable named ABI exports; neither relies on fixed Wasm function indices.
+Values live in the module's linear memory in the layout of `exs-layout`. The compiler generates the program's code and links the stateless functions of the core library (`exs-core`, embedded as `exs-core-template.wasm`) into the final Wasm module. A runner executes outside the module, supplies the Host ABI, and enforces execution limits. It passes inputs and host responses as images the module adopts without parsing, and reads results and host-call arguments directly from the module's memory. Rust guests built with `exs-guest` exchange every value as an image.
 
 ## Development Rules
 
 - Stable Rust is required.
 - `wasm-encoder`, `wasmparser`, and `wasmtime` are approved dependencies for the initial implementation.
-- `crates/exs-runtime/exs-runtime.wasm` is a committed Rust-compiled artifact embedded by the `exs-runtime` crate. Compiler users never build it themselves.
+- `crates/exs-core-template/exs-core-template.wasm` is a committed Rust-compiled artifact embedded by the compiler. Compiler users never build it themselves; after changes to `exs-core` or the template, rebuild it with `nu crates/exs-core-template/build-template.nu`.
 - Run `cargo fmt`, `cargo test`, `cargo check`, and `cargo clippy` after Rust changes.
 - Invoke a program with positional values using `exs run app.exs -- 1 Ada "[3, 'four']"`.
 
@@ -46,4 +46,4 @@ The browser feature uses the application's `wasm-bindgen` JavaScript glue to ins
 
 Both runners also support runner-registered pull streams through `Host::stream(name, arguments...)`. Native registrations implement `HostStream`; browser registrations implement `BrowserHostStream`. Stream state is isolated to each execution and released on completion, cancellation, or `IteratorStep::Done`.
 
-`BrowserRunner` executes Wasm on the calling JavaScript thread and does not enforce fuel, wall-clock, memory, task, host-call, or CBOR limits. It must therefore run untrusted ExS source inside a dedicated Web Worker. The embedding application owns the Worker lifecycle and should terminate it when its resource policy is exceeded; executing untrusted code on the main thread can freeze the user interface.
+`BrowserRunner` executes Wasm on the calling JavaScript thread and does not enforce fuel, wall-clock, memory, task, or host-call limits. It must therefore run untrusted ExS source inside a dedicated Web Worker. The embedding application owns the Worker lifecycle and should terminate it when its resource policy is exceeded; executing untrusted code on the main thread can freeze the user interface.

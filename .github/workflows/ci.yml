@@ -31,16 +31,16 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Lint Wasm runtime
-        run: cargo clippy -p exs-runtime --lib --target wasm32-unknown-unknown -- -D warnings
+      - name: Lint Wasm core template
+        run: cargo clippy -p exs-core-template --features template --lib --target wasm32-unknown-unknown -- -D warnings
       - name: Test workspace
         run: cargo test --workspace
       - name: Build Rust guest example
         run: cargo build -p exs-rust-guest --target wasm32-unknown-unknown
       - name: Build no-std Rust guest library
         run: cargo build -p exs-guest --no-default-features --features no-std --target wasm32-unknown-unknown
-      - name: Build runtime Wasm template
-        run: cargo rustc -p exs-runtime --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory
+      - name: Build core Wasm template
+        run: cargo rustc -p exs-core-template --features template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory -C link-arg=-zstack-size=262144
       - name: Install Trunk
         run: cargo install trunk --locked
       - name: Build playground

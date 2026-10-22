@@ -167,7 +167,7 @@ Because the boundary may change, the guest-side CBOR encoding can go away:
 - **Host calls:** the same direct exchange for arguments and results.
 - **Browser runner and `exs-guest`:** the browser runner uses the same direct boundary, reading
   module memory page by page through JavaScript; Rust guests exchange every value as an image
-  (phase 6, section 12za). Only v1 modules still use CBOR.
+  (phase 6, section 12za). Since phase 7 no boundary uses CBOR (section 12zb).
 
 ## 9. Compiler structure
 
@@ -200,12 +200,14 @@ Each phase ends with measurement and an explicit go / no-go.
 | 4 | Async: frames as heap objects, scheduler state in memory, host calls, parallel groups, cancellation | done, see sections 12t to 12w |
 | 5 | Host boundary v2 for the Wasmtime runner | done, see section 12x |
 | 6 | Browser runner and `exs-guest` on the new boundary | done, see section 12za |
-| 7 | Switch the default to v2, delete v1 code and `exs-runtime` | one backend left |
+| 7 | Switch the default to v2, delete v1 code and `exs-runtime` | done, see section 12zb |
 
 ### Later work outside the phases
 
-- **CBOR codec.** v2 paths no longer use CBOR; the codec in `exs-abi` and the runner's CBOR
-  paths remain for v1 modules and go with them in phase 7.
+- **Comments that name v1.** Many comments in the code generator, the core library and the
+  runner explain behavior as "like v1"; they now describe the behavior the rewrite kept.
+- **Stored modules.** Modules compiled for ABI 25 and Rust guests built against the CBOR
+  boundary no longer run; applications must recompile stored modules and rebuild guests.
 - **Data span.** The uninitialized VM state block (356 bytes) still lies inside the
   initialized data span, because generated code needs its address before the size of the
   program's static data is known (section 12z).
@@ -1189,6 +1191,58 @@ took 0.55 ms, slower than v1. The fuel suite on v2 is unchanged except
 `datetime_roundtrip_100` (3,159,571 → 3,157,671) and `record_roundtrip_20` (1,882,224 →
 1,881,844), whose VM state no longer reserves a result buffer.
 
+## 12zb. Phase 7 results: one backend
+
+- **v2 by default (7a):** `compile` and the project compilers generate v2 modules. Closing the
+  last gaps of the compiler and CLI suites, the code generator gained the `assert` and
+  `assert_eq` intrinsics (fatal AssertionFailed Errors from the core library, also in
+  resumable code), embeds sources when asked, reports unknown functions (E0207) and loop
+  control outside loops (E0213) like before, collects the errors of every function body
+  instead of stopping at the first, and checks source functions no entry reaches by building
+  their continuation graphs, so errors in uncalled functions are still reported. The fuel
+  ceilings are the v2 values; `backend_v2.rs` is gone with its oracle.
+- **v1 deleted (7b):** the v1 function and step emitters, the v1 linker and literal pool,
+  `exs-runtime` with its committed template, and `Backend` / `compile_with_backend` are
+  removed. The code generator lives directly in `codegen`; the v1 parts it uses stay there:
+  types, traits, the continuation graph, match arms, the source map, pruning and
+  `declarations` (signatures, methods, lifted closures). Graph fields, HIR data and helpers
+  only the v1 emitters read are removed.
+- **CBOR removed, ABI 26 (7c):** the CBOR codec and `minicbor` are deleted. The value types
+  live in `exs_abi::value`; `CborLimits` and `CborError` became `BoundaryLimits` and
+  `BoundaryError`, the limit kinds are `Payload`, `Nesting` and `CollectionEntries`, and the
+  runner's public CBOR helpers are gone. The payload size the limits measure is still the
+  size of the compact encoding the boundary used to have, so the limits accept the same
+  values. Rust guests need no marker export any more: a module without
+  `__exs_result_value` is a guest exchanging images. ABI version 26 rejects modules built for
+  the CBOR boundary with a clear version error.
+
+| Source lines | before phase 7 | after |
+|---|---:|---:|
+| `exs-compiler/src` | 36,794 | 27,752 |
+| `exs-runtime` | 9,296 | 0 |
+| `exs-abi/src` | 3,072 | 2,565 |
+| `exs-runner/src` | 5,591 | 5,417 |
+
+Compiled module sizes: an empty `main` is 84 KB (phase 0: 668 KB with v1), the example
+scripts 86 to 181 KB.
+
+`examples/fuel-baseline/compare.nu` now compares v2 with the Rust guest (median of 7 runs):
+
+| Scenario | ExS fuel | Rust fuel | factor | ExS Winch | Rust Winch | ExS Cranelift | Rust Cranelift |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `empty_main` | 17,139 | 18,430 | 0.9x | 22 µs | 61 µs | 18 µs | 37 µs |
+| `int_loop_1000` | 210,356 | 46,177 | 4.6x | 79 µs | 57 µs | 45 µs | 37 µs |
+| `async_int_while_1000` | 275,044 | 46,177 | 6.0x | 144 µs | 60 µs | 76 µs | 40 µs |
+| `concat_100_objects` | 311,453 | 365,950 | 0.9x | 203 µs | 200 µs | 134 µs | 102 µs |
+| `format_loop_1000` | 1,736,492 | 1,233,327 | 1.4x | 480 µs | 443 µs | 151 µs | 170 µs |
+| `list_churn_6000` | 3,385,124 | 1,531,154 | 2.2x | 768 µs | 491 µs | 284 µs | 194 µs |
+| `datetime_roundtrip_100` | 3,159,571 | 872,394 | 3.6x | 1,109 µs | 358 µs | 391 µs | 148 µs |
+| `record_roundtrip_20` | 1,882,224 | 2,009,610 | 0.9x | 829 µs | 787 µs | 426 µs | 361 µs |
+
+Measured the same way after phase 6 with v1 as ExS, scripts needed 1.3 to 5.9 times the
+Rust guest's execution time under Winch; with v2 they need 0.3 to 3.1 times. The fuel suite
+is unchanged since 7a, and the browser check passes for compiled modules and the Rust guest.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.
@@ -1205,7 +1259,8 @@ took 0.55 ms, slower than v1. The fuel suite on v2 is unchanged except
 - **Fragmentation** of the non-moving heap for long-running tasks; measured in phase 2.
 - **Wall-clock vs fuel:** Winch generates slower machine code than Cranelift; whether
   production should switch compilers is a separate decision informed by phase 0 numbers.
-- **Browser runner** may need its own implementation of the layout readers.
+- **Browser runner:** reads module memory through the same core walk, page by page
+  (section 12za).
 - **Scope:** this replaces most of `exs-runtime` (≈9,300 lines) and large parts of the
   value-related codegen; it spans many sessions.
 
