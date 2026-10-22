@@ -31,7 +31,15 @@ module_name_repetitions = "allow"
 [workspace.dependencies]
 wasm-encoder = { version = "0.245.1", features = ["wasmparser"] }
 wasmparser = "0.245.1"
-wasmtime = { version = "47.0.3", features = ["winch"] }
+# Only the core runtime and the two code generators: no component model, GC, threads, async,
+# caching, profiling or debugging support, and no WebAssembly text parsing.
+wasmtime = { version = "47.0.3", default-features = false, features = [
+    "std",
+    "runtime",
+    "cranelift",
+    "winch",
+    "parallel-compilation",
+] }
 dlmalloc = { version = "0.2", features = ["global"] }
 jiff = { version = "0.2.35", default-features = false }
 serde = { version = "1.0.229", default-features = false, features = ["alloc", "derive"] }

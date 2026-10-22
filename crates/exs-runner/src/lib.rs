@@ -343,14 +343,12 @@ fn limited_engine(
     configuration.consume_fuel(true);
     configuration.epoch_interruption(true);
     configuration.max_wasm_stack(limits.max_wasm_stack_bytes);
-    // The runner ABI accounts for one linear memory; retain broadly used core features otherwise.
+    // The runner ABI accounts for one linear memory. Threads, function references and
+    // exceptions are not compiled into the engine at all.
     configuration.wasm_multi_memory(false);
     configuration.wasm_memory64(false);
-    configuration.wasm_threads(false);
     configuration.wasm_shared_everything_threads(false);
     configuration.wasm_gc(false);
-    configuration.wasm_function_references(false);
-    configuration.wasm_exceptions(false);
     configuration.wasm_stack_switching(false);
     configuration.wasm_custom_page_sizes(false);
     Engine::new(&configuration).map_err(|error| RunnerError::Wasm(error.to_string()))
