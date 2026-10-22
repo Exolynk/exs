@@ -143,7 +143,7 @@ fn links_against_the_committed_runtime_template() {
     );
 }
 
-/// Returns a fatal Error when the final value cannot cross the runner CBOR boundary.
+/// Returns a fatal Error when the final value cannot cross the runner boundary.
 #[test]
 fn returns_fatal_serialization_errors_for_unserializable_final_values() {
     for source in [
@@ -196,18 +196,18 @@ fn compares_mixed_numeric_values() {
     );
 }
 
-/// Decodes CBOR input in the runtime and passes it to the one main parameter.
+/// Adopts the input in the module and passes it to the one main parameter.
 #[test]
-fn passes_cbor_input_to_main() {
+fn passes_input_to_main() {
     assert_eq!(
         execute_source("fn main(input) { ret input + 1; }", ExsValue::Int(41)),
         ExsValue::Int(42)
     );
 }
 
-/// Passes ordered CBOR values into typed multi-parameter main declarations.
+/// Passes ordered values into typed multi-parameter main declarations.
 #[test]
-fn passes_multiple_cbor_inputs_to_main() {
+fn passes_multiple_inputs_to_main() {
     assert_eq!(
         execute_source_with_inputs(
             "fn main(number: Int, offset: Float, name: String) -> String { ret name; }",

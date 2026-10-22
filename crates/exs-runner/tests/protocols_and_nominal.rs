@@ -379,9 +379,9 @@ fn executes_nominal_object_construction_and_implementation_methods() {
     );
 }
 
-/// Constructs tagged enum values, dispatches their methods, and returns them through CBOR.
+/// Constructs tagged enum values, dispatches their methods, and returns them through the boundary.
 #[test]
-fn executes_enum_constructors_implementations_and_cbor_results() {
+fn executes_enum_constructors_implementations_and_results() {
     let source = r#"
         enum Color {
             Rgb(red: Int, green: Int, blue: Int),
@@ -410,7 +410,7 @@ fn executes_enum_constructors_implementations_and_cbor_results() {
 
 /// Accepts a tagged enum supplied by a runner for its matching enum contract.
 #[test]
-fn accepts_cbor_enum_input_for_enum_contract() {
+fn accepts_enum_input_for_enum_contract() {
     assert_eq!(
         execute_source(
             "enum Color { Transparent, } fn main(value: Color) -> Color { ret value; }",

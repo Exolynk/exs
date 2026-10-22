@@ -1,5 +1,5 @@
-//! Images: the format in which values cross the boundary of runtime v2 modules and Rust
-//! guests, laid out so a module adopts them without parsing.
+//! Images: the format in which values cross the boundary of compiled modules and Rust guests,
+//! laid out so a module adopts them without parsing.
 
 mod format;
 mod reader;
@@ -7,18 +7,18 @@ mod writer;
 
 pub use format::*;
 
-use crate::cbor::{CborError, CborLimits, ExsValue};
+use crate::value::{BoundaryError, BoundaryLimits, ExsValue};
 
 impl ExsValue {
-    /// Writes this value as an image, keeping `limits` as if it were encoded as CBOR.
+    /// Writes this value as an image within `limits`.
     ///
     /// # Errors
     ///
     /// Returns the exceeded limit, or `Encode` for an image beyond 4 GiB.
     pub fn to_image_with_limits(
         &self,
-        limits: CborLimits,
-    ) -> Result<alloc::vec::Vec<u8>, CborError> {
+        limits: BoundaryLimits,
+    ) -> Result<alloc::vec::Vec<u8>, BoundaryError> {
         writer::write_image(self, limits)
     }
 
@@ -27,7 +27,10 @@ impl ExsValue {
     /// # Errors
     ///
     /// Returns `Malformed` for an invalid image, or the exceeded limit.
-    pub fn from_image_with_limits(bytes: &[u8], limits: CborLimits) -> Result<Self, CborError> {
+    pub fn from_image_with_limits(
+        bytes: &[u8],
+        limits: BoundaryLimits,
+    ) -> Result<Self, BoundaryError> {
         reader::read_image(bytes, limits)
     }
 }

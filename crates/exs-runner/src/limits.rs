@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-use exs_abi::CborLimits;
+use exs_abi::BoundaryLimits;
 
 /// Identifies the resource exhausted by one runner execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,14 +28,14 @@ pub enum LimitKind {
     HostOwnedBytes,
     /// The native WebAssembly call stack exceeded its configured byte limit.
     WasmStack,
-    /// A main input or host CBOR request/response exceeded its byte limit.
-    CborPayload,
-    /// A final result CBOR payload exceeded its byte limit.
+    /// A main input or a host request or response exceeded its payload limit.
+    Payload,
+    /// The final result exceeded its payload limit.
     Result,
-    /// A CBOR value exceeded its recursive nesting limit.
-    CborNesting,
-    /// A CBOR collection exceeded its configured entry limit.
-    CborCollectionEntries,
+    /// A boundary value exceeded its recursive nesting limit.
+    Nesting,
+    /// A collection of a boundary value exceeded its configured entry limit.
+    CollectionEntries,
 }
 
 impl std::fmt::Display for LimitKind {
@@ -52,10 +52,10 @@ impl std::fmt::Display for LimitKind {
             Self::ReadyResponses => "ready host responses",
             Self::HostOwnedBytes => "host-owned bytes",
             Self::WasmStack => "WebAssembly stack",
-            Self::CborPayload => "CBOR payload",
+            Self::Payload => "payload",
             Self::Result => "result",
-            Self::CborNesting => "CBOR nesting",
-            Self::CborCollectionEntries => "CBOR collection entries",
+            Self::Nesting => "nesting",
+            Self::CollectionEntries => "collection entries",
         };
         formatter.write_str(name)
     }
@@ -102,14 +102,14 @@ pub(crate) struct ExecutionLimits {
     pub(crate) max_host_owned_bytes: usize,
     /// Maximum native Wasm call-stack bytes available to Wasmtime.
     pub(crate) max_wasm_stack_bytes: usize,
-    /// Maximum bytes for a main input and every host request or response CBOR payload.
-    pub(crate) max_cbor_payload_bytes: usize,
-    /// Maximum bytes for the final result CBOR payload.
+    /// Maximum payload size of a main input and of every host request or response.
+    pub(crate) max_payload_bytes: usize,
+    /// Maximum payload size of the final result.
     pub(crate) max_result_bytes: usize,
-    /// Maximum recursive CBOR value depth, including the root value.
-    pub(crate) max_cbor_nesting: usize,
-    /// Maximum direct entries in a decoded or encoded CBOR collection.
-    pub(crate) max_cbor_collection_entries: usize,
+    /// Maximum recursive boundary value depth, including the root value.
+    pub(crate) max_nesting: usize,
+    /// Maximum direct entries in one collection of a boundary value.
+    pub(crate) max_collection_entries: usize,
 }
 
 impl ExecutionLimits {
@@ -130,10 +130,10 @@ impl ExecutionLimits {
             max_ready_responses,
             max_host_owned_bytes,
             max_wasm_stack_bytes,
-            max_cbor_payload_bytes,
+            max_payload_bytes,
             max_result_bytes,
-            max_cbor_nesting,
-            max_cbor_collection_entries,
+            max_nesting,
+            max_collection_entries,
         ) = match protection {
             ProtectionLevel::Low => (
                 4 * 1024 * 1024,
@@ -192,23 +192,23 @@ impl ExecutionLimits {
             max_ready_responses,
             max_host_owned_bytes,
             max_wasm_stack_bytes,
-            max_cbor_payload_bytes,
+            max_payload_bytes,
             max_result_bytes,
-            max_cbor_nesting,
-            max_cbor_collection_entries,
+            max_nesting,
+            max_collection_entries,
         }
     }
 }
 
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl ExecutionLimits {
-    /// Returns the CBOR resource limits derived from this runner policy.
+    /// Returns the boundary value limits derived from this runner policy.
     #[must_use]
-    pub(crate) const fn cbor_limits(&self) -> CborLimits {
-        CborLimits {
-            max_payload_bytes: self.max_cbor_payload_bytes,
-            max_nesting: self.max_cbor_nesting,
-            max_collection_entries: self.max_cbor_collection_entries,
+    pub(crate) const fn boundary_limits(&self) -> BoundaryLimits {
+        BoundaryLimits {
+            max_payload_bytes: self.max_payload_bytes,
+            max_nesting: self.max_nesting,
+            max_collection_entries: self.max_collection_entries,
         }
     }
 }

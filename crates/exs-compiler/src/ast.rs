@@ -542,7 +542,7 @@ pub enum Expression<'a> {
     /// A dynamically resolved host invocation.
     ///
     /// The name expression must evaluate to String at runtime. Every argument is transported in
-    /// source order across the host CBOR boundary.
+    /// source order across the host boundary.
     HostCall {
         /// Runtime expression that supplies the registered host-function name.
         name: Box<Expression<'a>>,

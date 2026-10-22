@@ -14,9 +14,9 @@ use js_sys::{Array, Error as JsError, Function, Promise, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
+use crate::RunnerError;
 #[cfg(feature = "serde")]
 use crate::typed_registry::{decode_typed_request, typed_encode_error};
-use crate::{HostCborError, RunnerError, decode_arguments, encode_result};
 #[cfg(feature = "serde")]
 use serde::{Serialize, de::DeserializeOwned};
 

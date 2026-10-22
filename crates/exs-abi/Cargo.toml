@@ -9,7 +9,6 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-minicbor.workspace = true
 serde = { workspace = true, optional = true }
 
 [features]

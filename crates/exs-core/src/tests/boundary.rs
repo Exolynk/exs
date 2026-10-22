@@ -1,6 +1,6 @@
 //! Runner input and result conversion tests.
 
-use exs_abi::{CborLimits, ExsValue};
+use exs_abi::{BoundaryLimits, ExsValue};
 use exs_value::ValueRef;
 
 use super::heap::{VM, VecMemory};
@@ -24,7 +24,7 @@ fn memory_with_input(input: &[u8]) -> VecMemory {
 /// Returns the image of the runner argument List `values`.
 fn image(values: std::vec::Vec<ExsValue>) -> std::vec::Vec<u8> {
     ExsValue::List(values)
-        .to_image_with_limits(CborLimits::unrestricted())
+        .to_image_with_limits(BoundaryLimits::unrestricted())
         .expect("encodable")
 }
 

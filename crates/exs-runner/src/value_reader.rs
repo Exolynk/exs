@@ -1,19 +1,19 @@
-//! Building the runner's values from runtime v2 module memory.
+//! Building the runner's values from the memory of compiled modules.
 //!
 //! The core library walks a value in the module's memory and reports its parts; this visitor
-//! builds the [`ExsValue`]. It keeps the limits the CBOR boundary had, as if the value were
-//! CBOR: a byte budget stops the walk at once, while nesting, collection and payload limits
-//! apply once the walk has shown that the value can cross the boundary at all.
+//! builds the [`ExsValue`]. It keeps the boundary limits: a payload budget stops the walk at
+//! once, while nesting, collection and payload limits apply once the walk has shown that the
+//! value can cross the boundary at all.
 
-use exs_abi::cbor::{ExsStackFrame, SourcePositionId};
-use exs_abi::{CborLimits, ErrorSeverity, ExsError, ExsValue};
+use exs_abi::value::{ExsStackFrame, SourcePositionId};
+use exs_abi::{BoundaryLimits, ErrorSeverity, ExsError, ExsValue};
 use exs_core::{Memory, Visitor, WalkError, walk_value};
 
 /// Size of the pages within which [`Builder::copy`] borrows memory.
 const PAGE_SIZE: u32 = 65_536;
-/// CBOR tag of an ExS Error, whose head the equivalent CBOR size counts.
+/// Tag number of an Error in the compact encoding the payload size measures.
 const ERROR_TAG: u64 = 60_001;
-/// CBOR tag of an ExS enum, whose head the equivalent CBOR size counts.
+/// Tag number of an enum in the compact encoding the payload size measures.
 const ENUM_TAG: u64 = 60_005;
 
 /// Why a value could not be read.
@@ -34,13 +34,13 @@ pub(crate) enum ReadError {
 }
 
 /// Reads the value `raw` of the memory `memory`, whose VM state block is at `vm`: the walk
-/// stops once the equivalent CBOR exceeds `budget` bytes, and `limits` apply afterwards.
+/// stops once the payload size exceeds `budget` bytes, and `limits` apply afterwards.
 pub(crate) fn read_value<M: Memory>(
     memory: &M,
     vm: u32,
     raw: u64,
     budget: usize,
-    limits: CborLimits,
+    limits: BoundaryLimits,
 ) -> Result<ExsValue, ReadError> {
     let mut builder = Builder {
         stack: Vec::new(),
@@ -68,7 +68,7 @@ pub(crate) fn read_value<M: Memory>(
     builder.root.ok_or(ReadError::Malformed)
 }
 
-/// Returns the byte length of a CBOR head with `argument`.
+/// Returns the byte length of a head with `argument` in the compact encoding.
 const fn head_len(argument: u64) -> usize {
     match argument {
         0..=23 => 1,
@@ -172,7 +172,7 @@ impl Frame {
                 let kind = text(parts.next().ok_or(ReadError::Malformed)?)?;
                 let message = text(parts.next().ok_or(ReadError::Malformed)?)?;
                 let data = parts.next().ok_or(ReadError::Malformed)?;
-                // Like CBOR, whose `null` cause decodes as no cause, a None cause is no cause.
+                // A None cause is no cause.
                 let cause = match parts.next().ok_or(ReadError::Malformed)? {
                     ExsValue::None => None,
                     cause => Some(Box::new(cause)),
@@ -201,18 +201,18 @@ struct Builder {
     stack: Vec<Frame>,
     /// The completed root value.
     root: Option<ExsValue>,
-    /// Byte size of the equivalent CBOR so far.
+    /// Payload size so far.
     size: usize,
-    /// The most bytes the equivalent CBOR may have before the walk stops.
+    /// The largest payload size before the walk stops.
     budget: usize,
     /// The limits that apply after the walk.
-    limits: CborLimits,
+    limits: BoundaryLimits,
     /// The first nesting or collection limit the value exceeds.
     violation: Option<ReadError>,
 }
 
 impl Builder {
-    /// Accounts for `count` bytes of the equivalent CBOR.
+    /// Accounts for `count` bytes of payload.
     fn grow(&mut self, count: usize) -> Result<(), ReadError> {
         self.size = self.size.saturating_add(count);
         if self.size > self.budget {

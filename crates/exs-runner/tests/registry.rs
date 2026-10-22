@@ -2,10 +2,9 @@
 
 use std::task::{Context, Poll, Waker};
 
-use exs_abi::{BuiltinHostOperation, CborError};
+use exs_abi::BuiltinHostOperation;
 use exs_runner::{
-    ErrorSeverity, ExsError, ExsValue, HostCall, HostCborError, HostFunctionRegistry,
-    RegistryError, decode_arguments, encode_result,
+    ErrorSeverity, ExsError, ExsValue, HostCall, HostFunctionRegistry, RegistryError,
 };
 
 /// Polls an immediately ready host future without adding an executor dependency.
@@ -16,40 +15,6 @@ fn complete(mut future: exs_runner::HostFuture) -> ExsValue {
         Poll::Ready(value) => value,
         Poll::Pending => panic!("test host future unexpectedly remained pending"),
     }
-}
-
-/// Decodes ordered CBOR arguments and encodes a host-function result.
-#[test]
-fn converts_host_payloads_through_the_exs_cbor_boundary() {
-    let request = ExsValue::List(vec![ExsValue::Int(1), ExsValue::String("Ada".to_owned())]);
-    let bytes = request.to_cbor().unwrap();
-    assert_eq!(
-        decode_arguments(&bytes),
-        Ok(vec![ExsValue::Int(1), ExsValue::String("Ada".to_owned())])
-    );
-
-    let result = ExsValue::Bool(true);
-    let encoded = encode_result(&result).unwrap();
-    assert_eq!(ExsValue::from_cbor(&encoded), Ok(result));
-}
-
-/// Rejects host requests whose valid CBOR root is not an argument List.
-#[test]
-fn rejects_non_list_host_arguments() {
-    let bytes = ExsValue::Int(1).to_cbor().unwrap();
-    assert_eq!(
-        decode_arguments(&bytes),
-        Err(HostCborError::ArgumentsMustBeList)
-    );
-}
-
-/// Applies default CBOR limits before allocating host-call arguments.
-#[test]
-fn rejects_hostile_declared_argument_collection_by_default() {
-    assert_eq!(
-        decode_arguments(&[0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
-        Err(HostCborError::Invalid(CborError::CollectionLimitExceeded))
-    );
 }
 
 /// Preserves argument order and language Errors through a synchronous host implementation.

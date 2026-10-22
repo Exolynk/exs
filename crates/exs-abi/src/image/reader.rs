@@ -1,9 +1,8 @@
 //! Reading values from images, which may come from an untrusted module.
 //!
 //! Every offset, length and record kind is checked, Strings must be valid UTF-8, and the
-//! limits apply as if the value were CBOR: nesting, collection entries and the byte size of
-//! the equivalent CBOR, so records shared by several parents cannot make a value grow without
-//! bound.
+//! limits apply to the value: nesting, collection entries and its payload size, so records
+//! shared by several parents cannot make a value grow without bound.
 
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
@@ -16,8 +15,9 @@ use super::format::{
     RECORD_STRING,
 };
 use super::writer::{ENUM_TAG, ERROR_TAG, head_len, int_len};
-use crate::cbor::{
-    CborError, CborLimits, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, SourcePositionId,
+use crate::value::{
+    BoundaryError, BoundaryLimits, ErrorSeverity, ExsError, ExsStackFrame, ExsValue,
+    SourcePositionId,
 };
 
 /// Reads the value of the image `bytes` within `limits`.
@@ -25,34 +25,34 @@ use crate::cbor::{
 /// # Errors
 ///
 /// Returns `Malformed` for an invalid image, or the exceeded limit.
-pub(super) fn read_image(bytes: &[u8], limits: CborLimits) -> Result<ExsValue, CborError> {
+pub(super) fn read_image(bytes: &[u8], limits: BoundaryLimits) -> Result<ExsValue, BoundaryError> {
     if bytes.len() < IMAGE_HEADER_SIZE as usize || word(bytes, 0)? != IMAGE_MAGIC {
-        return Err(CborError::Malformed);
+        return Err(BoundaryError::Malformed);
     }
     let mut reader = Reader {
         bytes,
-        cbor_len: 0,
+        payload_len: 0,
         limits,
     };
     reader.value(word(bytes, 4)?, 1)
 }
 
 /// Returns the little-endian `u32` at byte `offset`.
-fn word(bytes: &[u8], offset: usize) -> Result<u32, CborError> {
+fn word(bytes: &[u8], offset: usize) -> Result<u32, BoundaryError> {
     bytes
-        .get(offset..offset.checked_add(4).ok_or(CborError::Malformed)?)
+        .get(offset..offset.checked_add(4).ok_or(BoundaryError::Malformed)?)
         .and_then(|word| word.try_into().ok())
         .map(u32::from_le_bytes)
-        .ok_or(CborError::Malformed)
+        .ok_or(BoundaryError::Malformed)
 }
 
 /// Returns the little-endian `u64` at byte `offset`.
-fn double_word(bytes: &[u8], offset: usize) -> Result<u64, CborError> {
+fn double_word(bytes: &[u8], offset: usize) -> Result<u64, BoundaryError> {
     bytes
-        .get(offset..offset.checked_add(8).ok_or(CborError::Malformed)?)
+        .get(offset..offset.checked_add(8).ok_or(BoundaryError::Malformed)?)
         .and_then(|word| word.try_into().ok())
         .map(u64::from_le_bytes)
-        .ok_or(CborError::Malformed)
+        .ok_or(BoundaryError::Malformed)
 }
 
 /// One record: its payload offset, kind and argument.
@@ -66,40 +66,40 @@ struct Record {
     argument: u32,
 }
 
-/// The image being read, with the size of the equivalent CBOR.
+/// The image being read, with its payload size.
 struct Reader<'b> {
     /// The image.
     bytes: &'b [u8],
-    /// Byte length of the equivalent CBOR so far.
-    cbor_len: usize,
+    /// Payload size so far.
+    payload_len: usize,
     /// The limits the value must keep.
-    limits: CborLimits,
+    limits: BoundaryLimits,
 }
 
 impl Reader<'_> {
-    /// Accounts for `count` bytes of the equivalent CBOR.
-    fn cbor(&mut self, count: usize) -> Result<(), CborError> {
-        self.cbor_len = self.cbor_len.saturating_add(count);
-        if self.cbor_len > self.limits.max_payload_bytes {
-            return Err(CborError::PayloadLimitExceeded);
+    /// Accounts for `count` bytes of payload.
+    fn account(&mut self, count: usize) -> Result<(), BoundaryError> {
+        self.payload_len = self.payload_len.saturating_add(count);
+        if self.payload_len > self.limits.max_payload_bytes {
+            return Err(BoundaryError::PayloadLimitExceeded);
         }
         Ok(())
     }
 
     /// Checks one collection's entry count.
-    fn collection(&self, count: u32) -> Result<usize, CborError> {
+    fn collection(&self, count: u32) -> Result<usize, BoundaryError> {
         let count = count as usize;
         if count > self.limits.max_collection_entries {
-            return Err(CborError::CollectionLimitExceeded);
+            return Err(BoundaryError::CollectionLimitExceeded);
         }
         Ok(count)
     }
 
     /// Returns the record at `offset`, which must be an aligned record inside the image.
-    fn record(&self, offset: u32) -> Result<Record, CborError> {
+    fn record(&self, offset: u32) -> Result<Record, BoundaryError> {
         let offset = offset as usize;
         if offset < IMAGE_HEADER_SIZE as usize || !offset.is_multiple_of(8) {
-            return Err(CborError::Malformed);
+            return Err(BoundaryError::Malformed);
         }
         Ok(Record {
             payload: offset + RECORD_HEADER_SIZE as usize,
@@ -109,66 +109,66 @@ impl Reader<'_> {
     }
 
     /// Returns `len` payload bytes of `record` from byte `start` of its payload.
-    fn payload(&self, record: Record, start: usize, len: usize) -> Result<&[u8], CborError> {
+    fn payload(&self, record: Record, start: usize, len: usize) -> Result<&[u8], BoundaryError> {
         let from = record
             .payload
             .checked_add(start)
-            .ok_or(CborError::Malformed)?;
-        let to = from.checked_add(len).ok_or(CborError::Malformed)?;
-        self.bytes.get(from..to).ok_or(CborError::Malformed)
+            .ok_or(BoundaryError::Malformed)?;
+        let to = from.checked_add(len).ok_or(BoundaryError::Malformed)?;
+        self.bytes.get(from..to).ok_or(BoundaryError::Malformed)
     }
 
     /// Returns `u32` word `index` of `record`'s payload.
-    fn payload_word(&self, record: Record, index: usize) -> Result<u32, CborError> {
+    fn payload_word(&self, record: Record, index: usize) -> Result<u32, BoundaryError> {
         word(
             self.bytes,
             record
                 .payload
                 .checked_add(index * 4)
-                .ok_or(CborError::Malformed)?,
+                .ok_or(BoundaryError::Malformed)?,
         )
     }
 
     /// Reads the String record at `offset`.
-    fn string(&mut self, offset: u32) -> Result<String, CborError> {
+    fn string(&mut self, offset: u32) -> Result<String, BoundaryError> {
         let record = self.record(offset)?;
         if record.kind != RECORD_STRING {
-            return Err(CborError::Malformed);
+            return Err(BoundaryError::Malformed);
         }
         let len = record.argument as usize;
-        self.cbor(head_len(len as u64) + len)?;
+        self.account(head_len(len as u64) + len)?;
         let text = self.payload(record, 8, len)?;
         core::str::from_utf8(text)
             .map(ToOwned::to_owned)
-            .map_err(|_| CborError::Malformed)
+            .map_err(|_| BoundaryError::Malformed)
     }
 
     /// Reads the record at `offset` at nesting depth `depth`.
-    fn value(&mut self, offset: u32, depth: usize) -> Result<ExsValue, CborError> {
+    fn value(&mut self, offset: u32, depth: usize) -> Result<ExsValue, BoundaryError> {
         if depth > self.limits.max_nesting {
-            return Err(CborError::NestingLimitExceeded);
+            return Err(BoundaryError::NestingLimitExceeded);
         }
         let record = self.record(offset)?;
         match record.kind {
             RECORD_NONE => {
-                self.cbor(1)?;
+                self.account(1)?;
                 Ok(ExsValue::None)
             }
             RECORD_BOOL => {
-                self.cbor(1)?;
+                self.account(1)?;
                 match record.argument {
                     0 => Ok(ExsValue::Bool(false)),
                     1 => Ok(ExsValue::Bool(true)),
-                    _ => Err(CborError::Malformed),
+                    _ => Err(BoundaryError::Malformed),
                 }
             }
             RECORD_INT => {
                 let value = double_word(self.bytes, record.payload)?.cast_signed();
-                self.cbor(int_len(value))?;
+                self.account(int_len(value))?;
                 Ok(ExsValue::Int(value))
             }
             RECORD_FLOAT => {
-                self.cbor(9)?;
+                self.account(9)?;
                 Ok(ExsValue::Float(f64::from_bits(double_word(
                     self.bytes,
                     record.payload,
@@ -177,12 +177,12 @@ impl Reader<'_> {
             RECORD_STRING => self.string(offset).map(ExsValue::String),
             RECORD_BYTES => {
                 let len = record.argument as usize;
-                self.cbor(head_len(len as u64) + len)?;
+                self.account(head_len(len as u64) + len)?;
                 Ok(ExsValue::Bytes(self.payload(record, 0, len)?.to_vec()))
             }
             RECORD_LIST => {
                 let count = self.collection(record.argument)?;
-                self.cbor(head_len(count as u64))?;
+                self.account(head_len(count as u64))?;
                 let mut items = Vec::new();
                 for index in 0..count {
                     let item = self.payload_word(record, index)?;
@@ -192,7 +192,7 @@ impl Reader<'_> {
             }
             RECORD_OBJECT => {
                 let count = self.collection(record.argument)?;
-                self.cbor(head_len(count as u64))?;
+                self.account(head_len(count as u64))?;
                 let mut entries = Vec::new();
                 for index in 0..count {
                     let key = self.string(self.payload_word(record, index * 2)?)?;
@@ -203,7 +203,7 @@ impl Reader<'_> {
             }
             RECORD_ENUM => {
                 let count = self.collection(record.argument)?;
-                self.cbor(head_len(ENUM_TAG) + 1 + head_len(count as u64))?;
+                self.account(head_len(ENUM_TAG) + 1 + head_len(count as u64))?;
                 let type_id = self.string(self.payload_word(record, 0)?)?;
                 let variant = self.string(self.payload_word(record, 1)?)?;
                 let mut fields = Vec::new();
@@ -218,30 +218,30 @@ impl Reader<'_> {
                 })
             }
             RECORD_ERROR => self.error(record, depth),
-            _ => Err(CborError::Malformed),
+            _ => Err(BoundaryError::Malformed),
         }
     }
 
     /// Reads an Error record at nesting depth `depth`.
-    fn error(&mut self, record: Record, depth: usize) -> Result<ExsValue, CborError> {
+    fn error(&mut self, record: Record, depth: usize) -> Result<ExsValue, BoundaryError> {
         let severity = match record.argument {
             0 => ErrorSeverity::Recoverable,
             1 => ErrorSeverity::Fatal,
-            _ => return Err(CborError::Malformed),
+            _ => return Err(BoundaryError::Malformed),
         };
         let trace_count = self.collection(self.payload_word(record, 5)?)?;
-        self.cbor(head_len(ERROR_TAG) + 1 + 7 + 1 + head_len(trace_count as u64))?;
+        self.account(head_len(ERROR_TAG) + 1 + 7 + 1 + head_len(trace_count as u64))?;
         let kind = self.string(self.payload_word(record, 0)?)?;
         let message = self.string(self.payload_word(record, 1)?)?;
         let data = self.value(self.payload_word(record, 2)?, depth + 1)?;
         let origin = match self.payload_word(record, 3)? {
             0 => {
-                self.cbor(1)?;
+                self.account(1)?;
                 None
             }
             origin => {
                 let position = origin - 1;
-                self.cbor(head_len(u64::from(position)))?;
+                self.account(head_len(u64::from(position)))?;
                 Some(SourcePositionId(position))
             }
         };
@@ -252,21 +252,21 @@ impl Reader<'_> {
                 record
                     .payload
                     .checked_add(24 + index * 8)
-                    .ok_or(CborError::Malformed)?,
+                    .ok_or(BoundaryError::Malformed)?,
             )?;
             let frame = ExsStackFrame {
                 function_id: entry as u32,
                 call_site: SourcePositionId((entry >> 32) as u32),
             };
-            self.cbor(
+            self.account(
                 1 + head_len(u64::from(frame.function_id)) + head_len(u64::from(frame.call_site.0)),
             )?;
             trace.push(frame);
         }
-        // Like CBOR, whose `null` cause decodes as no cause, a None cause is no cause.
+        // A None cause is no cause.
         let cause = match self.payload_word(record, 4)? {
             0 => {
-                self.cbor(1)?;
+                self.account(1)?;
                 None
             }
             offset => match self.value(offset, depth + 1)? {

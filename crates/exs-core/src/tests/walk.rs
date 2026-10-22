@@ -4,7 +4,7 @@ use std::boxed::Box;
 use std::string::String;
 use std::vec::Vec;
 
-use exs_abi::cbor::{ExsStackFrame, SourcePositionId};
+use exs_abi::value::{ExsStackFrame, SourcePositionId};
 use exs_abi::{ErrorSeverity, ExsError, ExsValue};
 
 use crate::{Memory, Visitor, WalkError, walk_value};

@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use exs_abi::{
-    CborLimits, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY, STATUS_CANCELLED,
+    BoundaryLimits, HOST_CALL_FATAL, HOST_CALL_PENDING, HOST_CALL_READY, STATUS_CANCELLED,
     STATUS_COMPLETE, STATUS_PENDING,
 };
 
@@ -214,13 +214,13 @@ fn host_response(response: &[u8]) -> ExsValue {
 }
 
 /// Decodes one image the runner wrote; the runner already applied its limits.
-fn read_image(bytes: &[u8]) -> Result<ExsValue, exs_abi::CborError> {
-    ExsValue::from_image_with_limits(bytes, CborLimits::unrestricted())
+fn read_image(bytes: &[u8]) -> Result<ExsValue, exs_abi::BoundaryError> {
+    ExsValue::from_image_with_limits(bytes, BoundaryLimits::unrestricted())
 }
 
 /// Encodes one value the runner reads as an image; the runner applies its limits.
-fn write_image(value: &ExsValue) -> Result<Vec<u8>, exs_abi::CborError> {
-    value.to_image_with_limits(CborLimits::unrestricted())
+fn write_image(value: &ExsValue) -> Result<Vec<u8>, exs_abi::BoundaryError> {
+    value.to_image_with_limits(BoundaryLimits::unrestricted())
 }
 
 /// Allocates the next positive identifier for an in-flight host call.

@@ -100,7 +100,7 @@ fn preserves_closure_identity_equality() {
 
 /// Decodes a host list for the root input and returns a nested list result.
 #[test]
-fn passes_list_cbor_input_to_main() {
+fn passes_list_input_to_main() {
     assert_eq!(
         execute_source(
             "fn main(input) { input.push([3]); ret input; }",
@@ -494,9 +494,9 @@ fn executes_object_convenience_operations() {
     );
 }
 
-/// Decodes a host object for the root input and returns it as an ordered CBOR map.
+/// Decodes a host object for the root input and returns it as an ordered Object.
 #[test]
-fn passes_object_cbor_input_to_main() {
+fn passes_object_input_to_main() {
     assert_eq!(
         execute_source(
             "fn main(input) { input.updated = true; ret input; }",

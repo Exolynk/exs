@@ -2,9 +2,9 @@
 //!
 //! The runner walks the value with the core library on a bounds-checked view of the memory and
 //! builds the value directly, so a corrupted heap can neither read outside the memory nor make
-//! the walk unbounded: nesting is limited and the equivalent CBOR has a byte budget.
+//! the walk unbounded: nesting is limited and the payload has a byte budget.
 
-use exs_abi::{CborLimits, ExsValue, RESULT_VALUE_EXPORT, VM_EXPORT};
+use exs_abi::{BoundaryLimits, ExsValue, RESULT_VALUE_EXPORT, VM_EXPORT};
 use exs_core::SliceMemory;
 use wasmtime::{Instance, Store};
 
@@ -13,14 +13,14 @@ use crate::value_reader::{ReadError, read_value, serialization_error};
 use crate::{LimitKind, RunnerError, host_abi};
 
 /// Reads the value `raw` of the module memory `data`, whose VM state block is at `vm`, on a
-/// bounds-checked view, within `budget` bytes of equivalent CBOR and `limits`. A corrupted
+/// bounds-checked view, within a payload of `budget` bytes and `limits`. A corrupted
 /// heap that makes the walk panic reads as malformed.
 pub(crate) fn read(
     data: &[u8],
     vm: u32,
     raw: u64,
     budget: usize,
-    limits: CborLimits,
+    limits: BoundaryLimits,
 ) -> Result<ExsValue, ReadError> {
     std::panic::catch_unwind(|| read_value(&SliceMemory::new(data), vm, raw, budget, limits))
         .unwrap_or(Err(ReadError::Malformed))
@@ -29,9 +29,9 @@ pub(crate) fn read(
 /// Returns the limit a value exceeded, for the read errors that are limits.
 pub(crate) const fn limit_kind(error: ReadError) -> Option<LimitKind> {
     match error {
-        ReadError::PayloadLimitExceeded => Some(LimitKind::CborPayload),
-        ReadError::NestingLimitExceeded => Some(LimitKind::CborNesting),
-        ReadError::CollectionLimitExceeded => Some(LimitKind::CborCollectionEntries),
+        ReadError::PayloadLimitExceeded => Some(LimitKind::Payload),
+        ReadError::NestingLimitExceeded => Some(LimitKind::Nesting),
+        ReadError::CollectionLimitExceeded => Some(LimitKind::CollectionEntries),
         ReadError::Unsupported(_) | ReadError::TooLarge | ReadError::Malformed => None,
     }
 }
@@ -80,7 +80,7 @@ pub(crate) fn result(
         vm,
         raw,
         limits.max_result_bytes,
-        limits.cbor_limits(),
+        limits.boundary_limits(),
     ) {
         Ok(value) => Ok(value),
         Err(ReadError::Unsupported(message)) => {

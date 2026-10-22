@@ -12,21 +12,18 @@ use exs_abi::{
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter};
 
-use crate::cbor::decode_image_arguments;
+use crate::arguments::{ArgumentsError, decode_arguments};
 use crate::limits::ExecutionLimits;
 use crate::value_reader::ReadError;
-use crate::{
-    HostCborError, HostFunctionRegistry, HostFuture, HostStream, LimitKind, RegistryError,
-    decode_arguments_with_limits, encode_result_with_limits,
-};
+use crate::{HostFunctionRegistry, HostFuture, HostStream, LimitKind, RegistryError};
 
 /// Runner-owned state accessed by imported host functions for one Wasm instance.
 pub(crate) struct HostAbiState {
     /// Registry used to dynamically resolve language-provided host names.
     registry: HostFunctionRegistry,
-    /// CBOR responses that completed synchronously and await runtime retrieval.
+    /// Response images that completed synchronously and await runtime retrieval.
     ready_responses: HashMap<i64, Vec<u8>>,
-    /// Total byte length retained by synchronous CBOR responses awaiting runtime retrieval.
+    /// Total byte length retained by synchronous responses awaiting runtime retrieval.
     ready_response_bytes: usize,
     /// Futures that have suspended a runtime task and await later runner resumption.
     pending_calls: BTreeMap<i64, HostFuture>,
@@ -61,11 +58,9 @@ pub(crate) struct HostAbiState {
 /// How boundary values cross between the runner and a module.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Boundary {
-    /// CBOR in both directions, as for v1 modules.
-    Cbor,
     /// Images in both directions, as for Rust guests.
     Image,
-    /// Images to the module and values read from its memory, as for runtime v2 modules.
+    /// Images to the module and values read from its memory, as for compiled modules.
     Direct,
 }
 
@@ -94,7 +89,7 @@ impl HostAbiState {
             execution_started_at,
             deadline_at,
             limit_violation: None,
-            boundary: Boundary::Cbor,
+            boundary: Boundary::Image,
         }
     }
 
@@ -103,21 +98,11 @@ impl HostAbiState {
         self.boundary
     }
 
-    /// Returns whether the module takes inputs and host responses as images.
-    pub(crate) fn takes_images(&self) -> bool {
-        self.boundary != Boundary::Cbor
-    }
-
-    /// Makes the module take host responses as images of the direct boundary, and lets its
-    /// memory refuse to grow beyond the limit so its collector can reclaim memory first.
+    /// Makes the runner read the module's results and host-call arguments from its memory, and
+    /// lets its memory refuse to grow beyond the limit so its collector can reclaim memory first.
     pub(crate) fn use_direct_boundary(&mut self) {
         self.boundary = Boundary::Direct;
         self.store_limits.refuse_memory_growth();
-    }
-
-    /// Makes the module exchange every boundary value as an image.
-    pub(crate) fn use_image_boundary(&mut self) {
-        self.boundary = Boundary::Image;
     }
 
     /// Returns whether the module's memory refused to grow beyond the limit.
@@ -442,7 +427,7 @@ fn host_call_start(
         &mut caller,
         name_pointer,
         name_length,
-        limits.max_cbor_payload_bytes,
+        limits.max_payload_bytes,
     )?;
     let name = std::str::from_utf8(&name_bytes)
         .map_err(|_| wasmtime::Error::msg("host function name is not valid UTF-8"))?;
@@ -450,14 +435,10 @@ fn host_call_start(
         &mut caller,
         request_pointer,
         request_length,
-        limits.max_cbor_payload_bytes,
+        limits.max_payload_bytes,
     )?;
-    let arguments = if caller.data().boundary == Boundary::Image {
-        decode_image_arguments(&request, limits.cbor_limits())
-    } else {
-        decode_arguments_with_limits(&request, limits.cbor_limits())
-    }
-    .map_err(|error| host_cbor_error(&mut caller, error))?;
+    let arguments = decode_arguments(&request, limits.boundary_limits())
+        .map_err(|error| host_boundary_error(&mut caller, error))?;
     dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
 }
 
@@ -479,15 +460,13 @@ fn host_call_start_value(
         memory(&mut caller)?.data(&caller),
         vm.cast_unsigned(),
         arguments.cast_unsigned(),
-        limits.max_cbor_payload_bytes,
-        limits.cbor_limits(),
+        limits.max_payload_bytes,
+        limits.boundary_limits(),
     );
     match read {
         Err(ReadError::Unsupported(_)) => return Ok(HOST_CALL_UNSUPPORTED),
         Err(ReadError::TooLarge) => {
-            caller
-                .data_mut()
-                .report_limit_violation(LimitKind::CborPayload);
+            caller.data_mut().report_limit_violation(LimitKind::Payload);
             return Err(wasmtime::Error::msg(
                 "host-call payload exceeds configured limit",
             ));
@@ -507,11 +486,11 @@ fn host_call_start_value(
         &mut caller,
         name_pointer,
         name_length,
-        limits.max_cbor_payload_bytes,
+        limits.max_payload_bytes,
     )?;
     let name = std::str::from_utf8(&name_bytes)
         .map_err(|_| wasmtime::Error::msg("host function name is not valid UTF-8"))?;
-    // Like the decoding of a CBOR request, limits apply once the call counts.
+    // Like the decoding of a request image, limits apply once the call counts.
     let arguments = match read {
         Ok(ExsValue::List(arguments)) => arguments,
         Ok(_) => {
@@ -607,7 +586,7 @@ fn dispatch_host_call(
     }
 }
 
-/// Returns the byte length of one ready CBOR host response.
+/// Returns the byte length of one ready host response image.
 fn host_call_response_length(
     caller: Caller<'_, HostAbiState>,
     call_id: i64,
@@ -621,7 +600,7 @@ fn host_call_response_length(
         .map_err(|_| wasmtime::Error::msg("host response exceeds Wasm i32 length"))
 }
 
-/// Copies one ready CBOR host response into runtime-owned linear memory.
+/// Copies one ready host response image into runtime-owned linear memory.
 fn host_call_response_copy(
     mut caller: Caller<'_, HostAbiState>,
     call_id: i64,
@@ -657,9 +636,7 @@ fn read_memory(
 ) -> Result<Vec<u8>, wasmtime::Error> {
     let (pointer, length) = memory_range(pointer, length)?;
     if length > maximum_length {
-        caller
-            .data_mut()
-            .report_limit_violation(LimitKind::CborPayload);
+        caller.data_mut().report_limit_violation(LimitKind::Payload);
         return Err(wasmtime::Error::msg(
             "host-call payload exceeds configured limit",
         ));
@@ -711,30 +688,9 @@ fn store_ready_response(
     value: ExsValue,
 ) -> Result<(), wasmtime::Error> {
     let limits = caller.data().limits.clone();
-    let mut cbor_limits = limits.cbor_limits();
-    cbor_limits.max_payload_bytes = cbor_limits
-        .max_payload_bytes
-        .min(limits.max_cbor_payload_bytes);
-    // An image applies the payload limit to the size of the equivalent CBOR itself.
-    let (response, payload_len) = if caller.data().takes_images() {
-        let image = value
-            .to_image_with_limits(cbor_limits)
-            .map_err(|error| host_cbor_error(caller, HostCborError::Invalid(error)))?;
-        (image, 0)
-    } else {
-        let bytes = encode_result_with_limits(&value, limits.cbor_limits())
-            .map_err(|error| host_cbor_error(caller, error))?;
-        let len = bytes.len();
-        (bytes, len)
-    };
-    if payload_len > limits.max_cbor_payload_bytes {
-        caller
-            .data_mut()
-            .report_limit_violation(LimitKind::CborPayload);
-        return Err(wasmtime::Error::msg(
-            "host response exceeds configured CBOR payload limit",
-        ));
-    }
+    let response = value
+        .to_image_with_limits(limits.boundary_limits())
+        .map_err(|error| host_boundary_error(caller, ArgumentsError::Invalid(error)))?;
     match caller.data_mut().store_ready_response(call_id, response) {
         Ok(()) => Ok(()),
         Err(LimitKind::HostCalls) => Err(wasmtime::Error::msg(
@@ -747,27 +703,27 @@ fn store_ready_response(
     }
 }
 
-/// Converts a host-boundary CBOR failure into a technical Wasmtime failure.
-fn host_cbor_error(caller: &mut Caller<'_, HostAbiState>, error: HostCborError) -> wasmtime::Error {
+/// Converts a host-boundary failure into a technical Wasmtime failure, recording an exceeded
+/// limit.
+fn host_boundary_error(
+    caller: &mut Caller<'_, HostAbiState>,
+    error: ArgumentsError,
+) -> wasmtime::Error {
     match error {
-        HostCborError::Invalid(exs_abi::CborError::PayloadLimitExceeded) => {
-            caller
-                .data_mut()
-                .report_limit_violation(LimitKind::CborPayload);
+        ArgumentsError::Invalid(exs_abi::BoundaryError::PayloadLimitExceeded) => {
+            caller.data_mut().report_limit_violation(LimitKind::Payload);
         }
-        HostCborError::Invalid(exs_abi::CborError::NestingLimitExceeded) => {
-            caller
-                .data_mut()
-                .report_limit_violation(LimitKind::CborNesting);
+        ArgumentsError::Invalid(exs_abi::BoundaryError::NestingLimitExceeded) => {
+            caller.data_mut().report_limit_violation(LimitKind::Nesting);
         }
-        HostCborError::Invalid(exs_abi::CborError::CollectionLimitExceeded) => {
+        ArgumentsError::Invalid(exs_abi::BoundaryError::CollectionLimitExceeded) => {
             caller
                 .data_mut()
-                .report_limit_violation(LimitKind::CborCollectionEntries);
+                .report_limit_violation(LimitKind::CollectionEntries);
         }
         _ => {}
     }
-    wasmtime::Error::msg(format!("could not process host CBOR: {error}"))
+    wasmtime::Error::msg(format!("could not process host-call value: {error}"))
 }
 
 #[cfg(test)]

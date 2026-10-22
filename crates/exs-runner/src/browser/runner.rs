@@ -1,14 +1,12 @@
-use super::bindings::{
-    ValueReader, browser_runner_boundary, create_browser_runner, execute_browser_runner,
-};
-use super::direct::{self, Boundary};
+use super::bindings::{ValueReader, create_browser_runner, execute_browser_runner};
+use super::direct;
 use super::host::{rejected_browser_value, start_host_call};
 use super::*;
 use crate::value_reader::{ReadError, serialization_error};
 
-/// The host callback JavaScript invokes for every host call: name, request, boundary code,
-/// source position, execution identity and execution start time.
-type HostCallback = dyn FnMut(String, JsValue, u32, i32, i32, f64) -> JsValue;
+/// The host callback JavaScript invokes for every host call: name, request, source position,
+/// execution identity and execution start time.
+type HostCallback = dyn FnMut(String, JsValue, i32, i32, f64) -> JsValue;
 
 /// Browser-specific configuration used when creating one reusable runner.
 #[derive(Default)]
@@ -34,8 +32,6 @@ impl BrowserRunnerConfig {
 pub struct BrowserRunner {
     /// Browser-compiled module and its JavaScript execution controller.
     controller: JsValue,
-    /// How boundary values cross between the runner and the module.
-    boundary: Boundary,
     /// Rust callback retained for as long as JavaScript may invoke the Host ABI imports.
     _host_callback: Closure<HostCallback>,
     /// Rust callback retained for execution-scoped host stream cleanup.
@@ -55,7 +51,6 @@ impl BrowserRunner {
         let callback = Closure::wrap(Box::new(
             move |name: String,
                   request: JsValue,
-                  boundary: u32,
                   source_position: i32,
                   execution_id: i32,
                   execution_started_at: f64| {
@@ -67,7 +62,6 @@ impl BrowserRunner {
                     execution_id,
                     &name,
                     &request,
-                    Boundary::from_code(boundary),
                     source_position,
                     execution_started_at,
                 )
@@ -86,7 +80,6 @@ impl BrowserRunner {
             .map_err(browser_error)?;
         let controller = JsFuture::from(promise).await.map_err(browser_error)?;
         Ok(Self {
-            boundary: Boundary::from_code(browser_runner_boundary(&controller)),
             controller,
             _host_callback: callback,
             _release_callback: release,
@@ -97,7 +90,7 @@ impl BrowserRunner {
     ///
     /// # Errors
     ///
-    /// Returns an error when Wasm instantiation, ABI validation, host dispatch, or CBOR boundary
+    /// Returns an error when Wasm instantiation, ABI validation, host dispatch, or boundary
     /// handling fails. Recoverable language failures remain `Ok(ExsValue::Error(...))`.
     pub async fn execute(
         &self,
@@ -105,32 +98,21 @@ impl BrowserRunner {
         inputs: &[ExsValue],
     ) -> Result<ExsValue, RunnerError> {
         let inputs = ExsValue::List(inputs.to_vec());
-        let input = if self.boundary.takes_images() {
-            direct::image(&inputs).map_err(RunnerError::Abi)?
-        } else {
-            inputs.to_cbor().map_err(|error| {
-                RunnerError::Abi(format!("could not encode input CBOR: {error}"))
-            })?
-        };
+        let input = direct::image(&inputs).map_err(RunnerError::Abi)?;
         let input = Uint8Array::from(input.as_slice());
         let promise =
             execute_browser_runner(&self.controller, function, &input).map_err(browser_error)?;
         let result = JsFuture::from(promise).await.map_err(browser_error)?;
         if let Some(result) = result.dyn_ref::<Uint8Array>() {
-            return if self.boundary == Boundary::Image {
-                direct::read_image(&result.to_vec())
-                    .map_err(|error| RunnerError::Abi(format!("invalid result image: {error}")))
-            } else {
-                ExsValue::from_cbor(&result.to_vec())
-                    .map_err(|error| RunnerError::Abi(format!("invalid result CBOR: {error}")))
-            };
+            return direct::read_image(&result.to_vec())
+                .map_err(|error| RunnerError::Abi(format!("invalid result image: {error}")));
         }
-        if self.boundary != Boundary::Direct || !result.is_object() {
+        if !result.is_object() {
             return Err(RunnerError::Abi(
-                "browser runner returned a non-byte result".to_owned(),
+                "browser runner returned an invalid result".to_owned(),
             ));
         }
-        // Like v1, a result that cannot cross becomes a fatal SerializationError.
+        // A result that cannot cross becomes a fatal SerializationError.
         match direct::read(result.unchecked_ref::<ValueReader>()) {
             Ok(value) => Ok(value),
             Err(ReadError::Unsupported(message)) => {

@@ -17,7 +17,7 @@ use std::task::Poll;
 use self::limits::ExecutionLimits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use exs_abi::{
-    ABI_VERSION, ABI_VERSION_EXPORT, CANCEL_EXPORT, CborError, INPUT_ALLOC_EXPORT,
+    ABI_VERSION, ABI_VERSION_EXPORT, BoundaryError, CANCEL_EXPORT, INPUT_ALLOC_EXPORT,
     RESULT_LENGTH_EXPORT, RESULT_POINTER_EXPORT, RESUME_HOST_EXPORT, RUNNER_IMPORT_MODULE,
     RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, START_EXPORT_PREFIX, STATUS_CANCELLED,
     STATUS_COMPLETE, STATUS_PENDING,
@@ -25,11 +25,15 @@ use exs_abi::{
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use wasmtime::{Config, Engine, Instance, Linker, Module, Store};
 
+#[cfg(any(
+    all(feature = "server", not(target_arch = "wasm32")),
+    all(feature = "browser", target_arch = "wasm32")
+))]
+mod arguments;
 #[cfg(all(feature = "browser", target_arch = "wasm32"))]
 mod browser;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod cancellation;
-mod cbor;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod compiler;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -76,10 +80,6 @@ pub use self::browser::{
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::cancellation::ExecutionCancellation;
-pub use self::cbor::{
-    HostCborError, decode_arguments, decode_arguments_with_limits, encode_result,
-    encode_result_with_limits,
-};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::compiler::CompilerStrategy;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -228,11 +228,6 @@ impl ServerRunner {
         check_abi(&mut store, &instance)?;
         if direct::is_direct(&mut store, &instance) {
             store.data_mut().use_direct_boundary();
-        } else if instance
-            .get_func(&mut store, exs_abi::IMAGE_BOUNDARY_EXPORT)
-            .is_some()
-        {
-            store.data_mut().use_image_boundary();
         }
         let compile_time = execution_started_at.elapsed();
         let run_started_at = std::time::Instant::now();
@@ -496,53 +491,26 @@ fn check_task_metering_imports(module: &Module) -> Result<(), RunnerError> {
     }
 }
 
-/// Encodes one runner-owned CBOR value and applies its configured byte and structural limits.
-#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn encode_limited_cbor(
-    value: &ExsValue,
-    limits: &ExecutionLimits,
-    size_kind: LimitKind,
-    label: &str,
-) -> Result<Vec<u8>, RunnerError> {
-    let bytes = value
-        .to_cbor_with_limits(limits.cbor_limits())
-        .map_err(|error| cbor_error(error, &format!("could not encode {label} CBOR")))?;
-    if bytes.len() > limits.max_cbor_payload_bytes {
-        return Err(RunnerError::LimitExceeded(size_kind));
-    }
-    Ok(bytes)
-}
-
-/// Encodes one runner-owned value for the module: as an image for a module that takes images,
-/// as CBOR otherwise, with the configured limits.
+/// Encodes one runner-owned value for the module as an image within the configured limits.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn encode_boundary_value(
-    store: &Store<host_abi::HostAbiState>,
     value: &ExsValue,
     limits: &ExecutionLimits,
     label: &str,
 ) -> Result<Vec<u8>, RunnerError> {
-    if store.data().takes_images() {
-        let mut cbor_limits = limits.cbor_limits();
-        cbor_limits.max_payload_bytes = cbor_limits
-            .max_payload_bytes
-            .min(limits.max_cbor_payload_bytes);
-        value
-            .to_image_with_limits(cbor_limits)
-            .map_err(|error| cbor_error(error, &format!("could not encode {label} image")))
-    } else {
-        encode_limited_cbor(value, limits, LimitKind::CborPayload, label)
-    }
+    value
+        .to_image_with_limits(limits.boundary_limits())
+        .map_err(|error| boundary_error(error, &format!("could not encode {label} image")))
 }
 
-/// Maps a bounded CBOR failure to a typed runner limit or an ABI diagnostic.
+/// Maps a boundary failure to a typed runner limit or an ABI diagnostic.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn cbor_error(error: CborError, context: &str) -> RunnerError {
+fn boundary_error(error: BoundaryError, context: &str) -> RunnerError {
     match error {
-        CborError::PayloadLimitExceeded => RunnerError::LimitExceeded(LimitKind::CborPayload),
-        CborError::NestingLimitExceeded => RunnerError::LimitExceeded(LimitKind::CborNesting),
-        CborError::CollectionLimitExceeded => {
-            RunnerError::LimitExceeded(LimitKind::CborCollectionEntries)
+        BoundaryError::PayloadLimitExceeded => RunnerError::LimitExceeded(LimitKind::Payload),
+        BoundaryError::NestingLimitExceeded => RunnerError::LimitExceeded(LimitKind::Nesting),
+        BoundaryError::CollectionLimitExceeded => {
+            RunnerError::LimitExceeded(LimitKind::CollectionEntries)
         }
         error => RunnerError::Abi(format!("{context}: {error}")),
     }
@@ -556,7 +524,7 @@ fn write_response(
     response: &ExsValue,
     limits: &ExecutionLimits,
 ) -> Result<(i32, i32), RunnerError> {
-    let bytes = encode_boundary_value(store, response, limits, "host response")?;
+    let bytes = encode_boundary_value(response, limits, "host response")?;
     let length = i32::try_from(bytes.len())
         .map_err(|_| RunnerError::Abi("host response exceeds Wasm i32 length".to_owned()))?;
     let allocate = instance
@@ -574,7 +542,7 @@ fn write_response(
     Ok((pointer, length))
 }
 
-/// Decodes the runtime-owned completed result without exposing its `ValueRef` to the host.
+/// Decodes the result image of a completed Rust guest.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 fn result(
     store: &mut Store<host_abi::HostAbiState>,
@@ -590,11 +558,6 @@ fn result(
         .map_err(|_| RunnerError::Abi("negative result pointer".to_owned()))?;
     let length = usize::try_from(length)
         .map_err(|_| RunnerError::Abi("negative result length".to_owned()))?;
-    let image = store.data().boundary() == host_abi::Boundary::Image;
-    // An image's result limit applies to the size of the equivalent CBOR, below.
-    if length > limits.max_result_bytes && !image {
-        return Err(RunnerError::LimitExceeded(LimitKind::Result));
-    }
     let end = pointer
         .checked_add(length)
         .ok_or_else(|| RunnerError::Abi("result buffer range overflow".to_owned()))?;
@@ -602,16 +565,13 @@ fn result(
         .data(&*store)
         .get(pointer..end)
         .ok_or_else(|| RunnerError::Abi("result buffer lies outside linear memory".to_owned()))?;
-    if image {
-        let mut cbor_limits = limits.cbor_limits();
-        cbor_limits.max_payload_bytes = cbor_limits.max_payload_bytes.min(limits.max_result_bytes);
-        return ExsValue::from_image_with_limits(bytes, cbor_limits).map_err(|error| match error {
-            CborError::PayloadLimitExceeded => RunnerError::LimitExceeded(LimitKind::Result),
-            error => cbor_error(error, "invalid result image"),
-        });
-    }
-    ExsValue::from_cbor_with_limits(bytes, limits.cbor_limits())
-        .map_err(|error| cbor_error(error, "invalid result CBOR"))
+    // The result limit applies to the payload size of the result.
+    let mut result_limits = limits.boundary_limits();
+    result_limits.max_payload_bytes = result_limits.max_payload_bytes.min(limits.max_result_bytes);
+    ExsValue::from_image_with_limits(bytes, result_limits).map_err(|error| match error {
+        BoundaryError::PayloadLimitExceeded => RunnerError::LimitExceeded(LimitKind::Result),
+        error => boundary_error(error, "invalid result image"),
+    })
 }
 
 /// Encodes ordered main arguments and writes them to the runtime-owned input buffer.
@@ -623,9 +583,9 @@ fn write_input(
     limits: &ExecutionLimits,
 ) -> Result<(i32, i32), RunnerError> {
     let input = ExsValue::List(inputs.to_vec());
-    let bytes = encode_boundary_value(store, &input, limits, "input")?;
+    let bytes = encode_boundary_value(&input, limits, "input")?;
     let length = i32::try_from(bytes.len())
-        .map_err(|_| RunnerError::Abi("input CBOR exceeds Wasm i32 length".to_owned()))?;
+        .map_err(|_| RunnerError::Abi("input exceeds Wasm i32 length".to_owned()))?;
     let allocate = instance
         .get_typed_func::<i32, i32>(&mut *store, INPUT_ALLOC_EXPORT)
         .map_err(|error| RunnerError::Abi(error.to_string()))?;

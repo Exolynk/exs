@@ -1,8 +1,8 @@
-//! The direct boundary of runtime v2 modules.
+//! The direct boundary of compiled modules.
 //!
-//! The runner reads results and host-call arguments from the module's memory instead of CBOR
-//! the module encoded, and passes inputs and host-call responses as `exs_abi::image` images the
-//! module adopts without parsing.
+//! The runner reads results and host-call arguments from the module's memory, and passes
+//! inputs and host-call responses as `exs_abi::image` images the module adopts without
+//! parsing.
 
 mod reader;
 

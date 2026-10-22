@@ -137,7 +137,7 @@ impl Execution {
     /// Adopts the single runner argument of `value` into a rooted slot and returns it.
     pub(super) fn decoded(&mut self, value: &ExsValue) -> Result<u64, BoundaryError> {
         let input = ExsValue::List(std::vec![value.clone()])
-            .to_image_with_limits(exs_abi::CborLimits::unrestricted())
+            .to_image_with_limits(exs_abi::BoundaryLimits::unrestricted())
             .expect("encodable");
         self.decoded_bytes(&input)
     }

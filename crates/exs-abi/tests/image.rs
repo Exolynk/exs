@@ -1,7 +1,7 @@
 //! Integration tests for the image boundary representation.
 
-use exs_abi::cbor::{ExsStackFrame, SourcePositionId};
-use exs_abi::{CborError, CborLimits, ErrorSeverity, ExsError, ExsValue};
+use exs_abi::value::{ExsStackFrame, SourcePositionId};
+use exs_abi::{BoundaryError, BoundaryLimits, ErrorSeverity, ExsError, ExsValue};
 
 /// Returns one value of every kind, nested.
 fn sample() -> ExsValue {
@@ -47,59 +47,62 @@ fn sample() -> ExsValue {
 fn round_trips_every_kind() {
     let value = sample();
     let image = value
-        .to_image_with_limits(CborLimits::unrestricted())
+        .to_image_with_limits(BoundaryLimits::unrestricted())
         .expect("image");
-    let read = ExsValue::from_image_with_limits(&image, CborLimits::unrestricted()).expect("value");
+    let read =
+        ExsValue::from_image_with_limits(&image, BoundaryLimits::unrestricted()).expect("value");
     assert_eq!(read, value);
 }
 
-/// Applies the payload limit to the size of the equivalent CBOR, exactly.
+/// Applies the payload limit in the writer and the reader at exactly the same size.
 #[test]
-fn limits_the_equivalent_cbor_size() {
+fn limits_the_payload_size() {
     let value = sample();
-    let cbor = value.to_cbor().expect("cbor").len();
-    let limits = |max_payload_bytes| CborLimits {
+    let limits = |max_payload_bytes| BoundaryLimits {
         max_payload_bytes,
-        ..CborLimits::unrestricted()
+        ..BoundaryLimits::unrestricted()
     };
-    let image = value.to_image_with_limits(limits(cbor)).expect("fits");
+    let size = (1..10_000)
+        .find(|size| value.to_image_with_limits(limits(*size)).is_ok())
+        .expect("the sample has a payload size");
+    let image = value.to_image_with_limits(limits(size)).expect("fits");
     assert_eq!(
-        value.to_image_with_limits(limits(cbor - 1)),
-        Err(CborError::PayloadLimitExceeded)
+        value.to_image_with_limits(limits(size - 1)),
+        Err(BoundaryError::PayloadLimitExceeded)
     );
-    assert!(ExsValue::from_image_with_limits(&image, limits(cbor)).is_ok());
+    assert!(ExsValue::from_image_with_limits(&image, limits(size)).is_ok());
     assert_eq!(
-        ExsValue::from_image_with_limits(&image, limits(cbor - 1)),
-        Err(CborError::PayloadLimitExceeded)
+        ExsValue::from_image_with_limits(&image, limits(size - 1)),
+        Err(BoundaryError::PayloadLimitExceeded)
     );
 }
 
-/// Applies the nesting and collection limits like CBOR.
+/// Applies the nesting and collection limits.
 #[test]
 fn limits_nesting_and_collections() {
     let nested = ExsValue::List(vec![ExsValue::List(vec![ExsValue::Int(1)])]);
     let image = nested
-        .to_image_with_limits(CborLimits::unrestricted())
+        .to_image_with_limits(BoundaryLimits::unrestricted())
         .expect("image");
-    let nesting = CborLimits {
+    let nesting = BoundaryLimits {
         max_nesting: 2,
-        ..CborLimits::unrestricted()
+        ..BoundaryLimits::unrestricted()
     };
     assert_eq!(
         ExsValue::from_image_with_limits(&image, nesting),
-        Err(CborError::NestingLimitExceeded)
+        Err(BoundaryError::NestingLimitExceeded)
     );
     assert_eq!(
         nested.to_image_with_limits(nesting),
-        Err(CborError::NestingLimitExceeded)
+        Err(BoundaryError::NestingLimitExceeded)
     );
-    let entries = CborLimits {
+    let entries = BoundaryLimits {
         max_collection_entries: 0,
-        ..CborLimits::unrestricted()
+        ..BoundaryLimits::unrestricted()
     };
     assert_eq!(
         ExsValue::from_image_with_limits(&image, entries),
-        Err(CborError::CollectionLimitExceeded)
+        Err(BoundaryError::CollectionLimitExceeded)
     );
 }
 
@@ -107,47 +110,49 @@ fn limits_nesting_and_collections() {
 #[test]
 fn rejects_malformed_images() {
     let image = sample()
-        .to_image_with_limits(CborLimits::unrestricted())
+        .to_image_with_limits(BoundaryLimits::unrestricted())
         .expect("image");
     for len in [0, 4, 8, image.len() / 2] {
-        assert!(ExsValue::from_image_with_limits(&image[..len], CborLimits::default()).is_err());
+        assert!(
+            ExsValue::from_image_with_limits(&image[..len], BoundaryLimits::default()).is_err()
+        );
     }
     let mut bad_magic = image.clone();
     bad_magic[0] ^= 1;
     assert_eq!(
-        ExsValue::from_image_with_limits(&bad_magic, CborLimits::default()),
-        Err(CborError::Malformed)
+        ExsValue::from_image_with_limits(&bad_magic, BoundaryLimits::default()),
+        Err(BoundaryError::Malformed)
     );
     let mut misaligned = image.clone();
     misaligned[4] = 9;
     assert_eq!(
-        ExsValue::from_image_with_limits(&misaligned, CborLimits::default()),
-        Err(CborError::Malformed)
+        ExsValue::from_image_with_limits(&misaligned, BoundaryLimits::default()),
+        Err(BoundaryError::Malformed)
     );
     let text = ExsValue::String("ab".to_owned())
-        .to_image_with_limits(CborLimits::unrestricted())
+        .to_image_with_limits(BoundaryLimits::unrestricted())
         .expect("image");
     let mut invalid = text.clone();
     let last = invalid.len() - 8;
     invalid[last] = 0xff;
     assert_eq!(
-        ExsValue::from_image_with_limits(&invalid, CborLimits::default()),
-        Err(CborError::Malformed)
+        ExsValue::from_image_with_limits(&invalid, BoundaryLimits::default()),
+        Err(BoundaryError::Malformed)
     );
     // A List whose element points back at the List nests until the limit stops it.
     let mut cycle = ExsValue::List(vec![ExsValue::None])
-        .to_image_with_limits(CborLimits::unrestricted())
+        .to_image_with_limits(BoundaryLimits::unrestricted())
         .expect("image");
     let root = u32::from_le_bytes(cycle[4..8].try_into().expect("root")) as usize;
     let root_bytes = (root as u32).to_le_bytes();
     cycle[root + 8..root + 12].copy_from_slice(&root_bytes);
     assert_eq!(
-        ExsValue::from_image_with_limits(&cycle, CborLimits::default()),
-        Err(CborError::NestingLimitExceeded)
+        ExsValue::from_image_with_limits(&cycle, BoundaryLimits::default()),
+        Err(BoundaryError::NestingLimitExceeded)
     );
 }
 
-/// Reads a None cause as no cause, like CBOR.
+/// Reads a None cause as no cause.
 #[test]
 fn reads_a_none_cause_as_no_cause() {
     let value = ExsValue::Error(ExsError {
@@ -160,11 +165,14 @@ fn reads_a_none_cause_as_no_cause() {
         cause: Some(Box::new(ExsValue::None)),
     });
     let image = value
-        .to_image_with_limits(CborLimits::unrestricted())
+        .to_image_with_limits(BoundaryLimits::unrestricted())
         .expect("image");
-    let from_cbor = ExsValue::from_cbor(&value.to_cbor().expect("cbor")).expect("cbor value");
+    let ExsValue::Error(mut expected) = value else {
+        unreachable!("the value is an Error");
+    };
+    expected.cause = None;
     assert_eq!(
-        ExsValue::from_image_with_limits(&image, CborLimits::unrestricted()),
-        Ok(from_cbor)
+        ExsValue::from_image_with_limits(&image, BoundaryLimits::unrestricted()),
+        Ok(ExsValue::Error(expected))
     );
 }

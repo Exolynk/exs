@@ -9,10 +9,10 @@ use alloc::vec::Vec;
 pub use builtin_method::BuiltinMethod;
 
 mod builtin_method;
-pub mod cbor;
 pub mod image;
 #[cfg(feature = "serde")]
 mod serde;
+pub mod value;
 #[cfg(feature = "serde")]
 pub use serde::SerdeError;
 
@@ -50,14 +50,16 @@ impl From<Vec<u8>> for Bytes {
     }
 }
 
-pub use cbor::{
-    CborError, CborLimits, ErrorSeverity, ExsError, ExsStackFrame, ExsValue, SourcePositionId,
+pub use value::{
+    BoundaryError, BoundaryLimits, ErrorSeverity, ExsError, ExsStackFrame, ExsValue,
+    SourcePositionId,
 };
 
-/// The compiler/runtime ABI version for the current Phase-1 implementation.
+/// The ABI version shared by compiled modules, Rust guests and runners.
 ///
-/// Version 25 adds native immutable Bytes values to the host boundary.
-pub const ABI_VERSION: u32 = 25;
+/// Version 26 exchanges every boundary value as an image or, for compiled modules, through
+/// module memory, and no longer as CBOR.
+pub const ABI_VERSION: u32 = 26;
 
 /// Runtime type-mask bit for None.
 pub const TYPE_NONE: u32 = 1 << 0;
@@ -178,18 +180,15 @@ pub const START_EXPORT_PREFIX: &str = "__exs_start_";
 pub const ABI_VERSION_EXPORT: &str = "__exs_abi_version";
 /// The runtime export allocating a host-writable input buffer in linear memory.
 pub const INPUT_ALLOC_EXPORT: &str = "__exs_input_alloc";
-/// The export returning the linear-memory pointer to the completed CBOR result.
+/// The export of a Rust guest returning the linear-memory pointer to its result image.
 pub const RESULT_POINTER_EXPORT: &str = "__exs_result_ptr";
-/// The export returning the byte length of the completed CBOR result.
+/// The export of a Rust guest returning the byte length of its result image.
 pub const RESULT_LENGTH_EXPORT: &str = "__exs_result_len";
 /// The export of a runtime v2 module returning the completed result as a raw `ValueRef`,
-/// which the runner reads from memory instead of a CBOR result.
+/// which the runner reads from memory instead of a result image.
 pub const RESULT_VALUE_EXPORT: &str = "__exs_result_value";
 /// The export of a runtime v2 module returning the address of its VM state block.
 pub const VM_EXPORT: &str = "__exs_vm";
-/// The export marking a module whose boundary values are `image` images instead of CBOR:
-/// inputs, host-call requests and responses, and the result.
-pub const IMAGE_BOUNDARY_EXPORT: &str = "__exs_image_boundary";
 /// The module name containing runner-provided Host ABI imports.
 pub const HOST_IMPORT_MODULE: &str = "exs";
 /// The language-neutral module name containing runner resource-metering imports.
@@ -220,49 +219,13 @@ pub const STATUS_READY: i32 = 0;
 pub const STATUS_PENDING: i32 = 1;
 /// A root execution was cancelled before its pending host call completed.
 pub const STATUS_CANCELLED: i32 = 3;
-/// Byte offset of the `u32` continuation state in an async frame's linear-memory block.
-pub const ASYNC_FRAME_STATE_OFFSET: u32 = 0;
-/// Byte offset of the `u32` generated function identifier in an async frame's block.
-pub const ASYNC_FRAME_FUNCTION_OFFSET: u32 = 4;
-/// Byte offset of the first raw 64-bit `ValueRef` slot in an async frame's block.
-pub const ASYNC_FRAME_SLOTS_OFFSET: u32 = 8;
 
-/// Exported runtime-template global whose constant value is the runtime register block address.
-pub const RUNTIME_REGISTERS_EXPORT: &str = "__EXS_RT_REGISTERS";
-/// Byte offset of the pending call-site position in the runtime register block.
-pub const REGISTERS_CALL_SITE_OFFSET: u32 = 0;
-/// Byte offset of the running task's remaining scheduler checkpoints in the register block.
-pub const REGISTERS_QUANTUM_OFFSET: u32 = 4;
-/// Byte offset of the next free root-stack slot address in the register block.
-pub const REGISTERS_ROOT_TOP_OFFSET: u32 = 8;
-/// Byte offset of the current root-stack chunk's end address in the register block.
-pub const REGISTERS_ROOT_LIMIT_OFFSET: u32 = 12;
-/// Byte offset of the current root-stack chunk's start address in the register block.
-pub const REGISTERS_ROOT_FLOOR_OFFSET: u32 = 16;
-/// Byte offset of the next free error-trace entry address in the register block.
-pub const REGISTERS_TRACE_TOP_OFFSET: u32 = 20;
-/// Byte offset of the error-trace buffer's end address in the register block.
-pub const REGISTERS_TRACE_LIMIT_OFFSET: u32 = 24;
-/// Byte offset of the cached active async frame identifier, or 0 when the cache is stale.
-pub const REGISTERS_ACTIVE_FRAME_OFFSET: u32 = 28;
-/// Byte offset of the cached active async frame's generated function id.
-pub const REGISTERS_ACTIVE_FUNCTION_OFFSET: u32 = 32;
-/// Byte offset of the cached active async frame's block address.
-pub const REGISTERS_ACTIVE_BLOCK_OFFSET: u32 = 36;
-/// Byte offset of the number of resumable child steps generated code currently runs nested.
-pub const REGISTERS_DIRECT_DEPTH_OFFSET: u32 = 40;
-/// Deepest nesting at which generated code still runs a resumable child step directly.
-///
-/// Deeper calls return to the dispatcher, which runs them from a flat Wasm stack.
-pub const DIRECT_CHILD_DEPTH_LIMIT: i32 = 32;
-/// Returned by `__exs_rt_range_begin` when a for loop must iterate the Range Object itself.
+/// Returned by the core library's Range start when a for loop must iterate the Range Object itself.
 pub const RANGE_BEGIN_FALLBACK: i64 = 0x8000_0000;
 /// Inline Range loop state after the last item was yielded.
 pub const RANGE_STATE_LAST: i64 = 1;
 /// Inline Range loop state after another item was requested past the last one.
 pub const RANGE_STATE_FINISHED: i64 = 2;
-/// Byte size of one error-trace entry: the `u32` function id followed by the `u32` call site.
-pub const TRACE_ENTRY_SIZE: u32 = 8;
 /// A host call completed synchronously and has a response available to the runtime.
 pub const HOST_CALL_READY: i32 = 0;
 /// A host call is pending and will be resumed by the runner.
@@ -270,5 +233,5 @@ pub const HOST_CALL_PENDING: i32 = 1;
 /// A host call failed at the runner-technical layer.
 pub const HOST_CALL_FATAL: i32 = 2;
 /// The arguments of a direct-boundary host call cannot cross the boundary; the module reports
-/// v1's recoverable SerializationError instead of calling.
+/// a recoverable SerializationError instead of calling.
 pub const HOST_CALL_UNSUPPORTED: i32 = 3;

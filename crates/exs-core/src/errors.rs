@@ -45,7 +45,7 @@ pub(crate) fn is_fatal(memory: &impl Memory, raw: u64) -> bool {
     error_object(raw).is_some_and(|object| memory.load_u32(object + SEVERITY) == ERROR_FATAL)
 }
 
-/// The parts of one Error, as the CBOR encoder reads them.
+/// The parts of one Error, as the boundary walk reads them.
 pub(crate) struct ErrorParts {
     /// Whether the Error is fatal.
     pub(crate) fatal: bool,

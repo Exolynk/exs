@@ -55,11 +55,6 @@ macro_rules! export {
             $crate::abi_version()
         }
         #[unsafe(no_mangle)]
-        #[doc = "Marks this guest as exchanging boundary values as images instead of CBOR."]
-        pub extern "C" fn __exs_image_boundary() -> i32 {
-            1
-        }
-        #[unsafe(no_mangle)]
         #[doc = "Allocates one runner-writable input buffer in guest linear memory."]
         pub extern "C" fn __exs_input_alloc(length: i32) -> i32 {
             $crate::input_alloc(length)
