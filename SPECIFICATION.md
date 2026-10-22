@@ -35,6 +35,8 @@ fn main(name: String) -> String {
 
 Statements end with `;`. Blocks and declarations do not require a trailing semicolon.
 
+Expressions, blocks, and type annotations may nest at most 32 levels deep by default (`E0114`); the embedding application may change this limit along with limits on source and project size.
+
 # 2. Lexical Structure
 
 ## Source text
@@ -507,7 +509,7 @@ let results = par([first, second]);
 
 Tasks share the same values and mutations. `par` returns a List of task results in source order, independent of completion order. An Error is a normal task result and does not cancel its siblings. A parent task waits until all of its direct `par` children finish.
 
-Host calls may complete in a nondeterministic order. Apart from that external completion order, task scheduling is deterministic.
+Host calls may complete in a nondeterministic order. Apart from that external completion order, task scheduling is deterministic. A task runs until it suspends, for example at a host call or `Host::sleep`, or reaches a scheduler checkpoint in a loop or call of code that can suspend; synchronous code runs without interruption. Programs must not rely on a particular interleaving of mutations that parallel tasks make to shared values.
 
 # 11. Modules
 

@@ -16,6 +16,11 @@ ExS source -> compiler + embedded exs-core-template.wasm -> final Wasm module
 
 Values live in the module's linear memory in the layout of `exs-layout`. The compiler generates the program's code and links the stateless functions of the core library (`exs-core`, embedded as `exs-core-template.wasm`) into the final Wasm module. A runner executes outside the module, supplies the Host ABI, and enforces execution limits. It passes inputs and host responses as images the module adopts without parsing, and reads results and host-call arguments directly from the module's memory. Rust guests built with `exs-guest` exchange every value as an image.
 
+- **Values:** a `ValueRef` is 64 bits wide; None, Bool, and Ints in the `i32` range are immediates, every other value lives on a non-moving heap in linear memory. Untyped Objects share hidden-class shapes; nominal types use fixed field layouts.
+- **Memory:** a stop-the-world mark-and-sweep collector in `exs-core` finds live values from precise root frames the compiler emits. When memory growth reaches the runner's limit, it collects and retries before the execution fails.
+- **Tasks:** functions that may suspend compile to resumable step functions with frames in linear memory. The scheduler state of `par` tasks lives in the module's memory and its logic in `exs-core`; a task switches only when suspending or at checkpoints in loops and calls of resumable code.
+- **Boundary:** inputs, host responses, results, and host-call arguments are acyclic by-value images (`exs_abi::image`), bounded by `BoundaryLimits`.
+
 ## Development Rules
 
 - Stable Rust is required.
@@ -115,3 +120,18 @@ The browser feature uses the application's `wasm-bindgen` JavaScript glue to ins
 Both runners also support runner-registered pull streams through `Host::stream(name, arguments...)`. Native registrations implement `HostStream`; browser registrations implement `BrowserHostStream`. Stream state is isolated to each execution and released on completion, cancellation, or `IteratorStep::Done`.
 
 `BrowserRunner` executes Wasm on the calling JavaScript thread and does not enforce fuel, wall-clock, memory, task, or host-call limits. It must therefore run untrusted ExS source inside a dedicated Web Worker. The embedding application owns the Worker lifecycle and should terminate it when its resource policy is exceeded; executing untrusted code on the main thread can freeze the user interface.
+
+## Open Points
+
+- One native OS thread is created per execution deadline; concurrent slow executions can exhaust threads. Share one timer or epoch ticker and add a runner-level concurrency limit.
+- CI does not verify that the committed `exs-core-template.wasm` matches its source; builds on macOS and Linux currently differ.
+- The Exolynk embedding still has to move to library modules, `private`, and the documentation options.
+- Optimizations: host-name caching, direct-operation specialization, root-frame reduction, and inlining.
+- Graph references at the boundary for cyclic and aliased Lists and Objects; host-resource capability values; runner instance pooling.
+
+Risks to keep in mind:
+
+- Every value that survives an allocation must be reachable from a root; each allocating helper must keep that discipline.
+- Shapes are never collected, so Objects with many distinct dynamic keys keep their shapes for the rest of the execution.
+- The non-moving heap can fragment in long-running tasks.
+- Winch generates slower machine code than Cranelift; which compiler production uses is a separate decision.

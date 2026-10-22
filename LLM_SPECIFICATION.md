@@ -12,7 +12,8 @@ application signatures, types, traits, and enum variants.
   `use`, declarations, and tests, but not executable statements or `let`.
 - The root module declares exactly one `fn main(...)`; imported modules never declare `main`.
   Every public root-module function is externally callable by name. Statements end with `;`; blocks
-  and declarations do not.
+  and declarations do not. Expressions, blocks, and type annotations nest at most 32 levels by
+  default (`E0114`).
 - Comments are `//` to end of line or non-nesting `/* ... */`. Adjacent `///` comments document a
   declaration; leading `//!` comments document the module. Identifiers are case-sensitive ASCII names beginning with `_` or a letter and then
   containing letters, digits, or `_`.
@@ -106,7 +107,8 @@ application signatures, types, traits, and enum variants.
 - `par { expression; ... }` creates one task per expression and returns source-ordered results;
   empty is `[]`. `par(list_of_zero_argument_closures)` is dynamic. Tasks share values/mutations;
   Error is a normal result; parents wait for direct children. Host completion can be nondeterministic;
-  other scheduling is deterministic.
+  other scheduling is deterministic. Tasks switch only when suspending or at checkpoints in loops and
+  calls of suspendable code; never rely on the interleaving of shared-state mutations.
 - `import "./path.exs" as namespace;` loads a relative module; the filename supplies an omitted
   namespace. Imports/uses come before declarations and cycles are errors.
 - Embedder libraries such as `log` or `exo::db` need no import: name items by path (`log::info(x)`,
