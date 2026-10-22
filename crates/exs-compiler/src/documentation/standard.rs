@@ -816,6 +816,51 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     example: "let index = items.last_index_of(target);",
                 },
                 StandardMethod {
+                    signature: "sort() -> None | Error",
+                    description: "Sorts the List in place in ascending order under `<`, which uses `Compare` implementations; equal items keep their order. Items without an order return the TypeError of `<`.",
+                    example: "let items = [3, 1, 2];\nitems.sort(); // [1, 2, 3]",
+                },
+                StandardMethod {
+                    signature: "sort(compare: Fn) -> None | Error",
+                    description: "Sorts the List in place by the Ordering `compare(a, b)` returns: `Ordering::Less` puts `a` first. Equal items keep their order; a comparison Error is returned.",
+                    example: "let items = [1, 3, 2];\nitems.sort((a, b) => { ret b.compare(a); }); // [3, 2, 1]",
+                },
+                StandardMethod {
+                    signature: "sorted() -> List | Error",
+                    description: "Returns a new List of the items in ascending order under `<`, like `sort()`, without changing the receiver.",
+                    example: "let ordered = [\"b\", \"a\"].sorted(); // [\"a\", \"b\"]",
+                },
+                StandardMethod {
+                    signature: "sorted(compare: Fn) -> List | Error",
+                    description: "Returns a new List of the items ordered by `compare`, like `sort(compare)`, without changing the receiver.",
+                    example: "let newest = [1, 3, 2].sorted((a, b) => { ret b.compare(a); });",
+                },
+                StandardMethod {
+                    signature: "sum() -> Any | Error",
+                    description: "Returns the sum of the items under `+`, which uses `Add` implementations; an empty List sums to 0. The first Error of `+` is returned.",
+                    example: "let total = [1, 2, 3.5].sum(); // 6.5",
+                },
+                StandardMethod {
+                    signature: "min() -> Any | None | Error",
+                    description: "Returns the smallest item under `<`, the first of equal ones, or None for an empty List.",
+                    example: "let smallest = [3, 1, 2].min(); // 1",
+                },
+                StandardMethod {
+                    signature: "max() -> Any | None | Error",
+                    description: "Returns the largest item under `>`, the first of equal ones, or None for an empty List.",
+                    example: "let largest = [3, 1, 2].max(); // 3",
+                },
+                StandardMethod {
+                    signature: "flatten() -> List",
+                    description: "Returns a new List in which nested Lists are replaced by their items, one level deep.",
+                    example: "let flat = [[1, 2], 3, [[4]]].flatten(); // [1, 2, 3, [4]]",
+                },
+                StandardMethod {
+                    signature: "unique() -> List | Error",
+                    description: "Returns a new List without items equal under `==` to an earlier item, keeping first occurrences in order.",
+                    example: "let distinct = [1, 2, 1].unique(); // [1, 2]",
+                },
+                StandardMethod {
                     signature: "join(separator: String) -> String | Error",
                     description: "Joins String items using a String separator. Non-String items return TypeError.",
                     example: "let csv = names.join(\",\");",

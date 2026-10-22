@@ -512,3 +512,69 @@ fn passes_object_input_to_main() {
         ]),
     );
 }
+
+/// Sorts, aggregates, flattens and deduplicates Lists through the language's operators.
+#[test]
+fn sorts_and_aggregates_lists() {
+    assert_eq!(
+        execute_source(
+            r#"
+            type Version { major: Int, tag: String }
+            impl Compare for Version {
+                fn compare(self, other: Any) -> Ordering { ret self.major.compare(other.major); }
+            }
+
+            fn main(input) -> List {
+                let items = [3, 1, 2];
+                let sorted = items.sort();
+                let versions = [
+                    Version { major: 2, tag: "a" },
+                    Version { major: 1, tag: "b" },
+                    Version { major: 2, tag: "c" },
+                ];
+                ret [
+                    sorted, items, ["b", "a"].sorted(),
+                    [3, 1, 2].sorted((a, b) => { ret b.compare(a); }),
+                    versions.sorted().map((version) => { ret version.tag; }),
+                    [1, 2.5].sum(), [].sum(), [3, 1, 3].min(), [3, 9, 1].max(), [].min(),
+                    [[1, 2], 3, [[4]]].flatten(), [1, 2, 1, [1], [1]].unique(),
+                    [1, "a"].sorted() is Error, 1.min(2),
+                ];
+            }
+        "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::None,
+            ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2), ExsValue::Int(3)]),
+            ExsValue::List(vec![
+                ExsValue::String("a".to_owned()),
+                ExsValue::String("b".to_owned()),
+            ]),
+            ExsValue::List(vec![ExsValue::Int(3), ExsValue::Int(2), ExsValue::Int(1)]),
+            ExsValue::List(vec![
+                ExsValue::String("b".to_owned()),
+                ExsValue::String("a".to_owned()),
+                ExsValue::String("c".to_owned()),
+            ]),
+            ExsValue::Float(3.5),
+            ExsValue::Int(0),
+            ExsValue::Int(1),
+            ExsValue::Int(9),
+            ExsValue::None,
+            ExsValue::List(vec![
+                ExsValue::Int(1),
+                ExsValue::Int(2),
+                ExsValue::Int(3),
+                ExsValue::List(vec![ExsValue::Int(4)]),
+            ]),
+            ExsValue::List(vec![
+                ExsValue::Int(1),
+                ExsValue::Int(2),
+                ExsValue::List(vec![ExsValue::Int(1)]),
+            ]),
+            ExsValue::Bool(true),
+            ExsValue::Int(1),
+        ]),
+    );
+}

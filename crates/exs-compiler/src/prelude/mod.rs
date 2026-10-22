@@ -92,8 +92,9 @@ pub(crate) struct MethodHelper {
 }
 
 /// Returns the private prelude helper implementing the built-in method `method` taking
-/// `arguments` arguments: the eager iterable methods for every receiver, the List searches,
-/// which compare through `==`, for Lists, and the rendering of composites.
+/// `arguments` arguments: the eager iterable methods for every receiver; the List searches,
+/// sorting and aggregates, which compare and add through the operators, for Lists; and the
+/// rendering of composites.
 pub(crate) fn method_helper(method: &str, arguments: usize) -> Option<MethodHelper> {
     let iterable = |key| {
         Some(MethodHelper {
@@ -108,7 +109,7 @@ pub(crate) fn method_helper(method: &str, arguments: usize) -> Option<MethodHelp
         })
     };
     let list = |key| {
-        (arguments == 1).then_some(MethodHelper {
+        Some(MethodHelper {
             key,
             receivers: exs_layout::TYPE_LIST,
         })
@@ -124,9 +125,18 @@ pub(crate) fn method_helper(method: &str, arguments: usize) -> Option<MethodHelp
         "collect" => iterable("__exs_iterator_collect"),
         "count" => iterable("__exs_iterator_count"),
         "to_list" => iterable("__exs_iterator_to_list"),
-        "contains" => list("__exs_list_contains"),
-        "index_of" => list("__exs_list_index_of"),
-        "last_index_of" => list("__exs_list_last_index_of"),
+        "contains" if arguments == 1 => list("__exs_list_contains"),
+        "index_of" if arguments == 1 => list("__exs_list_index_of"),
+        "last_index_of" if arguments == 1 => list("__exs_list_last_index_of"),
+        "sort" if arguments == 0 => list("__exs_list_sort"),
+        "sort" if arguments == 1 => list("__exs_list_sort_by"),
+        "sorted" if arguments == 0 => list("__exs_list_sorted"),
+        "sorted" if arguments == 1 => list("__exs_list_sorted_by"),
+        "sum" if arguments == 0 => list("__exs_list_sum"),
+        "min" if arguments == 0 => list("__exs_list_min"),
+        "max" if arguments == 0 => list("__exs_list_max"),
+        "flatten" if arguments == 0 => list("__exs_list_flatten"),
+        "unique" if arguments == 0 => list("__exs_list_unique"),
         "to_string" | "debug" => composite(RENDER_HELPER),
         _ => None,
     }
