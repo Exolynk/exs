@@ -8,7 +8,9 @@
 use exs_layout::BuiltinMethod;
 use exs_layout::StaticFunction;
 use exs_layout::ValueRef;
-use wasm_encoder::Instruction;
+use wasm_encoder::{BlockType, Instruction};
+
+use crate::codegen::VALUE_TYPE;
 
 use super::closures::{accepts, arity_description};
 use super::function::{FunctionCompiler, error, unsupported};
@@ -115,7 +117,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         let builtin = BuiltinMethod::from_name(&method.name);
         // Receivers no implementation accepts fall back to built-in behavior the backend may
         // not support yet; without implementations that is a compile error, with them a trap.
-        let helper = crate::prelude::iterator_helper(&method.name);
+        let helper = crate::prelude::method_helper(&method.name, arguments.len());
         let unsupported_fallback = builtin
             .filter(|builtin| {
                 helper.is_none() && builtin.arity() == arguments.len() && !is_supported(*builtin)
@@ -137,9 +139,19 @@ impl<'a> FunctionCompiler<'a, '_> {
         }
         let arguments: Vec<u32> = (0..count).map(|offset| block + offset).collect();
         self.dispatch_chain(&targets, receiver, &arguments, span, |compiler| {
-            // The prelude's eager iterator helpers come before built-in methods.
+            // The prelude's helpers come before built-in methods for the receivers they serve.
             if let Some(helper) = helper {
-                return compiler.call_method(helper, receiver, &arguments, span);
+                if helper.receivers == exs_layout::TYPE_ANY {
+                    return compiler.call_method(helper.key, receiver, &arguments, span);
+                }
+                compiler.instruction(Instruction::LocalGet(receiver));
+                immediate::type_mask_test(&mut compiler.function, helper.receivers);
+                compiler.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
+                compiler.call_method(helper.key, receiver, &arguments, span)?;
+                compiler.instruction(Instruction::Else);
+                compiler.builtin_method_call(builtin, receiver, block, count, span)?;
+                compiler.instruction(Instruction::End);
+                return Ok(());
             }
             if unsupported_fallback.is_some() {
                 compiler.instruction(Instruction::Unreachable);

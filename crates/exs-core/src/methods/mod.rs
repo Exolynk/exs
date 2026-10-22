@@ -7,7 +7,7 @@ mod dispatch;
 mod float_parse;
 mod lists;
 mod numbers;
-mod objects;
+pub(crate) mod objects;
 mod statics;
 mod strings;
 mod values;

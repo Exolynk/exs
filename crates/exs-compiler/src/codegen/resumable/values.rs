@@ -713,6 +713,13 @@ impl<'a> StepEmitter<'a, '_> {
         export: &str,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        if let Some(intrinsic) = crate::codegen::intrinsics::Intrinsic::from_name(export) {
+            return self.synthesize(values, span, |arguments| Expression::Call {
+                callee: identifier(intrinsic.name(), span),
+                arguments,
+                span,
+            });
+        }
         if export == "__exs_rt_datetime_parse_rfc3339" {
             return self.synthesize(values, span, |arguments| Expression::Call {
                 callee: identifier("__exs_datetime_parse_rfc3339_runtime", span),

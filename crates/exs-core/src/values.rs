@@ -29,8 +29,7 @@ pub fn equal(memory: &impl Memory, left: u64, right: u64) -> bool {
 
 /// Applies one ordering comparison to two references.
 ///
-/// Numbers order numerically and Strings byte-wise. Values of other kinds only satisfy `<=`
-/// and `>=` when they are equal.
+/// Numbers order numerically and Strings byte-wise; values of other kinds have no order.
 ///
 /// # Errors
 ///
@@ -47,8 +46,6 @@ pub fn compare(
         order_numbers(left, right)
     } else if let (Some(left), Some(right)) = (string_object(left), string_object(right)) {
         Some(compare_strings(memory, left, right))
-    } else if equal(memory, left, right) {
-        Some(core::cmp::Ordering::Equal)
     } else {
         None
     }
@@ -62,15 +59,13 @@ pub fn compare(
 }
 
 /// Orders two values like the built-in ordering: numbers numerically with Float promotion,
-/// Strings byte-wise, equal values as Equal and everything else as Unordered.
+/// Strings byte-wise and everything else as Unordered.
 pub(crate) fn order(memory: &impl Memory, left: u64, right: u64) -> Order {
     let ordering = if let (Some(left), Some(right)) = (number(memory, left), number(memory, right))
     {
         order_numbers(left, right)
     } else if let (Some(left), Some(right)) = (string_object(left), string_object(right)) {
         Some(compare_strings(memory, left, right))
-    } else if equal(memory, left, right) {
-        Some(core::cmp::Ordering::Equal)
     } else {
         None
     };
@@ -110,23 +105,32 @@ pub fn compare_value(
     Some(ValueRef::boolean(result).raw())
 }
 
-/// Evaluates the `compare` method: the `std::Ordering` of two values.
+/// Evaluates the `compare` method of the ordered built-in values, Int, Float and String: the
+/// `std::Ordering` of two values. Other receivers lack the method.
 pub(crate) fn compare_method(
     memory: &mut impl Memory,
     vm: u32,
     left: u64,
     right: u64,
 ) -> Option<u64> {
+    if number(memory, left).is_none() && string_object(left).is_none() {
+        return crate::errors::method_not_found(memory, vm, left);
+    }
     let order = order(memory, left, right);
     ordering(memory, vm, order)
 }
 
 /// Applies the comparison `test` (0 `==`, 1 `!=`, 2 `<`, 3 `<=`, 4 `>`, 5 `>=`) to the
-/// Ordering a `Compare` implementation returned.
+/// Ordering a `Compare` implementation returned, or to the Bool an `Eq` implementation or
+/// the built-in part-by-part equality returned for `==` and `!=`.
 ///
 /// Returns the Bool, or a TypeError for a value that is no Ordering and for `Unordered`
 /// under an ordering test.
 pub fn ordering_test(memory: &mut impl Memory, vm: u32, ordering: u64, test: u32) -> Option<u64> {
+    if test <= 1 && (ordering == ValueRef::TRUE.raw() || ordering == ValueRef::FALSE.raw()) {
+        let equal = ordering == ValueRef::TRUE.raw();
+        return Some(ValueRef::boolean(equal == (test == 0)).raw());
+    }
     let order = crate::enums::enum_object(memory, ordering)
         .filter(|object| {
             crate::enums::enum_type(memory, *object) == exs_layout::STANDARD_ORDERING_TYPE_ID

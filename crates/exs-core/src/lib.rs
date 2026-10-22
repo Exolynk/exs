@@ -35,6 +35,7 @@ mod methods;
 mod numbers;
 mod objects;
 mod pages;
+mod parts;
 mod ranges;
 mod render;
 mod shapes;
@@ -76,6 +77,7 @@ pub use numbers::{
     number,
 };
 pub use objects::{object_lookup, object_with_shape};
+pub use parts::{equality, parts};
 pub use ranges::{RANGE_DONE, RANGE_FALLBACK, range_begin, range_finish, range_step};
 pub use shapes::shape_for;
 pub use strings::{concat, format, string_object};

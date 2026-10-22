@@ -40,7 +40,14 @@ pub(crate) const DIV_TRAIT: &str = "Div";
 /// Required instance-method name for the `Div` protocol.
 pub(crate) const DIV_METHOD: &str = "div";
 
-/// Canonical source name for the protocol invoked by equality and ordering operators.
+/// Canonical source name for the protocol invoked by the equality operators.
+pub(crate) const EQ_TRAIT: &str = "Eq";
+
+/// Required instance-method name for the `Eq` protocol.
+pub(crate) const EQ_METHOD: &str = "eq";
+
+/// Canonical source name for the protocol invoked by ordering operators and, without an `Eq`
+/// implementation, by the equality operators.
 pub(crate) const COMPARE_TRAIT: &str = "Compare";
 
 /// Required instance-method name for the `Compare` protocol.
@@ -150,6 +157,12 @@ const ARITHMETIC_PARAMETER_TYPES: [Option<&str>; 2] = [None, Some("Any")];
 /// Return annotation required by standard binary arithmetic trait methods.
 const ARITHMETIC_RETURN_TYPES: [&str; 1] = ["Any"];
 
+/// Parameter annotations required by the standard `Eq::eq` method.
+const EQ_PARAMETER_TYPES: [Option<&str>; 2] = [None, Some("Any")];
+
+/// Return annotation required by the standard `Eq::eq` method.
+const EQ_RETURN_TYPES: [&str; 1] = ["Bool"];
+
 /// Parameter annotations required by the standard `Compare::compare` method.
 const COMPARE_PARAMETER_TYPES: [Option<&str>; 2] = [None, Some("Any")];
 
@@ -170,6 +183,8 @@ const SUB_OPERATORS: [StandardOperator; 1] = [StandardOperator::Subtract];
 const MUL_OPERATORS: [StandardOperator; 1] = [StandardOperator::Multiply];
 /// The arithmetic source operator bound to `Div::div`.
 const DIV_OPERATORS: [StandardOperator; 1] = [StandardOperator::Divide];
+/// Source operators bound to `Eq::eq`.
+const EQ_OPERATORS: [StandardOperator; 2] = [StandardOperator::Equal, StandardOperator::NotEqual];
 /// Source operators bound to `Compare::compare`.
 const COMPARE_OPERATORS: [StandardOperator; 6] = [
     StandardOperator::Equal,
@@ -220,6 +235,16 @@ const DIV_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
     description: "Divides the receiver by the evaluated `other` operand. Implementations may return any ExS value, including a recoverable Error. The `/` operator selects this method for matching nominal receivers; built-in numeric implementations expose the same behavior through `value.div(other)`. Built-in division always returns Float and follows IEEE 754 behavior for zero divisors.",
 }];
 
+/// The required `Eq::eq` method declaration.
+const EQ_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
+    name: EQ_METHOD,
+    has_receiver: true,
+    parameter_types: &EQ_PARAMETER_TYPES,
+    return_types: &EQ_RETURN_TYPES,
+    signature: "fn eq(self, other: Any) -> Bool;",
+    description: "Returns whether the receiver equals the evaluated `other` operand. `==` and `!=` select this method for matching nominal receivers, also where the value is a part of a List, Object, nominal value or enum payload that is compared. Built-in values compare by value: numbers, Strings and Bytes by content, Lists, Objects, nominal values, enums and Errors part by part, and closures by identity.",
+}];
+
 /// The required `Compare::compare` method declaration.
 const COMPARE_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
     name: COMPARE_METHOD,
@@ -227,7 +252,7 @@ const COMPARE_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor
     parameter_types: &COMPARE_PARAMETER_TYPES,
     return_types: &COMPARE_RETURN_TYPES,
     signature: "fn compare(self, other: Any) -> Ordering;",
-    description: "Compares the receiver with the evaluated `other` operand and returns `Ordering::Less`, `Ordering::Equal`, `Ordering::Greater`, or `Ordering::Unordered`. Equality uses only the Equal result. Ordering operators reject Unordered with TypeError.",
+    description: "Compares the receiver with the evaluated `other` operand and returns `Ordering::Less`, `Ordering::Equal`, `Ordering::Greater`, or `Ordering::Unordered`. Ordering operators reject Unordered with TypeError. Without an `Eq` implementation, `==` and `!=` use only the Equal result.",
 }];
 
 /// The required `ToString::to_string` method declaration.
@@ -250,8 +275,8 @@ const DEBUG_METHODS: [StandardMethodDescriptor; 1] = [StandardMethodDescriptor {
     description: "Renders the receiver for diagnostics. Every built-in value has a stable default representation; nominal types and enums may override it with `impl Debug`.",
 }];
 
-/// The standard `Add` trait declaration shared by validation, contracts, and documentation.
-const STANDARD_TRAITS: [StandardTraitDescriptor; 7] = [
+/// The standard trait declarations shared by validation, contracts, and documentation.
+const STANDARD_TRAITS: [StandardTraitDescriptor; 8] = [
     StandardTraitDescriptor {
         name: ADD_TRAIT,
         builtin_mask: TYPE_BOOL | TYPE_INT | TYPE_FLOAT | TYPE_STRING | TYPE_LIST,
@@ -289,15 +314,25 @@ const STANDARD_TRAITS: [StandardTraitDescriptor; 7] = [
         implemented_by: &["Bool", "Int", "Float"],
     },
     StandardTraitDescriptor {
-        name: COMPARE_TRAIT,
+        name: EQ_TRAIT,
         builtin_mask: TYPE_ANY,
+        methods: &EQ_METHODS,
+        operators: &EQ_OPERATORS,
+        description: "`Eq` is the protocol selected by `==` and `!=`. Every value has a built-in equality: numbers, Strings and Bytes compare by content; Lists, Objects, nominal values, enums and Errors compare part by part; closures and host resources compare by identity. A nominal type or enum may replace its equality with `impl Eq`; the implementation also applies where its values are parts of compared composites. Without `Eq`, a `Compare` implementation decides equality through its Equal result.",
+        usage: "type Money { cents: Int, label: String }\n\nimpl Eq for Money {\n    fn eq(self, other: Any) -> Bool {\n        ret other is Money && self.cents == other.cents;\n    }\n}\n\nfn main() -> Bool {\n    ret [Money { cents: 100, label: \"a\" }] == [Money { cents: 100, label: \"b\" }];\n}",
+        implemented_by: &[
+            "None", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object", "Fn",
+            "Ordering",
+        ],
+    },
+    StandardTraitDescriptor {
+        name: COMPARE_TRAIT,
+        builtin_mask: TYPE_INT | TYPE_FLOAT | TYPE_STRING,
         methods: &COMPARE_METHODS,
         operators: &COMPARE_OPERATORS,
-        description: "`Compare` is the protocol selected by equality and ordering operators. Its fixed Ordering result lets one implementation define equal, less-than, and greater-than behavior coherently. Built-in values preserve ExS equality semantics: numeric and String values are ordered, while identity-only values return Unordered unless they are the same value.",
+        description: "`Compare` is the protocol selected by the ordering operators `<`, `<=`, `>`, and `>=`. Its fixed Ordering result lets one implementation define less-than, equal, and greater-than behavior coherently; without an `Eq` implementation, `==` and `!=` use its Equal result. Built-in Int, Float, and String values are ordered; numbers order numerically and Strings by their UTF-8 bytes. Other built-in values have no order, so ordering operators return TypeError for them.",
         usage: "type Version { major: Int, minor: Int }\n\nimpl Compare for Version {\n    fn compare(self, other: Any) -> Ordering {\n        if self.major < other.major { ret Ordering::Less; }\n        if self.major > other.major { ret Ordering::Greater; }\n        if self.minor < other.minor { ret Ordering::Less; }\n        if self.minor > other.minor { ret Ordering::Greater; }\n        ret Ordering::Equal;\n    }\n}\n\nfn main() -> Bool {\n    ret Version { major: 1, minor: 2 } < Version { major: 2, minor: 0 };\n}",
-        implemented_by: &[
-            "None", "Error", "Bool", "Int", "Float", "String", "List", "Object", "Fn", "Ordering",
-        ],
+        implemented_by: &["Int", "Float", "String"],
     },
     StandardTraitDescriptor {
         name: TO_STRING_TRAIT,
@@ -307,7 +342,8 @@ const STANDARD_TRAITS: [StandardTraitDescriptor; 7] = [
         description: "`ToString` controls formatted string interpolation and explicit `value.to_string()` calls. Every built-in value has a default String representation. Nominal types and enums may override it with `impl ToString`.",
         usage: "type User { name: String }\n\nimpl ToString for User {\n    fn to_string(self) -> String {\n        ret f\"User({self.name})\";\n    }\n}\n\nfn main() -> String {\n    ret f\"{User { name: \\\"Ada\\\" }}\";\n}",
         implemented_by: &[
-            "None", "Error", "Bool", "Int", "Float", "String", "List", "Object", "Fn", "Ordering",
+            "None", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object", "Fn",
+            "Ordering",
         ],
     },
     StandardTraitDescriptor {
@@ -318,7 +354,8 @@ const STANDARD_TRAITS: [StandardTraitDescriptor; 7] = [
         description: "`Debug` provides a diagnostic String representation. Every built-in value has a default representation. Nominal types and enums may override it with `impl Debug`.",
         usage: "type User { name: String }\n\nimpl Debug for User {\n    fn debug(self) -> String {\n        ret f\"User(name={self.name})\";\n    }\n}\n\nfn main() -> String {\n    ret User { name: \\\"Ada\\\" }.debug();\n}",
         implemented_by: &[
-            "None", "Error", "Bool", "Int", "Float", "String", "List", "Object", "Fn", "Ordering",
+            "None", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object", "Fn",
+            "Ordering",
         ],
     },
 ];

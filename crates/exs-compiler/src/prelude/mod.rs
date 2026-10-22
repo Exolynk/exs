@@ -19,6 +19,11 @@ struct PreludeSource {
 /// Prelude units linked in deterministic dependency order.
 const SOURCES: &[PreludeSource] = &[
     PreludeSource {
+        source_id: "<std>/equality.exs",
+        text: include_str!("equality.exs"),
+        type_names: &[],
+    },
+    PreludeSource {
         source_id: "<std>/collections.exs",
         text: include_str!("collections.exs"),
         type_names: &[],
@@ -58,19 +63,49 @@ pub(crate) fn type_names() -> impl Iterator<Item = &'static str> {
         .chain(["Bytes", "Int", "Float", "Object", "Math"])
 }
 
-/// Returns the private prelude helper implementing one eager iterable method.
-pub(crate) fn iterator_helper(method: &str) -> Option<&'static str> {
+/// The private prelude function that compares two composites of one kind part by part for
+/// the built-in `==`.
+pub(crate) const EQUALITY_HELPER: &str = "__exs_equal";
+
+/// A private prelude function implementing a built-in method for some receivers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MethodHelper {
+    /// The helper's name.
+    pub(crate) key: &'static str,
+    /// Type mask of the receivers the helper serves; other receivers use the built-in method.
+    pub(crate) receivers: u32,
+}
+
+/// Returns the private prelude helper implementing the built-in method `method` taking
+/// `arguments` arguments: the eager iterable methods for every receiver, and the List
+/// searches, which compare through `==`, for Lists.
+pub(crate) fn method_helper(method: &str, arguments: usize) -> Option<MethodHelper> {
+    let iterable = |key| {
+        Some(MethodHelper {
+            key,
+            receivers: exs_layout::TYPE_ANY,
+        })
+    };
+    let list = |key| {
+        (arguments == 1).then_some(MethodHelper {
+            key,
+            receivers: exs_layout::TYPE_LIST,
+        })
+    };
     match method {
-        "map" => Some("__exs_list_map"),
-        "filter" => Some("__exs_list_filter"),
-        "find" => Some("__exs_list_find"),
-        "any" => Some("__exs_list_any"),
-        "all" => Some("__exs_list_all"),
-        "each" => Some("__exs_list_each"),
-        "reduce" => Some("__exs_list_reduce"),
-        "collect" => Some("__exs_iterator_collect"),
-        "count" => Some("__exs_iterator_count"),
-        "to_list" => Some("__exs_iterator_to_list"),
+        "map" => iterable("__exs_list_map"),
+        "filter" => iterable("__exs_list_filter"),
+        "find" => iterable("__exs_list_find"),
+        "any" => iterable("__exs_list_any"),
+        "all" => iterable("__exs_list_all"),
+        "each" => iterable("__exs_list_each"),
+        "reduce" => iterable("__exs_list_reduce"),
+        "collect" => iterable("__exs_iterator_collect"),
+        "count" => iterable("__exs_iterator_count"),
+        "to_list" => iterable("__exs_iterator_to_list"),
+        "contains" => list("__exs_list_contains"),
+        "index_of" => list("__exs_list_index_of"),
+        "last_index_of" => list("__exs_list_last_index_of"),
         _ => None,
     }
 }

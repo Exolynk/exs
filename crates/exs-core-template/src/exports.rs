@@ -251,13 +251,26 @@ pub extern "C" fn __exs_core_match_error(vm: i32, matched: i64) -> i64 {
     ))
 }
 
-/// Returns 1 when two values are equal by the language's equality.
+/// Compares two values as far as possible without their parts: 0 different, 1 equal, 2 when
+/// their parts decide (see `exs_core::equality`).
 #[unsafe(no_mangle)]
-pub extern "C" fn __exs_core_equal(left: i64, right: i64) -> i32 {
-    i32::from(exs_core::equal(
+pub extern "C" fn __exs_core_equal(vm: i32, left: i64, right: i64) -> i32 {
+    exs_core::equality(
         &memory(),
+        address(vm),
         left.cast_unsigned(),
         right.cast_unsigned(),
+    )
+    .cast_signed()
+}
+
+/// Returns a new List of the parts of a composite value, or None (see `exs_core::parts`).
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_parts(vm: i32, raw: i64) -> i64 {
+    value(exs_core::parts(
+        &mut memory(),
+        address(vm),
+        raw.cast_unsigned(),
     ))
 }
 

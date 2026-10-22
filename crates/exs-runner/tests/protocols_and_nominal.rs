@@ -712,7 +712,7 @@ fn dispatches_builtin_compare_trait_contracts() {
                     "Ada" < "Lin",
                     values == values,
                     match compare_self(20) { Ordering::Equal => true, Ordering::Less => false, Ordering::Greater => false, Ordering::Unordered => false, },
-                    match [1].compare([2]) { Ordering::Unordered => true, Ordering::Less => false, Ordering::Equal => false, Ordering::Greater => false, },
+                    [1].compare([2]) is Error,
                 ];
             }
             "#,

@@ -167,7 +167,13 @@ impl<'a> StepEmitter<'a, '_> {
             slot: comparison.destination,
             next: comparison.next,
         });
-        if !self.any_resumable(targets) {
+        let equality = matches!(operator, TraitOperator::Equal | TraitOperator::NotEqual);
+        let helper_resumable = equality
+            && self
+                .resumable
+                .steps
+                .contains_key(crate::prelude::EQUALITY_HELPER);
+        if !self.any_resumable(targets) && !helper_resumable {
             self.synthesize(&operands, span, |mut operands| {
                 let right = operands.remove(1);
                 Expression::Binary {
@@ -199,8 +205,66 @@ impl<'a> StepEmitter<'a, '_> {
             )?;
             self.instruction(Instruction::End);
         }
+        if helper_resumable {
+            return self.resumable_equality(
+                operator,
+                operands,
+                [left, right],
+                destination,
+                builtin,
+                span,
+            );
+        }
         self.compiler
             .compile_builtin_binary(binary, left, right, span)?;
+        self.set_slot(builtin.slot);
+        self.ready(builtin.next, span)
+    }
+
+    /// Emits the built-in `==` or `!=` when the prelude's part-by-part comparison may
+    /// suspend: composites call it as a child frame whose Bool the following OrderingTest
+    /// state tests, every other pair produces the final Bool at once.
+    #[allow(clippy::too_many_arguments)] // Durable operands, their temporaries and both results.
+    fn resumable_equality(
+        &mut self,
+        operator: TraitOperator,
+        operands: [u32; 2],
+        locals: [u32; 2],
+        comparison: Destination,
+        builtin: Destination,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.compiler.push_vm();
+        self.instruction(Instruction::LocalGet(locals[0]));
+        self.instruction(Instruction::LocalGet(locals[1]));
+        self.compiler.core_call("__exs_core_equal", span)?;
+        self.instruction(Instruction::I64ExtendI32U);
+        let equality = self.compiler.scalar_local();
+        self.instruction(Instruction::LocalSet(equality));
+        self.instruction(Instruction::LocalGet(equality));
+        self.instruction(Instruction::I64Const(i64::from(
+            exs_layout::EQUALITY_STRUCTURAL,
+        )));
+        self.instruction(Instruction::I64Eq);
+        self.instruction(Instruction::If(BlockType::Empty));
+        self.method_target(
+            crate::prelude::EQUALITY_HELPER,
+            operands[0],
+            locals[0],
+            &[operands[1]],
+            &[locals[1]],
+            comparison,
+            span,
+        )?;
+        self.instruction(Instruction::End);
+        self.instruction(Instruction::LocalGet(equality));
+        self.instruction(Instruction::I64Const(i64::from(exs_layout::EQUALITY_SAME)));
+        self.instruction(if operator == TraitOperator::NotEqual {
+            Instruction::I64Ne
+        } else {
+            Instruction::I64Eq
+        });
+        crate::codegen::immediate::bool_from_condition(&mut self.compiler.function);
         self.set_slot(builtin.slot);
         self.ready(builtin.next, span)
     }
@@ -252,9 +316,9 @@ impl<'a> StepEmitter<'a, '_> {
         if self.iterator_next_states.contains(&self.current_state()) {
             return self.iterator_next(receiver, destination, span);
         }
-        let helper = crate::prelude::iterator_helper(method);
+        let helper = crate::prelude::method_helper(method, arguments.len());
         let helper_resumable =
-            helper.is_some_and(|helper| self.resumable.steps.contains_key(helper));
+            helper.is_some_and(|helper| self.resumable.steps.contains_key(helper.key));
         if !self.any_resumable(targets) && !helper_resumable {
             let slots: Vec<u32> = core::iter::once(receiver)
                 .chain(arguments.iter().copied())
@@ -300,17 +364,35 @@ impl<'a> StepEmitter<'a, '_> {
             )?;
             self.instruction(Instruction::End);
         }
-        // The prelude's eager iterator helpers come before built-in methods.
+        // The prelude's helpers come before built-in methods for the receivers they serve.
         if let Some(helper) = helper {
-            return self.method_target(
-                helper,
+            if helper.receivers == exs_layout::TYPE_ANY {
+                return self.method_target(
+                    helper.key,
+                    receiver,
+                    receiver_local,
+                    arguments,
+                    &locals,
+                    destination,
+                    span,
+                );
+            }
+            self.instruction(Instruction::LocalGet(receiver_local));
+            crate::codegen::immediate::type_mask_test(
+                &mut self.compiler.function,
+                helper.receivers,
+            );
+            self.instruction(Instruction::If(BlockType::Empty));
+            self.method_target(
+                helper.key,
                 receiver,
                 receiver_local,
                 arguments,
                 &locals,
                 destination,
                 span,
-            );
+            )?;
+            self.instruction(Instruction::End);
         }
         self.compiler.builtin_method_call(
             BuiltinMethod::from_name(method),

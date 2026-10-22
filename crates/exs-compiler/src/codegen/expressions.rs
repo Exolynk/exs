@@ -5,7 +5,7 @@ use wasm_encoder::{BlockType, Instruction};
 use super::assertions::Assertion;
 use super::closures::{accepts, arity_description};
 use super::function::{FunctionCompiler, error, unsupported};
-use super::intrinsics::is_datetime_parser;
+use super::intrinsics::{Intrinsic, is_datetime_parser};
 use crate::ast::{BinaryOperator, Expression, FormattedStringPart, UnaryOperator};
 use crate::codegen::VALUE_TYPE;
 use crate::codegen::declarations::contains_statements;
@@ -343,22 +343,63 @@ impl<'a> FunctionCompiler<'a, '_> {
             BinaryOperator::LessOrEqual => comparison(1)(self),
             BinaryOperator::GreaterThan => comparison(2)(self),
             BinaryOperator::GreaterOrEqual => comparison(3)(self),
-            BinaryOperator::Equal | BinaryOperator::NotEqual => {
-                self.instruction(Instruction::LocalGet(left));
-                self.instruction(Instruction::LocalGet(right));
-                self.core_call("__exs_core_equal", span)?;
-                if matches!(operator, BinaryOperator::NotEqual) {
-                    self.instruction(Instruction::I32Eqz);
-                }
-                immediate::bool_from_condition(&mut self.function);
-                Ok(())
-            }
+            BinaryOperator::Equal | BinaryOperator::NotEqual => self.compile_equality(
+                matches!(operator, BinaryOperator::NotEqual),
+                left,
+                right,
+                span,
+            ),
             BinaryOperator::And | BinaryOperator::Or => Err(error(
                 "E0999",
                 span,
                 "logical operator reached arithmetic lowering".to_owned(),
             )),
         }
+    }
+
+    /// Emits the built-in `==`, or `!=` when `negate`, on two rooted operand locals: the core
+    /// decides scalars and identical references, and the prelude compares the parts of
+    /// composites, so their implementations of `Eq` and `Compare` take part.
+    pub(super) fn compile_equality(
+        &mut self,
+        negate: bool,
+        left: u32,
+        right: u32,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        self.push_vm();
+        self.instruction(Instruction::LocalGet(left));
+        self.instruction(Instruction::LocalGet(right));
+        self.core_call("__exs_core_equal", span)?;
+        self.instruction(Instruction::I64ExtendI32U);
+        let equality = self.scalar_local();
+        self.instruction(Instruction::LocalSet(equality));
+        self.instruction(Instruction::LocalGet(equality));
+        self.instruction(Instruction::I64Const(i64::from(
+            exs_layout::EQUALITY_STRUCTURAL,
+        )));
+        self.instruction(Instruction::I64Eq);
+        self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
+        self.call_method(crate::prelude::EQUALITY_HELPER, left, &[right], span)?;
+        let result = self.store_new();
+        self.return_if_error(result, span)?;
+        self.instruction(Instruction::LocalGet(result));
+        if negate {
+            immediate::push(&mut self.function, exs_layout::ValueRef::TRUE);
+            self.instruction(Instruction::I64Ne);
+            immediate::bool_from_condition(&mut self.function);
+        }
+        self.instruction(Instruction::Else);
+        self.instruction(Instruction::LocalGet(equality));
+        self.instruction(Instruction::I64Const(i64::from(exs_layout::EQUALITY_SAME)));
+        self.instruction(if negate {
+            Instruction::I64Ne
+        } else {
+            Instruction::I64Eq
+        });
+        immediate::bool_from_condition(&mut self.function);
+        self.instruction(Instruction::End);
+        Ok(())
     }
 
     /// Compiles short-circuiting `&&` or `||`; both operands must be Bools.
@@ -414,6 +455,11 @@ impl<'a> FunctionCompiler<'a, '_> {
     ) -> Result<(), CompileDiagnostics<'a>> {
         if is_datetime_parser(callee) {
             return self.compile_datetime_parse(arguments, span);
+        }
+        if self.declaration.package == crate::prelude::STD_PACKAGE
+            && let Some(intrinsic) = Intrinsic::from_name(callee)
+        {
+            return self.compile_intrinsic(intrinsic, arguments, span);
         }
         if let Some(assertion) = Assertion::from_callee(callee) {
             return self.compile_assertion(assertion, arguments, span);

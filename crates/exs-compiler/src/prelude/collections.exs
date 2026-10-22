@@ -114,3 +114,37 @@ private fn __exs_iterator_count(iterable: Any) -> Int | Error {
 private fn __exs_iterator_to_list(iterable: Any) -> List | Error {
     ret __exs_iterator_collect(iterable);
 }
+
+/// Returns whether a List holds an item equal to `value` under `==`.
+private fn __exs_list_contains(list: List, value: Any) -> Bool | Error {
+    for item in list {
+        if item == value {
+            ret true;
+        }
+    }
+    ret false;
+}
+
+/// Returns the index of the first List item equal to `value` under `==`, or None.
+private fn __exs_list_index_of(list: List, value: Any) -> Int | None | Error {
+    let index = 0;
+    for item in list {
+        if item == value {
+            ret index;
+        }
+        index = index + 1;
+    }
+    ret None;
+}
+
+/// Returns the index of the last List item equal to `value` under `==`, or None.
+private fn __exs_list_last_index_of(list: List, value: Any) -> Int | None | Error {
+    let index = list.length() - 1;
+    while index >= 0 {
+        if list[index] == value {
+            ret index;
+        }
+        index = index - 1;
+    }
+    ret None;
+}

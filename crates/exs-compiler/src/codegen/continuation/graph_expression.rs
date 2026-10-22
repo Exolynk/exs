@@ -536,6 +536,19 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     });
                     return Ok(destination);
                 }
+                if let Some(intrinsic) =
+                    crate::codegen::intrinsics::Intrinsic::from_name(&callee.name)
+                {
+                    let values = self.lower_operands(arguments)?;
+                    let destination = self.temporary(*span)?;
+                    self.operations.push(Operation::RuntimeStatic {
+                        values,
+                        export: intrinsic.name(),
+                        destination,
+                        span: *span,
+                    });
+                    return Ok(destination);
+                }
                 if is_datetime_parser_intrinsic(&callee.name) {
                     if arguments.len() != 1 {
                         return Err(diagnostics(CompileDiagnostic::new(

@@ -97,11 +97,13 @@ impl Dispatch {
                 let trait_name =
                     standard::canonical_trait_name(&trait_name.name).unwrap_or(&trait_name.name);
                 for operator in traits.operators_for(trait_name, &method.name.name) {
-                    dispatch
-                        .operators
-                        .entry(*operator)
-                        .or_default()
-                        .push(target.clone());
+                    let targets = dispatch.operators.entry(*operator).or_default();
+                    // `Eq` decides equality before a `Compare` of the same type.
+                    if trait_name == standard::EQ_TRAIT {
+                        targets.insert(0, target.clone());
+                    } else {
+                        targets.push(target.clone());
+                    }
                 }
                 if trait_name == TO_STRING_TRAIT && method.name.name == TO_STRING_METHOD {
                     dispatch.to_string.push(target.clone());

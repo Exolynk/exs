@@ -8,8 +8,8 @@ use super::dispatch::{Dispatch, Target};
 use super::intrinsics::{DATETIME_KEYS, is_datetime_parser};
 use super::units::Unit;
 use crate::ast::{
-    AssignmentTarget, Block, ElseBranch, Expression, FormattedStringPart, FunctionDeclaration,
-    HostTimeOperation, MatchArmBody, ObjectProperty, Statement,
+    AssignmentTarget, BinaryOperator, Block, ElseBranch, Expression, FormattedStringPart,
+    FunctionDeclaration, HostTimeOperation, MatchArmBody, ObjectProperty, Statement,
 };
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::TypeRegistry;
@@ -56,6 +56,10 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
                     if let Some(variant) = types.enum_variant(&callee.name) {
                         constructible.insert(variant.type_id);
                     }
+                    if Assertion::from_callee(&callee.name) == Some(Assertion::AssertEq) {
+                        targets(dispatch.operator(TraitOperator::Equal), &mut pending);
+                        pending.push(crate::prelude::EQUALITY_HELPER.to_owned());
+                    }
                     pending.push(callee.name.clone());
                 }
                 Expression::Variable(identifier) => {
@@ -83,10 +87,14 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
                     }
                     pending.push(key);
                 }
-                Expression::MethodCall { method, .. } => {
+                Expression::MethodCall {
+                    method, arguments, ..
+                } => {
                     targets(dispatch.instance_all(&method.name), &mut pending);
-                    if let Some(helper) = crate::prelude::iterator_helper(&method.name) {
-                        pending.push(helper.to_owned());
+                    if let Some(helper) =
+                        crate::prelude::method_helper(&method.name, arguments.len())
+                    {
+                        pending.push(helper.key.to_owned());
                     }
                 }
                 Expression::Closure { span, .. } => {
@@ -97,6 +105,9 @@ pub(super) fn reachable_units<'u, 'm, 'a>(
                 Expression::Binary { operator, .. } => {
                     if let Some(operator) = TraitOperator::from_binary(*operator) {
                         targets(dispatch.operator(operator), &mut pending);
+                    }
+                    if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
+                        pending.push(crate::prelude::EQUALITY_HELPER.to_owned());
                     }
                 }
                 Expression::FormattedString { .. } => targets(dispatch.to_string(), &mut pending),

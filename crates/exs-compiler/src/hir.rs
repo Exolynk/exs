@@ -4,7 +4,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use crate::ast::{
-    AssignmentTarget, Block, Expression, FunctionDeclaration, Module, Parameter, Statement,
+    AssignmentTarget, BinaryOperator, Block, Expression, FunctionDeclaration, Module, Parameter,
+    Statement,
 };
 use crate::codegen::trait_registry::{TraitOperator, TraitRegistry};
 use crate::diagnostic::SourceSpan;
@@ -430,6 +431,11 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                     self.calls
                         .extend(targets.iter().cloned().map(|key| CallEdge { key }));
                 }
+                if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
+                    self.calls.push(CallEdge {
+                        key: crate::prelude::EQUALITY_HELPER.to_owned(),
+                    });
+                }
                 self.lower_expression(left);
                 self.lower_expression(right);
             }
@@ -446,6 +452,18 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 } else {
                     self.calls.push(CallEdge {
                         key: callee.name.clone(),
+                    });
+                }
+                if callee.name == "assert_eq" || callee.name.ends_with("::assert_eq") {
+                    if let Some(targets) = self
+                        .instance_targets
+                        .operator(TraitOperator::Equal.target_key())
+                    {
+                        self.calls
+                            .extend(targets.iter().cloned().map(|key| CallEdge { key }));
+                    }
+                    self.calls.push(CallEdge {
+                        key: crate::prelude::EQUALITY_HELPER.to_owned(),
                     });
                 }
                 for argument in arguments {
@@ -479,9 +497,9 @@ impl<'a, 'state> FunctionLowerer<'a, 'state> {
                 arguments,
                 ..
             } => {
-                if let Some(key) = crate::prelude::iterator_helper(&method.name) {
+                if let Some(helper) = crate::prelude::method_helper(&method.name, arguments.len()) {
                     self.calls.push(CallEdge {
-                        key: key.to_owned(),
+                        key: helper.key.to_owned(),
                     });
                 }
                 if let Some(targets) = self.instance_targets.method(&method.name) {

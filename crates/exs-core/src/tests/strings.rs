@@ -96,14 +96,15 @@ fn compares_strings() {
     );
     let one = ValueRef::small_int(1).expect("small").raw();
     assert!(compare(&heap.memory, Ordering::Less, apple, one).is_err());
-    assert_eq!(
+    // Only numbers and Strings have an order, even for equal values.
+    assert!(
         compare(
             &heap.memory,
             Ordering::LessOrEqual,
             ValueRef::NONE.raw(),
             ValueRef::NONE.raw()
-        ),
-        Ok(true)
+        )
+        .is_err()
     );
 }
 
