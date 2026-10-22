@@ -34,6 +34,48 @@ options.limits.max_nesting = 32;
 let module = compile(source, options)?;
 ```
 
+### Libraries
+
+An application provides library modules, such as `log` or `exo::db`, through its `ModuleResolver`: `library(path)` returns the source of the library module at `path`, and `libraries()` lists every path. Scripts name library items without importing them (`log::info("ready")`) or bring them into scope with `use exo::db::load;`. The compiler loads only the libraries a script names. Declarations are public by default; `private` keeps a declaration inside its library or project.
+
+```rust
+impl ModuleResolver for AppResolver {
+    fn resolve(&mut self, importer: &str, path: &str) -> Result<ResolvedSource, String> {
+        Err(format!("{importer} cannot import {path}"))
+    }
+
+    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
+        let text = match path {
+            "log" => LOG_SOURCE,
+            "exo::db" => DB_SOURCE,
+            _ => return None,
+        };
+        Some(ResolvedSource { source_id: path.to_owned(), text: text.to_owned() })
+    }
+
+    fn libraries(&mut self) -> Vec<String> {
+        vec!["log".to_owned(), "exo::db".to_owned()]
+    }
+}
+```
+
+`CompletionEngine::with_library(path, source)` offers the public declarations of a library module to editor completions.
+
+### Documentation
+
+`document_with_resolver` documents the standard library, a project, and the libraries it names; `document_libraries` documents the standard library and every library `libraries()` lists. Both return an `ApiDocumentation` model. `markdown(&MarkdownOptions)` renders it as pages, one per module by default or one per type, enum, trait, and namespace with `PageLayout::PerItem`; the options also set the index file name, an absolute link prefix, and a front-matter callback for static-site generators such as Zola. `llm()` renders the language specification and a compact API reference as one Markdown document. `exs docs app.exs -o docs` writes the pages and `exs docs app.exs -o api.md --llm` the compact reference.
+
+```rust
+let front_matter = |page: &PageInfo<'_>| format!("+++\ntitle = \"{}\"\n+++\n\n", page.title);
+let pages = document_libraries(&mut resolver)?.markdown(&MarkdownOptions {
+    layout: PageLayout::PerItem,
+    index_file: "_index.md",
+    link_prefix: Some("@/exs/"),
+    title_heading: false,
+    front_matter: Some(&front_matter),
+});
+```
+
 ### Server runner
 
 `ServerRunner::new` takes a `ServerRunnerConfig` with the memory, fuel and wall-clock limits, the protection level for host-side resources, the Wasmtime compiler strategy and the module cache size. Every field has a default suited to untrusted source:

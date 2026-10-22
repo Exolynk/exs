@@ -1280,6 +1280,33 @@ is unchanged since 7a, and the browser check passes for compiled modules and the
 - **Comments:** explanations that referred to the removed backend ("like v1") now describe the
   behavior directly.
 
+## 12zd. Phase 10: libraries, visibility and one documentation model
+
+- **Libraries without import:** an embedder provides library modules, such as `log` or
+  `exo::db`, through `ModuleResolver::library(path)`. Every module names their items by path
+  (`log::info(x)`, `exo::Record { ... }`) or through `use` (`use exo::db::{load, save as
+  store};`, `use exo::db;`). The loader scans each source for lowercase-initial qualified paths,
+  including inside formatted strings, and loads only the libraries a script names; `import
+  "log";` is accepted without effect for the transition.
+- **`private`:** declarations are public by default. `private` before a module-level function,
+  type, enum or trait, or an inherent `impl` method, limits it to its package: one library (all
+  modules sharing the first path segment) or the project. Names are checked at compile time
+  (E0115 misplaced `private`, E0117 on trait implementation methods, E0118 private static
+  method from outside); a private instance method is filtered out of the dispatch chain for
+  callers outside its package, so the call fails like a missing method. The prelude's
+  `__exs_*` helpers are private, and private root functions are not runner entries.
+- **Documentation model:** `document_with_resolver` and the new `document_libraries` (std plus
+  every path `ModuleResolver::libraries()` lists) return an `ApiDocumentation` of modules,
+  items, sections and members built from the standard-library descriptors, the prelude and the
+  parsed modules. Private declarations are left out; leading `//!` comments describe modules.
+  `markdown(&MarkdownOptions)` renders one page per module by default or one page per type,
+  enum, trait and namespace, with configurable index file names, absolute link prefixes and a
+  front-matter callback, which replaces an embedder's own Markdown post-processing. `llm()`
+  renders the compact reference from the same model.
+- **Completions:** `CompletionEngine::with_library(path, source)` registers library modules by
+  path; completions offer child modules, `use` names and aliases, and hide private library
+  declarations.
+
 ## 13. Risks and open questions
 
 - **GC correctness:** every value that survives an allocation must be reachable from a root.

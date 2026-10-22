@@ -11,13 +11,13 @@ application signatures, types, traits, and enum variants.
 - A UTF-8 `.exs` file is one module. `LF` and `CRLF` are equivalent. Module scope permits imports,
   `use`, declarations, and tests, but not executable statements or `let`.
 - The root module declares exactly one `fn main(...)`; imported modules never declare `main`.
-  Every root-module function is externally callable by name. Statements end with `;`; blocks and
-  declarations do not.
+  Every public root-module function is externally callable by name. Statements end with `;`; blocks
+  and declarations do not.
 - Comments are `//` to end of line or non-nesting `/* ... */`. Adjacent `///` comments document a
-  declaration. Identifiers are case-sensitive ASCII names beginning with `_` or a letter and then
+  declaration; leading `//!` comments document the module. Identifiers are case-sensitive ASCII names beginning with `_` or a letter and then
   containing letters, digits, or `_`.
 - Reserved words: `as break continue else enum Error false fn for host if impl import in is let
-  match None par ret trait true type use while`.
+  match None par private ret trait true type use while`.
 - `Int` is signed 64-bit. Decimal Int literals allow `_` and must fit `-2^63..2^63-1`; leading `-`
   is an operator. `Float` is IEEE-754 binary64 and its literal has a decimal point, exponent, or
   both.
@@ -108,8 +108,16 @@ application signatures, types, traits, and enum variants.
   Error is a normal result; parents wait for direct children. Host completion can be nondeterministic;
   other scheduling is deterministic.
 - `import "./path.exs" as namespace;` loads a relative module; the filename supplies an omitted
-  namespace. `use namespace::{name as alias};` creates read-only imported names. Imports/uses come
-  before declarations and cycles are errors.
+  namespace. Imports/uses come before declarations and cycles are errors.
+- Embedder libraries such as `log` or `exo::db` need no import: name items by path (`log::info(x)`,
+  `exo::db::load(id)`, `exo::Record { ... }`). `use log::info;`, `use exo::db::{load, save as
+  store};`, and `use exo::db;` (then `db::load(id)`) create read-only names; this also works for
+  imported files (`use math::{add as plus};`).
+- Declarations are public by default. `private` before a module-level `fn`/`type`/`enum`/`trait` or
+  an inherent `impl` method limits it to its package: one library (`exo` and `exo::db`) or the
+  project (root plus imported files). Outside access is a compile error; an outside call of a
+  private instance method behaves like a missing method. Trait implementation methods cannot be
+  private; private root functions are not entry points.
 - `Host::call(name, arguments...)` calls a host-provided operation, may suspend, and creates no ExS
   task. The embedding host defines available names, contracts, capabilities, and side effects.
 - `Host::sleep(duration)` may suspend. Duration is nonnegative normalized `seconds: Int` and
@@ -133,10 +141,11 @@ module          = { moduleDecl } { item } ;
 moduleDecl      = importDecl | useDecl ;
 importDecl      = "import" string [ "as" identifier ] ";" ;
 useDecl         = "use" qualifiedName [ "as" identifier ] ";"
-                | "use" identifier "::" "{" useItem { "," useItem } [ "," ] "}" ";" ;
+                | "use" qualifiedName "::" "{" useItem { "," useItem } [ "," ] "}" ";" ;
 useItem         = identifier [ "as" identifier ] ;
 qualifiedName   = identifier { "::" identifier } ;
-item            = functionDecl | testDecl | typeDecl | enumDecl | traitDecl | implDecl ;
+item            = [ "private" ] ( functionDecl | typeDecl | enumDecl | traitDecl )
+                | testDecl | implDecl ;
 functionDecl    = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] block ;
 testDecl        = "test" string block ;
 typeDecl        = "type" identifier "{" [ typeField { "," typeField } [ "," ] ] "}" ;
@@ -145,7 +154,7 @@ enumVariant     = identifier [ "(" [ typeField { "," typeField } [ "," ] ] ")" ]
 typeField       = identifier [ ":" typeUnion ] ;
 traitDecl       = "trait" identifier "{" { traitMethod } "}" ;
 traitMethod     = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] ( ";" | block ) ;
-implDecl        = "impl" identifier [ "for" identifier ] "{" { functionDecl } "}" ;
+implDecl        = "impl" identifier [ "for" identifier ] "{" { [ "private" ] functionDecl } "}" ;
 closure         = "(" closureParameters? ")" "=>" block ;
 parameters      = parameter { "," parameter } [ "," ] ;
 closureParameters = closureParameter { "," closureParameter } [ "," ] ;

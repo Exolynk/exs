@@ -163,6 +163,14 @@ The [language reference](SPECIFICATION.md) defines only the ExS source language 
 - [x] Disable Wasmtime default features and enable only the core runtime and compiler features ExS uses. Current defaults include component model, GC, threads, async support, profiling, caching, and other unused attack surface. Resolved: Wasmtime is built with `std`, `runtime`, `cranelift`, `winch` and `parallel-compilation` only; tests add `wat`.
 - [x] Replace runtime functions returning `&'static`/`&'static mut` values from global state with scoped accessors. Resolved by runtime v2: `exs-runtime` is gone, and the stateless core library receives its memory and VM state block explicitly.
 
+### Phase 19: Libraries, visibility and documentation
+
+- [x] Library modules provided by the embedder (`ModuleResolver::library`, `libraries`), usable without import by path or through `use`, loaded only when named.
+- [x] `private` declarations limited to their library or project, checked at compile time and, for instance methods, at dispatch.
+- [x] One documentation model with a Markdown renderer (page per module or per item, index file name, link prefix, front matter) and the compact LLM reference.
+- [x] Library completions with child modules, `use` names and hidden private declarations.
+- [ ] Migrate the Exolynk embedding to library modules, `private`, and the documentation options.
+
 ### Backlog: Further Ideas
 
 - [ ] Optimizations: Add host-name caching, direct-operation specialization, root-frame reduction, and safe inlining.

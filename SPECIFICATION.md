@@ -25,7 +25,7 @@ This document defines the ExS source language. It is written for authors of ExS 
 
 An ExS source file is a module. A module has an optional import and `use` prelude followed by declarations. Executable statements and `let` declarations are not permitted at module scope. A module may also declare source tests; normal program compilation omits them.
 
-The root module must declare exactly one `fn main(...)` function. Imported modules must not declare `main`. Every root-module function is callable by an external runner.
+The root module must declare exactly one `fn main(...)` function. Imported modules must not declare `main`. Every public root-module function is callable by an external runner; `private` root functions are not (see [Visibility](#visibility)).
 
 ```exs
 fn main(name: String) -> String {
@@ -41,7 +41,7 @@ Statements end with `;`. Blocks and declarations do not require a trailing semic
 
 Source files are UTF-8. `LF` and `CRLF` line endings are equivalent. Whitespace is otherwise insignificant except where it separates tokens.
 
-Line comments begin with `//` and continue to the end of the line. Block comments begin with `/*` and end at the next `*/`; they do not nest.
+Line comments begin with `//` and continue to the end of the line. Block comments begin with `/*` and end at the next `*/`; they do not nest. Adjacent `///` lines document the declaration that follows them, and `//!` lines at the start of a file document the module; generated documentation uses both.
 
 Identifiers begin with `_` or an ASCII letter. Later characters may also be ASCII digits or `_`. Identifiers are case-sensitive.
 
@@ -49,7 +49,7 @@ The following words are reserved and cannot be used as identifiers:
 
 ```text
 as break continue else enum Error false fn for host if impl import in
-is let match None par ret trait true type use while
+is let match None par private ret trait true type use while
 ```
 
 ## Literals
@@ -335,7 +335,7 @@ fn add(left: Int, right: Int) -> Int {
 
 Parameters are positional. ExS has no default, named, or keyword parameters. Duplicate parameter names are compile errors. Named functions are visible throughout their enclosing module, enabling recursion.
 
-Every root-module function is callable by an external runner. The runner selects the function by name and supplies its positional arguments. Methods, trait methods, closures, prelude functions, and imported-module functions are not externally callable.
+Every public root-module function is callable by an external runner. The runner selects the function by name and supplies its positional arguments. Private root-module functions, methods, trait methods, closures, prelude functions, imported-module functions, and library functions are not externally callable.
 
 A function, method, trait method, or closure may declare one trailing variadic parameter with `...` after its name or type annotation:
 
@@ -511,6 +511,8 @@ Host calls may complete in a nondeterministic order. Apart from that external co
 
 # 11. Modules
 
+## Files and imports
+
 Imports load relative `.exs` files into namespaces:
 
 ```exs
@@ -525,7 +527,65 @@ fn main() -> Int {
 
 Without `as`, an import namespace is derived from its file name. More than one import may use the same namespace only when their exported declaration names do not conflict. Import cycles are compile errors.
 
-Imports and `use` declarations must precede type, enum, trait, implementation, and function declarations. A `use` alias is read-only and may name an imported function, type, enum, or trait.
+## Libraries
+
+The application that embeds ExS may provide library modules, such as `log`, `exo`, or `exo::db`. Like the standard library, library modules need no import: every module names their items by path. Library paths start with a lowercase letter, and a library module may have child modules, such as `exo` and `exo::db`.
+
+```exs
+fn main(id: Int) -> exo::Record {
+    log::info("loading record");
+    ret exo::db::load(id);
+}
+```
+
+`use` brings library items and modules into scope:
+
+```exs
+use log::info;
+use exo::db::{load, save as store};
+use exo::db;
+
+fn main(id: Int) -> None {
+    info("loading record");
+    let record = load(id);
+    store(record);
+    db::load(id);
+    ret None;
+}
+```
+
+`import "log";` names a library like a file and is accepted without effect; prefer the path or `use`.
+
+## Use declarations
+
+A `use` declaration names an imported or library declaration, or a library module, through a path; `as` gives it another name, and a braced list names several items of one module. `use` names are read-only and may stand for functions, types, enums, traits, and library modules. Imports and `use` declarations must precede type, enum, trait, implementation, and function declarations.
+
+## Visibility
+
+Declarations are public by default. The `private` keyword before a module-level function, type, enum, or trait, or before a method of an inherent `impl` block, restricts it to its package:
+
+- a library package contains every module of one library, such as `exo` and `exo::db`;
+- the project package contains the root file and every file it imports.
+
+```exs
+private fn normalize(name: String) -> String {
+    ret name.trim();
+}
+
+type User { name: String }
+
+impl User {
+    fn create(name: String) -> User {
+        ret User { name: normalize(name) };
+    }
+
+    private fn audit(self) -> None {
+        ret None;
+    }
+}
+```
+
+Naming a private function, type, enum, or trait from another package is a compile error that names the item as private to its library; calling a private static method from another package is a compile error as well. Instance methods are dispatched at run time, so a private instance method behaves like a missing method for receivers called from another package. Methods of trait implementations are always public, and `private` before any other declaration is a compile error. Private declarations are left out of generated documentation and editor completions for other packages.
 
 # 12. Built-ins and Host Calls
 
@@ -670,10 +730,11 @@ module          = { moduleDecl } { item } ;
 moduleDecl      = importDecl | useDecl ;
 importDecl      = "import" string [ "as" identifier ] ";" ;
 useDecl         = "use" qualifiedName [ "as" identifier ] ";"
-                | "use" identifier "::" "{" useItem { "," useItem } [ "," ] "}" ";" ;
+                | "use" qualifiedName "::" "{" useItem { "," useItem } [ "," ] "}" ";" ;
 useItem         = identifier [ "as" identifier ] ;
 qualifiedName   = identifier { "::" identifier } ;
-item            = functionDecl | testDecl | typeDecl | enumDecl | traitDecl | implDecl ;
+item            = [ "private" ] ( functionDecl | typeDecl | enumDecl | traitDecl )
+                | testDecl | implDecl ;
 
 functionDecl    = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] block ;
 testDecl        = "test" string block ;
@@ -683,7 +744,7 @@ enumVariant     = identifier [ "(" [ typeField { "," typeField } [ "," ] ] ")" ]
 typeField       = identifier [ ":" typeUnion ] ;
 traitDecl       = "trait" identifier "{" { traitMethod } "}" ;
 traitMethod     = "fn" identifier "(" parameters? ")" [ "->" typeUnion ] ( ";" | block ) ;
-implDecl        = "impl" identifier [ "for" identifier ] "{" { functionDecl } "}" ;
+implDecl        = "impl" identifier [ "for" identifier ] "{" { [ "private" ] functionDecl } "}" ;
 closure         = "(" closureParameters? ")" "=>" block ;
 parameters      = parameter { "," parameter } [ "," ] ;
 closureParameters = closureParameter { "," closureParameter } [ "," ] ;
