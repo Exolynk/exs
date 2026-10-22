@@ -291,7 +291,7 @@ mod tests {
     fn forwards_completion_documentation_to_birei() {
         let service = ExsBireiLanguageService::new(
             CompletionEngine::default()
-                .with_module_source("exo", "/// Reloads the browser page.\nfn ui::reload() {}"),
+                .with_library("exo::ui", "/// Reloads the browser page.\nfn reload() {}"),
         );
         let source = "exo::ui::re";
         let response = service.completion_response(source, source.len(), true);

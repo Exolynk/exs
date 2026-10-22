@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use exs_compiler::{SourceInput, SourceToken, source_lex};
 
@@ -16,6 +16,17 @@ pub(crate) struct DocumentSymbols {
     pub(crate) functions: BTreeMap<String, FunctionSignature>,
     /// Variants keyed by their enclosing enum name.
     pub(crate) variants: BTreeMap<String, Vec<String>>,
+    /// Names of the declarations marked `private`, methods as `Type::method`.
+    pub(crate) private: BTreeSet<String>,
+}
+
+/// One name a `use` declaration brings into scope.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UseBinding {
+    /// The full path the name stands for, such as `exo::ui::reload`.
+    pub(crate) target: String,
+    /// The name in scope, such as `reload` or an alias.
+    pub(crate) alias: String,
 }
 
 /// One source function signature available to a completion client.
@@ -100,6 +111,9 @@ pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbol
                         .any(|parameter| parameter.name == "self")
                 {
                     let name = format!("{type_name}::{method}");
+                    if is_marked_private(tokens, index) {
+                        symbols.private.insert(name.clone());
+                    }
                     symbols
                         .declarations
                         .insert(name.clone(), SymbolKind::Function);
@@ -125,6 +139,9 @@ pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbol
                     index = end;
                     continue;
                 }
+                if is_marked_private(tokens, index) {
+                    symbols.private.insert(name.clone());
+                }
                 symbols.declarations.insert(name.clone(), kind);
                 if let Some(documentation) = preceding_documentation(source, token.start) {
                     symbols.documentation.insert(name.clone(), documentation);
@@ -144,6 +161,107 @@ pub(crate) fn document_symbols(source: &str, tokens: &[Token]) -> DocumentSymbol
         index += 1;
     }
     symbols
+}
+
+/// Collects the public declarations of a library module, which modules outside its library
+/// may name.
+pub(crate) fn library_symbols(source: &str) -> DocumentSymbols {
+    let mut symbols = document_symbols(source, &tokenize(source));
+    for name in std::mem::take(&mut symbols.private) {
+        symbols.declarations.remove(&name);
+        symbols.documentation.remove(&name);
+        symbols.functions.remove(&name);
+        symbols.variants.remove(&name);
+    }
+    symbols
+}
+
+/// Reports whether the declaration keyword at `index` follows the `private` keyword.
+fn is_marked_private(tokens: &[Token], index: usize) -> bool {
+    index
+        .checked_sub(1)
+        .and_then(|previous| tokens.get(previous))
+        .is_some_and(|token| token.text == "private")
+}
+
+/// Returns every name the top-level `use` declarations of a document bring into scope.
+pub(crate) fn use_bindings(tokens: &[Token]) -> Vec<UseBinding> {
+    let mut bindings = Vec::new();
+    let mut depth = 0usize;
+    let mut index = 0usize;
+    while index < tokens.len() {
+        match tokens[index].text.as_str() {
+            "{" => depth += 1,
+            "}" => depth = depth.saturating_sub(1),
+            "use" if depth == 0 => {
+                index = use_declaration(tokens, index + 1, &mut bindings);
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    bindings
+}
+
+/// Reads one `use` declaration whose path starts at `index` and returns the index after it.
+fn use_declaration(tokens: &[Token], mut index: usize, bindings: &mut Vec<UseBinding>) -> usize {
+    let mut path = Vec::new();
+    while let Some(token) = tokens.get(index) {
+        if !token_is_identifier(token) {
+            break;
+        }
+        path.push(token.text.as_str());
+        index += 1;
+        if tokens.get(index).is_none_or(|token| token.text != "::") {
+            break;
+        }
+        index += 1;
+    }
+    let prefix = path.join("::");
+    if tokens.get(index).is_some_and(|token| token.text == "{") {
+        index += 1;
+        while let Some(token) = tokens.get(index) {
+            if token.text == "}" {
+                index += 1;
+                break;
+            }
+            if token_is_identifier(token) {
+                let (alias, next) = use_alias(tokens, index + 1, &token.text);
+                bindings.push(UseBinding {
+                    target: if prefix.is_empty() {
+                        token.text.clone()
+                    } else {
+                        format!("{prefix}::{}", token.text)
+                    },
+                    alias,
+                });
+                index = next;
+                continue;
+            }
+            index += 1;
+        }
+    } else if let Some(name) = path.last() {
+        let (alias, next) = use_alias(tokens, index, name);
+        bindings.push(UseBinding {
+            target: prefix.clone(),
+            alias,
+        });
+        index = next;
+    }
+    index
+}
+
+/// Returns the alias an optional `as name` at `index` gives, or `name`, and the index after it.
+fn use_alias(tokens: &[Token], index: usize, name: &str) -> (String, usize) {
+    if tokens.get(index).is_some_and(|token| token.text == "as")
+        && let Some(alias) = tokens
+            .get(index + 1)
+            .filter(|token| token_is_identifier(token))
+    {
+        return (alias.text.clone(), index + 2);
+    }
+    (name.to_owned(), index)
 }
 
 /// Reports whether a declaration is reserved for ExS or host implementation details.

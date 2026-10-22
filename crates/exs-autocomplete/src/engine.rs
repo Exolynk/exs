@@ -12,26 +12,28 @@ use crate::catalog::{
 };
 use crate::syntax::{
     DocumentSymbols, FunctionHeaderContext, FunctionParameter, FunctionSignature, SymbolKind,
-    call_argument_context, document_symbols, function_header_context, identifier_prefix,
-    is_function_name_declaration_context, is_host_member_context, is_type_context, member_receiver,
-    namespace_receiver, visible_binding_types, visible_bindings,
+    UseBinding, call_argument_context, document_symbols, function_header_context,
+    identifier_prefix, is_function_name_declaration_context, is_host_member_context,
+    is_type_context, library_symbols, member_receiver, namespace_receiver, use_bindings,
+    visible_binding_types, visible_bindings,
 };
 use crate::{CompletionItem, CompletionKind, CompletionRequest, CompletionResponse};
 
-/// Completion engine for one ExS source document and its configured virtual modules.
+/// Completion engine for one ExS source document and the library modules the embedder
+/// provides.
 #[derive(Clone, Debug, Default)]
 pub struct CompletionEngine {
+    /// Public declarations of every library module, keyed by its path such as `exo::db`.
     modules: BTreeMap<String, DocumentSymbols>,
 }
 
 impl CompletionEngine {
-    /// Adds declarations from one importable virtual module to completion responses.
+    /// Adds the public declarations of the library module at `path`, such as `log` or
+    /// `exo::db`, which documents may name without importing it.
     #[must_use]
-    pub fn with_module_source(mut self, namespace: &str, source: &str) -> Self {
-        self.modules.insert(
-            namespace.to_owned(),
-            document_symbols(source, &crate::syntax::tokenize(source)),
-        );
+    pub fn with_library(mut self, path: &str, source: &str) -> Self {
+        self.modules
+            .insert(path.to_owned(), library_symbols(source));
         self
     }
 
@@ -48,6 +50,7 @@ impl CompletionEngine {
         let (prefix_start, prefix) = identifier_prefix(request.source, request.cursor);
         let tokens = lexed.tokens;
         let symbols = document_symbols(request.source, &tokens);
+        let uses = use_bindings(&tokens);
         if is_function_name_declaration_context(request.source, prefix_start) {
             return CompletionResponse::default();
         }
@@ -57,6 +60,7 @@ impl CompletionEngine {
                 let mut items = Vec::new();
                 append_standard_symbols(&mut items, prefix);
                 append_document_types(&mut items, prefix, &symbols);
+                append_used_items(&mut items, prefix, &uses, &self.modules, true);
                 return unique_response(items, prefix_start, request.cursor);
             }
             None => {}
@@ -102,7 +106,7 @@ impl CompletionEngine {
                 prefix_start,
                 request.cursor,
                 &symbols,
-                receiver,
+                &expand_use(receiver, &uses),
                 &self.modules,
             );
         }
@@ -114,12 +118,14 @@ impl CompletionEngine {
         if is_type_context(request.source, prefix_start) {
             append_standard_symbols(&mut items, prefix);
             append_document_types(&mut items, prefix, &symbols);
+            append_used_items(&mut items, prefix, &uses, &self.modules, true);
         } else {
             append_keywords(&mut items, prefix);
             append_standard_functions(&mut items, prefix);
             append_standard_symbols(&mut items, prefix);
             append_standard_namespaces(&mut items, prefix);
             append_module_namespaces(&mut items, prefix, &self.modules);
+            append_used_items(&mut items, prefix, &uses, &self.modules, false);
             append_document_symbols(&mut items, prefix, &symbols);
             append_visible_bindings(&mut items, prefix, &visible_bindings(&tokens_before_cursor));
         }
@@ -268,36 +274,154 @@ fn response_for_namespace(
     unique_response(items, prefix_start, cursor)
 }
 
-/// Appends configured module roots as expression completions.
+/// Returns `receiver` with a leading name a `use` declaration brought into scope replaced by
+/// the path it stands for.
+fn expand_use(receiver: &str, uses: &[UseBinding]) -> String {
+    let (first, rest) = receiver
+        .split_once("::")
+        .map_or((receiver, None), |(first, rest)| (first, Some(rest)));
+    match uses.iter().rev().find(|binding| binding.alias == first) {
+        Some(binding) => rest.map_or_else(
+            || binding.target.clone(),
+            |rest| format!("{}::{rest}", binding.target),
+        ),
+        None => receiver.to_owned(),
+    }
+}
+
+/// Splits `path` into the longest library path it starts with and the rest.
+fn split_library<'p>(
+    path: &'p str,
+    modules: &BTreeMap<String, DocumentSymbols>,
+) -> Option<(&'p str, &'p str)> {
+    let mut end = Some(path.len());
+    while let Some(index) = end {
+        let library = &path[..index];
+        if modules.contains_key(library) {
+            let rest = path[index..].strip_prefix("::").unwrap_or_default();
+            return Some((library, rest));
+        }
+        end = library.rfind("::");
+    }
+    None
+}
+
+/// Appends the first segments of the library paths as expression completions.
 fn append_module_namespaces(
     items: &mut Vec<CompletionItem>,
     prefix: &str,
     modules: &BTreeMap<String, DocumentSymbols>,
 ) {
-    for namespace in modules.keys() {
+    let roots = modules
+        .keys()
+        .map(|path| path.split("::").next().unwrap_or(path))
+        .collect::<BTreeSet<_>>();
+    for root in roots {
         push_if_matching(
             items,
             prefix,
-            namespace,
-            Some("Imported module"),
-            &format!("{namespace}::"),
-            Some(namespace.len() + 2),
+            root,
+            Some("Library"),
+            &format!("{root}::"),
+            Some(root.len() + 2),
             CompletionKind::Module,
         );
     }
 }
 
-/// Appends functions and child namespaces declared by one configured module.
+/// Appends the library declarations and modules `use` declarations brought into scope; only
+/// types, enums, and traits when `types_only`.
+fn append_used_items(
+    items: &mut Vec<CompletionItem>,
+    prefix: &str,
+    uses: &[UseBinding],
+    modules: &BTreeMap<String, DocumentSymbols>,
+    types_only: bool,
+) {
+    for binding in uses {
+        if modules.contains_key(&binding.target) {
+            if !types_only {
+                push_if_matching(
+                    items,
+                    prefix,
+                    &binding.alias,
+                    Some("Library"),
+                    &format!("{}::", binding.alias),
+                    Some(binding.alias.len() + 2),
+                    CompletionKind::Module,
+                );
+            }
+            continue;
+        }
+        let Some((library, name)) = binding.target.rsplit_once("::") else {
+            continue;
+        };
+        let Some(symbols) = modules.get(library) else {
+            continue;
+        };
+        let documentation = symbols.documentation.get(name).map(String::as_str);
+        let (detail, kind) = match symbols.declarations.get(name) {
+            Some(SymbolKind::Function) => {
+                if let Some(signature) = symbols.functions.get(name).filter(|_| !types_only) {
+                    append_function_completion(
+                        items,
+                        prefix,
+                        &binding.alias,
+                        signature,
+                        documentation,
+                    );
+                }
+                continue;
+            }
+            Some(SymbolKind::Type) => ("Library type", CompletionKind::Type),
+            Some(SymbolKind::Enum) => ("Library enum", CompletionKind::Enum),
+            Some(SymbolKind::Trait) => ("Library trait", CompletionKind::Trait),
+            None => continue,
+        };
+        push_documented_if_matching(
+            items,
+            prefix,
+            &binding.alias,
+            CompletionPresentation::new(Some(detail), documentation),
+            &binding.alias,
+            None,
+            kind,
+        );
+    }
+}
+
+/// Appends the declarations of the library module `receiver` names, or the static methods
+/// and variants of the library type or enum it names, and its child library modules.
 fn append_module_members(
     items: &mut Vec<CompletionItem>,
     prefix: &str,
     receiver: &str,
     modules: &BTreeMap<String, DocumentSymbols>,
 ) {
-    let (root, path) = receiver.split_once("::").unwrap_or((receiver, ""));
-    let Some(symbols) = modules.get(root) else {
+    let Some((library, path)) = split_library(receiver, modules) else {
         return;
     };
+    let Some(symbols) = modules.get(library) else {
+        return;
+    };
+    if path.is_empty() {
+        let children = format!("{library}::");
+        for child in modules
+            .keys()
+            .filter_map(|key| key.strip_prefix(&children))
+            .filter(|child| !child.contains("::"))
+        {
+            push_if_matching(
+                items,
+                prefix,
+                child,
+                Some("Library"),
+                &format!("{child}::"),
+                Some(child.len() + 2),
+                CompletionKind::Module,
+            );
+        }
+    }
     let namespace_prefix = if path.is_empty() {
         String::new()
     } else {
@@ -337,9 +461,9 @@ fn append_module_members(
             continue;
         }
         let (detail, completion_kind) = match kind {
-            SymbolKind::Type => ("Imported type", CompletionKind::Type),
-            SymbolKind::Enum => ("Imported enum", CompletionKind::Enum),
-            SymbolKind::Trait => ("Imported trait", CompletionKind::Trait),
+            SymbolKind::Type => ("Library type", CompletionKind::Type),
+            SymbolKind::Enum => ("Library enum", CompletionKind::Enum),
+            SymbolKind::Trait => ("Library trait", CompletionKind::Trait),
             SymbolKind::Function => continue,
         };
         push_documented_if_matching(
@@ -781,7 +905,7 @@ mod tests {
     /// Completes static imported type methods without exposing instance or private methods.
     #[test]
     fn completes_configured_type_static_methods() {
-        let engine = CompletionEngine::default().with_module_source(
+        let engine = CompletionEngine::default().with_library(
             "camt",
             "type Transaction {} impl Transaction {\n/// Parses a document.\nfn parse(content: String) -> Transaction {} fn status(self) {} fn __internal() {} }",
         );
@@ -815,13 +939,18 @@ mod tests {
         );
     }
 
-    /// Completes functions, types, and nested namespaces from a virtual import source.
+    /// Completes functions, types, and child modules of library modules.
     #[test]
     fn completes_configured_virtual_module_members() {
-        let engine = CompletionEngine::default().with_module_source(
-            "exo",
-            "/// Localized text.\ntype Language {}\n/// Returns the active environment.\nfn get_environment() {}\nfn __exo_hydrate_environment() {}\n/// Reloads the browser page.\nfn ui::reload() {}",
-        );
+        let engine = CompletionEngine::default()
+            .with_library(
+                "exo",
+                "/// Localized text.\ntype Language {}\n/// Returns the active environment.\nfn get_environment() {}\nprivate fn __exo_hydrate_environment() {}",
+            )
+            .with_library(
+                "exo::ui",
+                "/// Reloads the browser page.\nfn reload() {}",
+            );
 
         let module_source = "ex";
         let module_response = engine.complete(CompletionRequest {
@@ -876,6 +1005,70 @@ mod tests {
             cursor: private_source.len(),
         });
         assert!(private_response.items.is_empty());
+    }
+
+    /// Hides the private declarations of a library and keeps the document's own.
+    #[test]
+    fn hides_private_library_declarations() {
+        let engine = CompletionEngine::default().with_library(
+            "log",
+            "fn info(message: String) {}\nprivate fn format(message: String) {}\nprivate type Entry {}\ntype Level {} impl Level { private fn parse(text: String) {} fn named(text: String) {} }",
+        );
+        let response = engine.complete(CompletionRequest {
+            source: "log::",
+            cursor: 5,
+        });
+        assert!(response.items.iter().any(|item| item.label == "info"));
+        assert!(
+            !response
+                .items
+                .iter()
+                .any(|item| matches!(item.label.as_str(), "format" | "Entry"))
+        );
+        let response = engine.complete(CompletionRequest {
+            source: "log::Level::",
+            cursor: 12,
+        });
+        assert!(response.items.iter().any(|item| item.label == "named"));
+        assert!(!response.items.iter().any(|item| item.label == "parse"));
+        let source = "private fn helper() {}\nfn main() { hel }";
+        let response = engine.complete(CompletionRequest {
+            source,
+            cursor: source.len() - 2,
+        });
+        assert_eq!(item(&response, "helper").kind, CompletionKind::Function);
+    }
+
+    /// Completes names and modules that `use` declarations bring into scope.
+    #[test]
+    fn completes_used_library_items() {
+        let engine = CompletionEngine::default()
+            .with_library("exo", "/// A stored record.\ntype Record {}")
+            .with_library(
+                "exo::ui",
+                "/// Reloads the browser page.\nfn reload() {}\n/// Opens a popup.\nfn popup(title: String) {}",
+            );
+        let source =
+            "use exo::ui::{reload, popup as open};\nuse exo::ui;\nuse exo::Record;\nfn main() { ";
+        let complete = |text: &str| {
+            let source = format!("{source}{text}");
+            engine.complete(CompletionRequest {
+                source: &source,
+                cursor: source.len(),
+            })
+        };
+        let response = complete("rel");
+        assert_eq!(item(&response, "reload").insert_text, "reload()");
+        let response = complete("op");
+        let open = item(&response, "open");
+        assert_eq!(open.insert_text, "open()");
+        assert_eq!(open.documentation.as_deref(), Some("Opens a popup."));
+        let response = complete("u");
+        assert_eq!(item(&response, "ui").insert_text, "ui::");
+        let response = complete("ui::po");
+        assert_eq!(item(&response, "popup").insert_text, "popup()");
+        let response = complete("Rec");
+        assert_eq!(item(&response, "Record").kind, CompletionKind::Type);
     }
 
     /// Avoids opening an unsolicited completion list on an empty source position.
