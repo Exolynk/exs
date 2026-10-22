@@ -826,6 +826,7 @@ fn standard_prelude_modules() -> Result<Vec<(Module<'static>, LoadedSource)>, St
                 LoadedSource {
                     source_id: source.source_id.to_owned(),
                     display_path: source.source_id.to_owned(),
+                    library: None,
                     text: source.text.to_owned(),
                 },
             ))

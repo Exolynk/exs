@@ -20,6 +20,8 @@ mod formatter;
 mod imports;
 #[path = "compiler/language.rs"]
 mod language;
+#[path = "compiler/libraries.rs"]
+mod libraries;
 #[path = "compiler/limits.rs"]
 mod limits;
 #[path = "compiler/visibility.rs"]

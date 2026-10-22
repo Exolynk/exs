@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::ast::{ImportDeclaration, Module};
-use crate::{CompileLimits, ModuleResolver, SourceInput};
+use crate::lexer::{FormattedStringPart, Token, TokenKind};
+use crate::{CompileLimits, ModuleResolver, ResolvedSource, SourceInput};
 
 /// A fully resolved project source unit.
 pub(crate) struct LoadedSource {
@@ -14,6 +15,9 @@ pub(crate) struct LoadedSource {
     pub(crate) display_path: String,
     /// Complete UTF-8 source text.
     pub(crate) text: String,
+    /// The path of the library module this source provides, such as `exo::db`, or `None`
+    /// for a source of the project.
+    pub(crate) library: Option<String>,
 }
 
 /// One resolved relative import between loaded project sources.
@@ -39,27 +43,52 @@ pub(crate) struct LoadedProject {
 }
 
 impl LoadedProject {
-    /// Loads every relative import reachable from `source` without applying consumer semantics,
-    /// within the size and module limits of `limits`.
+    /// Loads every relative import reachable from `source` and every library module the
+    /// loaded sources name, within the size and module limits of `limits`.
+    ///
+    /// A library module is loaded when a source names a path the resolver provides as a
+    /// library, such as `log` in `log::info` or `exo::db` in `use exo::db::query;`, so
+    /// unused libraries cost nothing. Importing a library by its path is accepted and only
+    /// loads it.
     pub(crate) fn load<R: ModuleResolver>(
         source: SourceInput<'_>,
         resolver: &mut R,
         limits: CompileLimits,
     ) -> Result<Self, String> {
-        let mut total_bytes = check_size(source.source_id, source.text.len(), 0, limits)?;
-        let mut files = vec![LoadedSource {
-            source_id: source.source_id.to_owned(),
-            display_path: root_display_path(source.source_id),
-            text: source.text.to_owned(),
-        }];
-        let mut edges = vec![Vec::new()];
-        let mut indices = HashMap::from([(source.source_id.to_owned(), 0_usize)]);
+        let mut loader = Loader {
+            files: Vec::new(),
+            edges: Vec::new(),
+            indices: HashMap::new(),
+            libraries: HashMap::new(),
+            total_bytes: 0,
+            limits,
+        };
+        loader.add(
+            ResolvedSource {
+                source_id: source.source_id.to_owned(),
+                text: source.text.to_owned(),
+            },
+            root_display_path(source.source_id),
+            None,
+        )?;
         let mut index = 0;
-        while index < files.len() {
-            let source_id = files[index].source_id.clone();
-            let text = files[index].text.clone();
-            let imports = scan_imports(&source_id, &text)?;
-            for import in imports {
+        while index < loader.files.len() {
+            let source_id = loader.files[index].source_id.clone();
+            let text = loader.files[index].text.clone();
+            let scanned = scan_source(&source_id, &text)?;
+            for import in scanned.imports {
+                if let Some(target) = loader.library(resolver, &import.path)? {
+                    // A library is visible everywhere; only a different alias needs an edge.
+                    if let Some(alias) = import.alias.filter(|alias| alias.name != import.path) {
+                        loader.edges[index].push(ImportEdge {
+                            namespace: alias.name,
+                            start_byte: import.span.start_byte,
+                            end_byte: import.span.end_byte,
+                            target,
+                        });
+                    }
+                    continue;
+                }
                 let resolved = resolver
                     .resolve(&source_id, &import.path)
                     .map_err(|error| {
@@ -68,32 +97,8 @@ impl LoadedProject {
                             source_id, import.span.start_byte, import.span.end_byte, import.path
                         )
                     })?;
-                let target = if let Some(target) = indices.get(&resolved.source_id) {
-                    *target
-                } else {
-                    if files.len() >= limits.max_modules {
-                        return Err(format!(
-                            "{}: the project exceeds the limit of {} modules",
-                            files[0].source_id, limits.max_modules
-                        ));
-                    }
-                    total_bytes = check_size(
-                        &resolved.source_id,
-                        resolved.text.len(),
-                        total_bytes,
-                        limits,
-                    )?;
-                    let target = files.len();
-                    indices.insert(resolved.source_id.clone(), target);
-                    files.push(LoadedSource {
-                        source_id: resolved.source_id,
-                        display_path: import.path.clone(),
-                        text: resolved.text,
-                    });
-                    edges.push(Vec::new());
-                    target
-                };
-                edges[index].push(ImportEdge {
+                let target = loader.add(resolved, import.path.clone(), None)?;
+                loader.edges[index].push(ImportEdge {
                     namespace: import
                         .alias
                         .map_or_else(|| default_namespace(&import.path), |alias| alias.name),
@@ -102,11 +107,21 @@ impl LoadedProject {
                     target,
                 });
             }
+            for path in scanned.paths {
+                let mut prefix = String::new();
+                for segment in path.split("::") {
+                    if !prefix.is_empty() {
+                        prefix.push_str("::");
+                    }
+                    prefix.push_str(segment);
+                    loader.library(resolver, &prefix)?;
+                }
+            }
             index += 1;
         }
         Ok(Self {
-            files,
-            edges,
+            files: loader.files,
+            edges: loader.edges,
             max_nesting: limits.max_nesting,
         })
     }
@@ -146,17 +161,145 @@ impl LoadedProject {
     }
 }
 
-/// Returns the import declarations of one source and renders its lexical diagnostics or the
-/// syntax diagnostics of its imports; the rest of the source is parsed once, later.
-fn scan_imports<'a>(
-    source_id: &'a str,
-    text: &'a str,
-) -> Result<Vec<ImportDeclaration<'a>>, String> {
+/// The sources a loader has gathered so far.
+struct Loader {
+    /// Loaded sources in discovery order.
+    files: Vec<LoadedSource>,
+    /// Import edges indexed by importing source.
+    edges: Vec<Vec<ImportEdge>>,
+    /// Index of every loaded source by its identity.
+    indices: HashMap<String, usize>,
+    /// Every path asked of the resolver as a library, with the index of its source if the
+    /// resolver provides one.
+    libraries: HashMap<String, Option<usize>>,
+    /// Bytes of all loaded sources.
+    total_bytes: usize,
+    /// Limits of the compilation.
+    limits: CompileLimits,
+}
+
+impl Loader {
+    /// Adds `source` unless a source of its identity is loaded already, and returns its index.
+    fn add(
+        &mut self,
+        source: ResolvedSource,
+        display_path: String,
+        library: Option<String>,
+    ) -> Result<usize, String> {
+        if let Some(index) = self.indices.get(&source.source_id) {
+            return Ok(*index);
+        }
+        if self.files.len() >= self.limits.max_modules {
+            return Err(format!(
+                "{}: the project exceeds the limit of {} modules",
+                self.files
+                    .first()
+                    .map_or(source.source_id.as_str(), |root| root.source_id.as_str()),
+                self.limits.max_modules
+            ));
+        }
+        self.total_bytes = check_size(
+            &source.source_id,
+            source.text.len(),
+            self.total_bytes,
+            self.limits,
+        )?;
+        let index = self.files.len();
+        self.indices.insert(source.source_id.clone(), index);
+        self.files.push(LoadedSource {
+            source_id: source.source_id,
+            display_path,
+            text: source.text,
+            library,
+        });
+        self.edges.push(Vec::new());
+        Ok(index)
+    }
+
+    /// Loads the library module at `path` if the resolver provides one, asking it once per
+    /// path, and returns its index.
+    fn library<R: ModuleResolver>(
+        &mut self,
+        resolver: &mut R,
+        path: &str,
+    ) -> Result<Option<usize>, String> {
+        if let Some(index) = self.libraries.get(path) {
+            return Ok(*index);
+        }
+        let index = match resolver.library(path) {
+            Some(source) => Some(self.add(source, path.to_owned(), Some(path.to_owned()))?),
+            None => None,
+        };
+        self.libraries.insert(path.to_owned(), index);
+        Ok(index)
+    }
+}
+
+/// What loading needs from one source before it is parsed.
+struct ScannedSource<'a> {
+    /// Its import declarations.
+    imports: Vec<ImportDeclaration<'a>>,
+    /// Every qualified path it spells whose first segment starts with a lowercase letter,
+    /// such as `exo::db::query`; library names are lowercase.
+    paths: Vec<String>,
+}
+
+/// Scans one source for its imports and the qualified paths it names, and renders its
+/// lexical diagnostics or the syntax diagnostics of its imports; the rest of the source is
+/// parsed once, later.
+fn scan_source<'a>(source_id: &'a str, text: &'a str) -> Result<ScannedSource<'a>, String> {
     let lexed = crate::lexer::lex(SourceInput { source_id, text });
     if !lexed.diagnostics.is_empty() {
         return Err(lexed.diagnostics.render(text));
     }
-    crate::parser::parse_imports(lexed.tokens).map_err(|error| error.render(text))
+    let paths = qualified_paths(&lexed.tokens);
+    let imports = crate::parser::parse_imports(lexed.tokens).map_err(|error| error.render(text))?;
+    Ok(ScannedSource { imports, paths })
+}
+
+/// Returns every distinct `name::name...` path of `tokens` whose first name starts with a
+/// lowercase letter.
+fn qualified_paths(tokens: &[Token<'_>]) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    collect_paths(tokens, &mut paths);
+    paths
+}
+
+/// Adds the paths of `tokens`, including those inside formatted-string interpolations, to
+/// `paths`.
+fn collect_paths(tokens: &[Token<'_>], paths: &mut Vec<String>) {
+    let mut index = 0;
+    while index < tokens.len() {
+        if let TokenKind::FormattedString(formatted) = &tokens[index].kind {
+            for part in &formatted.parts {
+                if let FormattedStringPart::Expression { source, start_byte } = part {
+                    let fragment = crate::lexer::lex_fragment("", source, *start_byte);
+                    collect_paths(&fragment.tokens, paths);
+                }
+            }
+        }
+        let TokenKind::Identifier(first) = &tokens[index].kind else {
+            index += 1;
+            continue;
+        };
+        let mut path = first.clone();
+        let mut next = index + 1;
+        while let (Some(TokenKind::DoubleColon), Some(TokenKind::Identifier(segment))) = (
+            tokens.get(next).map(|token| &token.kind),
+            tokens.get(next + 1).map(|token| &token.kind),
+        ) {
+            path.push_str("::");
+            path.push_str(segment);
+            next += 2;
+        }
+        if next > index + 1
+            && first.starts_with(|character: char| character.is_ascii_lowercase())
+            && !paths.contains(&path)
+        {
+            paths.push(path);
+        }
+        index = next;
+    }
 }
 
 /// Parses one non-root source module, nesting at most `max_nesting` levels deep, and renders

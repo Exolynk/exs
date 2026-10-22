@@ -106,6 +106,14 @@ pub struct ResolvedSource {
 pub trait ModuleResolver {
     /// Resolves `path` relative to the source identified by `importer`.
     fn resolve(&mut self, importer: &str, path: &str) -> Result<ResolvedSource, String>;
+
+    /// Returns the library module at `path`, such as `log` or `exo::db`, which every module
+    /// may name without importing it, or `None` when the embedder provides no library module
+    /// there. Library names start with a lowercase letter.
+    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
+        let _ = path;
+        None
+    }
 }
 
 /// Compiles one `ExS` module against the core library template.

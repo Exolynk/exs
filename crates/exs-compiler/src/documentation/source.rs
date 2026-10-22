@@ -446,7 +446,11 @@ fn render_module_index(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            output.push_str(&format!("- `{}::{items}`\n", declaration.namespace.name));
+            if declaration.namespace.name.is_empty() {
+                output.push_str(&format!("- `{items}`\n"));
+            } else {
+                output.push_str(&format!("- `{}::{items}`\n", declaration.namespace.name));
+            }
         }
         output.push('\n');
     }

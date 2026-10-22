@@ -83,7 +83,11 @@ pub(crate) fn append_keywords(items: &mut Vec<CompletionItem>, prefix: &str) {
         ("let", "Local binding declaration", "let "),
         ("match", "Exhaustive match", "match "),
         ("par", "Parallel task expression", "par "),
-        ("private", "Declaration hidden outside its library or project", "private "),
+        (
+            "private",
+            "Declaration hidden outside its library or project",
+            "private ",
+        ),
         ("ret", "Return statement", "ret "),
         ("trait", "Trait declaration", "trait "),
         ("type", "Type declaration", "type "),

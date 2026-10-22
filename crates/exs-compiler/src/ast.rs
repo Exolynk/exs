@@ -46,7 +46,8 @@ pub struct UseItem<'a> {
 /// One compile-time `use` declaration.
 #[derive(Debug, Clone)]
 pub struct UseDeclaration<'a> {
-    /// Imported namespace being referenced.
+    /// The path the items are taken from, such as `exo::db`; empty when a single module
+    /// is used, as in `use log;`.
     pub namespace: Identifier<'a>,
     /// Declarations introduced into the local module scope.
     pub items: Vec<UseItem<'a>>,

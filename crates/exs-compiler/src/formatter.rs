@@ -82,7 +82,11 @@ impl Formatter {
             } else {
                 format!("{{{}}}", items.join(", "))
             };
-            self.line(&format!("use {}::{};", declaration.namespace.name, suffix));
+            if declaration.namespace.name.is_empty() {
+                self.line(&format!("use {suffix};"));
+            } else {
+                self.line(&format!("use {}::{suffix};", declaration.namespace.name));
+            }
         }
         let has_prelude = !module.imports.is_empty() || !module.uses.is_empty();
         let declarations = module

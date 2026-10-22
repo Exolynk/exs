@@ -96,47 +96,44 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses one `use namespace::{name as alias}` declaration.
+    /// Parses one `use` declaration: `use path::name [as alias];`, `use path::{name [as alias],
+    /// ...};` or `use module [as alias];` for a library module or import namespace.
     pub(super) fn use_declaration(&mut self) -> Result<UseDeclaration<'a>, CompileDiagnostic<'a>> {
         let start = self.expect_simple(TokenKind::Use, "expected `use`")?.span;
-        let namespace = self.identifier("expected namespace after `use`")?;
-        self.expect_simple(TokenKind::DoubleColon, "expected `::` after use namespace")?;
+        let mut segments = vec![self.identifier("expected a path after `use`")?];
         let mut items = Vec::new();
-        if self.matches(&TokenKind::LeftBrace) {
-            loop {
-                let name = self.identifier("expected imported declaration name")?;
-                let alias = if self.matches(&TokenKind::As) {
-                    Some(self.identifier("expected alias after `as`")?)
-                } else {
-                    None
-                };
-                self.type_names.insert(
-                    alias
-                        .as_ref()
-                        .map_or_else(|| name.name.clone(), |alias| alias.name.clone()),
-                );
-                items.push(UseItem { name, alias });
-                if !self.matches(&TokenKind::Comma) {
-                    break;
-                }
-                if self.check(&TokenKind::RightBrace) {
-                    break;
-                }
+        while self.matches(&TokenKind::DoubleColon) {
+            if self.matches(&TokenKind::LeftBrace) {
+                items = self.use_items()?;
+                break;
             }
-            self.expect_simple(TokenKind::RightBrace, "expected `}` after use list")?;
-        } else {
-            let name = self.identifier("expected imported declaration name")?;
-            let alias = if self.matches(&TokenKind::As) {
-                Some(self.identifier("expected alias after `as`")?)
-            } else {
-                None
-            };
-            self.type_names.insert(
-                alias
-                    .as_ref()
-                    .map_or_else(|| name.name.clone(), |alias| alias.name.clone()),
-            );
+            segments.push(self.identifier("expected a name after `::`")?);
+        }
+        if items.is_empty() {
+            let name = segments
+                .pop()
+                .ok_or_else(|| self.error(start, "E0103", "expected a path after `use`"))?;
+            let alias = self.use_alias()?;
             items.push(UseItem { name, alias });
+        }
+        let namespace = segments.iter().skip(1).fold(
+            segments.first().cloned().unwrap_or_else(|| Identifier {
+                name: String::new(),
+                span: start,
+            }),
+            |mut path, segment| {
+                path.name.push_str("::");
+                path.name.push_str(&segment.name);
+                path.span = path.span.through(segment.span);
+                path
+            },
+        );
+        for item in &items {
+            self.type_names.insert(
+                item.alias
+                    .as_ref()
+                    .map_or_else(|| item.name.name.clone(), |alias| alias.name.clone()),
+            );
         }
         let end = self
             .expect_simple(TokenKind::Semicolon, "expected `;` after use declaration")?
@@ -146,6 +143,30 @@ impl<'a> Parser<'a> {
             items,
             span: start.through(end),
         })
+    }
+
+    /// Parses the `name [as alias], ...` list of a `use` declaration after its `{`.
+    fn use_items(&mut self) -> Result<Vec<UseItem<'a>>, CompileDiagnostic<'a>> {
+        let mut items = Vec::new();
+        loop {
+            let name = self.identifier("expected imported declaration name")?;
+            let alias = self.use_alias()?;
+            items.push(UseItem { name, alias });
+            if !self.matches(&TokenKind::Comma) || self.check(&TokenKind::RightBrace) {
+                break;
+            }
+        }
+        self.expect_simple(TokenKind::RightBrace, "expected `}` after use list")?;
+        Ok(items)
+    }
+
+    /// Parses the optional `as alias` of a used name.
+    fn use_alias(&mut self) -> Result<Option<Identifier<'a>>, CompileDiagnostic<'a>> {
+        if self.matches(&TokenKind::As) {
+            Ok(Some(self.identifier("expected alias after `as`")?))
+        } else {
+            Ok(None)
+        }
     }
 
     pub(super) fn function(
@@ -214,7 +235,14 @@ impl<'a> Parser<'a> {
         ),
         CompileDiagnostic<'a>,
     > {
-        let name = self.qualified_identifier("expected function name")?;
+        let name = self.identifier("expected function name")?;
+        if self.check(&TokenKind::DoubleColon) {
+            return Err(self.error(
+                self.peek().span,
+                "E0116",
+                "function names cannot contain `::`; declare the function in a library module instead",
+            ));
+        }
         self.expect_simple(TokenKind::LeftParen, "expected `(` after function name")?;
         let mut parameters = Vec::new();
         if !self.check(&TokenKind::RightParen) {

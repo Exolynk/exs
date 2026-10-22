@@ -162,26 +162,20 @@ fn imported_modules_preserve_local_bindings() {
     .expect("lexical binding remains local");
 }
 
-/// Resolves a nested exported function namespace through an imported module.
+/// Rejects function names with `::`, which library modules replace.
 #[test]
-fn compiles_imported_nested_function_namespaces() {
-    let mut resolver = TestResolver {
-        sources: HashMap::from([(
-            "./ui.exs".to_owned(),
-            "fn ui::reload() -> String { ret \"reloaded\"; }".to_owned(),
-        )]),
-    };
-    let compiled = compile_with_resolver(
+fn rejects_qualified_function_names() {
+    let error = match compile(
         SourceInput {
             source_id: "./main.exs",
-            text: "import \"./ui.exs\" as exo; fn main() -> String { ret exo::ui::reload(); }",
+            text: "fn ui::reload() -> String { ret \"reloaded\"; } fn main() -> String { ret \"\"; }",
         },
         CompileOptions::default(),
-        &mut resolver,
-    );
-    if let Err(error) = compiled {
-        panic!("compilation failed: {error}");
-    }
+    ) {
+        Ok(_) => panic!("a qualified function name unexpectedly compiled"),
+        Err(error) => error,
+    };
+    assert_eq!(error.diagnostics[0].code, "E0116");
 }
 
 /// Resolves nominal types used by typed bindings inside imported function bodies.

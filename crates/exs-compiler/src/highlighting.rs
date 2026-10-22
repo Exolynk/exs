@@ -291,7 +291,9 @@ fn highlight_module(
         }
     }
     for use_declaration in &module.uses {
-        highlight_identifier(&use_declaration.namespace, HighlightKind::Type, spans, len);
+        if !use_declaration.namespace.name.is_empty() {
+            highlight_identifier(&use_declaration.namespace, HighlightKind::Type, spans, len);
+        }
         for item in &use_declaration.items {
             highlight_identifier(&item.name, HighlightKind::Type, spans, len);
             if let Some(alias) = &item.alias {

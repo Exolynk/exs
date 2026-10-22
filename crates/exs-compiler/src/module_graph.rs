@@ -67,6 +67,12 @@ fn compile_target<R: ModuleResolver>(
         }
         exports.push(collect_exports(module, index)?);
     }
+    let libraries: HashMap<&str, usize> = files
+        .iter()
+        .enumerate()
+        .filter_map(|(index, file)| file.library.as_deref().map(|path| (path, index)))
+        .collect();
+    let library_bindings = library_bindings(&libraries, &exports);
     let mut root_tests = if test_target {
         std::mem::take(&mut modules[0].tests)
     } else {
@@ -84,7 +90,14 @@ fn compile_target<R: ModuleResolver>(
         tests: Vec::new(),
     };
     for index in 0..modules.len() {
-        let mut bindings = bindings_for(&modules[index], index, &edges[index], &exports)?;
+        let mut bindings = bindings_for(
+            &modules[index],
+            index,
+            &edges[index],
+            &exports,
+            &libraries,
+            &library_bindings,
+        )?;
         if test_target && index == 0 {
             if let Some(function) = modules[index]
                 .functions
@@ -303,19 +316,52 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<HashMap<String, 
     Ok(exports)
 }
 
-/// Builds canonical name lookups visible from one source module.
+/// Returns the qualified name of every declaration of the library modules `libraries`, by
+/// path and source index, such as `log::info`, with its canonical name. Every module may
+/// name them.
+fn library_bindings(
+    libraries: &HashMap<&str, usize>,
+    exports: &[HashMap<String, String>],
+) -> HashMap<String, String> {
+    let mut bindings = HashMap::new();
+    for (path, index) in libraries {
+        for (name, canonical) in &exports[*index] {
+            bindings.insert(format!("{path}::{name}"), canonical.clone());
+        }
+    }
+    bindings
+}
+
+/// Builds canonical name lookups visible from one source module: its own declarations,
+/// every library module's declarations by their path, its import namespaces and its `use`
+/// declarations.
 fn bindings_for(
     module: &Module<'_>,
     index: usize,
     edges: &[ImportEdge],
     exports: &[HashMap<String, String>],
+    libraries: &HashMap<&str, usize>,
+    library_bindings: &HashMap<String, String>,
 ) -> Result<HashMap<String, String>, String> {
     let mut bindings = collect_exports(module, index)?;
+    bindings.extend(
+        library_bindings
+            .iter()
+            .map(|(name, canonical)| (name.clone(), canonical.clone())),
+    );
     let mut namespaces: HashMap<&str, HashSet<&str>> = HashMap::new();
     for edge in edges {
         let alias = &edge.namespace;
         if alias == "std" {
             return Err("`std` is a reserved built-in type namespace".to_owned());
+        }
+        if libraries
+            .keys()
+            .any(|path| path.split("::").next() == Some(alias.as_str()))
+        {
+            return Err(format!(
+                "import namespace `{alias}` collides with the library of the same name"
+            ));
         }
         let names = namespaces.entry(alias).or_default();
         for (name, canonical) in &exports[edge.target] {
@@ -329,17 +375,20 @@ fn bindings_for(
     }
     for declaration in &module.uses {
         for item in &declaration.items {
-            let source = format!("{}::{}", declaration.namespace.name, item.name.name);
-            let Some(canonical) = bindings.get(&source).cloned() else {
-                return Err(format!(
-                    "{}: unknown import `{source}`",
-                    declaration.span.source_id
-                ));
+            let source = if declaration.namespace.name.is_empty() {
+                item.name.name.clone()
+            } else {
+                format!("{}::{}", declaration.namespace.name, item.name.name)
             };
             let local = item
                 .alias
                 .as_ref()
                 .map_or(&item.name.name, |alias| &alias.name);
+            let Some(canonical) = bindings.get(&source).cloned() else {
+                use_module(&mut bindings, &source, local, libraries)
+                    .map_err(|error| format!("{}: {error}", declaration.span.source_id))?;
+                continue;
+            };
             if bindings.insert(local.clone(), canonical).is_some() {
                 return Err(format!(
                     "{}: used name `{local}` collides with an existing declaration",
@@ -366,6 +415,39 @@ fn bindings_for(
         }
     }
     Ok(bindings)
+}
+
+/// Binds the module at `path`, a library module or an import namespace, under `local`, so
+/// `local::name` names its declarations; `use log;` binds nothing new.
+fn use_module(
+    bindings: &mut HashMap<String, String>,
+    path: &str,
+    local: &str,
+    libraries: &HashMap<&str, usize>,
+) -> Result<(), String> {
+    let prefix = format!("{path}::");
+    let members = bindings
+        .iter()
+        .filter_map(|(name, canonical)| {
+            name.strip_prefix(&prefix)
+                .map(|member| (member.to_owned(), canonical.clone()))
+        })
+        .collect::<Vec<_>>();
+    if members.is_empty() && !libraries.contains_key(path) {
+        return Err(format!("unknown import `{path}`"));
+    }
+    if local == path {
+        return Ok(());
+    }
+    for (member, canonical) in members {
+        let name = format!("{local}::{member}");
+        if bindings.insert(name.clone(), canonical).is_some() {
+            return Err(format!(
+                "used name `{name}` collides with an existing declaration"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Rewrites declared and referenced top-level symbols to linker-stable canonical names.
@@ -567,9 +649,30 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
         }
         Expression::StaticMethodCall {
             type_name,
+            method,
             arguments,
-            ..
+            span,
         } => {
+            // `module::function(...)` of a used module parses like a static call.
+            let function = format!("{}::{}", type_name.name, method.name);
+            if !bindings.contains_key(&type_name.name)
+                && let Some(canonical) = bindings.get(&function)
+            {
+                let callee = Identifier {
+                    name: canonical.clone(),
+                    span: type_name.span.through(method.span),
+                };
+                let mut arguments = std::mem::take(arguments);
+                for argument in &mut arguments {
+                    rewrite_expression(argument, bindings);
+                }
+                *expression = Expression::Call {
+                    callee,
+                    arguments,
+                    span: *span,
+                };
+                return;
+            }
             rewrite_identifier(type_name, bindings);
             for argument in arguments {
                 rewrite_expression(argument, bindings);
