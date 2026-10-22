@@ -1,5 +1,7 @@
 //! Compiler-linked ExS source declarations available to every module.
 
+use std::sync::OnceLock;
+
 use crate::SourceInput;
 use crate::ast::{FunctionVisibility, Module};
 use crate::diagnostic::CompileDiagnostics;
@@ -84,8 +86,16 @@ pub(crate) fn source_inputs<'a>() -> Vec<SourceInput<'a>> {
         .collect()
 }
 
-/// Parses and combines all bundled prelude units without requiring a root entry point.
+/// Returns the combined bundled prelude units; they are parsed once per process and cloned
+/// for every compilation, which modifies its copy.
 pub(crate) fn parse() -> Result<Module<'static>, CompileDiagnostics<'static>> {
+    static PRELUDE: OnceLock<Result<Module<'static>, CompileDiagnostics<'static>>> =
+        OnceLock::new();
+    PRELUDE.get_or_init(parse_sources).clone()
+}
+
+/// Parses and combines all bundled prelude units without requiring a root entry point.
+fn parse_sources() -> Result<Module<'static>, CompileDiagnostics<'static>> {
     let mut combined = Module {
         imports: Vec::new(),
         uses: Vec::new(),

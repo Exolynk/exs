@@ -1271,6 +1271,9 @@ is unchanged since 7a, and the browser check passes for compiled modules and the
   Before the parser change, a debug build overflowed at 39 parentheses on 2 MiB and 20 on
   1 MiB. A debug build on a 1 MiB stack, such as a development build of a browser
   application, still overflows just below the limit for nested parentheses and Lists.
+- **Parsing once:** loading a project only scans the import declarations of each source, so
+  every source is parsed in full once, and the prelude is parsed once per process and cloned
+  for each compilation: compiling a small script takes 3.3 instead of 3.7 ms.
 - **One result export for Rust guests:** `__exs_result_image` returns the result image's
   address and length in one `i64`; runners identify compiled modules and guests by
   `__exs_result_value` or `__exs_result_image` and reject modules with neither.
