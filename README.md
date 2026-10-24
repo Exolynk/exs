@@ -72,6 +72,7 @@ The `exs-libs` crate ships general library modules with their host functions, on
 
 - `json`: `json::parse(text)`, `json::stringify(value)`, and `json::pretty(value)` convert between values and JSON text; Objects keep their key order.
 - `url`: `url::encode_query(values)` and `url::decode_query(text)` handle `application/x-www-form-urlencoded` query strings; `url::encode(text)` and `url::decode(text)` percent-encode single URL parts.
+- `rand`: `rand::int(min, max)`, `rand::float(min, max)`, `rand::text(length)`, and `rand::bytes(length)` return values from the platform's secure random source (the operating system, or `crypto.getRandomValues` in browsers).
 
 An application enables them in two lines: its resolver returns `exs_libs::library(path)` (feature `compiler`) or `exs_libs::source(path)` from `library` and `exs_libs::libraries()` from `libraries`, and its runner calls `exs_libs::register(runner.registry_mut())`. The features `server` and `browser` select the registry type. The `exs` CLI enables every library.
 

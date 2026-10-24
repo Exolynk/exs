@@ -64,7 +64,7 @@ fn run(source: &str) -> ExsValue {
 /// Lists the enabled libraries.
 #[test]
 fn lists_enabled_libraries() {
-    assert_eq!(exs_libs::libraries(), ["json", "url"]);
+    assert_eq!(exs_libs::libraries(), ["json", "url", "rand"]);
     assert!(exs_libs::source("json").is_some());
     assert!(exs_libs::source("missing").is_none());
 }
@@ -117,7 +117,22 @@ fn encodes_urls() {
     );
 }
 
-/// Documents both libraries from their sources.
+/// Draws random values within the requested bounds.
+#[test]
+fn draws_random_values() {
+    assert_eq!(
+        run(r#"fn main() -> Bool | Error {
+            let die = rand::int(1, 6)?;
+            let ratio = rand::float(0, 1)?;
+            let code = rand::text(12)?;
+            let key = rand::bytes(16)?;
+            ret die >= 1 && die <= 6 && ratio >= 0.0 && ratio < 1.0 && code.length() == 12 && key.length() == 16;
+        }"#),
+        ExsValue::Bool(true)
+    );
+}
+
+/// Documents the libraries from their sources.
 #[test]
 fn documents_libraries() {
     let documentation =
@@ -128,6 +143,7 @@ fn documents_libraries() {
         "fn stringify(value: Any) -> String | Error",
         "fn encode_query(values: Object) -> String | Error",
         "fn decode(text: String) -> String | Error",
+        "fn int(min: Int, max: Int) -> Int | Error",
     ] {
         assert!(reference.contains(declaration), "{declaration}");
     }

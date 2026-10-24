@@ -10,7 +10,7 @@ description = "Optional ExS library modules, such as json and url, with their ho
 workspace = true
 
 [features]
-default = ["server", "json", "url"]
+default = ["server", "json", "url", "rand"]
 # Registers the host functions with the native server runner.
 server = ["exs-runner/server"]
 # Registers the host functions with the browser runner.
@@ -19,6 +19,7 @@ browser = ["exs-runner/browser"]
 compiler = ["dep:exs-compiler"]
 json = ["dep:serde", "dep:serde_json"]
 url = ["dep:form_urlencoded", "dep:percent-encoding"]
+rand = ["dep:getrandom", "dep:js-sys", "dep:wasm-bindgen"]
 
 [dependencies]
 exs-abi = { path = "../exs-abi" }
@@ -29,9 +30,18 @@ serde_json = { version = "1.0.145", optional = true }
 form_urlencoded = { version = "1.2.2", optional = true }
 percent-encoding = { version = "2.3.2", optional = true }
 
+# The operating system's secure random source on native targets.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom = { version = "0.3.4", optional = true }
+
+# The browser's `crypto.getRandomValues` on wasm32.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { version = "0.3.103", optional = true }
+wasm-bindgen = { version = "0.2.106", optional = true }
+
 [dev-dependencies]
 exs-compiler = { path = "../exs-compiler" }
 
 [[test]]
 name = "libraries"
-required-features = ["server", "json", "url"]
+required-features = ["server", "json", "url", "rand"]

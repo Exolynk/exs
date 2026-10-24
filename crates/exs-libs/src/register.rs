@@ -14,6 +14,8 @@ fn host_functions() -> Vec<(&'static str, HostFunction)> {
     functions.extend_from_slice(&crate::json::HOST_FUNCTIONS);
     #[cfg(feature = "url")]
     functions.extend_from_slice(&crate::url::HOST_FUNCTIONS);
+    #[cfg(feature = "rand")]
+    functions.extend_from_slice(&crate::rand::HOST_FUNCTIONS);
     functions
 }
 

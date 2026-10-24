@@ -20,6 +20,7 @@ pub(crate) fn error(kind: &str, message: impl Into<String>) -> ExsValue {
 
 /// Returns the single argument of `function`, or a type error when the call passes another
 /// number of arguments.
+#[cfg(any(feature = "json", feature = "url"))]
 pub(crate) fn single_argument(
     function: &str,
     arguments: Vec<ExsValue>,
@@ -35,6 +36,7 @@ pub(crate) fn single_argument(
 }
 
 /// Returns the single String argument of `function`, or a type error.
+#[cfg(any(feature = "json", feature = "url"))]
 pub(crate) fn string_argument(
     function: &str,
     arguments: Vec<ExsValue>,

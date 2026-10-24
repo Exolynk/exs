@@ -1,8 +1,8 @@
 //! Optional ExS library modules with their host functions, ready for any embedding
 //! application.
 //!
-//! Each Cargo feature enables one library: `json` converts between values and JSON text, and
-//! `url` encodes query strings and URL parts. Scripts name library items without imports, such
+//! Each Cargo feature enables one library: `json` converts between values and JSON text, `url`
+//! encodes query strings and URL parts, and `rand` returns secure random values. Scripts name library items without imports, such
 //! as `json::parse(text)`.
 //!
 //! An application integrates the enabled libraries in two places:
@@ -24,6 +24,8 @@ mod error;
 #[cfg(feature = "json")]
 mod json;
 mod libraries;
+#[cfg(feature = "rand")]
+mod rand;
 #[cfg(any(
     all(feature = "server", not(target_arch = "wasm32")),
     all(feature = "browser", target_arch = "wasm32")
