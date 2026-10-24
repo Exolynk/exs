@@ -4,7 +4,7 @@ use exs_abi::ExsValue;
 use exs_layout::VM_FLAG_COLLECT_EVERY_ALLOCATION;
 use exs_layout::ValueRef;
 
-use super::execution::Execution;
+use super::execution::{Execution, TYPED_BOUNDARY};
 use super::heap::VM;
 use crate::{
     Memory, concat, image_inputs, index_get, index_set, list_copy, list_object, property_get,
@@ -120,7 +120,8 @@ fn accesses_list_elements_and_fields() {
     );
 }
 
-/// Round-trips nested Lists through the runner's codec and encodes typed Objects as maps.
+/// Round-trips nested Lists through the runner's codec and encodes typed Objects with their
+/// type identity.
 #[test]
 fn converts_lists_and_typed_objects() {
     let nested = ExsValue::List(std::vec![
@@ -144,10 +145,10 @@ fn converts_lists_and_typed_objects() {
     let point = execution.typed_object(&["x", "label"], &[Execution::int(3), decoded]);
     assert_eq!(
         execution.encoded(point),
-        ExsValue::Object(std::vec![
-            ("x".into(), ExsValue::Int(3)),
-            ("label".into(), nested),
-        ])
+        ExsValue::Typed {
+            type_id: TYPED_BOUNDARY.into(),
+            fields: std::vec![("x".into(), ExsValue::Int(3)), ("label".into(), nested)],
+        }
     );
     // A List containing itself cannot cross; the runner reports the SerializationError.
     let cyclic = execution.list(&[0]);

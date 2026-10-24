@@ -99,9 +99,11 @@ fn body(value: &ExsValue) -> Result<(Vec<u8>, Option<&'static str>), ExsValue> {
         ExsValue::None => Ok((Vec::new(), None)),
         ExsValue::String(text) => Ok((text.as_bytes().to_vec(), Some("text/plain; charset=utf-8"))),
         ExsValue::Bytes(bytes) => Ok((bytes.clone(), None)),
-        ExsValue::Object(_) | ExsValue::List(_) => crate::json::to_text(value)
-            .map(|text| (text.into_bytes(), Some("application/json")))
-            .map_err(|message| error("JsonUnsupported", message)),
+        ExsValue::Object(_) | ExsValue::Typed { .. } | ExsValue::List(_) => {
+            crate::json::to_text(value)
+                .map(|text| (text.into_bytes(), Some("application/json")))
+                .map_err(|message| error("JsonUnsupported", message))
+        }
         _ => Err(type_error(
             "expects the body as a String, Bytes, an Object, or a List",
         )),
@@ -110,7 +112,11 @@ fn body(value: &ExsValue) -> Result<(Vec<u8>, Option<&'static str>), ExsValue> {
 
 /// Reads the `timeout` option, a Duration, in milliseconds.
 fn timeout_ms(value: &ExsValue) -> Result<u64, ExsValue> {
-    let ExsValue::Object(entries) = value else {
+    let (ExsValue::Typed {
+        fields: entries, ..
+    }
+    | ExsValue::Object(entries)) = value
+    else {
         return Err(type_error("expects the timeout as a Duration"));
     };
     let field = |name: &str| {

@@ -106,6 +106,7 @@ pub(crate) fn type_entry_at(memory: &impl Memory, vm: u32, index: u32) -> Option
         identity: memory.load_u64(field(offset_of!(TypeEntry, identity))),
         type_id: memory.load_u32(field(offset_of!(TypeEntry, type_id))),
         kind: memory.load_u32(field(offset_of!(TypeEntry, kind))),
+        boundary: memory.load_u64(field(offset_of!(TypeEntry, boundary))),
     })
 }
 

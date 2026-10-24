@@ -19,7 +19,7 @@ Values live in the module's linear memory in the layout of `exs-layout`. The com
 - **Values:** a `ValueRef` is 64 bits wide; None, Bool, and Ints in the `i32` range are immediates, every other value lives on a non-moving heap in linear memory. Untyped Objects share hidden-class shapes; nominal types use fixed field layouts.
 - **Memory:** a stop-the-world mark-and-sweep collector in `exs-core` finds live values from precise root frames the compiler emits. When memory growth reaches the runner's limit, it collects and retries before the execution fails.
 - **Tasks:** functions that may suspend compile to resumable step functions with frames in linear memory. The scheduler state of `par` tasks lives in the module's memory and its logic in `exs-core`; a task switches only when suspending or at checkpoints in loops and calls of resumable code.
-- **Boundary:** inputs, host responses, results, and host-call arguments are acyclic by-value images (`exs_abi::image`), bounded by `BoundaryLimits`.
+- **Boundary:** inputs, host responses, results, and host-call arguments are acyclic by-value images (`exs_abi::image`), bounded by `BoundaryLimits`. Values of nominal Object types cross as `ExsValue::Typed` with their type's identity, such as `exo::dom::Div`, and plain Objects as `ExsValue::Object`; a Typed host value becomes a value of its type when the program uses the type, and otherwise an Object that keeps the identity.
 
 ## Development Rules
 

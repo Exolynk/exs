@@ -768,3 +768,97 @@ fn resolves_self_in_inherent_implementations() {
         ExsValue::List(vec![ExsValue::Int(3), ExsValue::Bool(true)])
     );
 }
+
+/// Returns a value of the nominal type `type_id` holding `fields`.
+fn typed(type_id: &str, fields: Vec<(&str, ExsValue)>) -> ExsValue {
+    ExsValue::Typed {
+        type_id: type_id.to_owned(),
+        fields: fields
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect(),
+    }
+}
+
+/// Adopts inputs and host responses of a used type as its values, also without annotations,
+/// keeps values of other types as Objects that keep their identity, and returns nominal values
+/// with their type.
+#[test]
+fn exchanges_nominal_values_with_their_type() {
+    let compiled = compile_source(
+        r#"
+            type Point { x: Int, y: Int }
+            type Label { text: String }
+
+            fn main(point, nodes: List) -> List | Error {
+                let echoed = Host::call("echo", Point { x: 5, y: 6 })?;
+                ret [
+                    point is Point,
+                    point.x + point.y,
+                    nodes[0] is Label,
+                    nodes[1] is Object,
+                    nodes[1].name,
+                    echoed is Point,
+                    echoed.y,
+                    point,
+                    nodes[1],
+                ];
+            }
+        "#,
+    );
+    let mut runner = ServerRunner::default();
+    assert!(
+        runner
+            .registry_mut()
+            .fn_sync_raw("echo", |arguments: Vec<ExsValue>| arguments
+                .into_iter()
+                .next()
+                .unwrap_or(ExsValue::None))
+            .is_ok()
+    );
+    let point = typed(
+        "test.exs::Point",
+        vec![
+            ("y", ExsValue::Int(2)),
+            ("x", ExsValue::Int(1)),
+            ("z", ExsValue::Int(3)),
+        ],
+    );
+    let foreign = typed(
+        "other.exs::Node",
+        vec![("name", ExsValue::String("kept".to_owned()))],
+    );
+    let nodes = ExsValue::List(vec![
+        typed(
+            "test.exs::Label",
+            vec![("text", ExsValue::String("a".to_owned()))],
+        ),
+        foreign.clone(),
+    ]);
+    let result = match block_on(runner.execute(
+        &compiled.wasm,
+        "main",
+        &[point, nodes],
+        &ExecutionCancellation::new(),
+    )) {
+        Ok(result) => result,
+        Err(error) => panic!("execution failed: {error}"),
+    };
+    assert_eq!(
+        result,
+        ExsValue::List(vec![
+            ExsValue::Bool(true),
+            ExsValue::Int(3),
+            ExsValue::Bool(true),
+            ExsValue::Bool(true),
+            ExsValue::String("kept".to_owned()),
+            ExsValue::Bool(true),
+            ExsValue::Int(6),
+            typed(
+                "test.exs::Point",
+                vec![("x", ExsValue::Int(1)), ("y", ExsValue::Int(2))],
+            ),
+            foreign,
+        ])
+    );
+}

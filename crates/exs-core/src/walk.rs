@@ -2,8 +2,10 @@
 //!
 //! The runner reads results and host-call arguments of compiled modules from their memory:
 //! the walk reports every part of a value to a [`Visitor`] in the order of the runner codec,
-//! so the visitor builds the runner's value directly. Typed Objects are maps of their present
-//! declared fields in entry order followed by their extra keys, enums carry their identity and
+//! so the visitor builds the runner's value directly. Typed Objects carry their boundary
+//! identity followed by their present declared fields in entry order and their extra keys, as do
+//! untyped Objects that keep the identity of a type the program does not use; enums carry their
+//! identity and
 //! variant names, and Errors their kind, message, data, origin, trace and cause. Closures,
 //! Cells and nesting beyond [`MAX_DEPTH`] cannot cross the boundary.
 
@@ -15,7 +17,7 @@ use crate::errors::{error_object, error_parts};
 use crate::lists::{item_address, len, list_object};
 use crate::memory::Memory;
 use crate::numbers::{Number, number, reference};
-use crate::objects::{shape, untyped_object, value_address};
+use crate::objects::{foreign_identity, shape, untyped_object, value_address};
 use crate::shapes::{key, key_count};
 use crate::strings::{DATA, byte_len, string_object};
 use crate::typed::{
@@ -99,6 +101,14 @@ pub trait Visitor<M: Memory> {
     ///
     /// Returns an error to stop the walk.
     fn object(&mut self, count: u32) -> Result<(), Self::Error>;
+
+    /// Starts a value of a nominal Object type with `count` fields; its identity String
+    /// follows, then the name and value of every field.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error to stop the walk.
+    fn typed(&mut self, count: u32) -> Result<(), Self::Error>;
 
     /// Starts an enum of `count` payload fields; its identity and variant name follow as
     /// Strings, then the fields.
@@ -203,7 +213,13 @@ impl<M: Memory, V: Visitor<M>> Walk<'_, M, V> {
                 return Err(WalkError::Unsupported);
             }
             let count = key_count(memory, shape(memory, object));
-            self.visitor.object(count).map_err(WalkError::Stopped)?;
+            match foreign_identity(memory, object) {
+                0 => self.visitor.object(count).map_err(WalkError::Stopped)?,
+                identity => {
+                    self.visitor.typed(count).map_err(WalkError::Stopped)?;
+                    self.string(identity)?;
+                }
+            }
             return self.entries(object, depth);
         }
         let reported = match reference(raw).and_then(ValueRef::immediate) {
@@ -231,8 +247,8 @@ impl<M: Memory, V: Visitor<M>> Walk<'_, M, V> {
         Ok(())
     }
 
-    /// Reports the typed Object at `object` as its present declared fields in entry order
-    /// followed by its extra keys.
+    /// Reports the typed Object at `object` as its boundary identity, followed by its present
+    /// declared fields in entry order and its extra keys.
     fn typed_object(&mut self, object: u32, depth: u32) -> Result<(), WalkError<V::Error>> {
         let memory = self.memory;
         if depth >= MAX_DEPTH {
@@ -254,7 +270,8 @@ impl<M: Memory, V: Visitor<M>> Walk<'_, M, V> {
         let count = present
             .checked_add(extra_count)
             .ok_or(WalkError::Unsupported)?;
-        self.visitor.object(count).map_err(WalkError::Stopped)?;
+        self.visitor.typed(count).map_err(WalkError::Stopped)?;
+        self.string(string_object(entry.boundary).ok_or(WalkError::Unsupported)?)?;
         for position in 0..entry.field_count {
             let index = ordered_slot(memory, object, position);
             let value = memory.load_u64(slot_address(object, index));

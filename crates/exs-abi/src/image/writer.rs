@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use super::format::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
-    RECORD_FLOAT, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT, RECORD_STRING,
+    RECORD_FLOAT, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT, RECORD_STRING, RECORD_TYPED,
 };
 use crate::value::{BoundaryError, BoundaryLimits, ErrorSeverity, ExsError, ExsValue};
 
@@ -15,6 +15,8 @@ use crate::value::{BoundaryError, BoundaryLimits, ErrorSeverity, ExsError, ExsVa
 pub(super) const ERROR_TAG: u64 = 60_001;
 /// Tag number of an enum in the compact encoding the payload size measures.
 pub(super) const ENUM_TAG: u64 = 60_005;
+/// Tag number of a nominal Object value in the compact encoding the payload size measures.
+pub(super) const TYPED_TAG: u64 = 60_006;
 
 /// Returns `value` as an image, or the limit it exceeds.
 ///
@@ -178,6 +180,19 @@ impl Writer {
                     words.push(self.value(item, depth + 1)?);
                 }
                 let offset = self.record(RECORD_OBJECT, entries.len())?;
+                self.words(&words);
+                Ok(offset)
+            }
+            ExsValue::Typed { type_id, fields } => {
+                self.collection(fields.len())?;
+                self.account(head_len(TYPED_TAG) + 1 + head_len(fields.len() as u64))?;
+                let mut words = Vec::with_capacity(fields.len() * 2 + 1);
+                words.push(self.string(type_id)?);
+                for (name, field) in fields {
+                    words.push(self.string(name)?);
+                    words.push(self.value(field, depth + 1)?);
+                }
+                let offset = self.record(RECORD_TYPED, fields.len())?;
                 self.words(&words);
                 Ok(offset)
             }

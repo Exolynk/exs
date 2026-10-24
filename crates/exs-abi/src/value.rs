@@ -36,6 +36,13 @@ pub enum ExsValue {
     List(Vec<ExsValue>),
     /// An insertion-ordered mapping from string keys to host-safe ExS values.
     Object(Vec<(String, ExsValue)>),
+    /// A value of a nominal Object type with its opaque type identity and named fields.
+    Typed {
+        /// Resolver-derived nominal type identity, such as `exo::dom::Div`.
+        type_id: String,
+        /// Field names and values in entry order.
+        fields: Vec<(String, ExsValue)>,
+    },
     /// A nominal enum value with an opaque type identity and ordered variant fields.
     Enum {
         /// Resolver-derived nominal enum identity.

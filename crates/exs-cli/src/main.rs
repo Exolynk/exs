@@ -451,6 +451,15 @@ fn format_result(result: &exs_runner::ExsValue) -> String {
                 .join(", ");
             format!("{{{entries}}}")
         }
+        exs_runner::ExsValue::Typed { type_id, fields } => {
+            let type_name = type_id.rsplit("::").next().unwrap_or(type_id);
+            let fields = fields
+                .iter()
+                .map(|(name, value)| format!("{name}: {}", format_result(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{type_name} {{ {fields} }}")
+        }
         exs_runner::ExsValue::Enum {
             type_id,
             variant,

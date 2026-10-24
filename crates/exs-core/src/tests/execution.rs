@@ -18,6 +18,8 @@ use crate::{
 pub(super) const TYPES: u32 = 2048;
 /// Address of the field-name slots of type 0.
 pub(super) const FIELD_NAMES: u32 = 2304;
+/// Boundary identity of type 0.
+pub(super) const TYPED_BOUNDARY: &str = "test.exs::Point";
 
 /// One initialized execution whose values are rooted on the root stack.
 pub(super) struct Execution {
@@ -95,13 +97,16 @@ impl Execution {
         raw
     }
 
-    /// Declares type 0 with the field names `fields` and returns a typed Object of it holding
-    /// `values`.
+    /// Declares type 0, with the boundary identity [`TYPED_BOUNDARY`] and the field names
+    /// `fields`, and returns a typed Object of it holding `values`.
     pub(super) fn typed_object(&mut self, fields: &[&str], values: &[u64]) -> u64 {
         for (index, field) in (0_u32..).zip(fields) {
             let name = self.string(field);
             self.memory.store_u64(FIELD_NAMES + index * 8, name);
         }
+        let boundary = self.string(TYPED_BOUNDARY);
+        self.memory
+            .store_u64(TYPES + offset_of!(TypeEntry, boundary) as u32, boundary);
         self.memory.store_u32(
             TYPES + offset_of!(TypeEntry, field_count) as u32,
             fields.len() as u32,

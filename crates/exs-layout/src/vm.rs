@@ -136,6 +136,9 @@ pub struct TypeEntry {
     /// [`TYPE_ENTRY_OBJECT`] or [`TYPE_ENTRY_ENUM`], combined with
     /// [`TYPE_ENTRY_CUSTOM_EQUALITY`] and [`TYPE_ENTRY_CUSTOM_RENDERING`].
     pub kind: u32,
+    /// Raw `ValueRef` of the static host-boundary identity String, such as `exo::dom::Div`:
+    /// the identity values of the type carry when they cross the boundary.
+    pub boundary: u64,
 }
 
 /// [`TypeEntry::kind`] of a nominal Object type.

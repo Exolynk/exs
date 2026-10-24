@@ -30,7 +30,10 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
             ExsValue::String(value) => visitor.visit_string(value),
             ExsValue::Bytes(value) => visitor.visit_byte_buf(value),
             ExsValue::List(values) => visitor.visit_seq(ValueSeqAccess::new(values)),
-            ExsValue::Object(entries) => visitor.visit_map(ValueMapAccess::new(entries)),
+            ExsValue::Object(entries)
+            | ExsValue::Typed {
+                fields: entries, ..
+            } => visitor.visit_map(ValueMapAccess::new(entries)),
             ExsValue::Enum {
                 variant, fields, ..
             } => visitor.visit_map(ValueMapAccess::new(enum_entries(variant, fields))),
@@ -185,10 +188,14 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
         self.deserialize_seq(visitor)
     }
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        let ExsValue::Object(entries) = self.0 else {
-            return unexpected(self.0);
-        };
-        visitor.visit_map(ValueMapAccess::new(entries))
+        // A nominal value reads like an Object of its fields.
+        match self.0 {
+            ExsValue::Object(entries)
+            | ExsValue::Typed {
+                fields: entries, ..
+            } => visitor.visit_map(ValueMapAccess::new(entries)),
+            value => unexpected(value),
+        }
     }
     fn deserialize_struct<V: Visitor<'de>>(
         self,
@@ -285,6 +292,7 @@ fn value_name(value: &ExsValue) -> &'static str {
         ExsValue::Bytes(_) => "Bytes",
         ExsValue::List(_) => "List",
         ExsValue::Object(_) => "Object",
+        ExsValue::Typed { .. } => "Typed",
         ExsValue::Enum { .. } => "Enum",
     }
 }

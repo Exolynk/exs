@@ -17,6 +17,8 @@ use crate::vm::Vm;
 const SHAPE: u32 = offset_of!(ObjectObject, shape) as u32;
 /// Byte offset of [`ObjectObject::values`].
 const VALUES: u32 = offset_of!(ObjectObject, values) as u32;
+/// Byte offset of the identity String address in the header word of an untyped Object.
+const IDENTITY: u32 = exs_layout::HEADER_WORD_OFFSET;
 /// Byte offset of a Buffer's slot count in its header word.
 const CAPACITY: u32 = 4;
 /// Byte offset of a Buffer's first slot.
@@ -37,6 +39,18 @@ pub(crate) fn untyped_object(memory: &impl Memory, raw: u64) -> Option<u32> {
 /// Returns the raw reference of the untyped Object at `object`.
 pub(crate) fn object_reference(object: u32) -> Option<u64> {
     ValueRef::from_parts(type_kind(TYPE_OBJECT), 0, object).map(ValueRef::raw)
+}
+
+/// Returns the address of the identity String the untyped Object at `object` keeps for a host
+/// value of a nominal type the program does not use, or 0.
+pub(crate) fn foreign_identity(memory: &impl Memory, object: u32) -> u32 {
+    memory.load_u32(object + IDENTITY)
+}
+
+/// Sets the identity String the untyped Object at `object` keeps for a host value of a nominal
+/// type the program does not use.
+pub(crate) fn set_foreign_identity(memory: &mut impl Memory, object: u32, identity: u32) {
+    memory.store_u32(object + IDENTITY, identity);
 }
 
 /// Returns the shape of the untyped Object at `object`.

@@ -6,7 +6,7 @@ use exs_abi::ExsValue;
 use exs_layout::VM_FLAG_COLLECT_EVERY_ALLOCATION;
 use exs_layout::ValueRef;
 
-use super::execution::Execution;
+use super::execution::{Execution, TYPED_BOUNDARY};
 use super::heap::VM;
 use crate::{
     BoundaryError, collect, index_get, object_lookup, object_with_shape, property_get,
@@ -122,7 +122,46 @@ fn refuses_undeclared_keys_of_typed_objects() {
     let label = execution.string("label");
     let error = property_set(&mut execution.memory, VM, point, label, label).expect("room");
     assert_eq!(execution.error_kind(error), "TypeError");
-    assert_eq!(execution.encoded(point), object(&[("x", ExsValue::Int(1))]));
+    assert_eq!(
+        execution.encoded(point),
+        typed(TYPED_BOUNDARY, &[("x", ExsValue::Int(1))])
+    );
+}
+
+/// Returns a value of the nominal type `type_id` holding `fields`.
+fn typed(type_id: &str, fields: &[(&str, ExsValue)]) -> ExsValue {
+    ExsValue::Typed {
+        type_id: type_id.into(),
+        fields: fields
+            .iter()
+            .map(|(name, value)| ((*name).into(), value.clone()))
+            .collect(),
+    }
+}
+
+/// Adopts values of a used type as typed Objects, keeping only its declared fields, and values
+/// of other types as untyped Objects that keep their identity.
+#[test]
+fn adopts_typed_values() {
+    let mut execution = Execution::new();
+    execution.typed_object(&["x", "y"], &[Execution::int(0), Execution::int(0)]);
+    let tagged = typed(
+        TYPED_BOUNDARY,
+        &[("y", ExsValue::Int(2)), ("extra", ExsValue::Bool(true))],
+    );
+    let point = execution.decoded(&tagged).expect("adoptable");
+    assert!(crate::typed::typed_object(&execution.memory, point).is_some());
+    assert_eq!(
+        execution.encoded(point),
+        typed(
+            TYPED_BOUNDARY,
+            &[("x", ExsValue::None), ("y", ExsValue::Int(2))]
+        )
+    );
+    let foreign = typed("other.exs::Point", &[("x", ExsValue::Int(1))]);
+    let adopted = execution.decoded(&foreign).expect("adoptable");
+    assert!(crate::objects::untyped_object(&execution.memory, adopted).is_some());
+    assert_eq!(execution.encoded(adopted), foreign);
 }
 
 /// Rejects Objects with repeated keys.

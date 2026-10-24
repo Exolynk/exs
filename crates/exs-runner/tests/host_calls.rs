@@ -37,11 +37,12 @@ fn executes_a_builtin_host_sleep() {
 /// Returns a structured wall-clock snapshot without requiring a registered host function.
 #[test]
 fn executes_a_builtin_host_now() {
-    let ExsValue::Object(fields) =
+    let ExsValue::Typed { type_id, fields } =
         execute_source_with_inputs("fn main() { ret Host::now(); }", &[])
     else {
-        panic!("Host::now did not return a DateTime object");
+        panic!("Host::now did not return a DateTime");
     };
+    assert_eq!(type_id, "<std>/datetime.exs::DateTime");
     assert_eq!(fields.len(), 4);
     assert_eq!(fields[0].0, "unix_seconds");
     assert!(matches!(fields[0].1, ExsValue::Int(_)));
@@ -56,11 +57,12 @@ fn executes_a_builtin_host_now() {
 /// Returns a normalized non-negative monotonic Duration for the current root execution.
 #[test]
 fn executes_a_builtin_host_elapsed() {
-    let ExsValue::Object(fields) =
+    let ExsValue::Typed { type_id, fields } =
         execute_source_with_inputs("fn main() -> Duration { ret Host::elapsed(); }", &[])
     else {
-        panic!("Host::elapsed did not return a Duration object");
+        panic!("Host::elapsed did not return a Duration");
     };
+    assert_eq!(type_id, "<std>/duration.exs::Duration");
     assert_eq!(fields.len(), 2);
     assert_eq!(fields[0].0, "seconds");
     assert!(matches!(fields[0].1, ExsValue::Int(value) if value >= 0));
@@ -76,10 +78,13 @@ fn calculates_a_duration_between_datetime_snapshots() {
             "fn main() -> Duration | Error { let earlier = DateTime { unix_seconds: 1, nanoseconds: 900000000, utc_offset_seconds: 0, timezone: None }; let later = DateTime { unix_seconds: 2, nanoseconds: 100000000, utc_offset_seconds: 0, timezone: None }; ret later.duration_since(earlier); }",
             &[],
         ),
-        ExsValue::Object(vec![
-            ("seconds".to_owned(), ExsValue::Int(0)),
-            ("nanoseconds".to_owned(), ExsValue::Int(200_000_000)),
-        ]),
+        ExsValue::Typed {
+            type_id: "<std>/duration.exs::Duration".to_owned(),
+            fields: vec![
+                ("seconds".to_owned(), ExsValue::Int(0)),
+                ("nanoseconds".to_owned(), ExsValue::Int(200_000_000)),
+            ],
+        },
     );
 }
 
@@ -175,10 +180,13 @@ fn represents_duration_as_a_normal_exs_type() {
             "fn main() -> Duration | Error { ret Duration::milliseconds(1001); }",
             &[],
         ),
-        ExsValue::Object(vec![
-            ("seconds".to_owned(), ExsValue::Int(1)),
-            ("nanoseconds".to_owned(), ExsValue::Int(1_000_000)),
-        ]),
+        ExsValue::Typed {
+            type_id: "<std>/duration.exs::Duration".to_owned(),
+            fields: vec![
+                ("seconds".to_owned(), ExsValue::Int(1)),
+                ("nanoseconds".to_owned(), ExsValue::Int(1_000_000)),
+            ],
+        },
     );
 }
 

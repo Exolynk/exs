@@ -254,6 +254,9 @@ pub(super) struct NominalType {
     pub(super) enum_type_id: Option<String>,
     /// Source name without a module prefix, as values render it.
     pub(super) name: String,
+    /// Stable host-boundary identity of the type's values, as `ExsValue::Typed` and
+    /// `ExsValue::Enum` carry it.
+    pub(super) boundary: String,
 }
 
 /// The runtime construction category of one nominal type.
@@ -317,6 +320,7 @@ impl TypeRegistry {
                     kind: NominalKind::Enum,
                     enum_type_id: Some(STANDARD_ORDERING_TYPE_IDENTITY.to_owned()),
                     name: descriptor.name.to_owned(),
+                    boundary: STANDARD_ORDERING_TYPE_IDENTITY.to_owned(),
                 },
             );
         }
@@ -347,6 +351,10 @@ impl TypeRegistry {
                     kind: NominalKind::Object,
                     enum_type_id: None,
                     name: display_name(&declaration.name.name).to_owned(),
+                    boundary: boundary_identity(
+                        declaration.name.span.source_id,
+                        &declaration.name.name,
+                    ),
                 },
             );
         }
@@ -376,6 +384,7 @@ impl TypeRegistry {
                     kind: NominalKind::Enum,
                     enum_type_id: Some(enum_identity(declaration)),
                     name: display_name(&declaration.name.name).to_owned(),
+                    boundary: enum_identity(declaration),
                 },
             );
         }
@@ -708,13 +717,13 @@ fn display_name(name: &str) -> &str {
 
 /// Returns the resolver-derived identity used for one enum at the host boundary.
 fn enum_identity(declaration: &EnumDeclaration<'_>) -> String {
-    let type_name = declaration
-        .name
-        .name
-        .rsplit("::")
-        .next()
-        .unwrap_or(&declaration.name.name);
-    format!("{}::{type_name}", declaration.name.span.source_id)
+    boundary_identity(declaration.name.span.source_id, &declaration.name.name)
+}
+
+/// Returns the host-boundary identity of the type `name` declared in the source `source_id`:
+/// the source id, such as a library path, followed by the type's source name.
+fn boundary_identity(source_id: &str, name: &str) -> String {
+    format!("{source_id}::{}", display_name(name))
 }
 
 /// Returns whether a function return contract permits language Error values.

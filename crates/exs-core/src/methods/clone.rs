@@ -14,7 +14,10 @@ use crate::enums::{
 use crate::errors::{copy_error, error_object, error_value_fields};
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, set_len};
 use crate::memory::Memory;
-use crate::objects::{allocate_object, object_reference, shape, untyped_object, value_address};
+use crate::objects::{
+    allocate_object, foreign_identity, object_reference, set_foreign_identity, shape,
+    untyped_object, value_address,
+};
 use crate::shapes::key_count;
 use crate::typed::{
     allocate_typed, extra, order, set_extra, set_order, slot_address, slot_count, type_id,
@@ -131,6 +134,8 @@ impl Cloner {
             let object_shape = shape(memory, object);
             let count = key_count(memory, object_shape);
             let copy_object = allocate_object(memory, vm, object_shape, count)?;
+            // The immutable identity String of a host value is shared.
+            set_foreign_identity(memory, copy_object, foreign_identity(memory, object));
             let copy = object_reference(copy_object)?;
             self.register(memory, vm, source, copy)?;
             for index in 0..count {

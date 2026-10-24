@@ -16,6 +16,7 @@
 //! | [`RECORD_BYTES`] | length | the octets |
 //! | [`RECORD_LIST`] | element count | one `u32` offset per element |
 //! | [`RECORD_OBJECT`] | entry count | per entry a `u32` key offset (a String record) and a `u32` value offset |
+//! | [`RECORD_TYPED`] | field count | `u32` identity offset (a String record), per field a `u32` name offset (a String record) and a `u32` value offset |
 //! | [`RECORD_ENUM`] | field count | `u32` identity and variant offsets (String records), one `u32` offset per field |
 //! | [`RECORD_ERROR`] | 1 if fatal | `u32` kind, message and data offsets, `u32` origin + 1 or 0, `u32` cause offset or 0, `u32` trace count, the `u64` trace entries |
 //!
@@ -50,3 +51,5 @@ pub const RECORD_OBJECT: u32 = 7;
 pub const RECORD_ENUM: u32 = 8;
 /// An Error record.
 pub const RECORD_ERROR: u32 = 9;
+/// A record of a nominal Object type's value.
+pub const RECORD_TYPED: u32 = 10;

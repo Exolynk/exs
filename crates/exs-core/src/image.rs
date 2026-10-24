@@ -3,14 +3,16 @@
 //! The runner lays values out as records of the `exs_abi::image` format. Adopting an image
 //! walks its records from the root and builds the values on the heap: Strings and Bytes are
 //! copied as they are, without parsing or UTF-8 validation. Every offset is checked against the
-//! image, and nesting is bounded.
+//! image, and nesting is bounded. A Typed record of a nominal Object type the program uses
+//! becomes a value of that type; one of another type becomes an untyped Object that keeps its
+//! identity.
 
 use exs_abi::image::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
     RECORD_FLOAT, RECORD_HEADER_SIZE, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT,
-    RECORD_STRING,
+    RECORD_STRING, RECORD_TYPED,
 };
-use exs_layout::ValueRef;
+use exs_layout::{TYPE_ENTRY_ENUM, TypeEntry, ValueRef};
 
 use crate::boundary::BoundaryError;
 use crate::bytes::new_bytes;
@@ -21,9 +23,12 @@ use crate::execution::input;
 use crate::lists::{allocate_list, list_reference, push_unchecked};
 use crate::memory::Memory;
 use crate::numbers::{float_value, int_value};
-use crate::objects::{empty_object, find_value, object_append, object_reference, shape};
+use crate::objects::{
+    empty_object, find_value, object_append, object_reference, set_foreign_identity, shape,
+};
 use crate::shapes::child_key;
-use crate::strings::{copy_string, string_object};
+use crate::strings::{DATA, byte_len, copy_string, string_object};
+use crate::typed::{allocate_typed, slot_address, type_entry_at};
 use crate::vm::Vm;
 
 /// Deepest nesting of values an image may hold.
@@ -262,6 +267,7 @@ fn adopt(
         _ if depth >= MAX_DEPTH => Err(BoundaryError::Unsupported),
         RECORD_LIST => adopt_list(memory, vm, image, record, depth),
         RECORD_OBJECT => adopt_object(memory, vm, image, record, depth),
+        RECORD_TYPED => adopt_typed(memory, vm, image, record, depth),
         RECORD_ENUM => adopt_enum(memory, vm, image, record, depth),
         RECORD_ERROR => adopt_error(memory, vm, image, record, depth),
         _ => Err(BoundaryError::Malformed),
@@ -316,11 +322,25 @@ fn adopt_object(
     record: Record,
     depth: u32,
 ) -> Result<u64, BoundaryError> {
+    adopt_entries(memory, vm, image, record, None, depth)
+}
+
+/// Adopts the entries of an Object record, or of a Typed record after its identity, into a new
+/// untyped Object that keeps the `identity` text of a Typed record, rejecting repeated keys.
+fn adopt_entries(
+    memory: &mut impl Memory,
+    vm: u32,
+    image: Image,
+    record: Record,
+    identity: Option<(u32, u32)>,
+    depth: u32,
+) -> Result<u64, BoundaryError> {
     let count = record.argument;
+    let first = u32::from(identity.is_some());
     let entries = offsets(
         image,
         record,
-        0,
+        first,
         count.checked_mul(2).ok_or(BoundaryError::Malformed)?,
     )?;
     let object = empty_object(memory, vm, count + 1).ok_or(BoundaryError::OutOfMemory)?;
@@ -330,6 +350,12 @@ fn adopt_object(
         .push_root(memory, raw)
         .ok_or(BoundaryError::OutOfMemory)?;
     let adopted = (|| {
+        if let Some((start, len)) = identity {
+            let chars = memory.load_u32(start - 8);
+            let name =
+                copy_string(memory, vm, start, len, chars).ok_or(BoundaryError::OutOfMemory)?;
+            set_foreign_identity(memory, object, name as u32);
+        }
         for index in 0..count {
             let entry = entries + index * 8;
             let (start, len) = image.text(memory, memory.load_u32(entry))?;
@@ -358,6 +384,83 @@ fn adopt_object(
     })();
     state.pop_roots(memory, root);
     adopted
+}
+
+/// Adopts a Typed record as a value of the nominal Object type it names, holding its declared
+/// fields by name and None for missing ones, or, for a type the program does not use, as an
+/// untyped Object that keeps the identity.
+///
+/// Like adopted enums, the host vouches for the field values; undeclared fields are dropped.
+fn adopt_typed(
+    memory: &mut impl Memory,
+    vm: u32,
+    image: Image,
+    record: Record,
+    depth: u32,
+) -> Result<u64, BoundaryError> {
+    let count = record.argument;
+    let words = offsets(
+        image,
+        record,
+        0,
+        count
+            .checked_mul(2)
+            .and_then(|words| words.checked_add(1))
+            .ok_or(BoundaryError::Malformed)?,
+    )?;
+    let identity = image.text(memory, memory.load_u32(words))?;
+    let Some(entry) = object_type(memory, vm, identity) else {
+        return adopt_entries(memory, vm, image, record, Some(identity), depth);
+    };
+    let raw = allocate_typed(memory, vm, entry.type_id, entry.field_count)
+        .ok_or(BoundaryError::OutOfMemory)?;
+    for index in 0..entry.field_count {
+        memory.store_u64(slot_address(raw as u32, index), ValueRef::NONE.raw());
+    }
+    let state = Vm(vm);
+    let root = state
+        .push_root(memory, raw)
+        .ok_or(BoundaryError::OutOfMemory)?;
+    let adopted = (|| {
+        for field in 0..count {
+            let entry_words = words + 4 + field * 8;
+            let name = image.text(memory, memory.load_u32(entry_words))?;
+            let Some(index) = (0..entry.field_count).find(|index| {
+                string_object(memory.load_u64(entry.field_names + index * 8))
+                    .is_some_and(|declared| text_equals(memory, declared, name))
+            }) else {
+                continue;
+            };
+            let value = adopt(
+                memory,
+                vm,
+                image,
+                memory.load_u32(entry_words + 4),
+                depth + 1,
+            )?;
+            memory.store_u64(slot_address(raw as u32, index), value);
+        }
+        Ok(raw)
+    })();
+    state.pop_roots(memory, root);
+    adopted
+}
+
+/// Returns the type-table entry of the nominal Object type whose boundary identity is the text
+/// of `len` bytes at `start`.
+fn object_type(memory: &impl Memory, vm: u32, (start, len): (u32, u32)) -> Option<TypeEntry> {
+    (0..Vm(vm).program_type_count(memory))
+        .filter_map(|index| type_entry_at(memory, vm, index))
+        .filter(|entry| entry.kind & TYPE_ENTRY_ENUM == 0)
+        .find(|entry| {
+            string_object(entry.boundary)
+                .is_some_and(|boundary| text_equals(memory, boundary, (start, len)))
+        })
+}
+
+/// Returns whether the String at `object` holds the text of `len` bytes at `start`.
+fn text_equals(memory: &impl Memory, object: u32, (start, len): (u32, u32)) -> bool {
+    byte_len(memory, object) == len && memory.bytes(object + DATA, len) == memory.bytes(start, len)
 }
 
 /// Adopts an enum record of a type the program declares.

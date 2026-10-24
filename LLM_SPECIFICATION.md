@@ -148,6 +148,9 @@ application signatures, types, traits, and enum variants.
   private; private root functions are not entry points.
 - `Host::call(name, arguments...)` calls a host-provided operation, may suspend, and creates no ExS
   task. The embedding host defines available names, contracts, capabilities, and side effects.
+- Nominal values reach the host with their type identity, such as `exo::dom::Div`; host values
+  with that identity become values of that type when the program uses it (fields by name, missing
+  ones `None`, others dropped) and otherwise behave as Objects that keep their identity.
 - `Host::sleep(duration)` may suspend. Duration is nonnegative normalized `seconds: Int` and
   `nanoseconds: Int` (0 through 999999999); factories/conversions are in the API reference.
 - `Host::stream(name, arguments...)` opens a single-consumer pull stream. `next()` may suspend; a

@@ -107,11 +107,12 @@ fn keeps_bools_out_of_arithmetic() {
 /// Orders and combines Durations and DateTimes.
 #[test]
 fn orders_and_combines_durations_and_datetimes() {
-    let duration = |seconds: i64, nanoseconds: i64| {
-        ExsValue::Object(vec![
+    let duration = |seconds: i64, nanoseconds: i64| ExsValue::Typed {
+        type_id: "<std>/duration.exs::Duration".to_owned(),
+        fields: vec![
             ("seconds".to_owned(), ExsValue::Int(seconds)),
             ("nanoseconds".to_owned(), ExsValue::Int(nanoseconds)),
-        ])
+        ],
     };
     assert_eq!(
         execute_source_with_inputs(

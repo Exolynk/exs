@@ -75,6 +75,9 @@ pub struct TypedObject {
 }
 
 /// An untyped Object; its keys live in a shape and its values in a Buffer.
+///
+/// `header.word` is the address of the identity String of a host value of a nominal type the
+/// program does not use, which crosses the boundary again with that identity, or 0.
 #[repr(C)]
 pub struct ObjectObject {
     /// Common header.

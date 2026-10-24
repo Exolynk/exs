@@ -54,12 +54,16 @@ pub use value::{
 
 /// The ABI version shared by compiled modules, Rust guests and runners.
 ///
-/// Version 26 exchanges every boundary value as an image or, for compiled modules, through
-/// module memory, and no longer as CBOR.
-pub const ABI_VERSION: u32 = 26;
+/// Version 27 exchanges values of nominal Object types as [`ExsValue::Typed`] with their type
+/// identity.
+pub const ABI_VERSION: u32 = 27;
 
 /// Stable host-boundary identity used by the compiler-owned `IteratorStep` enum.
 pub const STANDARD_ITERATOR_STEP_TYPE_IDENTITY: &str = "<std>/iterator.exs::IteratorStep";
+/// Stable host-boundary identity of the standard `DateTime` type.
+pub const STANDARD_DATETIME_TYPE_IDENTITY: &str = "<std>/datetime.exs::DateTime";
+/// Stable host-boundary identity of the standard `Duration` type.
+pub const STANDARD_DURATION_TYPE_IDENTITY: &str = "<std>/duration.exs::Duration";
 /// Runner-internal host name used by the built-in `Host::sleep` operation.
 pub const HOST_SLEEP_HOST_NAME: &str = "__exs.host.sleep";
 /// Runner-internal host name used by the built-in `Host::now` operation.

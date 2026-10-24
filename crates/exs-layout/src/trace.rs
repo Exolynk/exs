@@ -46,8 +46,9 @@ const fn offset(value: usize) -> u32 {
 const LIST_ADDRESSES: &[u32] = &[offset(offset_of!(ListObject, items))];
 /// Address fields of typed Objects.
 const TYPED_OBJECT_ADDRESSES: &[u32] = &[offset(offset_of!(TypedObject, extra))];
-/// Address fields of untyped Objects.
+/// Address fields of untyped Objects, including the identity String in the header word.
 const OBJECT_ADDRESSES: &[u32] = &[
+    HEADER_WORD,
     offset(offset_of!(ObjectObject, shape)),
     offset(offset_of!(ObjectObject, values)),
 ];

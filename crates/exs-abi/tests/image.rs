@@ -33,6 +33,13 @@ fn sample() -> ExsValue {
             ("name".to_owned(), ExsValue::String("Ada".to_owned())),
             ("nested".to_owned(), ExsValue::Object(Vec::new())),
         ]),
+        ExsValue::Typed {
+            type_id: "test::Point".to_owned(),
+            fields: vec![
+                ("x".to_owned(), ExsValue::Int(1)),
+                ("label".to_owned(), ExsValue::String("a".to_owned())),
+            ],
+        },
         ExsValue::Enum {
             type_id: "test::Color".to_owned(),
             variant: "Rgb".to_owned(),

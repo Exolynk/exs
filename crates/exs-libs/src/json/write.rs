@@ -64,7 +64,11 @@ impl Serialize for JsonOutput<'_> {
                 }
                 sequence.end()
             }
-            ExsValue::Object(entries) => {
+            // A nominal value is written as the Object of its fields.
+            ExsValue::Object(entries)
+            | ExsValue::Typed {
+                fields: entries, ..
+            } => {
                 let mut map = serializer.serialize_map(Some(entries.len()))?;
                 for (key, value) in entries {
                     map.serialize_entry(key, &JsonOutput(value))?;
@@ -102,6 +106,19 @@ mod tests {
             ("price".to_owned(), ExsValue::Float(1.5)),
             ("ok".to_owned(), ExsValue::Bool(false)),
         ])
+    }
+
+    /// Writes nominal values as the Object of their fields.
+    #[test]
+    fn writes_typed_values_as_objects() {
+        let value = ExsValue::Typed {
+            type_id: "app.exs::Point".to_owned(),
+            fields: vec![("x".to_owned(), ExsValue::Int(1))],
+        };
+        assert_eq!(
+            stringify(vec![value]),
+            ExsValue::String(r#"{"x":1}"#.to_owned())
+        );
     }
 
     /// Writes compact JSON in the key order of the Object.

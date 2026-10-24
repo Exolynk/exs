@@ -22,6 +22,9 @@ enum Frame {
     List(usize, Vec<ExsValue>),
     /// An Object of the given part count, keys alternating with values.
     Object(usize, Vec<ExsValue>),
+    /// A nominal Object value of the given part count: identity, then names alternating with
+    /// values.
+    Typed(usize, Vec<ExsValue>),
     /// An enum of the given part count: identity, variant, then fields.
     Enum(usize, Vec<ExsValue>),
     /// An Error with its severity, origin and trace, and its kind, message, data and cause.
@@ -54,6 +57,7 @@ impl Builder {
             let done = match frame {
                 Frame::List(count, parts)
                 | Frame::Object(count, parts)
+                | Frame::Typed(count, parts)
                 | Frame::Enum(count, parts) => {
                     parts.push(value);
                     parts.len() == *count
@@ -77,6 +81,19 @@ impl Builder {
                         entries.push((key, value));
                     }
                     ExsValue::Object(entries)
+                }
+                Frame::Typed(_, parts) => {
+                    let mut parts = parts.into_iter();
+                    let Some(ExsValue::String(type_id)) = parts.next() else {
+                        return Err(());
+                    };
+                    let mut fields = Vec::new();
+                    while let (Some(ExsValue::String(name)), Some(value)) =
+                        (parts.next(), parts.next())
+                    {
+                        fields.push((name, value));
+                    }
+                    ExsValue::Typed { type_id, fields }
                 }
                 Frame::Enum(_, parts) => {
                     let mut parts = parts.into_iter();
@@ -178,6 +195,10 @@ impl<M: Memory> Visitor<M> for Builder {
 
     fn object(&mut self, count: u32) -> Result<(), ()> {
         self.start(Frame::Object(count as usize * 2, Vec::new()))
+    }
+
+    fn typed(&mut self, count: u32) -> Result<(), ()> {
+        self.start(Frame::Typed(count as usize * 2 + 1, Vec::new()))
     }
 
     fn enumeration(&mut self, count: u32) -> Result<(), ()> {

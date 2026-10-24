@@ -12,9 +12,9 @@ use alloc::vec::Vec;
 use super::format::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
     RECORD_FLOAT, RECORD_HEADER_SIZE, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT,
-    RECORD_STRING,
+    RECORD_STRING, RECORD_TYPED,
 };
-use super::writer::{ENUM_TAG, ERROR_TAG, head_len, int_len};
+use super::writer::{ENUM_TAG, ERROR_TAG, TYPED_TAG, head_len, int_len};
 use crate::value::{
     BoundaryError, BoundaryLimits, ErrorSeverity, ExsError, ExsStackFrame, ExsValue,
     SourcePositionId,
@@ -200,6 +200,18 @@ impl Reader<'_> {
                     entries.push((key, value));
                 }
                 Ok(ExsValue::Object(entries))
+            }
+            RECORD_TYPED => {
+                let count = self.collection(record.argument)?;
+                self.account(head_len(TYPED_TAG) + 1 + head_len(count as u64))?;
+                let type_id = self.string(self.payload_word(record, 0)?)?;
+                let mut fields = Vec::new();
+                for index in 0..count {
+                    let name = self.string(self.payload_word(record, index * 2 + 1)?)?;
+                    let value = self.value(self.payload_word(record, index * 2 + 2)?, depth + 1)?;
+                    fields.push((name, value));
+                }
+                Ok(ExsValue::Typed { type_id, fields })
             }
             RECORD_ENUM => {
                 let count = self.collection(record.argument)?;

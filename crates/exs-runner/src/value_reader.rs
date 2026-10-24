@@ -15,6 +15,8 @@ const PAGE_SIZE: u32 = 65_536;
 const ERROR_TAG: u64 = 60_001;
 /// Tag number of an enum in the compact encoding the payload size measures.
 const ENUM_TAG: u64 = 60_005;
+/// Tag number of a nominal Object value in the compact encoding the payload size measures.
+const TYPED_TAG: u64 = 60_006;
 
 /// Why a value could not be read.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -85,6 +87,9 @@ enum Frame {
     List(usize, Vec<ExsValue>),
     /// An Object of the remaining number of parts, keys and values alternating.
     Object(usize, Vec<ExsValue>),
+    /// A nominal Object value of the remaining number of parts: identity, then field names and
+    /// values alternating.
+    Typed(usize, Vec<ExsValue>),
     /// An enum of the remaining number of parts: identity, variant name, payload fields.
     Enum(usize, Vec<ExsValue>),
     /// An Error with its severity, origin and trace, and its arriving parts: kind, message,
@@ -108,6 +113,7 @@ impl Frame {
         match self {
             Self::List(..) => false,
             Self::Object(_, parts) => parts.len().is_multiple_of(2),
+            Self::Typed(_, parts) => parts.is_empty() || !parts.len().is_multiple_of(2),
             Self::Enum(_, parts) => parts.len() < 2,
             Self::Error { parts, .. } => parts.len() < 2,
         }
@@ -116,9 +122,10 @@ impl Frame {
     /// Returns whether every part arrived.
     fn complete(&self) -> bool {
         match self {
-            Self::List(remaining, _) | Self::Object(remaining, _) | Self::Enum(remaining, _) => {
-                *remaining == 0
-            }
+            Self::List(remaining, _)
+            | Self::Object(remaining, _)
+            | Self::Typed(remaining, _)
+            | Self::Enum(remaining, _) => *remaining == 0,
             Self::Error { parts, .. } => parts.len() == 4,
         }
     }
@@ -128,6 +135,7 @@ impl Frame {
         match self {
             Self::List(remaining, parts)
             | Self::Object(remaining, parts)
+            | Self::Typed(remaining, parts)
             | Self::Enum(remaining, parts) => {
                 *remaining = remaining.saturating_sub(1);
                 parts.push(value);
@@ -151,6 +159,15 @@ impl Frame {
                     entries.push((text(key)?, value));
                 }
                 ExsValue::Object(entries)
+            }
+            Self::Typed(_, parts) => {
+                let mut parts = parts.into_iter();
+                let type_id = text(parts.next().ok_or(ReadError::Malformed)?)?;
+                let mut fields = Vec::with_capacity(parts.len() / 2);
+                while let (Some(name), Some(value)) = (parts.next(), parts.next()) {
+                    fields.push((text(name)?, value));
+                }
+                ExsValue::Typed { type_id, fields }
             }
             Self::Enum(_, parts) => {
                 let mut parts = parts.into_iter();
@@ -348,6 +365,14 @@ impl<M: Memory> Visitor<M> for Builder {
         self.grow(head_len(u64::from(count)))?;
         let parts = (count as usize).saturating_mul(2);
         self.start(Frame::Object(parts, Vec::new()))
+    }
+
+    fn typed(&mut self, count: u32) -> Result<(), ReadError> {
+        self.enter_value();
+        self.collection(count);
+        self.grow(head_len(TYPED_TAG) + 1 + head_len(u64::from(count)))?;
+        let parts = (count as usize).saturating_mul(2).saturating_add(1);
+        self.start(Frame::Typed(parts, Vec::new()))
     }
 
     fn enumeration(&mut self, count: u32) -> Result<(), ReadError> {

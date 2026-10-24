@@ -30,8 +30,9 @@ pub(super) struct TypeTable {
 }
 
 impl TypeTable {
-    /// Returns the field names of the `used` nominal Object types and the identities, variant
-    /// names and payload names of the `used` enums, which must all be static Strings.
+    /// Returns the names, boundary identities and field names of the `used` nominal Object types
+    /// and the identities, variant names and payload names of the `used` enums, which must all be
+    /// static Strings.
     pub(super) fn field_names<'t>(
         types: &'t TypeRegistry,
         used: &'t HashSet<u32>,
@@ -40,7 +41,8 @@ impl TypeTable {
             .nominal_types()
             .filter(|nominal| nominal.kind == NominalKind::Object && used.contains(&nominal.id))
             .flat_map(|nominal| {
-                core::iter::once(nominal.name.as_str())
+                [nominal.name.as_str(), nominal.boundary.as_str()]
+                    .into_iter()
                     .chain(nominal.fields.iter().map(|field| field.name.as_str()))
             });
         let enums = types
@@ -89,6 +91,7 @@ impl TypeTable {
         let mut names = Vec::new();
         let names_base = base.checked_add(count.checked_mul(entry_size)?)?;
         for nominal in nominals {
+            let boundary = *strings.get(&nominal.boundary)?;
             let (listed, identity, kind): (Vec<&str>, u64, u32) =
                 match (&nominal.kind, &nominal.enum_type_id) {
                     (NominalKind::Enum, Some(identity)) => (
@@ -123,15 +126,17 @@ impl TypeTable {
                 identity,
                 nominal.id,
                 kind,
+                boundary,
             ));
         }
         let mut bytes = Vec::with_capacity(entries.len() * entry_size as usize + names.len());
-        for (field_count, field_names, identity, type_id, kind) in entries {
+        for (field_count, field_names, identity, type_id, kind, boundary) in entries {
             bytes.extend(field_count.to_le_bytes());
             bytes.extend(field_names.to_le_bytes());
             bytes.extend(identity.to_le_bytes());
             bytes.extend(type_id.to_le_bytes());
             bytes.extend(kind.to_le_bytes());
+            bytes.extend(boundary.to_le_bytes());
         }
         bytes.extend(names);
         Some(Self { base, count, bytes })

@@ -114,8 +114,8 @@ pub(crate) fn date_time_value_from_parts(
 
 /// Decodes the normalized instant fields required for one DateTime operation.
 pub(crate) fn date_time_parts(value: &ExsValue) -> Result<(i64, i32), String> {
-    let ExsValue::Object(fields) = value else {
-        return Err("DateTime argument must be an Object".to_owned());
+    let (ExsValue::Typed { fields, .. } | ExsValue::Object(fields)) = value else {
+        return Err("DateTime argument must be a DateTime".to_owned());
     };
     let mut seconds = None;
     let mut nanoseconds = None;
@@ -156,7 +156,13 @@ pub(crate) fn duration_value(duration: Duration) -> ExsValue {
 
 /// Validates one serialized Duration Object and returns normalized duration parts.
 pub(crate) fn duration_parts(arguments: Vec<ExsValue>) -> Result<(u64, u32), String> {
-    let [ExsValue::Object(entries)] = arguments.as_slice() else {
+    let [
+        ExsValue::Typed {
+            fields: entries, ..
+        }
+        | ExsValue::Object(entries),
+    ] = arguments.as_slice()
+    else {
         return Err("Host::sleep expects exactly one Duration argument".to_owned());
     };
     let mut seconds = None;

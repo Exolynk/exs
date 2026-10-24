@@ -776,6 +776,17 @@ let profile = Host::call("profile.load", user_id);
 
 `Host::call(name, arguments...)` invokes a host-provided operation. `name` must evaluate to a String. Arguments evaluate left to right. The host call returns its result or an Error and may suspend; it does not create an ExS task.
 
+Nominal values keep their type across the host boundary. A value of a `type` declaration reaches the host with its fields and the type's identity: the module's source id or library path followed by the type name, such as `exo::dom::Div`. A host value with the identity of a type the program uses becomes a value of that type, in host responses and in the inputs of `main`, wherever it is nested; its declared fields are taken by name, missing ones are `None`, and other fields are dropped. A host value of a type the program does not use behaves as an Object, and keeps its identity, so it reaches the host as that type again.
+
+```exs
+type Point { x: Int, y: Int }
+
+fn main() -> Bool | Error {
+    let point = Host::call("echo", Point { x: 1, y: 2 })?; // the host sees "app.exs::Point"
+    ret point is Point;
+}
+```
+
 ## Host streams
 
 ```exs
