@@ -1,2 +1,6 @@
+# Genrel
+.DS_Store
+.vscode
+
 /target/
 /examples/playground/dist/
