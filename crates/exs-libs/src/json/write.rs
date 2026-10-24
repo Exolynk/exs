@@ -20,6 +20,12 @@ pub(super) fn pretty(arguments: Vec<ExsValue>) -> ExsValue {
     })
 }
 
+/// Writes `value` as compact JSON text, or returns why it has no JSON form.
+#[cfg(feature = "http")]
+pub(crate) fn to_text(value: &ExsValue) -> Result<String, String> {
+    serde_json::to_string(&JsonOutput(value)).map_err(|cause| cause.to_string())
+}
+
 /// Writes the single argument of `function` with the serde_json `writer`.
 fn write(
     function: &str,

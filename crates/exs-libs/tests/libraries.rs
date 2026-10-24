@@ -64,7 +64,11 @@ fn run(source: &str) -> ExsValue {
 /// Lists the enabled libraries.
 #[test]
 fn lists_enabled_libraries() {
-    assert_eq!(exs_libs::libraries(), ["json", "url", "rand"]);
+    let mut expected = vec!["json", "url", "rand"];
+    if cfg!(feature = "http") {
+        expected.push("http");
+    }
+    assert_eq!(exs_libs::libraries(), expected);
     assert!(exs_libs::source("json").is_some());
     assert!(exs_libs::source("missing").is_none());
 }

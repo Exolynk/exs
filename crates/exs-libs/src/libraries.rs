@@ -38,9 +38,19 @@ const RAND: Option<Library> = Some(Library {
 #[cfg(not(feature = "rand"))]
 const RAND: Option<Library> = None;
 
+/// The `http` library, when its feature is enabled.
+#[cfg(feature = "http")]
+const HTTP: Option<Library> = Some(Library {
+    path: "http",
+    source: crate::http::SOURCE,
+});
+/// The `http` library, when its feature is enabled.
+#[cfg(not(feature = "http"))]
+const HTTP: Option<Library> = None;
+
 /// Returns every library module enabled by Cargo features.
 fn enabled() -> Vec<Library> {
-    [JSON, URL, RAND].into_iter().flatten().collect()
+    [JSON, URL, RAND, HTTP].into_iter().flatten().collect()
 }
 
 /// Returns the path of every enabled library, for `ModuleResolver::libraries`.

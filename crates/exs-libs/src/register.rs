@@ -19,7 +19,8 @@ fn host_functions() -> Vec<(&'static str, HostFunction)> {
     functions
 }
 
-/// Registers the host functions of every enabled library with the runner's registry.
+/// Registers the host functions of every enabled library with the runner's registry; `http`
+/// sends its requests with [`crate::http::DefaultTransport`].
 ///
 /// # Errors
 ///
@@ -28,5 +29,37 @@ pub fn register(registry: &mut Registry) -> Result<(), RegistryError> {
     for (name, function) in host_functions() {
         registry.fn_sync_raw(name, function)?;
     }
+    #[cfg(feature = "http")]
+    crate::http::register(registry, default_transport())?;
     Ok(())
+}
+
+/// Registers the host functions of every enabled library like [`register`], but `http` sends
+/// its requests through `transport`.
+///
+/// # Errors
+///
+/// Returns an error when one of the host names is already registered.
+#[cfg(feature = "http")]
+pub fn register_with_http(
+    registry: &mut Registry,
+    transport: crate::http::SharedTransport,
+) -> Result<(), RegistryError> {
+    for (name, function) in host_functions() {
+        registry.fn_sync_raw(name, function)?;
+    }
+    crate::http::register(registry, transport)
+}
+
+/// Returns the default transport of `http`.
+#[cfg(feature = "http")]
+fn default_transport() -> crate::http::SharedTransport {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::sync::Arc::new(crate::http::DefaultTransport)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        std::rc::Rc::new(crate::http::DefaultTransport)
+    }
 }

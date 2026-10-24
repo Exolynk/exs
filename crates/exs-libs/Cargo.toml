@@ -20,6 +20,8 @@ compiler = ["dep:exs-compiler"]
 json = ["dep:serde", "dep:serde_json"]
 url = ["dep:form_urlencoded", "dep:percent-encoding"]
 rand = ["dep:getrandom", "dep:js-sys", "dep:wasm-bindgen"]
+# Not a default feature: it pulls in an HTTP client, and native requests need a tokio runtime.
+http = ["json", "dep:reqwest", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures"]
 
 [dependencies]
 exs-abi = { path = "../exs-abi" }
@@ -30,18 +32,29 @@ serde_json = { version = "1.0.145", optional = true }
 form_urlencoded = { version = "1.2.2", optional = true }
 percent-encoding = { version = "2.3.2", optional = true }
 
-# The operating system's secure random source on native targets.
+# Native targets: the operating system's random source and the HTTP client.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 getrandom = { version = "0.3.4", optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
 
-# The browser's `crypto.getRandomValues` on wasm32.
+# Browsers: `crypto.getRandomValues` and `fetch`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = { version = "0.3.103", optional = true }
 wasm-bindgen = { version = "0.2.106", optional = true }
+wasm-bindgen-futures = { version = "0.4.56", optional = true }
+web-sys = { version = "0.3.80", features = ["AbortSignal", "Headers", "Request", "RequestInit", "Response"], optional = true }
 
 [dev-dependencies]
 exs-compiler = { path = "../exs-compiler" }
 
+# Native HTTP tests run the requests in a tokio runtime.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["rt", "net", "time"] }
+
 [[test]]
 name = "libraries"
 required-features = ["server", "json", "url", "rand"]
+
+[[test]]
+name = "http"
+required-features = ["server", "http"]

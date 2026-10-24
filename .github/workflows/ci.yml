@@ -35,6 +35,11 @@ jobs:
         run: cargo clippy -p exs-core-template --features template --lib --target wasm32-unknown-unknown -- -D warnings
       - name: Test workspace
         run: cargo test --workspace
+      - name: Lint and test exs-libs with http
+        run: |
+          cargo clippy -p exs-libs --all-targets --features http -- -D warnings
+          cargo clippy -p exs-libs --all-targets --target wasm32-unknown-unknown --no-default-features --features browser,compiler,json,url,rand,http -- -D warnings
+          cargo test -p exs-libs --features http
       - name: Build Rust guest example
         run: cargo build -p exs-rust-guest --target wasm32-unknown-unknown
       - name: Build no-std Rust guest library

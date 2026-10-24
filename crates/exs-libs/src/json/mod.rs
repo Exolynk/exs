@@ -5,3 +5,5 @@ mod parse;
 mod write;
 
 pub(crate) use library::{HOST_FUNCTIONS, SOURCE};
+#[cfg(feature = "http")]
+pub(crate) use write::to_text;
