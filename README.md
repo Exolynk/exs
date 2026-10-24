@@ -66,6 +66,21 @@ impl ModuleResolver for AppResolver {
 
 `CompletionEngine::with_library(path, source)` offers the public declarations of a library module to editor completions.
 
+### Optional libraries (`exs-libs`)
+
+The `exs-libs` crate ships general library modules with their host functions, one Cargo feature per library:
+
+- `json`: `json::parse(text)`, `json::stringify(value)`, and `json::pretty(value)` convert between values and JSON text; Objects keep their key order.
+- `url`: `url::encode_query(values)` and `url::decode_query(text)` handle `application/x-www-form-urlencoded` query strings; `url::encode(text)` and `url::decode(text)` percent-encode single URL parts.
+
+An application enables them in two lines: its resolver returns `exs_libs::library(path)` (feature `compiler`) or `exs_libs::source(path)` from `library` and `exs_libs::libraries()` from `libraries`, and its runner calls `exs_libs::register(runner.registry_mut())`. The features `server` and `browser` select the registry type. The `exs` CLI enables every library.
+
+```rust
+fn library(&mut self, path: &str) -> Option<ResolvedSource> {
+    exs_libs::library(path).or_else(|| app_library(path))
+}
+```
+
 ### Documentation
 
 `document_with_resolver` documents the standard library, a project, and the libraries it names; `document_libraries` documents the standard library and every library `libraries()` lists. Both return an `ApiDocumentation` model. `markdown(&MarkdownOptions)` renders it as pages, one per module by default or one per type, enum, trait, and namespace with `PageLayout::PerItem`; the options also set the index file name, an absolute link prefix, and a front-matter callback for static-site generators such as Zola. `llm()` renders the language specification and a compact API reference as one Markdown document. `exs docs app.exs -o docs` writes the pages and `exs docs app.exs -o api.md --llm` the compact reference.

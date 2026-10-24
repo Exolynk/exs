@@ -1,0 +1,37 @@
+[package]
+name = "exs-libs"
+version = "0.2.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Optional ExS library modules, such as json and url, with their host functions"
+
+[lints]
+workspace = true
+
+[features]
+default = ["server", "json", "url"]
+# Registers the host functions with the native server runner.
+server = ["exs-runner/server"]
+# Registers the host functions with the browser runner.
+browser = ["exs-runner/browser"]
+# Provides library sources as `exs_compiler::ResolvedSource` for module resolvers.
+compiler = ["dep:exs-compiler"]
+json = ["dep:serde", "dep:serde_json"]
+url = ["dep:form_urlencoded", "dep:percent-encoding"]
+
+[dependencies]
+exs-abi = { path = "../exs-abi" }
+exs-runner = { path = "../exs-runner", default-features = false }
+exs-compiler = { path = "../exs-compiler", optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { version = "1.0.145", optional = true }
+form_urlencoded = { version = "1.2.2", optional = true }
+percent-encoding = { version = "2.3.2", optional = true }
+
+[dev-dependencies]
+exs-compiler = { path = "../exs-compiler" }
+
+[[test]]
+name = "libraries"
+required-features = ["server", "json", "url"]

@@ -8,6 +8,7 @@ members = [
     "crates/exs-compiler",
     "crates/exs-autocomplete",
     "crates/exs-runner",
+    "crates/exs-libs",
     "crates/exs-cli",
     "examples/playground",
     "examples/rust-guest",

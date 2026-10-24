@@ -277,7 +277,8 @@ fn is_test_source(path: &Path) -> Result<bool, String> {
     .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// Resolves CLI imports through canonical local filesystem paths.
+/// Resolves CLI imports through canonical local filesystem paths and provides the
+/// `exs-libs` libraries.
 struct FileResolver;
 
 impl ModuleResolver for FileResolver {
@@ -303,6 +304,19 @@ impl ModuleResolver for FileResolver {
             source_id: path.to_string_lossy().into_owned(),
             text,
         })
+    }
+
+    /// Returns the `exs-libs` library at `path`, such as `json` or `url`.
+    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
+        exs_libs::source(path).map(|text| ResolvedSource {
+            source_id: path.to_owned(),
+            text: text.to_owned(),
+        })
+    }
+
+    /// Returns every `exs-libs` library.
+    fn libraries(&mut self) -> Vec<String> {
+        exs_libs::libraries()
     }
 }
 
@@ -337,9 +351,12 @@ fn run_program(path: &str, function: &str, inputs: &[exs_runner::ExsValue]) -> R
     }
 }
 
-/// Creates the CLI runner with its standard synchronous output host functions.
+/// Creates the CLI runner with its standard synchronous output host functions and the host
+/// functions of the `exs-libs` libraries.
 fn cli_runner() -> Result<ServerRunner, String> {
     let mut runner = ServerRunner::default();
+    exs_libs::register(runner.registry_mut())
+        .map_err(|error| format!("could not register library host functions: {error}"))?;
     runner
         .registry_mut()
         .fn_sync_raw("print", |arguments: Vec<ExsValue>| {
