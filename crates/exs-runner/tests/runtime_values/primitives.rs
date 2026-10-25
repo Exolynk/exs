@@ -712,3 +712,34 @@ fn applies_operator_precedence() {
         ])
     );
 }
+
+/// Finds the first and last positions of byte sequences and single octets in Bytes.
+#[test]
+fn finds_positions_in_bytes() {
+    let source = r#"
+        fn main(input) -> List | Error {
+            let data = b"a\nbc\nd";
+            ret [
+                data.index_of(10),
+                data.last_index_of(10),
+                data.index_of(b"bc"),
+                data.index_of(b"zz"),
+                data.index_of(b""),
+                data.last_index_of(b""),
+                data.index_of(300) is Error,
+                [1, 2].index_of(2),
+            ];
+        }
+    "#;
+    let expected = ExsValue::List(vec![
+        ExsValue::Int(1),
+        ExsValue::Int(4),
+        ExsValue::Int(2),
+        ExsValue::None,
+        ExsValue::Int(0),
+        ExsValue::Int(6),
+        ExsValue::Bool(true),
+        ExsValue::Int(1),
+    ]);
+    assert_eq!(execute_source(source, ExsValue::None), expected);
+}

@@ -128,6 +128,12 @@ pub fn call_builtin(
         BuiltinMethod::Extend => lists::extend(memory, vm, receiver, first),
         BuiltinMethod::Reverse => lists::reverse(memory, vm, receiver, false),
         BuiltinMethod::Reversed => lists::reverse(memory, vm, receiver, true),
+        BuiltinMethod::IndexOf if bytes_object(receiver).is_some() => {
+            bytes::index_of(memory, vm, receiver, first, false)
+        }
+        BuiltinMethod::LastIndexOf if bytes_object(receiver).is_some() => {
+            bytes::index_of(memory, vm, receiver, first, true)
+        }
         BuiltinMethod::IndexOf => lists::index_of(memory, vm, receiver, first, false),
         BuiltinMethod::LastIndexOf => lists::index_of(memory, vm, receiver, first, true),
         BuiltinMethod::Join => lists::join(memory, vm, receiver, first),

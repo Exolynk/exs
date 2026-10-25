@@ -715,6 +715,16 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     example: "let found = payload.contains(b\"EX\");",
                 },
                 StandardMethod {
+                    signature: "index_of(needle: Bytes | Int) -> Int | None | Error",
+                    description: "Returns the position of the first occurrence of a byte sequence or of one octet given as Int from 0 through 255, or None when absent.",
+                    example: "let end = line.index_of(10); // the first newline",
+                },
+                StandardMethod {
+                    signature: "last_index_of(needle: Bytes | Int) -> Int | None | Error",
+                    description: "Returns the position of the last occurrence of a byte sequence or of one octet given as Int from 0 through 255, or None when absent.",
+                    example: "let dot = name.encode_utf8()?.last_index_of(b\".\");",
+                },
+                StandardMethod {
                     signature: "repeat(count: Int) -> Bytes | Error",
                     description: "Returns new Bytes repeated a non-negative number of times.",
                     example: "let padded = b\"0\".repeat(4);",

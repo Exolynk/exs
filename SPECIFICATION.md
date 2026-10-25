@@ -702,6 +702,8 @@ bytes.decode_utf8()         // String or EncodingError
 bytes.starts_with(other)    // Bool or TypeError
 bytes.ends_with(other)      // Bool or TypeError
 bytes.contains(other)       // Bool or TypeError
+bytes.index_of(needle)      // first position of Bytes or an Int octet, None when absent
+bytes.last_index_of(needle) // last position of Bytes or an Int octet, None when absent
 bytes.repeat(count)         // new Bytes or Error
 bytes.to_hex()              // lowercase String
 Bytes::from_hex(value)      // Bytes or ParseError

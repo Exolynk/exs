@@ -7,6 +7,7 @@ use crate::errors::recoverable;
 use crate::lists::{allocate_list, item_address, len, list_object, list_reference, set_len};
 use crate::memory::Memory;
 use crate::methods::numbers::{exact_int, type_error};
+use crate::numbers::int_value;
 use crate::strings::{DATA, copy_string_object, string_object, text};
 
 /// Unwraps a check, returning its Error value from the enclosing method.
@@ -228,6 +229,60 @@ pub(crate) fn relation(
         Relation::EndsWith => value.ends_with(needle),
     };
     Some(ValueRef::boolean(result).raw())
+}
+
+/// Evaluates `index_of(needle)` or `last_index_of(needle)` on Bytes: the position of the
+/// first or last occurrence of a Bytes needle or of one octet given as Int, None when absent.
+pub(crate) fn index_of(
+    memory: &mut impl Memory,
+    vm: u32,
+    raw: u64,
+    needle: u64,
+    last: bool,
+) -> Option<u64> {
+    let message = if last {
+        "last_index_of requires a Bytes receiver"
+    } else {
+        "index_of requires a Bytes receiver"
+    };
+    let object = check!(receiver(memory, vm, raw, message));
+    let octet = exact_int(memory, needle).map(|value| u8::try_from(value).ok());
+    let found = match (bytes_object(needle), octet) {
+        (Some(needle), _) => {
+            let (value, needle) = (octets(memory, object), octets(memory, needle));
+            if needle.is_empty() {
+                Some(if last { value.len() } else { 0 })
+            } else if last {
+                value
+                    .windows(needle.len())
+                    .rposition(|window| window == needle)
+            } else {
+                value
+                    .windows(needle.len())
+                    .position(|window| window == needle)
+            }
+        }
+        (None, Some(Some(octet))) => {
+            let value = octets(memory, object);
+            if last {
+                value.iter().rposition(|byte| *byte == octet)
+            } else {
+                value.iter().position(|byte| *byte == octet)
+            }
+        }
+        _ => {
+            return type_error(
+                memory,
+                vm,
+                "index_of on Bytes requires a Bytes or an Int octet from 0 to 255",
+                needle,
+            );
+        }
+    };
+    match found {
+        Some(position) => int_value(memory, vm, i64::try_from(position).ok()?),
+        None => Some(ValueRef::NONE.raw()),
+    }
 }
 
 /// Evaluates `repeat(count)` on Bytes.
