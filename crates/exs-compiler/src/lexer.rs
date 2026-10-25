@@ -106,6 +106,8 @@ pub enum TokenKind {
     Continue,
     /// The None keyword.
     None,
+    /// The `Unit` result value and type.
+    Unit,
     /// The is keyword.
     Is,
     /// The Error keyword.
@@ -1291,6 +1293,7 @@ fn keyword_or_identifier(value: &str) -> TokenKind {
         "break" => TokenKind::Break,
         "continue" => TokenKind::Continue,
         "None" => TokenKind::None,
+        "Unit" => TokenKind::Unit,
         "is" => TokenKind::Is,
         "Error" => TokenKind::Error,
         "Host" => TokenKind::Host,

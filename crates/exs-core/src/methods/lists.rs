@@ -189,7 +189,7 @@ pub(crate) fn reverse(memory: &mut impl Memory, vm: u32, receiver: u64, copy: bo
     if copy {
         list_reference(target)
     } else {
-        Some(ValueRef::NONE.raw())
+        Some(ValueRef::UNIT.raw())
     }
 }
 
@@ -244,7 +244,7 @@ pub(crate) fn index_of(
     }
 }
 
-/// Evaluates `insert(index, value)`: inserts before `index` and returns None.
+/// Evaluates `insert(index, value)`: inserts before `index` and returns Unit.
 pub(crate) fn insert(
     memory: &mut impl Memory,
     vm: u32,
@@ -274,7 +274,7 @@ pub(crate) fn insert(
     memory.copy(slot + 8, slot, (count - position) * 8);
     memory.store_u64(slot, value);
     set_len(memory, list, count + 1);
-    Some(ValueRef::NONE.raw())
+    Some(ValueRef::UNIT.raw())
 }
 
 /// Evaluates `remove(index)`: removes and returns the element at `index`.

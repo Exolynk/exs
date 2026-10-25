@@ -186,15 +186,19 @@ fn propagates_option_and_result_values() {
     );
 }
 
-/// Converts None propagation into a MissingValue Error.
+/// Appends a closure, which makes every function resumable and selects the continuation
+/// lowering.
+fn resumable(source: &str) -> String {
+    format!("{source} fn force_resumable() {{ ret () => {{ ret 1; }}; }}")
+}
+
+/// Converts None propagation into a MissingValue Error when the return type admits Errors but
+/// not None.
 #[test]
 fn converts_none_propagation_to_missing_value_error() {
-    // The closure makes `main` resumable, which selects the continuation lowering.
-    for source in [
-        "fn main(input) { ret None?; }",
-        "fn main(input) { ret None?; } fn force_resumable() { ret () => { ret 1; }; }",
-    ] {
-        let result = execute_source(source, ExsValue::None);
+    let source = "fn main(input) -> Int | Error { ret None?; }";
+    for source in [source.to_owned(), resumable(source)] {
+        let result = execute_source(&source, ExsValue::None);
         let ExsValue::Error(error) = result else {
             panic!("None propagation did not return an Error");
         };
@@ -206,11 +210,86 @@ fn converts_none_propagation_to_missing_value_error() {
     }
 }
 
+/// Returns None from `?` on None when the return type admits None or is omitted, and passes
+/// Unit and other values through.
+#[test]
+fn returns_none_from_none_propagation() {
+    let source = r#"
+        fn missing(value) -> Int | None { let found = value?; ret found + 1; }
+        fn any(value) { let found = value?; ret found; }
+        fn done() -> Unit | Error { ret; }
+        fn main(input) -> List | Error {
+            ret [missing(None), missing(1), any(None), any(2), done()?, done()];
+        }
+    "#;
+    let expected = ExsValue::List(vec![
+        ExsValue::None,
+        ExsValue::Int(2),
+        ExsValue::None,
+        ExsValue::Int(2),
+        ExsValue::Unit,
+        ExsValue::Unit,
+    ]);
+    for source in [source.to_owned(), resumable(source)] {
+        assert_eq!(execute_source(&source, ExsValue::None), expected);
+    }
+}
+
+/// Fails fatally when `?` meets an Error in a function whose return type admits None but no
+/// Errors, keeping the Error as the data of the fatal TypeError.
+#[test]
+fn escalates_error_propagation_without_error_return_type() {
+    let source = r#"
+        fn missing(value) -> Int | None { ret value?; }
+        fn main(input) -> Int | None | Error { ret missing(input); }
+    "#;
+    let input = ExsValue::Error(ExsError {
+        severity: ErrorSeverity::Recoverable,
+        kind: "Example".to_owned(),
+        message: "example error".to_owned(),
+        data: Box::new(ExsValue::None),
+        origin: None,
+        trace: Vec::new(),
+        cause: None,
+    });
+    for source in [source.to_owned(), resumable(source)] {
+        let ExsValue::Error(error) = execute_source(&source, input.clone()) else {
+            panic!("Error propagation did not fail");
+        };
+        assert_eq!(error.severity, ErrorSeverity::Fatal);
+        assert_eq!(error.kind, "TypeError");
+        assert_eq!(error.data, Box::new(input.clone()));
+    }
+}
+
+/// Returns Unit from functions that complete without a value, from `ret;`, and from match
+/// blocks.
+#[test]
+fn returns_unit_without_a_value() {
+    let source = r#"
+        fn empty() {}
+        fn early(input) { if input { ret; } ret 1; }
+        fn main(input) -> List {
+            ret [empty(), early(true), match input { _ => { let x = 1; } }, Unit is Unit, Unit == None];
+        }
+    "#;
+    let expected = ExsValue::List(vec![
+        ExsValue::Unit,
+        ExsValue::Unit,
+        ExsValue::Unit,
+        ExsValue::Bool(true),
+        ExsValue::Bool(false),
+    ]);
+    for source in [source.to_owned(), resumable(source)] {
+        assert_eq!(execute_source(&source, ExsValue::None), expected);
+    }
+}
+
 /// Captures direct generated function frames when an Error is created.
 #[test]
 fn captures_direct_function_error_trace() {
     let result = execute_source(
-        "fn inner(value) { ret None?; } fn main(input) { ret inner(input); }",
+        "fn inner(value) -> Int | Error { ret None?; } fn main(input) { ret inner(input); }",
         ExsValue::None,
     );
     let ExsValue::Error(error) = result else {

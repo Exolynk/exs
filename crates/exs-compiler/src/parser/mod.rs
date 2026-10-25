@@ -294,7 +294,8 @@ pub(crate) fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a>
         | Expression::String(_, span)
         | Expression::Bytes(_, span)
         | Expression::Bool(_, span)
-        | Expression::None(span) => *span,
+        | Expression::None(span)
+        | Expression::Unit(span) => *span,
         Expression::FormattedString { span, .. } => *span,
         Expression::List { span, .. } => *span,
         Expression::Object { span, .. } => *span,

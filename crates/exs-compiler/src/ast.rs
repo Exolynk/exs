@@ -469,8 +469,10 @@ pub enum Expression<'a> {
     },
     /// A boolean literal.
     Bool(bool, SourceSpan<'a>),
-    /// The absence value shared by Options and empty operations.
+    /// The absence of a value.
     None(SourceSpan<'a>),
+    /// The result of a function that completes without a value.
+    Unit(SourceSpan<'a>),
     /// Tests whether one value satisfies a source-visible type contract.
     IsType {
         /// Value being tested.

@@ -53,6 +53,13 @@ pub trait Visitor<M: Memory> {
     /// Returns an error to stop the walk.
     fn none(&mut self) -> Result<(), Self::Error>;
 
+    /// Receives Unit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error to stop the walk.
+    fn unit(&mut self) -> Result<(), Self::Error>;
+
     /// Receives a Bool.
     ///
     /// # Errors
@@ -224,6 +231,7 @@ impl<M: Memory, V: Visitor<M>> Walk<'_, M, V> {
         }
         let reported = match reference(raw).and_then(ValueRef::immediate) {
             Some(Immediate::None) => self.visitor.none(),
+            Some(Immediate::Unit) => self.visitor.unit(),
             Some(Immediate::Bool(flag)) => self.visitor.boolean(flag),
             _ => match number(memory, raw).ok_or(WalkError::Unsupported)? {
                 Number::Int(value) => self.visitor.int(value),

@@ -246,6 +246,7 @@ fn is_keyword(kind: &TokenKind) -> bool {
             | TokenKind::Break
             | TokenKind::Continue
             | TokenKind::None
+            | TokenKind::Unit
             | TokenKind::Is
             | TokenKind::Error
             | TokenKind::Host
@@ -519,7 +520,8 @@ fn highlight_expression(
         | Expression::String(..)
         | Expression::Bytes(..)
         | Expression::Bool(..)
-        | Expression::None(..) => {}
+        | Expression::None(..)
+        | Expression::Unit(..) => {}
         Expression::FormattedString { parts, .. } => {
             for part in parts {
                 if let crate::ast::FormattedStringPart::Expression(expression) = part {

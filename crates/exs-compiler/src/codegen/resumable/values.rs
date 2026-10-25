@@ -137,6 +137,10 @@ impl<'a> StepEmitter<'a, '_> {
                 immediate::push(&mut self.compiler.function, ValueRef::NONE);
                 self.set_slot(*destination);
             }
+            Operation::Unit { destination, .. } => {
+                immediate::push(&mut self.compiler.function, ValueRef::UNIT);
+                self.set_slot(*destination);
+            }
             Operation::Boolean {
                 value, destination, ..
             } => {

@@ -51,6 +51,7 @@ pub use trace::{TraceLayout, ValueSlots, trace_layout};
 pub use types::{
     STANDARD_ORDERING_TYPE_ID, STANDARD_ORDERING_TYPE_IDENTITY, TYPE_ANY, TYPE_BOOL, TYPE_BYTES,
     TYPE_ERROR, TYPE_FLOAT, TYPE_FN, TYPE_INT, TYPE_LIST, TYPE_NONE, TYPE_OBJECT, TYPE_STRING,
+    TYPE_UNIT,
 };
 pub use value::{Immediate, ValueRef};
 pub use vm::{

@@ -27,6 +27,6 @@ pub(crate) fn start(
     let sleep = timer.sleep_until(wake_at);
     HostCall::Pending(Box::pin(async move {
         sleep.await;
-        ExsValue::None
+        ExsValue::Unit
     }))
 }

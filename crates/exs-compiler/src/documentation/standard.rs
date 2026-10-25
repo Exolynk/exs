@@ -88,14 +88,14 @@ pub fn standard_library_namespaces() -> &'static [StandardNamespace] {
             functions: &[
                 StandardFunction {
                     name: "assert",
-                    signature: "std::test::assert(condition: Bool[, description: String]) -> None",
-                    description: "Returns None when condition is true. When condition is false, it creates a fatal AssertionFailed Error with the supplied description, or the default message \"assert failed\" when omitted. The direct assert spelling is equivalent.",
+                    signature: "std::test::assert(condition: Bool[, description: String]) -> Unit",
+                    description: "Returns Unit when condition is true. When condition is false, it creates a fatal AssertionFailed Error with the supplied description, or the default message \"assert failed\" when omitted. The direct assert spelling is equivalent.",
                     example: "assert(total > 0, \"total must be positive\");",
                 },
                 StandardFunction {
                     name: "assert_eq",
-                    signature: "std::test::assert_eq(actual: Any, expected: Any[, description: String]) -> None",
-                    description: "Returns None when actual and expected compare equal with ExS equality semantics. Otherwise it creates a fatal AssertionFailed Error whose data contains actual and expected values and uses the supplied description, or the default message \"assert_eq failed\" when omitted. The direct assert_eq spelling is equivalent.",
+                    signature: "std::test::assert_eq(actual: Any, expected: Any[, description: String]) -> Unit",
+                    description: "Returns Unit when actual and expected compare equal with ExS equality semantics. Otherwise it creates a fatal AssertionFailed Error whose data contains actual and expected values and uses the supplied description, or the default message \"assert_eq failed\" when omitted. The direct assert_eq spelling is equivalent.",
                     example: "assert_eq(total, 42, \"total must include every line item\");",
                 },
             ],
@@ -112,9 +112,9 @@ pub fn standard_library_namespaces() -> &'static [StandardNamespace] {
                 },
                 StandardFunction {
                     name: "sleep",
-                    signature: "Host::sleep(duration: Duration) -> None",
-                    description: "Suspends the current ExS task until the supplied normalized Duration elapses, then returns None. This capability is built into every runner and does not use the application host-function registry.",
-                    example: "Host::sleep(Duration::milliseconds(250));\nret None;",
+                    signature: "Host::sleep(duration: Duration) -> Unit",
+                    description: "Suspends the current ExS task until the supplied normalized Duration elapses, then returns Unit. This capability is built into every runner and does not use the application host-function registry.",
+                    example: "Host::sleep(Duration::milliseconds(250));",
                 },
                 StandardFunction {
                     name: "now",
@@ -352,14 +352,20 @@ pub fn standard_library_types() -> Vec<StandardType> {
         },
         StandardType {
             name: "None",
-            description: "`None` is the single absence value. It is used for missing optional results, empty mutations, and Object reads whose key does not exist; ExS has no `null` source literal.",
+            description: "`None` is the single absence value. It is used for missing optional results and Object reads whose key does not exist; ExS has no `null` source literal. `?` on None returns None from a function whose return type includes None.",
             usage: "fn main() -> None {\n    let absent = None;\n    ret absent;\n}",
+            methods: &[],
+        },
+        StandardType {
+            name: "Unit",
+            description: "`Unit` is the result of a function that completes without a value: `ret;`, falling off the end of a function, a finished match block, and actions such as `list.clear()` return it. Functions that only act declare `-> Unit | Error`; `?` passes Unit through. `Unit` is both the value and its type, and it is not an absence like `None`.",
+            usage: "fn save(items: List) -> Unit | Error {\n    items.clear();\n    ret;\n}\n\nfn main() -> Unit | Error {\n    save([1])?;\n}",
             methods: &[],
         },
         StandardType {
             name: "Duration",
             description: "`Duration` is a normal prelude type representing a non-negative interval as normalized `seconds` and `nanoseconds` Int fields. Create values through its static factories before passing them to `Host::sleep`.",
-            usage: "fn main() -> None {\n    let pause = Duration::milliseconds(250);\n    Host::sleep(pause);\n    ret None;\n}",
+            usage: "fn main() -> Unit {\n    let pause = Duration::milliseconds(250);\n    Host::sleep(pause);\n}",
             methods: &[
                 StandardMethod {
                     signature: "as_seconds() -> Int",
@@ -751,8 +757,8 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     example: "let items = [\"Ada\", \"Lin\"];\nlet last = items.pop(); // \"Lin\"",
                 },
                 StandardMethod {
-                    signature: "insert(index: Int, value) -> None | Error",
-                    description: "Inserts one value before the zero-based index and returns None. The index may equal the current length to append; invalid indexes return `IndexError`.",
+                    signature: "insert(index: Int, value) -> Unit | Error",
+                    description: "Inserts one value before the zero-based index and returns Unit. The index may equal the current length to append; invalid indexes return `IndexError`.",
                     example: "let items = [\"Ada\", \"Mia\"];\nitems.insert(1, \"Lin\"); // [\"Ada\", \"Lin\", \"Mia\"]",
                 },
                 StandardMethod {
@@ -761,8 +767,8 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     example: "let items = [\"Ada\", \"Lin\"];\nlet removed = items.remove(0); // \"Ada\"",
                 },
                 StandardMethod {
-                    signature: "clear() -> None",
-                    description: "Removes every element from the existing List and returns None. Aliases continue to refer to the now-empty same List.",
+                    signature: "clear() -> Unit",
+                    description: "Removes every element from the existing List and returns Unit. Aliases continue to refer to the now-empty same List.",
                     example: "let items = [1, 2, 3];\nitems.clear();\nlet empty = items.is_empty(); // true",
                 },
                 StandardMethod {
@@ -791,8 +797,8 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     example: "items.extend(more_items);",
                 },
                 StandardMethod {
-                    signature: "reverse() -> None",
-                    description: "Reverses this List in place and returns None.",
+                    signature: "reverse() -> Unit",
+                    description: "Reverses this List in place and returns Unit.",
                     example: "items.reverse();",
                 },
                 StandardMethod {
@@ -816,12 +822,12 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     example: "let index = items.last_index_of(target);",
                 },
                 StandardMethod {
-                    signature: "sort() -> None | Error",
+                    signature: "sort() -> Unit | Error",
                     description: "Sorts the List in place in ascending order under `<`, which uses `Compare` implementations; equal items keep their order. Items without an order return the TypeError of `<`.",
                     example: "let items = [3, 1, 2];\nitems.sort(); // [1, 2, 3]",
                 },
                 StandardMethod {
-                    signature: "sort(compare: Fn) -> None | Error",
+                    signature: "sort(compare: Fn) -> Unit | Error",
                     description: "Sorts the List in place by the Ordering `compare(a, b)` returns: `Ordering::Less` puts `a` first. Equal items keep their order; a comparison Error is returned.",
                     example: "let items = [1, 3, 2];\nitems.sort((a, b) => b.compare(a)); // [3, 2, 1]",
                 },
@@ -913,7 +919,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     example: "let role = user.get_or(\"role\", \"guest\");",
                 },
                 StandardMethod {
-                    signature: "clear() -> None",
+                    signature: "clear() -> Unit",
                     description: "Removes all keys from this Object while preserving its identity.",
                     example: "user.clear();",
                 },
@@ -968,9 +974,9 @@ pub(super) fn automatic_trait_methods(trait_name: &str) -> &'static [StandardMet
                 example: "let valid = (1..4).all((value) => { ret value > 0; });",
             },
             StandardMethod {
-                signature: "each(callback: Fn) -> None | Error",
+                signature: "each(callback: Fn) -> Unit | Error",
                 description: "Invokes the callback once for every yielded item. The first callback Error is returned.",
-                example: "(0..3).each((value) => { Host::call(\"record\", value); ret None; });",
+                example: "(0..3).each((value) => { Host::call(\"record\", value); });",
             },
             StandardMethod {
                 signature: "reduce(initial, callback: Fn) -> Any | Error",

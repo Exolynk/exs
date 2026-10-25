@@ -120,7 +120,7 @@ fn renders_one_page_per_module() {
     assert!(std.contains("## Namespace `Host`"));
     assert!(std.contains("fn Host::call(name, arguments...)"));
     assert!(std.contains("fn Host::stream(name, arguments...) -> HostStream | Error"));
-    assert!(std.contains("fn Host::sleep(duration: Duration) -> None"));
+    assert!(std.contains("fn Host::sleep(duration: Duration) -> Unit"));
     assert!(std.contains("## Type `Duration`"));
     assert!(std.contains("Creates an exact Duration from a non-negative millisecond count."));
     assert!(std.contains("fn milliseconds(value: Int) -> Duration | Error"));

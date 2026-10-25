@@ -94,7 +94,7 @@ fn start_host_sleep(arguments: Vec<ExsValue>, origin: Option<SourcePositionId>) 
     match browser_host_sleep(seconds, nanoseconds) {
         Ok(promise) => BrowserHostCall::Pending(Box::pin(async move {
             match JsFuture::from(promise).await {
-                Ok(_) => ExsValue::None,
+                Ok(_) => ExsValue::Unit,
                 Err(error) => sleep_error(format!("Host sleep failed: {error:?}"), origin),
             }
         })),

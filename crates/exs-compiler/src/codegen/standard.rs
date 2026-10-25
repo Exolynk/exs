@@ -350,8 +350,8 @@ const STANDARD_TRAITS: [StandardTraitDescriptor; 9] = [
         description: "`Eq` is the protocol selected by `==` and `!=`. Every value has a built-in equality: numbers, Strings and Bytes compare by content; Lists, Objects, nominal values, enums and Errors compare part by part; closures and host resources compare by identity. A nominal type or enum may replace its equality with `impl Eq`; the implementation also applies where its values are parts of compared composites. Without `Eq`, a `Compare` implementation decides equality through its Equal result.",
         usage: "type Money { cents: Int, label: String }\n\nimpl Eq for Money {\n    fn eq(self, other: Any) -> Bool {\n        ret other is Money && self.cents == other.cents;\n    }\n}\n\nfn main() -> Bool {\n    ret [Money { cents: 100, label: \"a\" }] == [Money { cents: 100, label: \"b\" }];\n}",
         implemented_by: &[
-            "None", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object", "Fn",
-            "Ordering",
+            "None", "Unit", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object",
+            "Fn", "Ordering",
         ],
     },
     StandardTraitDescriptor {
@@ -371,8 +371,8 @@ const STANDARD_TRAITS: [StandardTraitDescriptor; 9] = [
         description: "`ToString` controls formatted string interpolation and explicit `value.to_string()` calls. Every built-in value has a default String representation. Nominal types and enums may override it with `impl ToString`.",
         usage: "type User { name: String }\n\nimpl ToString for User {\n    fn to_string(self) -> String {\n        ret f\"User({self.name})\";\n    }\n}\n\nfn main() -> String {\n    ret f\"{User { name: \\\"Ada\\\" }}\";\n}",
         implemented_by: &[
-            "None", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object", "Fn",
-            "Ordering",
+            "None", "Unit", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object",
+            "Fn", "Ordering",
         ],
     },
     StandardTraitDescriptor {
@@ -383,8 +383,8 @@ const STANDARD_TRAITS: [StandardTraitDescriptor; 9] = [
         description: "`Debug` provides a diagnostic String representation. Every built-in value has a default representation. Nominal types and enums may override it with `impl Debug`.",
         usage: "type User { name: String }\n\nimpl Debug for User {\n    fn debug(self) -> String {\n        ret f\"User(name={self.name})\";\n    }\n}\n\nfn main() -> String {\n    ret User { name: \\\"Ada\\\" }.debug();\n}",
         implemented_by: &[
-            "None", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object", "Fn",
-            "Ordering",
+            "None", "Unit", "Error", "Bool", "Int", "Float", "String", "Bytes", "List", "Object",
+            "Fn", "Ordering",
         ],
     },
 ];

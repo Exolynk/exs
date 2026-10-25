@@ -49,7 +49,7 @@ impl Serialize for JsonOutput<'_> {
     /// Writes the value, or fails for Bytes, enums, Errors, and non-finite Floats.
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
-            ExsValue::None => serializer.serialize_unit(),
+            ExsValue::None | ExsValue::Unit => serializer.serialize_unit(),
             ExsValue::Bool(value) => serializer.serialize_bool(*value),
             ExsValue::Int(value) => serializer.serialize_i64(*value),
             ExsValue::Float(value) if value.is_finite() => serializer.serialize_f64(*value),

@@ -20,8 +20,13 @@ pub const TYPE_OBJECT: u32 = 1 << 7;
 pub const TYPE_FN: u32 = 1 << 8;
 /// Runtime type-mask bit for immutable byte sequences.
 pub const TYPE_BYTES: u32 = 1 << 9;
+/// Runtime type-mask bit for Unit, the result of a function that completes without a value.
+///
+/// Bits 10 to 13 are runtime-internal kinds, see `value::layout`.
+pub const TYPE_UNIT: u32 = 1 << 14;
 /// Runtime type-mask accepting every current source-visible value type.
 pub const TYPE_ANY: u32 = TYPE_NONE
+    | TYPE_UNIT
     | TYPE_ERROR
     | TYPE_BOOL
     | TYPE_INT

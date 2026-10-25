@@ -69,14 +69,14 @@ private fn __exs_list_all(iterable: Any, callback: Fn) -> Bool | Error {
 }
 
 /// Invokes a callback for every iterable item, stopping at the first callback Error.
-private fn __exs_list_each(iterable: Any, callback: Fn) -> None | Error {
+private fn __exs_list_each(iterable: Any, callback: Fn) -> Unit | Error {
     for item in iterable {
         let result = callback(item);
         if result is Error {
             ret result;
         }
     }
-    ret None;
+    ret Unit;
 }
 
 /// Folds iterable items from an explicit initial accumulator, stopping at callback Errors.
@@ -150,19 +150,19 @@ private fn __exs_list_last_index_of(list: List, value: Any) -> Int | None | Erro
 }
 
 /// Sorts a List in place in ascending order under `<`; equal items keep their order.
-private fn __exs_list_sort(list: List) -> None | Error {
+private fn __exs_list_sort(list: List) -> Unit | Error {
     let sorted = __exs_merge_sort(list, None)?;
     list.clear();
     list.extend(sorted);
-    ret None;
+    ret Unit;
 }
 
 /// Sorts a List in place by the Ordering `compare(a, b)` returns; equal items keep their order.
-private fn __exs_list_sort_by(list: List, compare: Fn) -> None | Error {
+private fn __exs_list_sort_by(list: List, compare: Fn) -> Unit | Error {
     let sorted = __exs_merge_sort(list, compare)?;
     list.clear();
     list.extend(sorted);
-    ret None;
+    ret Unit;
 }
 
 /// Returns a new List of the items in ascending order under `<`; equal items keep their order.

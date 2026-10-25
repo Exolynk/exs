@@ -688,6 +688,7 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
         Expression::FormattedString { kind, parts, .. } => formatted_string(*kind, parts),
         Expression::Bool(value, _) => value.to_string(),
         Expression::None(_) => "None".to_owned(),
+        Expression::Unit(_) => "Unit".to_owned(),
         Expression::Variable(identifier) => identifier.name.clone(),
         Expression::IsType {
             value,

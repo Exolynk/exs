@@ -136,6 +136,10 @@ fn value<M: Memory>(
         out.ascii(memory, b"None");
         return Ok(());
     }
+    if raw == ValueRef::UNIT.raw() {
+        out.ascii(memory, b"Unit");
+        return Ok(());
+    }
     if let Some(scalar) = scalar(memory, raw) {
         out.scalar(memory, scalar);
         return Ok(());

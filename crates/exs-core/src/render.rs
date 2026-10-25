@@ -2,7 +2,7 @@
 //! `+` operands, and the ExS literal spelling `debug` and the prelude's renderer build on.
 
 use exs_layout::value::layout::{KIND_CELL, KIND_SHIFT};
-use exs_layout::{TYPE_ERROR, TYPE_FN, TYPE_LIST, TYPE_NONE, TYPE_OBJECT, ValueRef};
+use exs_layout::{TYPE_ERROR, TYPE_FN, TYPE_LIST, TYPE_NONE, TYPE_OBJECT, TYPE_UNIT, ValueRef};
 
 use crate::enums::{enum_object, names};
 use crate::lists::{allocate_list, item_address, list_reference, set_len};
@@ -15,6 +15,8 @@ pub(crate) fn default_text(raw: u64) -> &'static str {
     let kind = (raw >> KIND_SHIFT) as u32;
     if kind & TYPE_NONE != 0 {
         "None"
+    } else if kind & TYPE_UNIT != 0 {
+        "Unit"
     } else if kind & TYPE_ERROR != 0 {
         "Error"
     } else if kind & TYPE_LIST != 0 {
@@ -32,7 +34,7 @@ pub(crate) fn default_text(raw: u64) -> &'static str {
 }
 
 /// Returns the ExS literal spelling of a value as `debug` renders it: Strings quoted with
-/// escapes, Bytes as a `b"..."` literal or `Bytes::from_hex(...)`, numbers, Bools and None as
+/// escapes, Bytes as a `b"..."` literal or `Bytes::from_hex(...)`, numbers, Bools, None and Unit as
 /// their source spelling, and composites part by part. Returns None when the prelude must
 /// render the value, because a part's type implements `Debug` or `ToString` or it nests too
 /// deeply, and `None` when memory is exhausted. `raw` must be rooted.

@@ -18,7 +18,7 @@ application signatures, types, traits, and enum variants.
   declaration; leading `//!` comments document the module. Identifiers are case-sensitive ASCII
   names beginning with `_` or a letter and then containing letters, digits, or `_`.
 - Reserved words: `as break const continue else enum Error false fn for if impl import in is let
-  match None par private ret trait true type use while`.
+  match None par private ret trait true type Unit use while`.
 - `Int` is signed 64-bit. Decimal Int literals allow `_` and must fit `-2^63..2^63-1`; leading `-`
   is an operator. `Float` is IEEE-754 binary64 and its literal has a decimal point followed by a
   digit, an exponent, or both, so `7.abs()` calls a method of the Int `7`.
@@ -34,16 +34,18 @@ application signatures, types, traits, and enum variants.
 
 # Values, Contracts, and Bindings
 
-- Values are `None`, `Bool`, `Int`, `Float`, `String`, `Bytes`, `List`, `Object`, `Range`, `Error`,
-  `Fn`, nominal-type values, and enum values. `None` is the only absence value; there is no `null`.
-- Contracts use union syntax: `String | Int | None`. Built-ins are `Any`, `None`, `Error`, `Bool`,
+- Values are `None`, `Unit`, `Bool`, `Int`, `Float`, `String`, `Bytes`, `List`, `Object`, `Range`,
+  `Error`, `Fn`, nominal-type values, and enum values. `None` is the only absence value; there is no
+  `null`. `Unit` means "done without a value": `ret;`, falling off a function, a finished match
+  block, and actions such as `list.clear()` return it, so acting functions declare `-> Unit | Error`.
+- Contracts use union syntax: `String | Int | None`. Built-ins are `Any`, `None`, `Unit`, `Error`, `Bool`,
   `Int`, `Float`, `String`, `Bytes`, `List`, `Object`, `Range`, and `Fn`; user nominal types, enums,
   and traits are valid too. `std::` qualification is optional. Missing annotations mean `Any`.
 - Contracts apply at function entry and explicit or implicit return. A failure is recoverable
   `TypeError` if the return contract includes `Error` or is omitted; otherwise it is fatal.
 - `let name = value;` makes a mutable lexical binding; `let name;` stores `None`. Inner scopes may
   shadow. A failed index or property assignment makes the current function return its Error.
-  `[private] const NAME = value;` declares a module constant: a literal of None, Bool, Int,
+  `[private] const NAME = value;` declares a module constant: a literal of None, Unit, Bool, Int,
   Float, String, or Bytes, a negated number, or another constant. Constants are exported, used, and
   kept private like functions; compilation substitutes them where no local binding shadows them,
   and assigning to one is a compile error. Valid assignment targets are local identifiers, Object properties, and List/Object
@@ -76,10 +78,13 @@ application signatures, types, traits, and enum variants.
 - Ordering (`<`, `<=`, `>`, `>=`) supports Int, Float, and String; other built-in values and
   unordered Floats (NaN) are `TypeError`; nominal values may implement `Compare`.
 - `value is Type` tests any contract and returns Bool. `clone()` deeply clones mutable graphs, preserves aliases/cycles,
-  and does not mutate its source. Postfix `?` propagates Error, turns None into `MissingValue`, and
-  otherwise leaves the value unchanged; it requires an Error-capable or omitted return contract.
+  and does not mutate its source. Postfix `?` acts by the return contract: None returns None when
+  the contract includes None (or is omitted/Any), else a `MissingValue` Error; an Error returns when
+  the contract includes Error (or is omitted/Any), else it is a fatal `TypeError`; other values,
+  including Unit, pass through. A contract with neither Error nor None (`-> String`, `-> Unit`)
+  makes `?` a compile error.
 - Blocks create lexical scopes. `if`, `else if`, `else`, and `while` require Bool conditions.
-  `ret;` and falling off a function return None. `break;` and `continue;` only apply inside loops.
+  `ret;` and falling off a function return Unit. `break;` and `continue;` only apply inside loops.
 - `for item in iterable` evaluates once and advances `Iterator::next() -> IteratorStep | Error`.
   Lists iterate a shallow snapshot; Strings yield scalar Strings; Bytes yield Int octets; Objects
   yield `[key, value]` entries of a snapshot in insertion order. Ranges are
@@ -109,7 +114,7 @@ application signatures, types, traits, and enum variants.
 - `enum Name { Variant(field: Contract), Empty }` has qualified constructors. Payloads are checked
   in order. `match` evaluates its input once and only one arm. Variant patterns use one enum and
   its exact payload count; `_` is last. Without `_`, every variant appears once. Literal patterns
-  (`0`, `-1`, `1.5`, `"admin"`, `true`, `None`, `b"x"`) match equal values; a match uses either
+  (`0`, `-1`, `1.5`, `"admin"`, `true`, `None`, `Unit`, `b"x"`) match equal values; a match uses either
   variants or literals, and without `_` an unmatched value is `MatchError`.
 - Trait methods ending `;` are required; those with bodies are defaults. Implementations provide
   required methods and may omit defaults. Trait and nominal type names share a namespace. `Self` is
@@ -193,7 +198,7 @@ closureParameters = closureParameter { "," closureParameter } [ "," ] ;
 closureParameter = identifier [ ":" typeUnion ] [ "..." ] ;
 parameter       = identifier [ ":" typeUnion ] [ "..." ] ;
 typeUnion       = typeName { "|" typeName } ;
-typeName        = qualifiedName | "None" | "Error" ;
+typeName        = qualifiedName | "None" | "Unit" | "Error" ;
 statement       = block | ifStmt | whileStmt | forStmt | breakStmt | continueStmt
                 | returnStmt | letDecl | expression ";" ;
 block           = "{" { statement } "}" ;
@@ -225,7 +230,7 @@ typedObject     = qualifiedName "{" [ objectItems ] "}" ;
 matchExpr       = "match" expression "{" matchArm { "," matchArm } [ "," ] "}" ;
 matchArm        = ( qualifiedName [ "(" identifiers? ")" ] | literalPattern | "_" )
                   "=>" ( expression | block ) ;
-literalPattern  = [ "-" ] ( integer | float ) | string | bytes | "true" | "false" | "None" ;
+literalPattern  = [ "-" ] ( integer | float ) | string | bytes | "true" | "false" | "None" | "Unit" ;
 parExpr         = "par" "{" { expression ";" } "}" | "par" "(" expression ")" ;
 hostCall        = "Host" "::" "call" "(" arguments? ")" ;
 listLiteral     = "[" [ arguments ] "]" ;

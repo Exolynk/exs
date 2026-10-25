@@ -51,7 +51,7 @@ The following words are reserved and cannot be used as identifiers:
 
 ```text
 as break const continue else enum Error false fn for if impl import in
-is let match None par private ret trait true type use while
+is let match None par private ret trait true type Unit use while
 ```
 
 ## Literals
@@ -146,7 +146,8 @@ ExS is dynamically typed. Types describe values, not variable bindings. The sour
 
 | Type | Description |
 | --- | --- |
-| `None` | The only absence value. |
+| `None` | The absence of a value, such as a missing Object key. |
+| `Unit` | The result of a function that completes without a value. |
 | `Bool` | `true` or `false`. |
 | `Int` | A signed 64-bit integer. |
 | `Float` | An IEEE 754 binary64 value. |
@@ -160,7 +161,7 @@ ExS is dynamically typed. Types describe values, not variable bindings. The sour
 | nominal type | A value constructed by a `type` declaration. |
 | enum | A value constructed by an `enum` declaration. |
 
-`None` is the only source-level absence value. ExS has no `null` literal.
+`None` is the only source-level absence value. ExS has no `null` literal. `Unit` is no absence: it means "done" and is what `ret;`, falling off the end of a function, and actions such as `list.clear()` return, so functions that only act declare `-> Unit | Error`. `Unit` is both the value and its type.
 
 ## Type contracts
 
@@ -172,7 +173,7 @@ fn describe(value: String | Int | None) -> String | Error {
 }
 ```
 
-The built-in contract names are `Any`, `None`, `Error`, `Bool`, `Int`, `Float`, `String`, `Bytes`, `List`, `Object`, `Range`, and `Fn`. User-defined nominal types, enums, and traits are also valid contract names. A type may optionally be written with the `std::` qualifier, such as `std::Int` or `std::None`.
+The built-in contract names are `Any`, `None`, `Unit`, `Error`, `Bool`, `Int`, `Float`, `String`, `Bytes`, `List`, `Object`, `Range`, and `Fn`. User-defined nominal types, enums, and traits are also valid contract names. A type may optionally be written with the `std::` qualifier, such as `std::Int` or `std::None`.
 
 An omitted annotation means `Any`. Contracts are checked at function entry and at each explicit or implicit return.
 
@@ -202,7 +203,7 @@ Closures capture referenced outer bindings. A captured binding is shared: assign
 
 ## Constants
 
-A module may declare constants. A constant's value is a literal of None, Bool, Int, Float, String, or Bytes, a negated number literal, or the name of another constant:
+A module may declare constants. A constant's value is a literal of None, Unit, Bool, Int, Float, String, or Bytes, a negated number literal, or the name of another constant:
 
 ```exs
 /// The default page size.
@@ -258,7 +259,7 @@ For nominal types and enums, `+`, `-`, `*`, `/`, and `%` first use a matching st
 
 `==` and `!=` compare values by content:
 
-- Numbers compare by value with Float promotion; Strings and Bytes compare by contents; None and Bools compare by value.
+- Numbers compare by value with Float promotion; Strings and Bytes compare by contents; None, Unit and Bools compare by value.
 - Lists compare element by element, Objects by their entries in any key order, nominal values of one type by their fields, enums by their variant and payload, and Errors by kind, message, data, and cause.
 - Closures and host resources compare by identity.
 - A nominal type or enum with an `Eq` implementation decides its own equality; without one, a `Compare` implementation decides through its Equal result. Both also apply where such values are parts of compared Lists, Objects, fields, or payloads.
@@ -284,13 +285,25 @@ if value is Error {
 
 Every value has a synchronous `clone()` method. It deeply clones mutable graphs, preserves aliases and cycles, and does not mutate the source value. Immutable scalar values may be reused.
 
-The postfix `?` operator propagates results:
+The postfix `?` operator propagates results by the return contract of the current function:
 
-- `Error` returns unchanged from the current function.
-- `None` returns an `Error` with kind `MissingValue`.
-- Any other value remains unchanged.
+- `None` returns `None` when the contract includes `None` (or is omitted or `Any`), and otherwise an `Error` with kind `MissingValue`.
+- `Error` returns unchanged when the contract includes `Error` (or is omitted or `Any`). When the contract includes `None` but not `Error`, an Error is a fatal `TypeError` with the Error as its data.
+- Any other value, including `Unit`, remains unchanged.
 
-`?` is permitted only in a function whose return contract includes `Error`, or whose return contract is omitted.
+`?` is permitted only in a function whose return contract includes `Error` or `None`, or is omitted; elsewhere, such as in `-> String` or `-> Unit`, it is a compile error.
+
+```exs
+fn name(record: Object) -> String | None {
+    let value = record.get("name")?;   // a missing name returns None
+    ret value.trim();
+}
+
+fn save(record: Object) -> Unit | Error {
+    Host::call("db.save", record)?;    // Unit passes through, an Error returns
+    ret;
+}
+```
 
 # 6. Statements and Control Flow
 
@@ -345,7 +358,7 @@ ret;
 ret value;
 ```
 
-`ret;` returns `None`. Falling off the end of a function also returns `None`.
+`ret;` returns `Unit`. Falling off the end of a function also returns `Unit`.
 
 # 7. Functions and Closures
 
@@ -466,7 +479,7 @@ Enum constructors are qualified by the enum name. Payload arguments are checked 
 
 A `match` expression evaluates its input once and evaluates only the selected arm. Variant patterns must name variants of the same enum and bind exactly the declared payload count. `_` is an optional fallback and must be last. Without `_`, every declared variant must be covered exactly once.
 
-Literal patterns match values equal to a literal of None, Bool, Int, Float, String, or Bytes, or a negated number:
+Literal patterns match values equal to a literal of None, Unit, Bool, Int, Float, String, or Bytes, or a negated number:
 
 ```exs
 let label = match status {
@@ -479,7 +492,7 @@ let label = match status {
 
 One `match` uses either variant patterns or literal patterns. A literal may appear only once. Without `_`, a value that no literal matches produces `MatchError`.
 
-An arm may use an expression or a statement block. A `ret` in a block returns from the enclosing function; a block that finishes normally has value `None`.
+An arm may use an expression or a statement block. A `ret` in a block returns from the enclosing function; a block that finishes normally has value `Unit`.
 
 ## Traits and operators
 
@@ -526,7 +539,7 @@ The default `to_string()` and `debug()` render values in ExS literal syntax:
 
 | Value | Rendering |
 | --- | --- |
-| None, Bool, Int, Float | `None`, `true`, `42`, `1.5` |
+| None, Unit, Bool, Int, Float | `None`, `Unit`, `true`, `42`, `1.5` |
 | String | the text itself; `debug()` quotes and escapes it: `"a\"b"` |
 | Bytes | `b"hi"`, or `Bytes::from_hex("00ff")` for bytes that are not UTF-8 |
 | List | `[1, "a", [2]]` |
@@ -622,12 +635,11 @@ use log::info;
 use exo::db::{load, save as store};
 use exo::db;
 
-fn main(id: Int) -> None {
+fn main(id: Int) -> Unit {
     info("loading record");
     let record = load(id);
     store(record);
     db::load(id);
-    ret None;
 }
 ```
 
@@ -656,8 +668,8 @@ impl User {
         ret User { name: normalize(name) };
     }
 
-    private fn audit(self) -> None {
-        ret None;
+    private fn audit(self) -> Unit {
+        ret;
     }
 }
 ```
@@ -704,17 +716,17 @@ Lists support:
 ```text
 list.push(value)        // mutates and returns the new length
 list.pop()              // removes the last value; None when empty
-list.insert(index, v)   // mutates; None or IndexError
+list.insert(index, v)   // mutates; Unit or IndexError
 list.remove(index)      // mutates; removed value or IndexError
-list.clear()            // mutates; None
+list.clear()            // mutates; Unit
 list.get(index)         // value or None when out of bounds
 list.first()            // first value or None
 list.last()             // final value or None
 list.slice(start, end)  // new shallow List or IndexError
 list.extend(other)      // mutates and returns the new length
-list.reverse()          // mutates; None
+list.reverse()          // mutates; Unit
 list.reversed()         // new shallow reversed List
-list.sort()             // sorts in place under `<`, stable; None or Error
+list.sort()             // sorts in place under `<`, stable; Unit or Error
 list.sort(compare)      // sorts in place by the Ordering compare(a, b) returns
 list.sorted()           // new List sorted under `<`
 list.sorted(compare)    // new List sorted by compare
@@ -732,7 +744,7 @@ list.filter(callback)   // new List or the first callback Error
 list.find(callback)     // matching value, None, or callback Error
 list.any(callback)      // Bool or callback Error
 list.all(callback)      // Bool or callback Error
-list.each(callback)     // None or callback Error
+list.each(callback)     // Unit or callback Error
 list.reduce(initial, callback) // accumulated value or callback Error
 list.collect()            // new shallow List snapshot
 list.count()              // number of yielded items
@@ -749,7 +761,7 @@ object.delete(key)      // removed value or None
 object.keys()           // new List of String keys in insertion order
 object.values()         // new shallow List in insertion order
 object.get_or(key, d)   // value or d when absent
-object.clear()          // mutates; None
+object.clear()          // mutates; Unit
 object.entries()        // new [String, value] Lists in insertion order
 object.merge(other)     // new Object with right-hand values winning
 Object::from_entries(entries) // Object from [String, value] Lists
@@ -766,7 +778,7 @@ Host::sleep(retry_after);
 
 `Duration` is a normal prelude type with `seconds: Int` and `nanoseconds: Int` fields. Durations order by length and support `+` and `-`; a negative difference produces `ValueError`. A `DateTime` plus or minus a Duration is a DateTime, a DateTime minus an earlier DateTime is the Duration between them, and DateTimes order and compare as instants independently of their display offsets. Valid Duration values have non-negative seconds and a nanosecond field from `0` to `999999999`. `Duration::nanoseconds(value)`, `Duration::microseconds(value)`, `Duration::milliseconds(value)`, and `Duration::seconds(value)` construct normalized values from non-negative Int input. Conversions return `ValueError` for negative input and `IntOverflowError` if an intermediate multiplication exceeds the Int range. `as_seconds()` returns the whole-second component; `as_milliseconds()`, `as_microseconds()`, and `as_nanoseconds()` return truncated total-unit Int values or `IntOverflowError` when that total exceeds the Int range.
 
-`Host::sleep(duration)` accepts exactly one normalized Duration and returns `None` after the duration elapses. It may suspend, but it is provided by every ExS runner and does not require an application host-function registration.
+`Host::sleep(duration)` accepts exactly one normalized Duration and returns `Unit` after the duration elapses. It may suspend, but it is provided by every ExS runner and does not require an application host-function registration.
 
 ## Host calls
 
@@ -816,7 +828,7 @@ test "adds two values" {
 
 Test declarations are not included by `exs run` or `exs compile`. A failed assertion creates a fatal `AssertionFailed` Error, so execution stops immediately whether the assertion appears in a test or ordinary program function.
 
-Every item in `std::` is automatically available in every module under its final name, so the `std::` qualifier is optional. `assert(condition[, description])` requires a Bool condition and accepts an optional String description. It returns None when the condition is true. Without a description, assertion failures use `"assert failed"`. `assert_eq(actual, expected[, description])` compares values with the normal `==` equality semantics and returns None when they compare equal. It accepts an optional String description and otherwise uses `"assert_eq failed"`. Assertion failures carry the description as their message; `assert_eq` carries actual and expected values as error data. `std::test::assert` and `std::test::assert_eq` are the equivalent qualified spellings.
+Every item in `std::` is automatically available in every module under its final name, so the `std::` qualifier is optional. `assert(condition[, description])` requires a Bool condition and accepts an optional String description. It returns Unit when the condition is true. Without a description, assertion failures use `"assert failed"`. `assert_eq(actual, expected[, description])` compares values with the normal `==` equality semantics and returns Unit when they compare equal. It accepts an optional String description and otherwise uses `"assert_eq failed"`. Assertion failures carry the description as their message; `assert_eq` carries actual and expected values as error data. `std::test::assert` and `std::test::assert_eq` are the equivalent qualified spellings.
 
 # 14. Grammar Summary
 
@@ -849,7 +861,7 @@ closureParameters = closureParameter { "," closureParameter } [ "," ] ;
 closureParameter = identifier [ ":" typeUnion ] [ "..." ] ;
 parameter       = identifier [ ":" typeUnion ] [ "..." ] ;
 typeUnion       = typeName { "|" typeName } ;
-typeName        = qualifiedName | "None" | "Error" ;
+typeName        = qualifiedName | "None" | "Unit" | "Error" ;
 
 statement       = block | ifStmt | whileStmt | forStmt | breakStmt | continueStmt
                 | returnStmt | letDecl | expression ";" ;
@@ -884,7 +896,7 @@ typedObject     = qualifiedName "{" [ objectItems ] "}" ;
 matchExpr       = "match" expression "{" matchArm { "," matchArm } [ "," ] "}" ;
 matchArm        = ( qualifiedName [ "(" identifiers? ")" ] | literalPattern | "_" )
                   "=>" ( expression | block ) ;
-literalPattern  = [ "-" ] ( integer | float ) | string | bytes | "true" | "false" | "None" ;
+literalPattern  = [ "-" ] ( integer | float ) | string | bytes | "true" | "false" | "None" | "Unit" ;
 parExpr         = "par" "{" { expression ";" } "}" | "par" "(" expression ")" ;
 hostCall        = "Host" "::" "call" "(" arguments? ")" ;
 listLiteral     = "[" [ arguments ] "]" ;

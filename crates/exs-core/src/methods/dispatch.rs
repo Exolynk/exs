@@ -146,7 +146,7 @@ pub fn call_builtin(
                     receiver,
                 );
             }
-            Some(ValueRef::NONE.raw())
+            Some(ValueRef::UNIT.raw())
         }
         BuiltinMethod::Has => objects::has(memory, vm, receiver, first),
         BuiltinMethod::Delete => objects::delete(memory, vm, receiver, first),

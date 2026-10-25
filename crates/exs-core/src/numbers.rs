@@ -78,7 +78,7 @@ pub fn number(memory: &impl Memory, raw: u64) -> Option<Number> {
     let value = reference(raw)?;
     match value.immediate() {
         Some(Immediate::Int(number)) => Some(Number::Int(i64::from(number))),
-        Some(Immediate::Bool(_) | Immediate::None) => None,
+        Some(Immediate::Bool(_) | Immediate::None | Immediate::Unit) => None,
         None if value.kind() == type_kind(TYPE_INT) && value.extra() & INT_BOXED != 0 => {
             Some(Number::Int(
                 memory

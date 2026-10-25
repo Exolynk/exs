@@ -168,6 +168,10 @@ impl<M: Memory> Visitor<M> for Builder {
         self.complete(ExsValue::None)
     }
 
+    fn unit(&mut self) -> Result<(), ()> {
+        self.complete(ExsValue::Unit)
+    }
+
     fn boolean(&mut self, value: bool) -> Result<(), ()> {
         self.complete(ExsValue::Bool(value))
     }

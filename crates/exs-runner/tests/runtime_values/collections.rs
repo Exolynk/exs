@@ -545,7 +545,7 @@ fn sorts_and_aggregates_lists() {
             ExsValue::None,
         ),
         ExsValue::List(vec![
-            ExsValue::None,
+            ExsValue::Unit,
             ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2), ExsValue::Int(3)]),
             ExsValue::List(vec![
                 ExsValue::String("a".to_owned()),

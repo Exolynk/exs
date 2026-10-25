@@ -966,7 +966,8 @@ fn rewrite_expression(expression: &mut Expression<'_>, bindings: &HashMap<String
         | Expression::String(_, _)
         | Expression::Bytes(_, _)
         | Expression::Bool(_, _)
-        | Expression::None(_) => {}
+        | Expression::None(_)
+        | Expression::Unit(_) => {}
     }
 }
 

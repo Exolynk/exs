@@ -51,6 +51,7 @@ pub(super) fn constant(
                 Expression::Integer(value, _) => small(*value)?,
                 Expression::Bool(value, _) => ValueRef::boolean(*value).raw(),
                 Expression::None(_) => ValueRef::NONE.raw(),
+                Expression::Unit(_) => ValueRef::UNIT.raw(),
                 Expression::String(text, _) => *strings.get(text)?,
                 _ => return None,
             };
@@ -63,6 +64,7 @@ pub(super) fn constant(
             value, destination, ..
         } => Some((*destination, small(i128::from(*value))?)),
         Operation::None { destination, .. } => Some((*destination, ValueRef::NONE.raw())),
+        Operation::Unit { destination, .. } => Some((*destination, ValueRef::UNIT.raw())),
         Operation::Boolean {
             value, destination, ..
         } => Some((*destination, ValueRef::boolean(*value).raw())),
@@ -79,6 +81,7 @@ fn written_slots(operation: &Operation<'_, '_>) -> Vec<u32> {
         | Operation::RuntimeStatic { destination, .. }
         | Operation::Integer { destination, .. }
         | Operation::None { destination, .. }
+        | Operation::Unit { destination, .. }
         | Operation::Boolean { destination, .. }
         | Operation::Copy { destination, .. }
         | Operation::WireDecode { destination, .. }

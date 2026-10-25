@@ -7,8 +7,8 @@ use crate::codegen::declarations::{
     FunctionSignature, InstanceMethod, LiftedFunction, MethodRegistry,
 };
 use crate::codegen::diagnostics;
+use crate::codegen::errors::permits_propagation;
 use crate::codegen::trait_registry::TraitOperator;
-use crate::codegen::types;
 use crate::codegen::types::{TypeContract, TypeRegistry};
 use crate::codegen::{CompileDiagnostic, CompileDiagnostics, SourceSpan};
 
@@ -73,6 +73,11 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
     },
     /// Constructs the singular None value in a destination slot.
     None {
+        destination: u32,
+        span: SourceSpan<'source>,
+    },
+    /// Constructs the singular Unit value in a destination slot.
+    Unit {
         destination: u32,
         span: SourceSpan<'source>,
     },
@@ -523,8 +528,8 @@ pub(super) struct GraphBuilder<'source, 'function> {
     pub(super) operations: Vec<Operation<'source, 'function>>,
     /// Active loop back-edges and break exits while lowering nested blocks.
     pub(super) loops: Vec<LoopBuilderContext>,
-    /// Whether this function may return Error through `?`.
-    pub(super) permits_error: bool,
+    /// Whether this function's return type lets `?` return from it.
+    pub(super) permits_propagation: bool,
     /// Linked source function signatures used while lowering direct calls.
     pub(super) signatures: &'function HashMap<String, FunctionSignature>,
     /// Durable layouts of every suspendable call target.
@@ -634,7 +639,7 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
             next_slot: parameter_count,
             operations: Vec::new(),
             loops: Vec::new(),
-            permits_error: types::permits_error(&signature.return_type),
+            permits_propagation: permits_propagation(signature.return_type.builtin_mask),
             signatures,
             frame_layouts,
             methods,
@@ -711,7 +716,7 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
             builder.lower_statement(statement)?;
         }
         let none = builder.temporary(declaration.span)?;
-        builder.operations.push(Operation::None {
+        builder.operations.push(Operation::Unit {
             destination: none,
             span: declaration.span,
         });
@@ -735,6 +740,7 @@ pub(in crate::codegen) fn operation_span<'source>(
         | Operation::RuntimeStatic { span, .. }
         | Operation::Integer { span, .. }
         | Operation::None { span, .. }
+        | Operation::Unit { span, .. }
         | Operation::Boolean { span, .. }
         | Operation::Copy { span, .. }
         | Operation::WireDecode { span, .. }
@@ -797,7 +803,8 @@ pub(super) fn expression_span<'source>(expression: &Expression<'source>) -> Sour
         | Expression::String(_, span)
         | Expression::Bytes(_, span)
         | Expression::Bool(_, span)
-        | Expression::None(span) => *span,
+        | Expression::None(span)
+        | Expression::Unit(span) => *span,
         Expression::FormattedString { span, .. } => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::Closure { span, .. } => *span,

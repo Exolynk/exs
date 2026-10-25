@@ -96,13 +96,13 @@ fn reads_variable_operands_before_later_rebinding() {
         }
     "#;
     let expected = ExsValue::List(vec![
-        ExsValue::List(vec![ExsValue::Int(1), ExsValue::None]),
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::Unit]),
         ExsValue::Int(10),
-        ExsValue::List(vec![ExsValue::Int(7), ExsValue::None]),
+        ExsValue::List(vec![ExsValue::Int(7), ExsValue::Unit]),
         ExsValue::List(vec![ExsValue::Int(8)]),
         ExsValue::Bool(false),
         ExsValue::None,
-        ExsValue::List(vec![ExsValue::Int(1), ExsValue::None]),
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::Unit]),
         ExsValue::Int(2),
     ]);
     // Any closure makes every function resumable, which selects the continuation lowering.

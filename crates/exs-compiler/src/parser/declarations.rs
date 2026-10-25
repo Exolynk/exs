@@ -491,6 +491,7 @@ impl<'a> Parser<'a> {
         let name = match token.kind {
             TokenKind::Identifier(name) => name,
             TokenKind::None => "None".to_owned(),
+            TokenKind::Unit => "Unit".to_owned(),
             TokenKind::Error => "Error".to_owned(),
             _ => return Err(self.error(token.span, "E0111", message)),
         };

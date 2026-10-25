@@ -45,7 +45,7 @@ pub const EMPTY_MAIN: Scenario = Scenario {
     name: "empty_main",
     source: "fn main() {}",
     inputs: no_inputs,
-    expected: none_result,
+    expected: unit_result,
 };
 
 /// Measures a show function that unconditionally returns `true`.
@@ -510,6 +510,11 @@ fn no_inputs() -> Vec<ExsValue> {
 /// Builds the None result.
 fn none_result() -> ExsValue {
     ExsValue::None
+}
+
+/// Builds the Unit result of a function that completes without a value.
+fn unit_result() -> ExsValue {
+    ExsValue::Unit
 }
 
 /// Builds the `true` result.

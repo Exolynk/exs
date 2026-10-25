@@ -736,6 +736,7 @@ fn builtin_mask(name: &str) -> Option<u32> {
     match name.strip_prefix("std::").unwrap_or(name) {
         "Any" => Some(TYPE_ANY),
         "None" => Some(TYPE_NONE),
+        "Unit" => Some(exs_layout::TYPE_UNIT),
         "Error" => Some(TYPE_ERROR),
         "Bool" => Some(TYPE_BOOL),
         "Int" => Some(TYPE_INT),

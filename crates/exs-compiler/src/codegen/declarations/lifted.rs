@@ -248,6 +248,7 @@ fn collect_closures_expression<'source, 'ast>(
         | Expression::Bytes(_, _)
         | Expression::Bool(_, _)
         | Expression::None(_)
+        | Expression::Unit(_)
         | Expression::Variable(_) => {}
     }
 }

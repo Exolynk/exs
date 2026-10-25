@@ -1,9 +1,9 @@
 //! Values encoded entirely inside one `ValueRef`.
 //!
-//! None, Bool and every Int inside the `i32` range are immediates and never allocate. An Int
+//! None, Unit, Bool and every Int inside the `i32` range are immediates and never allocate. An Int
 //! that fits an `i32` is always immediate, so equal immediates have equal raw references.
 
-use crate::types::{TYPE_BOOL, TYPE_INT, TYPE_NONE};
+use crate::types::{TYPE_BOOL, TYPE_INT, TYPE_NONE, TYPE_UNIT};
 
 use super::layout::{INT_BOXED, type_kind};
 use super::reference::ValueRef;
@@ -13,6 +13,8 @@ use super::reference::ValueRef;
 pub enum Immediate {
     /// The None value.
     None,
+    /// The Unit value.
+    Unit,
     /// One Bool value.
     Bool(bool),
     /// One Int value inside the `i32` range.
@@ -30,6 +32,8 @@ const fn immediate(type_bit: u32, payload: u32) -> ValueRef {
 impl ValueRef {
     /// The immediate None value.
     pub const NONE: Self = immediate(TYPE_NONE, 0);
+    /// The immediate Unit value.
+    pub const UNIT: Self = immediate(TYPE_UNIT, 0);
     /// The immediate `false` value.
     pub const FALSE: Self = immediate(TYPE_BOOL, 0);
     /// The immediate `true` value.
@@ -60,6 +64,8 @@ impl ValueRef {
         let kind = self.kind();
         if kind == type_kind(TYPE_NONE) {
             Some(Immediate::None)
+        } else if kind == type_kind(TYPE_UNIT) {
+            Some(Immediate::Unit)
         } else if kind == type_kind(TYPE_BOOL) {
             Some(Immediate::Bool(self.payload() != 0))
         } else if kind == type_kind(TYPE_INT) && self.extra() & INT_BOXED == 0 {

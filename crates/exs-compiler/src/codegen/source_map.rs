@@ -339,7 +339,8 @@ impl<'a> SourceMap<'a> {
             | Expression::String(_, span)
             | Expression::Bytes(_, span)
             | Expression::Bool(_, span)
-            | Expression::None(span) => self.insert(*span),
+            | Expression::None(span)
+            | Expression::Unit(span) => self.insert(*span),
             Expression::FormattedString { parts, span, .. } => {
                 self.insert(*span);
                 for part in parts {

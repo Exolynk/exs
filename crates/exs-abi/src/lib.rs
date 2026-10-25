@@ -56,7 +56,7 @@ pub use value::{
 ///
 /// Version 27 exchanges values of nominal Object types as [`ExsValue::Typed`] with their type
 /// identity.
-pub const ABI_VERSION: u32 = 27;
+pub const ABI_VERSION: u32 = 28;
 
 /// Stable host-boundary identity used by the compiler-owned `IteratorStep` enum.
 pub const STANDARD_ITERATOR_STEP_TYPE_IDENTITY: &str = "<std>/iterator.exs::IteratorStep";

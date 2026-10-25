@@ -12,7 +12,7 @@ use crate::memory::Memory;
 use crate::strings::{string_object, text_string};
 use crate::vm::Vm;
 
-/// Evaluates `assert(condition, description)`: None when `condition` is true, else a fatal
+/// Evaluates `assert(condition, description)`: Unit when `condition` is true, else a fatal
 /// AssertionFailed Error with `condition` as its data.
 ///
 /// Both values must be rooted.
@@ -26,7 +26,7 @@ pub fn assert(memory: &mut impl Memory, vm: u32, condition: u64, description: u6
         );
     }
     if condition == ValueRef::TRUE.raw() {
-        Some(ValueRef::NONE.raw())
+        Some(ValueRef::UNIT.raw())
     } else if condition == ValueRef::FALSE.raw() {
         assertion_failed(memory, vm, description, condition)
     } else {
@@ -61,7 +61,7 @@ pub fn assert_eq(
         );
     }
     if comparison == ValueRef::TRUE.raw() {
-        return Some(ValueRef::NONE.raw());
+        return Some(ValueRef::UNIT.raw());
     }
     if comparison != ValueRef::FALSE.raw() {
         return fatal_type_error(

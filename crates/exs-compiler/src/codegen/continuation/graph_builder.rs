@@ -148,7 +148,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                     Some(value) => self.lower_expression(value)?,
                     None => {
                         let destination = self.temporary(*span)?;
-                        self.operations.push(Operation::None {
+                        self.operations.push(Operation::Unit {
                             destination,
                             span: *span,
                         });

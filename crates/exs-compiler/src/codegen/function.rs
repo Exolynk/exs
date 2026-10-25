@@ -468,7 +468,7 @@ impl<'a, 'm> FunctionCompiler<'a, 'm> {
         }
         self.wrap_captured_parameters(first)?;
         self.compile_block(&self.declaration.body)?;
-        immediate::push(&mut self.function, exs_layout::ValueRef::NONE);
+        immediate::push(&mut self.function, exs_layout::ValueRef::UNIT);
         self.return_value(self.declaration.span)?;
         self.instruction(Instruction::End);
         let i64_locals = self.next_local - self.parameter_count - 2;

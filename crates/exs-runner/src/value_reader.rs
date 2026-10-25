@@ -315,6 +315,12 @@ impl<M: Memory> Visitor<M> for Builder {
         self.complete(ExsValue::None)
     }
 
+    fn unit(&mut self) -> Result<(), ReadError> {
+        self.enter_value();
+        self.grow(1)?;
+        self.complete(ExsValue::Unit)
+    }
+
     fn boolean(&mut self, value: bool) -> Result<(), ReadError> {
         self.enter_value();
         self.grow(1)?;

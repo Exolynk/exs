@@ -253,6 +253,7 @@ impl<'a> Parser<'a> {
             TokenKind::True => Ok(Expression::Bool(true, token.span)),
             TokenKind::False => Ok(Expression::Bool(false, token.span)),
             TokenKind::None => Ok(Expression::None(token.span)),
+            TokenKind::Unit => Ok(Expression::Unit(token.span)),
             TokenKind::Error => {
                 self.expect_simple(TokenKind::LeftParen, "expected ( after Error")?;
                 let arguments = self.arguments(TokenKind::RightParen)?;
@@ -447,7 +448,8 @@ impl<'a> Parser<'a> {
             | TokenKind::Bytes(_)
             | TokenKind::True
             | TokenKind::False
-            | TokenKind::None => true,
+            | TokenKind::None
+            | TokenKind::Unit => true,
             TokenKind::Minus => matches!(
                 self.tokens.get(self.current + 1).map(|token| &token.kind),
                 Some(TokenKind::Integer(_) | TokenKind::Float(_))

@@ -8,7 +8,7 @@
 
 use core::mem::offset_of;
 
-use exs_layout::{ERROR_FATAL, VmState};
+use exs_layout::{ERROR_FATAL, ValueRef, VmState};
 use exs_layout::{TYPE_ERROR, TYPE_NONE};
 use wasm_encoder::{BlockType, Function, Instruction, MemArg};
 
@@ -73,6 +73,16 @@ pub(super) fn emit_push_trace(
     function.instruction(&Instruction::I32Const(8));
     function.instruction(&Instruction::I32Add);
     function.instruction(&Instruction::I32Store(top));
+}
+
+/// The message of E0218, the diagnostic for `?` in a function it cannot return from.
+pub(super) const PROPAGATION_REQUIREMENT: &str =
+    "? requires the current function return type to include Error, None or Any";
+
+/// Returns whether `?` may return from a function whose return type has the built-in `mask`:
+/// it must admit Errors or None.
+pub(super) const fn permits_propagation(mask: u32) -> bool {
+    mask & (TYPE_ERROR | TYPE_NONE) != 0
 }
 
 impl<'a> FunctionCompiler<'a, '_> {
@@ -237,28 +247,33 @@ impl<'a> FunctionCompiler<'a, '_> {
         Ok(())
     }
 
-    /// Compiles `value?`: an Error returns from the function, None returns a MissingValue
-    /// Error, and every other value passes through.
+    /// Compiles `value?` by the function's return type: None returns None when the return
+    /// type admits None and a MissingValue Error otherwise; an Error returns from the function,
+    /// as a fatal TypeError when the return type admits no Errors; every other value passes
+    /// through.
     pub(super) fn compile_propagate(
         &mut self,
         value: &Expression<'a>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
-        if !self.permits_error() {
-            return Err(error(
-                "E0218",
-                span,
-                "? requires the current function return type to include Error or Any".to_owned(),
-            ));
+        let mask = self
+            .return_contract()
+            .map_or(0, |contract| contract.builtin_mask);
+        if !permits_propagation(mask) {
+            return Err(error("E0218", span, PROPAGATION_REQUIREMENT.to_owned()));
         }
         self.compile_expression(value)?;
         let operand = self.store_new();
         self.instruction(Instruction::LocalGet(operand));
         immediate::type_mask_test(&mut self.function, TYPE_NONE);
         self.instruction(Instruction::If(BlockType::Empty));
-        self.set_position(span)?;
-        self.push_vm();
-        self.core_call("__exs_core_missing_value", span)?;
+        if mask & TYPE_NONE != 0 {
+            immediate::push(&mut self.function, ValueRef::NONE);
+        } else {
+            self.set_position(span)?;
+            self.push_vm();
+            self.core_call("__exs_core_missing_value", span)?;
+        }
         self.return_top();
         self.instruction(Instruction::End);
         self.return_if_error(operand, span)?;

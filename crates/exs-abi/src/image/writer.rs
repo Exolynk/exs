@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use super::format::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
     RECORD_FLOAT, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT, RECORD_STRING, RECORD_TYPED,
+    RECORD_UNIT,
 };
 use crate::value::{BoundaryError, BoundaryLimits, ErrorSeverity, ExsError, ExsValue};
 
@@ -136,6 +137,10 @@ impl Writer {
             ExsValue::None => {
                 self.account(1)?;
                 self.record(RECORD_NONE, 0)
+            }
+            ExsValue::Unit => {
+                self.account(1)?;
+                self.record(RECORD_UNIT, 0)
             }
             ExsValue::Bool(flag) => {
                 self.account(1)?;

@@ -111,7 +111,8 @@ impl<'a> Resolver<'_, '_, 'a> {
             | Expression::String(..)
             | Expression::Bytes(..)
             | Expression::Bool(..)
-            | Expression::None(..) => Ok(expression.clone()),
+            | Expression::None(..)
+            | Expression::Unit(..) => Ok(expression.clone()),
             Expression::Unary {
                 operator: UnaryOperator::Negate,
                 operand,
@@ -167,6 +168,7 @@ fn with_span<'a>(value: Expression<'a>, span: SourceSpan<'a>) -> Expression<'a> 
         Expression::Bytes(text, _) => Expression::Bytes(text, span),
         Expression::Bool(flag, _) => Expression::Bool(flag, span),
         Expression::None(_) => Expression::None(span),
+        Expression::Unit(_) => Expression::Unit(span),
         Expression::Unary {
             operator, operand, ..
         } => Expression::Unary {
@@ -523,7 +525,8 @@ impl<'a> Inliner<'_, 'a> {
             | Expression::String(..)
             | Expression::Bytes(..)
             | Expression::Bool(..)
-            | Expression::None(..) => {}
+            | Expression::None(..)
+            | Expression::Unit(..) => {}
         }
     }
 }

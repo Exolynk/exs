@@ -417,6 +417,7 @@ fn print_result(result: exs_runner::ExsValue) {
 fn format_result(result: &exs_runner::ExsValue) -> String {
     match result {
         exs_runner::ExsValue::None => "None".to_owned(),
+        exs_runner::ExsValue::Unit => "Unit".to_owned(),
         exs_runner::ExsValue::Error(error) => {
             format!("Error({:?}, {:?})", error.kind, error.message)
         }

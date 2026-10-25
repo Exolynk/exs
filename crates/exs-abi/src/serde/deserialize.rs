@@ -23,7 +23,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self.0 {
-            ExsValue::None => visitor.visit_unit(),
+            ExsValue::None | ExsValue::Unit => visitor.visit_unit(),
             ExsValue::Bool(value) => visitor.visit_bool(value),
             ExsValue::Int(value) => visitor.visit_i64(value),
             ExsValue::Float(value) => visitor.visit_f64(value),
@@ -148,7 +148,7 @@ impl<'de> Deserializer<'de> for ValueDeserializer {
     }
     fn deserialize_unit<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self.0 {
-            ExsValue::None => visitor.visit_unit(),
+            ExsValue::Unit | ExsValue::None => visitor.visit_unit(),
             value => unexpected(value),
         }
     }
@@ -284,6 +284,7 @@ fn unexpected<T>(value: ExsValue) -> Result<T, SerdeError> {
 fn value_name(value: &ExsValue) -> &'static str {
     match value {
         ExsValue::None => "None",
+        ExsValue::Unit => "Unit",
         ExsValue::Error(_) => "Error",
         ExsValue::Bool(_) => "Bool",
         ExsValue::Int(_) => "Int",

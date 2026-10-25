@@ -205,7 +205,7 @@ pub(crate) fn delete(memory: &mut impl Memory, vm: u32, raw: u64, name_raw: u64)
 /// Message of the TypeError for removing the fields of a nominal value.
 const NOMINAL_FIELDS_FIXED: &str = "the fields of a nominal value cannot be removed";
 
-/// Removes every entry of an Object receiver and returns None, or the TypeError for a nominal
+/// Removes every entry of an Object receiver and returns Unit, or the TypeError for a nominal
 /// value, whose fields cannot be removed.
 pub(crate) fn clear(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> {
     match object(memory, raw)? {
@@ -213,7 +213,7 @@ pub(crate) fn clear(memory: &mut impl Memory, vm: u32, raw: u64) -> Option<u64> 
         Receiver::Untyped(object) => object_clear(memory, vm, object)?,
         Receiver::Typed(_) => return type_error(memory, vm, NOMINAL_FIELDS_FIXED, raw),
     }
-    Some(ValueRef::NONE.raw())
+    Some(ValueRef::UNIT.raw())
 }
 
 /// Returns whether `raw` is an Object.

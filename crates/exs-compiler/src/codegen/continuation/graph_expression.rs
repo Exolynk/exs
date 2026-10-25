@@ -8,6 +8,7 @@ use crate::ast::{
 };
 use crate::codegen::declarations::contains_statements;
 use crate::codegen::diagnostics;
+use crate::codegen::errors::PROPAGATION_REQUIREMENT;
 use crate::codegen::match_arms::{ArmTest, MatchArms, check_bindings};
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::{NominalKind, TypeContract};
@@ -28,7 +29,8 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             | Expression::String(_, _)
             | Expression::Bytes(_, _)
             | Expression::Bool(_, _)
-            | Expression::None(_) => {
+            | Expression::None(_)
+            | Expression::Unit(_) => {
                 let destination = self.temporary(expression_span(expression))?;
                 self.operations.push(Operation::Literal {
                     expression,
@@ -356,11 +358,11 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 Ok(destination)
             }
             Expression::Propagate { value, span } => {
-                if !self.permits_error {
+                if !self.permits_propagation {
                     return Err(diagnostics(CompileDiagnostic::new(
                         "E0218",
                         *span,
-                        "? requires the current function return type to include Error or Any",
+                        PROPAGATION_REQUIREMENT,
                     )));
                 }
                 let value = self.lower_expression(value)?;
@@ -1055,7 +1057,7 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             MatchArmBody::Block(block) => {
                 self.lower_block(block)?;
                 let destination = self.temporary(block.span)?;
-                self.operations.push(Operation::None {
+                self.operations.push(Operation::Unit {
                     destination,
                     span: block.span,
                 });

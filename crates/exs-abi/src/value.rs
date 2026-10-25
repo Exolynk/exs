@@ -18,8 +18,10 @@ const DEFAULT_MAX_COLLECTION_ENTRIES: usize = 65_536;
 /// references, object identities, and cycles are never exposed through this type.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExsValue {
-    /// The absence variant shared by ExS Options and empty operations.
+    /// The absence of a value, such as a missing Object key.
     None,
+    /// The result of a function that completes without a value.
+    Unit,
     /// A structured ExS language error.
     Error(ExsError),
     /// An ExS boolean.

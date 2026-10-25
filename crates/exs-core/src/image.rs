@@ -10,7 +10,7 @@
 use exs_abi::image::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
     RECORD_FLOAT, RECORD_HEADER_SIZE, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT,
-    RECORD_STRING, RECORD_TYPED,
+    RECORD_STRING, RECORD_TYPED, RECORD_UNIT,
 };
 use exs_layout::{TYPE_ENTRY_ENUM, TypeEntry, ValueRef};
 
@@ -242,6 +242,7 @@ fn adopt(
     let record = image.record(memory, offset)?;
     match record.kind {
         RECORD_NONE => Ok(ValueRef::NONE.raw()),
+        RECORD_UNIT => Ok(ValueRef::UNIT.raw()),
         RECORD_BOOL => Ok(ValueRef::boolean(record.argument != 0).raw()),
         RECORD_INT => {
             let value = memory.load_u64(image.payload(record, 8)?).cast_signed();

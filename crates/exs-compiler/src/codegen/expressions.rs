@@ -47,6 +47,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 immediate::push(&mut self.function, exs_layout::ValueRef::boolean(*value));
             }
             Expression::None(_) => immediate::push(&mut self.function, exs_layout::ValueRef::NONE),
+            Expression::Unit(_) => immediate::push(&mut self.function, exs_layout::ValueRef::UNIT),
             Expression::Variable(identifier) => {
                 if let Some(variant) = self.context.types.enum_variant(&identifier.name) {
                     return self.compile_unit_variant(variant, identifier.span);
@@ -812,7 +813,8 @@ pub(super) fn expression_span<'a>(expression: &Expression<'a>) -> SourceSpan<'a>
         | Expression::String(_, span)
         | Expression::Bytes(_, span)
         | Expression::Bool(_, span)
-        | Expression::None(span) => *span,
+        | Expression::None(span)
+        | Expression::Unit(span) => *span,
         Expression::Variable(identifier) => identifier.span,
         Expression::FormattedString { span, .. }
         | Expression::IsType { span, .. }

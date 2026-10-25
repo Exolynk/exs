@@ -153,21 +153,27 @@ fn rejects_an_unknown_function_type() {
     assert_eq!(error.diagnostics[0].code, "E0216");
 }
 
-/// Rejects propagation in a function whose declared return type excludes Error.
+/// Rejects propagation in a function whose declared return type admits neither Error nor None.
 #[test]
 fn rejects_propagation_without_an_error_return_type() {
-    let result = compile(
-        SourceInput {
-            source_id: "strict-return.exs",
-            text: "fn value(input) -> Int { ret input?; } fn main(input) { ret value(input); }",
-        },
-        CompileOptions::default(),
-    );
-    let error = match result {
-        Ok(_) => panic!("compilation unexpectedly succeeded"),
-        Err(error) => error,
-    };
-    assert_eq!(error.diagnostics[0].code, "E0218");
+    for return_type in ["Int", "Unit"] {
+        let text = format!(
+            "fn value(input) -> {return_type} {{ input?; ret value(1); }} \
+             fn main(input) {{ ret value(input); }}"
+        );
+        let result = compile(
+            SourceInput {
+                source_id: "strict-return.exs",
+                text: &text,
+            },
+            CompileOptions::default(),
+        );
+        let error = match result {
+            Ok(_) => panic!("compilation unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert_eq!(error.diagnostics[0].code, "E0218");
+    }
 }
 
 /// Compiles typed main declarations with multiple parameters.

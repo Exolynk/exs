@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use super::format::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
     RECORD_FLOAT, RECORD_HEADER_SIZE, RECORD_INT, RECORD_LIST, RECORD_NONE, RECORD_OBJECT,
-    RECORD_STRING, RECORD_TYPED,
+    RECORD_STRING, RECORD_TYPED, RECORD_UNIT,
 };
 use super::writer::{ENUM_TAG, ERROR_TAG, TYPED_TAG, head_len, int_len};
 use crate::value::{
@@ -153,6 +153,10 @@ impl Reader<'_> {
             RECORD_NONE => {
                 self.account(1)?;
                 Ok(ExsValue::None)
+            }
+            RECORD_UNIT => {
+                self.account(1)?;
+                Ok(ExsValue::Unit)
             }
             RECORD_BOOL => {
                 self.account(1)?;

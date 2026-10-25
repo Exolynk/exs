@@ -443,6 +443,7 @@ fn visit_expression<'e, 'a>(
         | Expression::Bytes(_, _)
         | Expression::Bool(_, _)
         | Expression::None(_)
+        | Expression::Unit(_)
         | Expression::Variable(_) => {}
         Expression::FormattedString { parts, .. } => {
             for part in parts {

@@ -16,6 +16,7 @@ pub(in crate::codegen) fn contains_statements(expression: &Expression<'_>) -> bo
         | Expression::Bytes(_, _)
         | Expression::Bool(_, _)
         | Expression::None(_)
+        | Expression::Unit(_)
         | Expression::Variable(_) => false,
         Expression::FormattedString { parts, .. } => parts.iter().any(|part| {
             matches!(part, FormattedStringPart::Expression(expression) if contains_statements(expression))

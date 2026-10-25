@@ -285,7 +285,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             MatchArmBody::Expression(value) => self.compile_expression(value)?,
             MatchArmBody::Block(block) => {
                 self.compile_block(block)?;
-                immediate::push(&mut self.function, exs_layout::ValueRef::NONE);
+                immediate::push(&mut self.function, exs_layout::ValueRef::UNIT);
             }
         }
         self.store(result);
