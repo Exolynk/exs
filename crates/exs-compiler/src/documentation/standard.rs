@@ -312,6 +312,30 @@ pub fn standard_library_type_static_functions(name: &str) -> &'static [StandardF
                 description: "Constructs a Duration from a non-negative exact second count. Negative input returns ValueError.",
                 example: "let interval = Duration::seconds(2);",
             },
+            StandardFunction {
+                name: "minutes",
+                signature: "Duration::minutes(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative minute count. Negative input returns ValueError; IntOverflowError reports a count beyond the Int range in seconds.",
+                example: "let interval = Duration::minutes(2);",
+            },
+            StandardFunction {
+                name: "hours",
+                signature: "Duration::hours(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative hour count. Negative input returns ValueError; IntOverflowError reports a count beyond the Int range in seconds.",
+                example: "let interval = Duration::hours(2);",
+            },
+            StandardFunction {
+                name: "days",
+                signature: "Duration::days(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative 24-hour day count. Negative input returns ValueError; IntOverflowError reports a count beyond the Int range in seconds.",
+                example: "let interval = Duration::days(2);",
+            },
+            StandardFunction {
+                name: "weeks",
+                signature: "Duration::weeks(value: Int) -> Duration | Error",
+                description: "Constructs a Duration from a non-negative 7-day week count. Negative input returns ValueError; IntOverflowError reports a count beyond the Int range in seconds.",
+                example: "let interval = Duration::weeks(2);",
+            },
         ],
         _ => &[],
     }
@@ -371,6 +395,26 @@ pub fn standard_library_types() -> Vec<StandardType> {
                     signature: "as_seconds() -> Int",
                     description: "Returns the normalized whole-second component. Any fractional second remains available through the `nanoseconds` field.",
                     example: "let seconds = Duration::milliseconds(1500).as_seconds(); // 1",
+                },
+                StandardMethod {
+                    signature: "as_minutes() -> Int",
+                    description: "Returns the Duration truncated to a whole number of minutes.",
+                    example: "let minutes = Duration::seconds(200000).as_minutes();",
+                },
+                StandardMethod {
+                    signature: "as_hours() -> Int",
+                    description: "Returns the Duration truncated to a whole number of hours.",
+                    example: "let hours = Duration::seconds(200000).as_hours();",
+                },
+                StandardMethod {
+                    signature: "as_days() -> Int",
+                    description: "Returns the Duration truncated to a whole number of 24-hour days.",
+                    example: "let days = Duration::seconds(200000).as_days();",
+                },
+                StandardMethod {
+                    signature: "as_weeks() -> Int",
+                    description: "Returns the Duration truncated to a whole number of 7-day weeks.",
+                    example: "let weeks = Duration::seconds(200000).as_weeks();",
                 },
                 StandardMethod {
                     signature: "as_milliseconds() -> Int | Error",

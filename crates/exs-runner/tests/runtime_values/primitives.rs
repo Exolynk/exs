@@ -743,3 +743,32 @@ fn finds_positions_in_bytes() {
     ]);
     assert_eq!(execute_source(source, ExsValue::None), expected);
 }
+
+/// Constructs Durations from minutes, hours, days, and weeks and truncates them to those units.
+#[test]
+fn converts_duration_units() {
+    let source = r#"
+        fn main(input) -> List | Error {
+            let span = (Duration::weeks(1)? + Duration::days(2)?)? + Duration::hours(3)?;
+            ret [
+                Duration::minutes(2)?.as_seconds(),
+                Duration::hours(1)?.as_minutes(),
+                span.as_weeks(),
+                span.as_days(),
+                span.as_hours(),
+                Duration::minutes(-1) is Error,
+                Duration::weeks(9223372036854775807) is Error,
+            ];
+        }
+    "#;
+    let expected = ExsValue::List(vec![
+        ExsValue::Int(120),
+        ExsValue::Int(60),
+        ExsValue::Int(1),
+        ExsValue::Int(9),
+        ExsValue::Int(219),
+        ExsValue::Bool(true),
+        ExsValue::Bool(true),
+    ]);
+    assert_eq!(execute_source(source, ExsValue::None), expected);
+}

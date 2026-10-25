@@ -63,6 +63,58 @@ impl Duration {
         }
         ret Duration { seconds: value, nanoseconds: 0 };
     }
+
+    /// Creates an exact Duration from a non-negative minute count.
+    fn minutes(value: Int) -> Duration | Error {
+        if value < 0 {
+            ret Error("ValueError", "duration minutes must not be negative", value);
+        }
+        ret Duration::seconds((value * 60)?);
+    }
+
+    /// Creates an exact Duration from a non-negative hour count.
+    fn hours(value: Int) -> Duration | Error {
+        if value < 0 {
+            ret Error("ValueError", "duration hours must not be negative", value);
+        }
+        ret Duration::seconds((value * 3600)?);
+    }
+
+    /// Creates an exact Duration from a non-negative count of 24-hour days.
+    fn days(value: Int) -> Duration | Error {
+        if value < 0 {
+            ret Error("ValueError", "duration days must not be negative", value);
+        }
+        ret Duration::seconds((value * 86400)?);
+    }
+
+    /// Creates an exact Duration from a non-negative count of 7-day weeks.
+    fn weeks(value: Int) -> Duration | Error {
+        if value < 0 {
+            ret Error("ValueError", "duration weeks must not be negative", value);
+        }
+        ret Duration::seconds((value * 604800)?);
+    }
+
+    /// Returns this Duration truncated to a whole number of minutes.
+    fn as_minutes(self) -> Int {
+        ret self.seconds.div_euclid(60);
+    }
+
+    /// Returns this Duration truncated to a whole number of hours.
+    fn as_hours(self) -> Int {
+        ret self.seconds.div_euclid(3600);
+    }
+
+    /// Returns this Duration truncated to a whole number of 24-hour days.
+    fn as_days(self) -> Int {
+        ret self.seconds.div_euclid(86400);
+    }
+
+    /// Returns this Duration truncated to a whole number of 7-day weeks.
+    fn as_weeks(self) -> Int {
+        ret self.seconds.div_euclid(604800);
+    }
 }
 
 impl Compare for Duration {
