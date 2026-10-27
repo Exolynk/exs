@@ -10,7 +10,7 @@ mod shared;
 mod standard;
 
 pub(crate) use build::{libraries, project};
-pub(crate) use llm::render as render_llm;
+pub(crate) use llm::{render as render_llm, render_core as render_llm_core, render_items as render_llm_items};
 pub(crate) use markdown::render as render_markdown;
 pub use markdown::{MarkdownOptions, PageInfo, PageKind, PageLayout};
 pub use model::{

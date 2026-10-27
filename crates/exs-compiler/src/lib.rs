@@ -290,4 +290,18 @@ impl ApiDocumentation {
     pub fn llm(&self) -> String {
         documentation::render_llm(self)
     }
+
+    /// Renders the language specification, the complete `full_modules` and an index of the
+    /// other modules' declarations, for an LLM that looks up further entries with `llm_items`.
+    #[must_use]
+    pub fn llm_core(&self, full_modules: &[&str]) -> String {
+        documentation::render_llm_core(self, full_modules)
+    }
+
+    /// Renders the requested entries of the compact reference: whole modules,
+    /// `module::name` paths or bare names. Returns the reference and the unmatched names.
+    #[must_use]
+    pub fn llm_items(&self, names: &[&str]) -> (String, Vec<String>) {
+        documentation::render_llm_items(self, names)
+    }
 }
