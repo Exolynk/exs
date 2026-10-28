@@ -31,6 +31,7 @@ pub mod source_map;
 pub(crate) mod standard;
 mod statements;
 mod static_keys;
+mod template_calls;
 pub(crate) mod trait_registry;
 mod traits;
 mod type_table;

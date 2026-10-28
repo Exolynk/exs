@@ -37,6 +37,7 @@ use crate::ast::Module;
 use crate::codegen::declarations::lifted_functions;
 use crate::codegen::prune::{PruneHints, prune_unreachable};
 use crate::codegen::source_map::{SOURCE_MAP_SECTION, SOURCES_SECTION, SourceMap};
+use crate::codegen::template_calls::template_calls;
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::trait_registry::TraitRegistry;
 use crate::codegen::types::TypeRegistry;
@@ -538,6 +539,7 @@ pub(in crate::codegen) fn compile<'a>(
         weak_caller: None,
         weak_targets: Vec::new(),
         roots: Vec::new(),
+        template: Some(template_calls().map_err(|message| error("E1001", span, message))?),
     };
     prune_unreachable(&wasm.finish(), &hints).map_err(|message| error("E1001", span, message))
 }
@@ -691,12 +693,18 @@ impl Reencode for Linker {
         Ok(())
     }
 
+    /// Copies the template's bodies unchanged and appends the program's bodies.
+    ///
+    /// The program only appends types, functions and globals, so no index inside a template
+    /// body changes and its bytes need no decoding or re-encoding.
     fn parse_code_section(
         &mut self,
         code: &mut CodeSection,
         section: wasmparser::CodeSectionReader<'_>,
     ) -> Result<(), reencode::Error<Self::Error>> {
-        reencode::utils::parse_code_section(self, code, section)?;
+        for body in section {
+            code.raw(body?.as_bytes());
+        }
         for body in &self.program.bodies {
             code.function(body);
         }

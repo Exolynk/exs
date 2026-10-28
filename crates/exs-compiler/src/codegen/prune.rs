@@ -11,13 +11,20 @@
 //! weak: they keep no step alive, and calls to pruned steps become `unreachable`. Steps stay live through
 //! direct calls, which every child call emits, or as linker-provided roots for the frames
 //! created by function id alone: suspendable entry points and lifted closures.
+//!
+//! Linked modules start with the core template's bodies unchanged. Their function references
+//! are read once per process, so pruning neither decodes nor re-encodes them: it marks their
+//! callees from the stored references and copies each live body with its indices renumbered.
 
 use std::collections::HashMap;
 
+use wasm_encoder::Encode;
 use wasm_encoder::reencode::{self, Reencode};
 use wasmparser::{
     ConstExpr, ElementItems, ExternalKind, FunctionBody, Name, Operator, Parser, Payload, TypeRef,
 };
+
+use super::template_calls::{TemplateBody, TemplateCalls};
 
 /// Export-name prefixes of template functions that only the linker resolves.
 const LINK_EXPORT_PREFIXES: [&str; 1] = ["__exs_core_"];
@@ -41,6 +48,8 @@ pub(super) fn prune_unreachable(wasm: &[u8], hints: &PruneHints) -> Result<Vec<u
         live,
         weak_caller: hints.weak_caller,
         in_weak_body: false,
+        template: hints.template,
+        scratch: Vec::new(),
     };
     let mut module = wasm_encoder::Module::new();
     reencode::utils::parse_core_module(&mut pruner, &mut module, Parser::new(0), wasm)
@@ -56,6 +65,9 @@ pub(super) struct PruneHints {
     pub(super) weak_targets: Vec<u32>,
     /// Step functions whose frames are created by function id, which keep them alive.
     pub(super) roots: Vec<u32>,
+    /// Function references of the core template, whose bodies the module starts with
+    /// unchanged.
+    pub(super) template: Option<&'static TemplateCalls>,
 }
 
 /// Reachability of every function and the index each live one keeps in the pruned module.
@@ -128,6 +140,9 @@ fn live_functions(wasm: &[u8], hints: &PruneHints) -> Result<LiveFunctions, Stri
             _ => {}
         }
     }
+    if let Some(template) = hints.template {
+        check_template_bodies(template, imports, &bodies)?;
+    }
     let mut live = vec![false; bodies.len()];
     while let Some(index) = roots.pop() {
         let Some(defined) = index.checked_sub(imports) else {
@@ -141,7 +156,10 @@ fn live_functions(wasm: &[u8], hints: &PruneHints) -> Result<LiveFunctions, Stri
         }
         if let Some(body) = bodies.get(defined as usize) {
             let first_new = roots.len();
-            called_functions(body, &mut roots)?;
+            match template_body(hints.template, defined) {
+                Some(template) => roots.extend(template.calls.iter().map(|call| call.target)),
+                None => called_functions(body, &mut roots)?,
+            }
             if hints.weak_caller == Some(index) {
                 let mut position = first_new;
                 while position < roots.len() {
@@ -163,6 +181,31 @@ fn live_functions(wasm: &[u8], hints: &PruneHints) -> Result<LiveFunctions, Stri
         }
     }
     Ok(LiveFunctions { imports, new_index })
+}
+
+/// Checks that `bodies` start with the template's bodies, which the stored references describe.
+fn check_template_bodies(
+    template: &TemplateCalls,
+    imports: u32,
+    bodies: &[FunctionBody<'_>],
+) -> Result<(), String> {
+    let matches = imports == template.imports
+        && bodies.len() >= template.bodies.len()
+        && template
+            .bodies
+            .iter()
+            .zip(bodies)
+            .all(|(template, body)| template.len == body.range().len());
+    if matches {
+        Ok(())
+    } else {
+        Err("the linked module does not start with the core template's bodies".to_owned())
+    }
+}
+
+/// Returns the stored references of defined function `defined` when it is a template body.
+fn template_body(template: Option<&TemplateCalls>, defined: u32) -> Option<&TemplateBody> {
+    template?.bodies.get(defined as usize)
 }
 
 /// Appends every function a body calls or references to `functions`.
@@ -205,6 +248,36 @@ struct Pruner {
     weak_caller: Option<u32>,
     /// Whether the body being re-encoded belongs to `weak_caller`.
     in_weak_body: bool,
+    /// Function references of the template bodies the module starts with.
+    template: Option<&'static TemplateCalls>,
+    /// Reused buffer for renumbered template bodies.
+    scratch: Vec<u8>,
+}
+
+impl Pruner {
+    /// Appends a template body to `code`, copying its re-encoded bytes and rewriting every
+    /// function index.
+    fn copy_template_body(
+        &mut self,
+        code: &mut wasm_encoder::CodeSection,
+        template: &TemplateBody,
+    ) -> Result<(), reencode::Error<String>> {
+        let bytes = template.bytes.as_slice();
+        let out_of_range =
+            || reencode::Error::UserError("a template call site is out of range".to_owned());
+        let mut scratch = std::mem::take(&mut self.scratch);
+        scratch.clear();
+        let mut copied = 0;
+        for call in &template.calls {
+            scratch.extend_from_slice(bytes.get(copied..call.start).ok_or_else(out_of_range)?);
+            self.function_index(call.target)?.encode(&mut scratch);
+            copied = call.end;
+        }
+        scratch.extend_from_slice(bytes.get(copied..).ok_or_else(out_of_range)?);
+        code.raw(&scratch);
+        self.scratch = scratch;
+        Ok(())
+    }
 }
 
 impl Reencode for Pruner {
@@ -240,9 +313,14 @@ impl Reencode for Pruner {
     ) -> Result<(), reencode::Error<Self::Error>> {
         for (index, body) in (self.live.imports..).zip(section) {
             let body = body?;
-            if self.live.is_live(index) {
-                self.in_weak_body = self.weak_caller == Some(index);
-                self.parse_function_body(code, body)?;
+            if !self.live.is_live(index) {
+                continue;
+            }
+            self.in_weak_body = self.weak_caller == Some(index);
+            match template_body(self.template, index - self.live.imports) {
+                // The weak caller's pruned calls become `unreachable`, which needs re-encoding.
+                Some(template) if !self.in_weak_body => self.copy_template_body(code, template)?,
+                _ => self.parse_function_body(code, body)?,
             }
         }
         self.in_weak_body = false;
