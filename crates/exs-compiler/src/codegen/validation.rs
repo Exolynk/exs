@@ -76,6 +76,7 @@ pub(super) fn unreached_diagnostics<'a>(
             lifted,
             &methods,
             types,
+            false,
         ) {
             diagnostics.extend(error);
         }

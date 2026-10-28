@@ -75,6 +75,7 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
             resumable.lifted,
             &resumable.methods,
             context.types,
+            resumable.parallel,
         )?;
         let mut compiler = FunctionCompiler::step(context, key, declaration);
         let state = compiler.scalar_local();
@@ -360,6 +361,15 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
             .is_some_and(|(slot, _)| self.constants.contains_key(&slot))
         {
             return self.ready(next, span);
+        }
+        if let Operation::Direct {
+            statement,
+            bindings,
+            checkpoint,
+            span,
+        } = operation
+        {
+            return self.direct(state, statement, bindings, *checkpoint, *span);
         }
         if self.value_operation(operation)? {
             return self.ready(next, span);

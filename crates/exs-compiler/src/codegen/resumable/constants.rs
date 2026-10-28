@@ -139,6 +139,11 @@ fn written_slots(operation: &Operation<'_, '_>) -> Vec<u32> {
         Operation::NativeIterNext { item, .. } | Operation::IteratorBranch { item, .. } => {
             std::vec![*item]
         }
+        Operation::Direct { bindings, .. } => bindings
+            .iter()
+            .filter(|binding| binding.assigned)
+            .map(|binding| binding.slot)
+            .collect(),
         Operation::CellSet { .. }
         | Operation::FormatPush { .. }
         | Operation::FormatValue { .. }

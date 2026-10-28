@@ -1,6 +1,7 @@
 //! Continuation graphs of functions that may suspend: the operations of a function in
 //! states, which the resumable step functions are emitted from.
 
+mod direct;
 mod graph;
 mod graph_builder;
 mod graph_expression;
@@ -12,7 +13,8 @@ use crate::codegen::declarations::{FunctionSignature, LiftedFunction, MethodRegi
 use crate::codegen::types::TypeRegistry;
 
 pub(in crate::codegen) use self::graph::{
-    ComparisonFallback, ContinuationGraph, FormatPart, HostTimeField, Operation, operation_span,
+    ComparisonFallback, ContinuationGraph, DirectBinding, FormatPart, HostTimeField, Operation,
+    operation_span,
 };
 
 /// Compiler-known durable capacity for one suspendable frame.
@@ -24,7 +26,8 @@ pub(in crate::codegen) struct FrameLayout {
     pub(in crate::codegen) slot_count: u32,
 }
 
-/// Returns the exact durable-frame slot count of one resumable function.
+/// Returns the exact durable-frame slot count of one resumable function in a module whose
+/// `par` expressions `parallel` tells.
 ///
 /// Returns `None` when the continuation graph cannot be built; compiling the function body
 /// reports the same diagnostics later.
@@ -37,6 +40,7 @@ pub(super) fn frame_slot_count<'source>(
     lifted: &[LiftedFunction<'source>],
     methods: &MethodRegistry,
     types: &TypeRegistry,
+    parallel: bool,
 ) -> Option<u32> {
     let signature = signatures.get(key)?;
     ContinuationGraph::build(
@@ -47,6 +51,7 @@ pub(super) fn frame_slot_count<'source>(
         lifted,
         methods,
         types,
+        parallel,
     )
     .ok()
     .map(|graph| graph.slot_count)

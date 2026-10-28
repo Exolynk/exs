@@ -62,7 +62,8 @@ pub(in crate::codegen) struct Resumable<'l, 'a> {
 
 impl<'l, 'a> Resumable<'l, 'a> {
     /// Builds the context of the `resumable` keys among `reached`, whose Wasm indices
-    /// `index_of` returns.
+    /// `index_of` returns, in a module whose `par` expressions `parallel` tells.
+    #[allow(clippy::too_many_arguments)] // The linked module context and the unit sets.
     pub(in crate::codegen) fn build(
         module: &Module<'a>,
         traits: &TraitRegistry<'a>,
@@ -70,6 +71,7 @@ impl<'l, 'a> Resumable<'l, 'a> {
         lifted: &'l [LiftedFunction<'a>],
         reached: &[&Unit<'_, 'a>],
         resumable: &HashSet<String>,
+        parallel: bool,
         index_of: impl Fn(&str) -> Option<u32>,
     ) -> Result<Self, CompileDiagnostics<'a>> {
         let signatures = build_signatures(module, lifted, types)?;
@@ -100,6 +102,7 @@ impl<'l, 'a> Resumable<'l, 'a> {
                 lifted,
                 &methods,
                 types,
+                parallel,
             )
             .unwrap_or_default();
             let step = steps.len() as u32;
@@ -127,7 +130,7 @@ impl<'l, 'a> Resumable<'l, 'a> {
             frame_layouts,
             lifted,
             closures: HashMap::new(),
-            parallel: false,
+            parallel,
         })
     }
 

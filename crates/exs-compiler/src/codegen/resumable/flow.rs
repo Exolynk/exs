@@ -140,6 +140,18 @@ impl<'a> StepEmitter<'a, '_> {
         target: u32,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
+        self.yield_checkpoint(target, span, |_| {})
+    }
+
+    /// Counts down the running task's quantum; once it is used up and another task is
+    /// runnable, runs `save`, which stores what the frame needs, and yields to continue at
+    /// `target` when the task runs again.
+    pub(super) fn yield_checkpoint(
+        &mut self,
+        target: u32,
+        span: SourceSpan<'a>,
+        save: impl FnOnce(&mut Self),
+    ) -> Result<(), CompileDiagnostics<'a>> {
         let quantum = vm_field(
             self.compiler.context.vm,
             (offset_of!(VmState, task) + offset_of!(TaskState, quantum)) as u32,
@@ -160,6 +172,7 @@ impl<'a> StepEmitter<'a, '_> {
         self.compiler
             .core_call("__exs_core_task_checkpoint", span)?;
         self.instruction(Instruction::If(BlockType::Empty));
+        save(self);
         self.leave(STATUS_READY);
         self.instruction(Instruction::End);
         self.instruction(Instruction::End);

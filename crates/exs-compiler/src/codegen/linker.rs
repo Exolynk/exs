@@ -284,6 +284,7 @@ pub(in crate::codegen) fn compile<'a>(
                 &lifted,
                 &reached,
                 &resumable_keys,
+                !parallel.is_empty(),
                 |key| infos.get(key).map(|info| info.index),
             )
         })
@@ -306,7 +307,6 @@ pub(in crate::codegen) fn compile<'a>(
         })
         .collect();
     if let Some(resumable) = &mut resumable {
-        resumable.parallel = !parallel.is_empty();
         for (unit, index) in reached_closures.iter().zip(0_u32..) {
             let (Some(step), Some(info)) = (resumable.steps.get(&unit.key), infos.get(&unit.key))
             else {

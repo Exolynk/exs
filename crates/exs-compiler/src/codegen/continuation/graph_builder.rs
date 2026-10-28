@@ -162,24 +162,9 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
                 let _value = self.lower_expression(expression)?;
             }
             Statement::Block { block, .. } => self.lower_block(block)?,
-            Statement::If {
-                condition,
-                then_block,
-                else_branch,
-                span,
-            } => self.lower_if(condition, then_block, else_branch.as_ref(), *span)?,
-            Statement::While {
-                condition,
-                body,
-                span,
-            } => self.lower_while(condition, body, *span)?,
-            Statement::For {
-                binding,
-                type_annotation,
-                iterable,
-                body,
-                span,
-            } => self.lower_for(binding, type_annotation.as_ref(), iterable, body, *span)?,
+            Statement::If { .. } | Statement::While { .. } | Statement::For { .. } => {
+                self.lower_compound(statement)?;
+            }
             Statement::Break { span } => self.lower_loop_branch(*span, true)?,
             Statement::Continue { span } => self.lower_loop_branch(*span, false)?,
         }

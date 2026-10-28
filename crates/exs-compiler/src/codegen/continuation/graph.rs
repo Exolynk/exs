@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinaryOperator, Expression, FunctionDeclaration, UnaryOperator};
+use crate::ast::{BinaryOperator, Expression, FunctionDeclaration, Statement, UnaryOperator};
 use crate::codegen::declarations::{
     FunctionSignature, InstanceMethod, LiftedFunction, MethodRegistry,
 };
@@ -506,6 +506,28 @@ pub(in crate::codegen) enum Operation<'source, 'function> {
         value: u32,
         span: SourceSpan<'source>,
     },
+    /// Runs one `while`, `for` or `if` statement that cannot suspend as synchronous code, its
+    /// bindings loaded from their slots into locals and the assigned ones stored back after.
+    Direct {
+        statement: &'function Statement<'source>,
+        bindings: Vec<DirectBinding>,
+        /// Whether the statement is a `while` loop that yields at the scheduler's checkpoints
+        /// before every iteration, resuming at this state.
+        checkpoint: bool,
+        span: SourceSpan<'source>,
+    },
+}
+
+/// One lexical binding a direct statement uses.
+#[derive(Debug, Clone)]
+pub(in crate::codegen) struct DirectBinding {
+    /// Source name of the binding.
+    pub(in crate::codegen) name: String,
+    /// The durable slot holding its value or Cell.
+    pub(in crate::codegen) slot: u32,
+    /// Whether the statement assigns the binding's value, which must be stored back. Cells
+    /// are never stored back: assignments change their contents.
+    pub(in crate::codegen) assigned: bool,
 }
 
 /// One nominal prelude field constructed from a runner-owned time response object.
@@ -542,6 +564,10 @@ pub(super) struct GraphBuilder<'source, 'function> {
     pub(super) captured_names: HashSet<String>,
     /// Compiler-private functions lifted from closure expressions.
     pub(super) lifted: &'function [LiftedFunction<'source>],
+    /// Trace ids of the units that run as frames, whose calls may suspend.
+    pub(super) frame_functions: HashSet<u32>,
+    /// Whether the module has `par` expressions, so loops yield at scheduler checkpoints.
+    pub(super) parallel: bool,
 }
 
 /// One durable lexical binding slot and its storage representation.
@@ -562,7 +588,9 @@ pub(super) struct LoopBuilderContext {
 }
 
 impl<'source, 'function> ContinuationGraph<'source, 'function> {
-    /// Lowers the sequential subset of one resumable function.
+    /// Lowers the sequential subset of one resumable function. `parallel` tells whether the
+    /// module has `par` expressions.
+    #[allow(clippy::too_many_arguments)] // Graph construction needs the same linked context.
     pub(in crate::codegen) fn build(
         declaration: &'function FunctionDeclaration<'source>,
         signature: &FunctionSignature,
@@ -571,6 +599,7 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
         lifted: &'function [LiftedFunction<'source>],
         methods: &'function MethodRegistry,
         types: &'function TypeRegistry,
+        parallel: bool,
     ) -> Result<Self, CompileDiagnostics<'source>> {
         let capture_count = signature.capture_count;
         let parameter_count = declaration
@@ -646,6 +675,11 @@ impl<'source, 'function> ContinuationGraph<'source, 'function> {
             types,
             captured_names,
             lifted,
+            frame_functions: frame_layouts
+                .values()
+                .map(|layout| layout.function_id)
+                .collect(),
+            parallel,
         };
         builder.operations.push(Operation::ValidateParameters {
             contracts: signature
@@ -791,7 +825,8 @@ pub(in crate::codegen) fn operation_span<'source>(
         | Operation::Goto { span, .. }
         | Operation::IterSnapshot { span, .. }
         | Operation::IteratorBranch { span, .. }
-        | Operation::Return { span, .. } => *span,
+        | Operation::Return { span, .. }
+        | Operation::Direct { span, .. } => *span,
     }
 }
 
