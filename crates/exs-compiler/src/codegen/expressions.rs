@@ -9,7 +9,7 @@ use super::intrinsics::{Intrinsic, is_datetime_parser};
 use crate::ast::{BinaryOperator, Expression, FormattedStringPart, UnaryOperator};
 use crate::codegen::VALUE_TYPE;
 use crate::codegen::declarations::contains_statements;
-use crate::codegen::immediate::{self, IntOperation};
+use crate::codegen::immediate::{self, IntOperation, Operand};
 use crate::codegen::trait_registry::TraitOperator;
 use crate::diagnostic::{CompileDiagnostics, SourceSpan};
 use exs_layout::value::layout::{KIND_SHIFT, type_kind};
@@ -210,13 +210,72 @@ impl<'a> FunctionCompiler<'a, '_> {
             for (index, operand) in operands.iter().enumerate() {
                 let later = operands.get(index + 1..).unwrap_or_default();
                 let stable = !later.iter().any(|later| contains_statements(later));
-                values.push(self.operand(operand, stable)?);
+                values.push(self.binary_operand(operand, stable)?);
             }
             return self.add_values(&values, &spans, span);
         }
-        let left = self.operand(left, !contains_statements(right))?;
-        let right = self.operand(right, true)?;
+        let left = self.binary_operand(left, !contains_statements(right))?;
+        let right = self.binary_operand(right, true)?;
         self.int_or_slow_binary(operator, left, right, span)
+    }
+
+    /// Pushes the Wasm `i32` condition of `condition`, which must be a Bool; any other value
+    /// returns its TypeError from the function with the origin `span`.
+    ///
+    /// A comparison tests two immediate Ints directly instead of building and testing a Bool.
+    pub(super) fn compile_condition(
+        &mut self,
+        condition: &Expression<'a>,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        if let Expression::Binary {
+            operator,
+            left,
+            right,
+            span: comparison_span,
+        } = condition
+            && let Some(operation) = IntOperation::from_binary(*operator)
+            && operation.is_comparison()
+        {
+            let left = self.binary_operand(left, !contains_statements(right))?;
+            let right = self.binary_operand(right, true)?;
+            immediate::both_small_ints_test(&mut self.function, left, right);
+            self.instruction(Instruction::If(BlockType::Result(
+                wasm_encoder::ValType::I32,
+            )));
+            operation.emit_test(&mut self.function, left, right);
+            self.instruction(Instruction::Else);
+            self.non_int_binary(*operator, left, right, *comparison_span)?;
+            self.condition(span)?;
+            self.instruction(Instruction::End);
+            return Ok(());
+        }
+        self.compile_expression(condition)?;
+        self.condition(span)
+    }
+
+    /// Evaluates one operand of an operator with inline Int paths: an immediate Int literal
+    /// stays a constant, anything else becomes a rooted local like [`Self::operand`].
+    fn binary_operand(
+        &mut self,
+        operand: &Expression<'a>,
+        stable: bool,
+    ) -> Result<Operand, CompileDiagnostics<'a>> {
+        if let Some(value) = small_int_literal(operand) {
+            return Ok(Operand::SmallInt(value));
+        }
+        Ok(Operand::Local(self.operand(operand, stable)?))
+    }
+
+    /// Returns the rooted local holding `operand`, storing a constant in a new one.
+    fn operand_local(&mut self, operand: Operand) -> u32 {
+        match operand {
+            Operand::Local(local) => local,
+            Operand::SmallInt(_) => {
+                operand.push(&mut self.function);
+                self.store_new()
+            }
+        }
     }
 
     /// Evaluates one operand and returns the rooted local holding its value: the binding's own
@@ -244,8 +303,8 @@ impl<'a> FunctionCompiler<'a, '_> {
     fn int_or_slow_binary(
         &mut self,
         operator: BinaryOperator,
-        left: u32,
-        right: u32,
+        left: Operand,
+        right: Operand,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         if let Some(operation) = IntOperation::from_binary(operator) {
@@ -260,9 +319,30 @@ impl<'a> FunctionCompiler<'a, '_> {
                 self.context.int_new,
             );
             self.instruction(Instruction::Else);
-            self.float_or_slow_binary(operator, left, right, span)?;
+            self.non_int_binary(operator, left, right, span)?;
             self.instruction(Instruction::End);
             Ok(())
+        } else {
+            self.non_int_binary(operator, left, right, span)
+        }
+    }
+
+    /// Emits `operator` for operands that are not both immediate Ints: the inline Float path,
+    /// unless an operand is an Int constant, and the core library.
+    fn non_int_binary(
+        &mut self,
+        operator: BinaryOperator,
+        left: Operand,
+        right: Operand,
+        span: SourceSpan<'a>,
+    ) -> Result<(), CompileDiagnostics<'a>> {
+        let constant =
+            matches!(left, Operand::SmallInt(_)) || matches!(right, Operand::SmallInt(_));
+        let left = self.operand_local(left);
+        let right = self.operand_local(right);
+        if constant {
+            // An Int is never a Float, so only the core library remains.
+            self.compile_slow_binary(operator, left, right, span)
         } else {
             self.float_or_slow_binary(operator, left, right, span)
         }
@@ -422,8 +502,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         let is_or = matches!(operator, BinaryOperator::Or);
-        self.compile_expression(left)?;
-        self.condition(span)?;
+        self.compile_condition(left, span)?;
         self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
         if is_or {
             immediate::push(&mut self.function, exs_layout::ValueRef::TRUE);
@@ -681,7 +760,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     /// `spans` holds the span of each `+`, the origin of an Error that step creates.
     fn add_values(
         &mut self,
-        values: &[u32],
+        values: &[Operand],
         spans: &[SourceSpan<'a>],
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
@@ -691,7 +770,7 @@ impl<'a> FunctionCompiler<'a, '_> {
         if let [second] = rest {
             return self.add_pair(*first, *second, span);
         }
-        self.instruction(Instruction::LocalGet(*first));
+        first.push(&mut self.function);
         immediate::type_mask_test(&mut self.function, TYPE_STRING);
         self.instruction(Instruction::If(BlockType::Result(VALUE_TYPE)));
         self.concat_values(values, Some(spans), span)?;
@@ -699,18 +778,18 @@ impl<'a> FunctionCompiler<'a, '_> {
         let mut accumulated = *first;
         for (value, step) in rest.iter().zip(spans) {
             self.add_pair(accumulated, *value, *step)?;
-            accumulated = self.store_new();
+            accumulated = Operand::Local(self.store_new());
         }
-        self.instruction(Instruction::LocalGet(accumulated));
+        accumulated.push(&mut self.function);
         self.instruction(Instruction::End);
         Ok(())
     }
 
-    /// Emits one `+` of two rooted locals with inline Int and Float paths.
+    /// Emits one `+` of two operands with inline Int and Float paths.
     fn add_pair(
         &mut self,
-        left: u32,
-        right: u32,
+        left: Operand,
+        right: Operand,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
         self.int_or_slow_binary(BinaryOperator::Add, left, right, span)
@@ -749,7 +828,7 @@ impl<'a> FunctionCompiler<'a, '_> {
     /// Errors use the position set before the call.
     fn concat_values(
         &mut self,
-        values: &[u32],
+        values: &[Operand],
         spans: Option<&[SourceSpan<'a>]>,
         span: SourceSpan<'a>,
     ) -> Result<(), CompileDiagnostics<'a>> {
@@ -761,7 +840,7 @@ impl<'a> FunctionCompiler<'a, '_> {
             .map_err(|_| error("E0212", span, "too many `+` operands".to_owned()))?;
         let block = self.consecutive_locals(count);
         for (offset, value) in (0..count).zip(values) {
-            self.instruction(Instruction::LocalGet(*value));
+            value.push(&mut self.function);
             self.store(block + offset);
         }
         self.push_vm();
@@ -802,6 +881,22 @@ fn unsupported_expression(expression: &Expression<'_>) -> &'static str {
         Expression::MethodCall { .. } => "method calls",
         Expression::StaticMethodCall { .. } => "static method calls",
         _ => "these expressions",
+    }
+}
+
+/// Returns the payload of an Int literal, or of a negated one, that fits an immediate Int.
+fn small_int_literal(expression: &Expression<'_>) -> Option<i32> {
+    match expression {
+        Expression::Integer(value, _) => i32::try_from(*value).ok(),
+        Expression::Unary {
+            operator: UnaryOperator::Negate,
+            operand,
+            ..
+        } => match operand.as_ref() {
+            Expression::Integer(value, _) => i32::try_from(value.checked_neg()?).ok(),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

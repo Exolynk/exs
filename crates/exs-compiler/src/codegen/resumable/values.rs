@@ -89,11 +89,16 @@ impl<'a> StepEmitter<'a, '_> {
     }
 
     /// Binds the values of the durable `slots` to temporary names in a new scope and returns
-    /// the variables naming them.
+    /// the variables naming them. A slot that always holds one immediate Int becomes that Int
+    /// literal, which operators use without a local or type test.
     fn bind(&mut self, slots: &[u32], span: SourceSpan<'a>) -> Vec<Expression<'a>> {
         let mut scope = HashMap::new();
         let mut operands = Vec::with_capacity(slots.len());
         for (index, slot) in slots.iter().enumerate() {
+            if let Some(value) = self.constant_small_int(*slot) {
+                operands.push(Expression::Integer(i128::from(value), span));
+                continue;
+            }
             let local = self.load(*slot);
             let name = format!("${index}");
             operands.push(Expression::Variable(identifier(&name, span)));

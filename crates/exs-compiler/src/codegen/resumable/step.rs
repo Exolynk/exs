@@ -211,6 +211,13 @@ impl<'a, 'm> StepEmitter<'a, 'm> {
         )));
     }
 
+    /// Returns the payload of durable slot `slot` when it always holds one immediate Int.
+    pub(super) fn constant_small_int(&self, slot: u32) -> Option<i32> {
+        self.constants
+            .get(&slot)
+            .and_then(|raw| immediate::small_int_payload(*raw))
+    }
+
     /// Pops the stack's value into durable slot `slot`.
     pub(super) fn set_slot(&mut self, slot: u32) {
         let scratch = self.compiler.scratch;

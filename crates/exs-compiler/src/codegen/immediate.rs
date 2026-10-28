@@ -61,13 +61,84 @@ pub(super) fn push_small_int(function: &mut Function, local: u32) {
     function.instruction(&Instruction::I64Or);
 }
 
-/// Pushes 1 when both `ValueRef` locals hold immediate Ints, else 0.
-pub(super) fn both_small_ints_test(function: &mut Function, left: u32, right: u32) {
-    function.instruction(&Instruction::LocalGet(left));
-    tag_test(function, SMALL_INT_TAG);
-    function.instruction(&Instruction::LocalGet(right));
-    tag_test(function, SMALL_INT_TAG);
-    function.instruction(&Instruction::I32And);
+/// One operand of an inline operation: a `ValueRef` local, or an immediate Int known at
+/// compile time, which needs no local, root slot or type test.
+#[derive(Clone, Copy)]
+pub(super) enum Operand {
+    /// A local holding any `ValueRef`.
+    Local(u32),
+    /// An immediate Int with this payload.
+    SmallInt(i32),
+}
+
+impl Operand {
+    /// Pushes the operand's `ValueRef`.
+    pub(super) fn push(self, function: &mut Function) {
+        match self {
+            Self::Local(local) => function.instruction(&Instruction::LocalGet(local)),
+            Self::SmallInt(value) => {
+                function.instruction(&Instruction::I64Const(small_int_raw(value).cast_signed()))
+            }
+        };
+    }
+
+    /// Pushes the operand's Int payload as an `i32`; the operand must be an immediate Int.
+    fn push_i32(self, function: &mut Function) {
+        match self {
+            Self::Local(local) => {
+                function.instruction(&Instruction::LocalGet(local));
+                function.instruction(&Instruction::I32WrapI64);
+            }
+            Self::SmallInt(value) => {
+                function.instruction(&Instruction::I32Const(value));
+            }
+        }
+    }
+
+    /// Pushes the operand's sign-extended Int payload as an `i64`; the operand must be an
+    /// immediate Int.
+    fn push_i64(self, function: &mut Function) {
+        match self {
+            Self::Local(local) => payload_as_i64(function, local),
+            Self::SmallInt(value) => {
+                function.instruction(&Instruction::I64Const(i64::from(value)));
+            }
+        }
+    }
+}
+
+/// Returns the raw `ValueRef` of the immediate Int `value`.
+const fn small_int_raw(value: i32) -> u64 {
+    ((SMALL_INT_TAG as u64) << EXTRA_SHIFT) | value.cast_unsigned() as u64
+}
+
+/// Returns the payload of a raw `ValueRef` when it is an immediate Int.
+pub(super) fn small_int_payload(raw: u64) -> Option<i32> {
+    if raw >> EXTRA_SHIFT != u64::from(SMALL_INT_TAG) {
+        return None;
+    }
+    u32::try_from(raw & 0xFFFF_FFFF).ok().map(u32::cast_signed)
+}
+
+/// Pushes 1 when both operands hold immediate Ints, else 0. Constant operands need no test.
+pub(super) fn both_small_ints_test(function: &mut Function, left: Operand, right: Operand) {
+    let mut tested = 0;
+    for operand in [left, right] {
+        if let Operand::Local(local) = operand {
+            function.instruction(&Instruction::LocalGet(local));
+            tag_test(function, SMALL_INT_TAG);
+            tested += 1;
+        }
+    }
+    match tested {
+        0 => {
+            function.instruction(&Instruction::I32Const(1));
+        }
+        2 => {
+            function.instruction(&Instruction::I32And);
+        }
+        _ => {}
+    }
 }
 
 /// One binary source operator with an inline fast path for two immediate Int operands.
@@ -113,7 +184,40 @@ impl IntOperation {
         }
     }
 
-    /// Pushes the result `ValueRef` for two `ValueRef` locals that both hold immediate Ints.
+    /// Returns whether the operation compares its operands and yields a Bool.
+    pub(super) const fn is_comparison(self) -> bool {
+        !matches!(self, Self::Add | Self::Subtract | Self::Multiply)
+    }
+
+    /// Pushes the Wasm `i32` condition (0 or 1) of a comparison of two operands that both
+    /// hold immediate Ints. Arithmetic operations push nothing.
+    pub(super) fn emit_test(self, function: &mut Function, left: Operand, right: Operand) {
+        match self {
+            Self::Equal | Self::NotEqual => {
+                // Immediate Ints are canonical, so equal values have equal raw references.
+                left.push(function);
+                right.push(function);
+                function.instruction(&if matches!(self, Self::Equal) {
+                    Instruction::I64Eq
+                } else {
+                    Instruction::I64Ne
+                });
+            }
+            Self::LessThan | Self::LessOrEqual | Self::GreaterThan | Self::GreaterOrEqual => {
+                left.push_i32(function);
+                right.push_i32(function);
+                function.instruction(&match self {
+                    Self::LessThan => Instruction::I32LtS,
+                    Self::LessOrEqual => Instruction::I32LeS,
+                    Self::GreaterThan => Instruction::I32GtS,
+                    _ => Instruction::I32GeS,
+                });
+            }
+            Self::Add | Self::Subtract | Self::Multiply => {}
+        }
+    }
+
+    /// Pushes the result `ValueRef` for two operands that both hold immediate Ints.
     ///
     /// Arithmetic on two `i32` values cannot overflow `i64`, so the only remaining case is a
     /// result outside the `i32` range, which `int_new` boxes exactly like the runtime would.
@@ -121,45 +225,25 @@ impl IntOperation {
     pub(super) fn emit(
         self,
         function: &mut Function,
-        left: u32,
-        right: u32,
+        left: Operand,
+        right: Operand,
         temporary: u32,
         int_new: u32,
     ) {
         match self {
-            Self::Equal | Self::NotEqual => {
-                // Immediate Ints are canonical, so equal values have equal raw references.
-                function.instruction(&Instruction::LocalGet(left));
-                function.instruction(&Instruction::LocalGet(right));
-                function.instruction(&if matches!(self, Self::Equal) {
-                    Instruction::I64Eq
-                } else {
-                    Instruction::I64Ne
-                });
-                bool_from_condition(function);
-            }
-            Self::LessThan | Self::LessOrEqual | Self::GreaterThan | Self::GreaterOrEqual => {
-                function.instruction(&Instruction::LocalGet(left));
-                function.instruction(&Instruction::I32WrapI64);
-                function.instruction(&Instruction::LocalGet(right));
-                function.instruction(&Instruction::I32WrapI64);
-                function.instruction(&match self {
-                    Self::LessThan => Instruction::I32LtS,
-                    Self::LessOrEqual => Instruction::I32LeS,
-                    Self::GreaterThan => Instruction::I32GtS,
-                    _ => Instruction::I32GeS,
-                });
-                bool_from_condition(function);
-            }
             Self::Add | Self::Subtract | Self::Multiply => {
-                payload_as_i64(function, left);
-                payload_as_i64(function, right);
+                left.push_i64(function);
+                right.push_i64(function);
                 function.instruction(&match self {
                     Self::Add => Instruction::I64Add,
                     Self::Subtract => Instruction::I64Sub,
                     _ => Instruction::I64Mul,
                 });
                 push_int_result(function, temporary, int_new);
+            }
+            _ => {
+                self.emit_test(function, left, right);
+                bool_from_condition(function);
             }
         }
     }
@@ -194,4 +278,22 @@ fn payload_as_i64(function: &mut Function, local: u32) {
     function.instruction(&Instruction::LocalGet(local));
     function.instruction(&Instruction::I32WrapI64);
     function.instruction(&Instruction::I64ExtendI32S);
+}
+
+#[cfg(test)]
+mod tests {
+    use exs_layout::ValueRef;
+
+    use super::{small_int_payload, small_int_raw};
+
+    /// Constant Int operands encode like the runtime's immediate Ints and decode back.
+    #[test]
+    fn small_int_constants_match_value_refs() {
+        for value in [0, 1, -1, 42, i32::MIN, i32::MAX] {
+            let raw = ValueRef::small_int(i64::from(value)).map(ValueRef::raw);
+            assert_eq!(raw, Some(small_int_raw(value)));
+            assert_eq!(small_int_payload(small_int_raw(value)), Some(value));
+        }
+        assert_eq!(small_int_payload(ValueRef::TRUE.raw()), None);
+    }
 }

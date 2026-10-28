@@ -130,7 +130,11 @@ impl<'a> FunctionCompiler<'a, '_> {
         self.compile_expression(end_expression)?;
         let end = self.store_new();
         let counter = Counter::new(self, method.name == "through", false);
-        immediate::both_small_ints_test(&mut self.function, start, end);
+        immediate::both_small_ints_test(
+            &mut self.function,
+            immediate::Operand::Local(start),
+            immediate::Operand::Local(end),
+        );
         self.instruction(Instruction::If(BlockType::Empty));
         immediate::push_payload(&mut self.function, start);
         self.instruction(Instruction::LocalSet(counter.cursor));

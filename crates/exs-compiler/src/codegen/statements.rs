@@ -95,8 +95,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 else_branch,
                 ..
             } => {
-                self.compile_expression(condition)?;
-                self.condition(expression_span(condition))?;
+                self.compile_condition(condition, expression_span(condition))?;
                 self.instruction(Instruction::If(BlockType::Empty));
                 self.compile_block(then_block)?;
                 if let Some(else_branch) = else_branch {
@@ -115,8 +114,7 @@ impl<'a> FunctionCompiler<'a, '_> {
                 let break_depth = self.depth;
                 self.instruction(Instruction::Loop(BlockType::Empty));
                 let continue_depth = self.depth;
-                self.compile_expression(condition)?;
-                self.condition(expression_span(condition))?;
+                self.compile_condition(condition, expression_span(condition))?;
                 self.instruction(Instruction::I32Eqz);
                 self.instruction(Instruction::BrIf(self.depth - break_depth));
                 self.loops.push((break_depth, continue_depth));
