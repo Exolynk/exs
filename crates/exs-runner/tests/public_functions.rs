@@ -1,7 +1,10 @@
 //! External public-function execution integration tests.
 
 use exs_compiler::{CompileOptions, SourceInput, compile};
-use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner, ServerRunnerConfig};
+use exs_runner::{
+    CompilerStrategy, ExecutionCancellation, ExsValue, ServerRunner, ServerRunnerConfig,
+    SharedModuleCache,
+};
 
 /// Executes one future to completion without adding a test-only async dependency.
 fn block_on<Output>(future: impl std::future::Future<Output = Output>) -> Output {
@@ -131,4 +134,52 @@ fn reuses_cached_modules_with_identical_results() {
             }
         }
     }
+}
+
+/// Compiles a module once for every runner given the same shared cache, while each runner keeps
+/// its own host functions, and ignores a cache with other engine settings.
+#[test]
+fn shares_compiled_modules_between_runners() {
+    let compiled = match compile(
+        SourceInput {
+            source_id: "test.exs",
+            text: r#"fn main(input: Int) -> Int { ret Host::call("offset") + input; }"#,
+        },
+        CompileOptions::default(),
+    ) {
+        Ok(module) => module.wasm,
+        Err(error) => panic!("compilation failed: {error}"),
+    };
+    let cache = SharedModuleCache::new(&ServerRunnerConfig::default());
+    let runner = |offset: i64, compiler: CompilerStrategy| {
+        let mut runner = ServerRunner::new(ServerRunnerConfig {
+            compiler,
+            module_cache: Some(cache.clone()),
+            ..ServerRunnerConfig::default()
+        });
+        let registration = runner
+            .registry_mut()
+            .fn_sync_raw("offset", move |_arguments: Vec<ExsValue>| {
+                ExsValue::Int(offset)
+            });
+        assert!(registration.is_ok());
+        runner
+    };
+    let execute = |runner: &ServerRunner| {
+        block_on(runner.execute(
+            &compiled,
+            "main",
+            &[ExsValue::Int(1)],
+            &ExecutionCancellation::new(),
+        ))
+        .ok()
+    };
+    for offset in [10, 20, 30] {
+        let shared = runner(offset, CompilerStrategy::Winch);
+        assert_eq!(execute(&shared), Some(ExsValue::Int(offset + 1)));
+        assert_eq!(cache.len(), 1);
+    }
+    let private = runner(40, CompilerStrategy::Cranelift);
+    assert_eq!(execute(&private), Some(ExsValue::Int(41)));
+    assert_eq!(cache.len(), 1);
 }

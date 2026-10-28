@@ -100,7 +100,7 @@ let pages = document_libraries(&mut resolver)?.markdown(&MarkdownOptions {
 
 ### Server runner
 
-`ServerRunner::new` takes a `ServerRunnerConfig` with the memory, fuel and wall-clock limits, the protection level for host-side resources, the Wasmtime compiler strategy and the module cache size. Every field has a default suited to untrusted source.
+`ServerRunner::new` takes a `ServerRunnerConfig` with the memory, fuel and wall-clock limits, the protection level for host-side resources, the Wasmtime compiler strategy and the module cache size. Every field has a default suited to untrusted source. Applications that create a runner per execution share compiled modules through one `SharedModuleCache`, created with the same configuration and passed as `module_cache`; each execution still gets its own store, limits and host functions.
 
 `execute` is an ordinary future that works with any executor. Running guest code yields to the executor every 100,000 fuel, so a busy script does not block the executor thread, and it stops at its wall-clock limit or cancellation. `Host::sleep` and the deadline of an execution that waits for a host operation are woken by the runner's timer. An application passes the timer of its async runtime through `ServerRunnerConfig::timer`, implementing `RunnerTimer`:
 

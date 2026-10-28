@@ -25,7 +25,7 @@ use exs_abi::{
     STATUS_PENDING,
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-use wasmtime::{Config, Engine, Instance, Linker, Module, Store};
+use wasmtime::{Instance, Module, Store};
 
 #[cfg(any(
     all(feature = "server", not(target_arch = "wasm32")),
@@ -95,6 +95,8 @@ pub use self::host_function::{
 };
 pub use self::limits::{LimitKind, ProtectionLevel};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+pub use self::module_cache::SharedModuleCache;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::registry::{HostFunctionRegistry, RegistryError};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::report::ExecutionReport;
@@ -109,10 +111,8 @@ pub struct ServerRunner {
     registry: HostFunctionRegistry,
     /// Resource policy applied to every native root execution.
     limits: ExecutionLimits,
-    /// Code generator used to compile every executed module.
-    compiler: CompilerStrategy,
-    /// Compiled artifacts of recently executed modules, shared by clones of this runner.
-    module_cache: module_cache::ModuleCache,
+    /// Engine and compiled modules, shared with every runner given the same cache.
+    module_cache: SharedModuleCache,
     /// Timer that wakes sleeping and timed-out executions.
     timer: Arc<dyn RunnerTimer>,
 }
@@ -121,18 +121,30 @@ pub struct ServerRunner {
 impl ServerRunner {
     /// Creates a server runner with the policy and engine settings of `config` and no host
     /// functions.
+    ///
+    /// The runner uses `config.module_cache` when its engine matches the compiler and
+    /// protection level of `config`, and otherwise a private cache of
+    /// `config.module_cache_capacity` modules.
     #[must_use]
     pub fn new(config: ServerRunnerConfig) -> Self {
+        let limits = ExecutionLimits::new(
+            config.max_memory_bytes,
+            config.max_fuel,
+            config.timeout,
+            config.protection,
+        );
+        let module_cache = match config.module_cache {
+            Some(cache) if cache.fits(config.compiler, limits.max_wasm_stack_bytes) => cache,
+            _ => SharedModuleCache::with_engine_settings(
+                config.compiler,
+                limits.max_wasm_stack_bytes,
+                config.module_cache_capacity,
+            ),
+        };
         Self {
             registry: HostFunctionRegistry::new(),
-            limits: ExecutionLimits::new(
-                config.max_memory_bytes,
-                config.max_fuel,
-                config.timeout,
-                config.protection,
-            ),
-            compiler: config.compiler,
-            module_cache: module_cache::ModuleCache::new(config.module_cache_capacity),
+            limits,
+            module_cache,
             timer: config.timer.unwrap_or_else(|| Arc::new(timer::ThreadTimer)),
         }
     }
@@ -179,15 +191,15 @@ impl ServerRunner {
             return Err(RunnerError::LimitExceeded(LimitKind::Module));
         }
         let execution_started_at = std::time::Instant::now();
-        let engine = limited_engine(&self.limits, self.compiler)?;
-        let module = self
+        let instance_pre = self
             .module_cache
-            .module(&engine, self.compiler, wasm)
-            .map_err(|error| RunnerError::Wasm(error.to_string()))?;
-        check_task_metering_imports(&module)?;
+            .instance_pre(wasm)
+            .map_err(RunnerError::Wasm)?;
+        check_task_metering_imports(instance_pre.module())?;
+        let engine = self.module_cache.engine().map_err(RunnerError::Wasm)?;
         let deadline = deadline::ExecutionDeadline::new(self.timer.clone(), self.limits.timeout);
         let mut store = Store::new(
-            &engine,
+            engine,
             host_abi::HostAbiState::new(
                 self.registry.clone(),
                 self.limits.clone(),
@@ -200,13 +212,11 @@ impl ServerRunner {
         store
             .set_fuel(self.limits.max_fuel)
             .map_err(|error| RunnerError::Wasm(error.to_string()))?;
-        let mut linker = Linker::new(&engine);
-        host_abi::define(&mut linker).map_err(|error| RunnerError::Wasm(error.to_string()))?;
         store
             .fuel_async_yield_interval(Some(YIELD_FUEL))
             .map_err(|error| RunnerError::Wasm(error.to_string()))?;
-        let instance = linker
-            .instantiate_async(&mut store, &module)
+        let instance = instance_pre
+            .instantiate_async(&mut store)
             .await
             .map_err(wasmtime_error)?;
         check_abi(&mut store, &instance).await?;
@@ -356,27 +366,6 @@ impl Default for ServerRunner {
     fn default() -> Self {
         Self::new(ServerRunnerConfig::default())
     }
-}
-
-/// Creates a native Wasmtime engine instrumented for one explicit runner policy.
-#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-fn limited_engine(
-    limits: &ExecutionLimits,
-    compiler: CompilerStrategy,
-) -> Result<Engine, RunnerError> {
-    let mut configuration = Config::new();
-    configuration.strategy(compiler.wasmtime_strategy());
-    configuration.consume_fuel(true);
-    configuration.max_wasm_stack(limits.max_wasm_stack_bytes);
-    // The runner ABI accounts for one linear memory. Threads, function references and
-    // exceptions are not compiled into the engine at all.
-    configuration.wasm_multi_memory(false);
-    configuration.wasm_memory64(false);
-    configuration.wasm_shared_everything_threads(false);
-    configuration.wasm_gc(false);
-    configuration.wasm_stack_switching(false);
-    configuration.wasm_custom_page_sizes(false);
-    Engine::new(&configuration).map_err(|error| RunnerError::Wasm(error.to_string()))
 }
 
 /// A technical error from Wasm loading or execution.

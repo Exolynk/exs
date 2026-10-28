@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::module_cache::DEFAULT_MODULE_CACHE_CAPACITY;
-use crate::{CompilerStrategy, ProtectionLevel, RunnerTimer};
+use crate::{CompilerStrategy, ProtectionLevel, RunnerTimer, SharedModuleCache};
 
 /// The execution policy and engine settings of one server runner.
 ///
@@ -23,8 +23,12 @@ pub struct ServerRunnerConfig {
     pub protection: ProtectionLevel,
     /// Code generator that compiles every executed module.
     pub compiler: CompilerStrategy,
-    /// Compiled modules kept for reuse; 0 disables caching.
+    /// Compiled modules a runner without a shared cache keeps for reuse; 0 disables caching.
     pub module_cache_capacity: usize,
+    /// Cache of compiled modules shared with other runners, usually every runner of the
+    /// application. Create it with [`SharedModuleCache::new`] from a configuration with the same
+    /// compiler and protection level; a cache with other engine settings is ignored.
+    pub module_cache: Option<SharedModuleCache>,
     /// Timer that wakes `Host::sleep` and executions at their deadline, usually the timer of
     /// the application's async runtime. Without one, the runner starts a single process-wide
     /// timer thread on first use.
@@ -33,7 +37,7 @@ pub struct ServerRunnerConfig {
 
 impl Default for ServerRunnerConfig {
     /// Returns the standard policy: 16 MiB of memory, 10 million fuel, 10 seconds, the standard
-    /// protection level, Winch and 16 cached modules.
+    /// protection level, Winch and a private cache of 16 modules.
     fn default() -> Self {
         Self {
             max_memory_bytes: 16 * 1024 * 1024,
@@ -42,6 +46,7 @@ impl Default for ServerRunnerConfig {
             protection: ProtectionLevel::Standard,
             compiler: CompilerStrategy::Winch,
             module_cache_capacity: DEFAULT_MODULE_CACHE_CAPACITY,
+            module_cache: None,
             timer: None,
         }
     }
@@ -58,13 +63,15 @@ impl fmt::Debug for ServerRunnerConfig {
             .field("protection", &self.protection)
             .field("compiler", &self.compiler)
             .field("module_cache_capacity", &self.module_cache_capacity)
+            .field("module_cache", &self.module_cache)
             .field("timer", &self.timer.as_ref().map(|_| "RunnerTimer"))
             .finish()
     }
 }
 
 impl PartialEq for ServerRunnerConfig {
-    /// Compares every field; timers are equal when both are unset or the same instance.
+    /// Compares every field; timers and module caches are equal when both are unset or the
+    /// same instance.
     fn eq(&self, other: &Self) -> bool {
         self.max_memory_bytes == other.max_memory_bytes
             && self.max_fuel == other.max_fuel
@@ -72,6 +79,11 @@ impl PartialEq for ServerRunnerConfig {
             && self.protection == other.protection
             && self.compiler == other.compiler
             && self.module_cache_capacity == other.module_cache_capacity
+            && match (&self.module_cache, &other.module_cache) {
+                (None, None) => true,
+                (Some(left), Some(right)) => left.ptr_eq(right),
+                _ => false,
+            }
             && match (&self.timer, &other.timer) {
                 (None, None) => true,
                 (Some(left), Some(right)) => Arc::ptr_eq(left, right),
