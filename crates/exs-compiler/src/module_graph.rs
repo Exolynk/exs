@@ -8,7 +8,8 @@ use crate::ast::{
 };
 use crate::loaded_project::{ImportEdge, LoadedProject, LoadedSource};
 use crate::{
-    CompileOptions, CompiledModule, CompiledTest, CompiledTests, ModuleResolver, SourceInput,
+    CompileFailure, CompileOptions, CompiledModule, CompiledTest, CompiledTests, ModuleResolver,
+    SourceInput,
 };
 
 /// Compiler-private name assigned to a production root entry while testing.
@@ -23,6 +24,15 @@ pub(super) fn compile<R: ModuleResolver>(
     options: CompileOptions,
     resolver: &mut R,
 ) -> Result<CompiledModule, String> {
+    compile_detailed(source, options, resolver).map_err(|failure| failure.report)
+}
+
+/// Compiles a resolved source graph, keeping located entry-source diagnostics on failure.
+pub(super) fn compile_detailed<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    options: CompileOptions,
+    resolver: &mut R,
+) -> Result<CompiledModule, CompileFailure> {
     compile_target(source, options, resolver, false).map(|(module, _)| module)
 }
 
@@ -32,6 +42,15 @@ pub(super) fn compile_tests<R: ModuleResolver>(
     options: CompileOptions,
     resolver: &mut R,
 ) -> Result<CompiledTests, String> {
+    compile_tests_detailed(source, options, resolver).map_err(|failure| failure.report)
+}
+
+/// Compiles the test dispatcher, keeping located entry-source diagnostics on failure.
+pub(super) fn compile_tests_detailed<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    options: CompileOptions,
+    resolver: &mut R,
+) -> Result<CompiledTests, CompileFailure> {
     let (module, tests) = compile_target(source, options, resolver, true)?;
     Ok(CompiledTests {
         wasm: module.wasm,
@@ -45,13 +64,20 @@ fn compile_target<R: ModuleResolver>(
     options: CompileOptions,
     resolver: &mut R,
     test_target: bool,
-) -> Result<(CompiledModule, Vec<CompiledTest>), String> {
+) -> Result<(CompiledModule, Vec<CompiledTest>), CompileFailure> {
     let project = LoadedProject::load(source, resolver, options.limits)?;
     validate_import_names(&project)?;
     project.validate_no_cycles()?;
     let files = project.files();
     let edges = project.edges();
-    let mut modules = project.parse_modules()?;
+    let mut modules = project.parse_modules().map_err(|report| CompileFailure {
+        report,
+        // Parsing reports rendered text; the syntax check locates the entry-source errors.
+        diagnostics: crate::check_syntax(SourceInput {
+            source_id: &files[0].source_id,
+            text: &files[0].text,
+        }),
+    })?;
     let mut exports = Vec::new();
     for (index, module) in modules.iter().enumerate() {
         if index != 0
@@ -63,7 +89,8 @@ fn compile_target<R: ModuleResolver>(
             return Err(format!(
                 "{}: imported modules must not declare fn main()",
                 files[index].source_id
-            ));
+            )
+            .into());
         }
         exports.push(collect_exports(module, index)?);
     }
@@ -195,7 +222,8 @@ fn compile_target<R: ModuleResolver>(
         return Err(format!(
             "{}: root module must declare exactly one fn main()",
             files[0].source_id
-        ));
+        )
+        .into());
     }
     let mut source_inputs = crate::prelude::source_inputs();
     source_inputs.extend(files.iter().map(|file| SourceInput {
@@ -203,7 +231,9 @@ fn compile_target<R: ModuleResolver>(
         text: &file.text,
     }));
     let wasm = crate::codegen::compile_project_module(&mut combined, &source_inputs, options)
-        .map_err(|error| error.render(&files[0].text))?;
+        .map_err(|error| {
+            CompileFailure::from_diagnostics(&error, &files[0].source_id, &files[0].text)
+        })?;
     Ok((CompiledModule { wasm }, tests))
 }
 

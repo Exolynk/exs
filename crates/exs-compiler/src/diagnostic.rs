@@ -301,3 +301,78 @@ pub(crate) fn unknown_name(kind: &str, name: &str) -> String {
         None => format!("unknown {kind} `{name}`"),
     }
 }
+
+/// One diagnostic located in the checked or compiled entry source.
+///
+/// Unlike [`CompileDiagnostic`] it owns its data, so it outlives the source text, for example
+/// when it is sent to an editor.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SourceDiagnostic {
+    /// Stable machine-readable diagnostic code.
+    pub code: &'static str,
+    /// Concise diagnostic message.
+    pub message: String,
+    /// Inclusive byte offset in the entry source.
+    pub start_byte: u32,
+    /// Exclusive byte offset in the entry source.
+    pub end_byte: u32,
+}
+
+impl SourceDiagnostic {
+    /// Collects the diagnostics of `diagnostics` that are located in the source `source_id`.
+    #[must_use]
+    pub fn located_in(diagnostics: &CompileDiagnostics<'_>, source_id: &str) -> Vec<Self> {
+        diagnostics
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.span.source_id == source_id)
+            .map(|diagnostic| Self {
+                code: diagnostic.code,
+                message: diagnostic.message.clone(),
+                start_byte: diagnostic.span.start_byte,
+                end_byte: diagnostic.span.end_byte,
+            })
+            .collect()
+    }
+}
+
+/// A failed compilation: the rendered report and the diagnostics located in the entry source.
+///
+/// Failures without a source location, such as unresolved imports, only carry the report.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CompileFailure {
+    /// Complete human-readable report with source excerpts.
+    pub report: String,
+    /// Diagnostics located in the entry source.
+    pub diagnostics: Vec<SourceDiagnostic>,
+}
+
+impl CompileFailure {
+    /// Creates a failure from compiler diagnostics, keeping those of the entry source.
+    #[must_use]
+    pub fn from_diagnostics(
+        diagnostics: &CompileDiagnostics<'_>,
+        source_id: &str,
+        text: &str,
+    ) -> Self {
+        Self {
+            report: diagnostics.render(text),
+            diagnostics: SourceDiagnostic::located_in(diagnostics, source_id),
+        }
+    }
+}
+
+impl From<String> for CompileFailure {
+    fn from(report: String) -> Self {
+        Self {
+            report,
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
+impl fmt::Display for CompileFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.report)
+    }
+}

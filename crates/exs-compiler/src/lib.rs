@@ -21,7 +21,8 @@ pub use codegen::source_map::{
     read_debug_info,
 };
 pub use diagnostic::{
-    CompileDiagnostic, CompileDiagnosticCategory, CompileDiagnostics, RelatedSpan, SourceSpan,
+    CompileDiagnostic, CompileDiagnosticCategory, CompileDiagnostics, CompileFailure, RelatedSpan,
+    SourceDiagnostic, SourceSpan,
 };
 pub use documentation::{
     ApiDocumentation, CompactForm, ItemDocs, ItemKind, ItemRef, MarkdownOptions, MemberDocs,
@@ -224,6 +225,53 @@ pub fn test_descriptions(source: SourceInput<'_>) -> Result<Vec<String>, String>
                 .collect()
         })
         .map_err(|error| error.render(source.text))
+}
+
+/// Compiles an entry source and every file reachable through its imports, keeping the
+/// diagnostics of the entry source with their positions.
+///
+/// # Errors
+///
+/// Returns the rendered report and the located entry-source diagnostics when parsing,
+/// resolution, or compilation fails.
+pub fn compile_with_resolver_diagnostics<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    options: CompileOptions,
+    resolver: &mut R,
+) -> Result<CompiledModule, CompileFailure> {
+    module_graph::compile_detailed(source, options, resolver)
+}
+
+/// Compiles the test dispatcher of one source graph, keeping the diagnostics of the entry
+/// source with their positions.
+///
+/// # Errors
+///
+/// Returns the rendered report and the located entry-source diagnostics when parsing,
+/// resolution, or compilation fails.
+pub fn compile_tests_with_resolver_diagnostics<R: ModuleResolver>(
+    source: SourceInput<'_>,
+    options: CompileOptions,
+    resolver: &mut R,
+) -> Result<CompiledTests, CompileFailure> {
+    module_graph::compile_tests_detailed(source, options, resolver)
+}
+
+/// Checks the lexical and syntactic validity of one source unit.
+///
+/// This is the light check an editor runs while typing: it neither resolves imports nor
+/// compiles, and it does not require `fn main()`. Semantic errors are reported by the
+/// compilation functions.
+#[must_use]
+pub fn check_syntax(source: SourceInput<'_>) -> Vec<SourceDiagnostic> {
+    let lexed = lexer::lex(source);
+    if !lexed.diagnostics.is_empty() {
+        return SourceDiagnostic::located_in(&lexed.diagnostics, source.source_id);
+    }
+    match parser::parse(source.source_id, lexed.tokens, false) {
+        Ok(_) => Vec::new(),
+        Err(diagnostics) => SourceDiagnostic::located_in(&diagnostics, source.source_id),
+    }
 }
 
 /// Compiles one source graph with an internal entry point for source-declared tests.

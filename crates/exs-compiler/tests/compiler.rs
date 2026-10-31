@@ -14,6 +14,8 @@ mod constants;
 mod continuations;
 #[path = "compiler/core.rs"]
 mod core;
+#[path = "compiler/diagnostics.rs"]
+mod diagnostics;
 #[path = "compiler/documentation.rs"]
 mod documentation;
 #[path = "compiler/formatter.rs"]

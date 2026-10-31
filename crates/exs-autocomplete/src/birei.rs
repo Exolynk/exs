@@ -2,11 +2,12 @@ use std::future::Future;
 use std::pin::Pin;
 
 use birei::code_editor::{
-    CodeCompletionItem, CodeCompletionKind, CodeLanguageService, CompletionRequest,
-    CompletionResponse, DiagnosticsRequest, DiagnosticsResponse, HighlightRequest,
-    HighlightResponse, HighlightSpan, IndentAction, IndentRequest, IndentResponse, TextEdit,
+    CodeCompletionItem, CodeCompletionKind, CodeDiagnostic, CodeDiagnosticSeverity,
+    CodeLanguageService, CompletionRequest, CompletionResponse, DiagnosticsRequest,
+    DiagnosticsResponse, HighlightRequest, HighlightResponse, HighlightSpan, IndentAction,
+    IndentRequest, IndentResponse, TextEdit,
 };
-use exs_compiler::{HighlightKind, SourceInput, highlight, source_lex};
+use exs_compiler::{HighlightKind, SourceInput, check_syntax, highlight, source_lex};
 
 use crate::syntax::tokenize;
 use crate::{CompletionEngine, CompletionKind, CompletionRequest as ExsCompletionRequest};
@@ -115,12 +116,25 @@ impl CodeLanguageService for ExsBireiLanguageService {
         })
     }
 
-    /// Leaves compiler diagnostics separate from completion until incremental diagnostics are added.
+    /// Reports lexical and syntax errors while typing; semantic errors come from compilation.
     fn diagnostics<'a>(
         &'a self,
-        _request: DiagnosticsRequest<'a>,
+        request: DiagnosticsRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = DiagnosticsResponse> + 'a>> {
-        Box::pin(async { DiagnosticsResponse::default() })
+        Box::pin(async move {
+            let items = check_syntax(SourceInput {
+                source_id: "<birei>",
+                text: request.text,
+            })
+            .into_iter()
+            .map(|diagnostic| CodeDiagnostic {
+                message: diagnostic.message,
+                severity: CodeDiagnosticSeverity::Error,
+                range: diagnostic.start_byte as usize..diagnostic.end_byte as usize,
+            })
+            .collect();
+            DiagnosticsResponse { items }
+        })
     }
 }
 
