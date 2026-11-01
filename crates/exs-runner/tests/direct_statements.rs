@@ -267,3 +267,246 @@ fn interleaves_parallel_tasks_with_long_loops() {
         "the second task only ran after the first finished"
     );
 }
+
+/// Types whose protocol implementations, methods and iterator call the host, so every
+/// statement using them reaches a unit that runs as a frame.
+const SUSPENDING_TYPES: &str = r#"
+type Num { value: Int }
+
+impl Eq for Num {
+    fn eq(self, other: Any) -> Bool {
+        Host::call("echo", 0);
+        ret other is Num && self.value == other.value;
+    }
+}
+
+impl Compare for Num {
+    fn compare(self, other: Any) -> Ordering {
+        Host::call("echo", 0);
+        ret self.value.compare(other.value);
+    }
+}
+
+impl Add for Num {
+    fn add(self, other: Any) -> Any {
+        Host::call("echo", 0);
+        ret Num { value: self.value + other.value };
+    }
+}
+
+impl ToString for Num {
+    fn to_string(self) -> String {
+        Host::call("echo", 0);
+        ret f"n{self.value}";
+    }
+}
+
+impl Debug for Num {
+    fn debug(self) -> String {
+        Host::call("echo", 0);
+        ret f"dbg{self.value}";
+    }
+}
+
+impl Num {
+    fn ping(self) -> Int {
+        Host::call("echo", 0);
+        ret self.value;
+    }
+
+    fn make(value: Int) -> Num {
+        Host::call("echo", 0);
+        ret Num { value: value };
+    }
+}
+
+type Count { left: Int }
+
+impl Iterator for Count {
+    fn next(self) -> IteratorStep | Error {
+        Host::call("echo", 0);
+        if self.left == 0 { ret IteratorStep::Done; }
+        self.left = self.left - 1;
+        ret IteratorStep::Item(self.left);
+    }
+}
+
+fn remote(value: Int) -> Int {
+    Host::call("echo", 0);
+    ret value;
+}
+"#;
+
+/// Runs each `(name, body, expected)` case as the body of `main` after
+/// [`SUSPENDING_TYPES`], with and without a host call in `main`.
+fn assert_suspending_cases(cases: &[(&str, &str, ExsValue)]) {
+    for (name, body, expected) in cases {
+        let source = format!("{SUSPENDING_TYPES}\nfn main() -> Any {{ {{HOST}} {body} }}");
+        let (synchronous, resumable) = run_both(&source, &[]);
+        assert_eq!(&synchronous, expected, "{name} without a host call in main");
+        assert_eq!(&resumable, expected, "{name} with a host call in main");
+    }
+}
+
+/// Runs statements whose operators, renderings, calls and iterators suspend.
+#[test]
+fn runs_statements_reaching_suspending_units() {
+    let string = |text: &str| ExsValue::String(text.to_owned());
+    assert_suspending_cases(&[
+        (
+            "==",
+            "let r = 0; if Num{value:1} == Num{value:1} { r = 1; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "!=",
+            "let r = 0; if Num{value:1} != Num{value:2} { r = 1; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "<",
+            "let r = 0; if Num{value:1} < Num{value:2} { r = 1; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "+",
+            "let r = 0; if (Num{value:1} + Num{value:2}).value == 3 { r = 1; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "List ==",
+            "let r = 0; if [Num{value:1}] == [Num{value:1}] { r = 1; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "while with !=",
+            "let r = 0; let n = Num{value:0}; while n != Num{value:3} { n = Num{value: n.value + 1}; r = r + 1; } ret r;",
+            ExsValue::Int(3),
+        ),
+        (
+            "for with ==",
+            "let r = 0; for n in [Num{value:1}, Num{value:2}] { if n == Num{value:2} { r = 1; } } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "interpolation",
+            "let r = \"\"; if true { r = f\"{Num{value:4}}\"; } ret r;",
+            string("n4"),
+        ),
+        (
+            "List interpolation",
+            "let r = \"\"; if true { r = f\"{[Num{value:4}]}\"; } ret r;",
+            string("[dbg4]"),
+        ),
+        (
+            "to_string",
+            "let r = \"\"; if true { r = Num{value:5}.to_string(); } ret r;",
+            string("n5"),
+        ),
+        (
+            "List to_string",
+            "let r = \"\"; if true { r = [Num{value:5}].to_string(); } ret r;",
+            string("[dbg5]"),
+        ),
+        (
+            "debug",
+            "let r = \"\"; if true { r = Num{value:5}.debug(); } ret r;",
+            string("dbg5"),
+        ),
+        (
+            "List debug",
+            "let r = \"\"; if true { r = [Num{value:5}].debug(); } ret r;",
+            string("[dbg5]"),
+        ),
+        (
+            "instance method",
+            "let r = 0; if true { r = Num{value:6}.ping(); } ret r;",
+            ExsValue::Int(6),
+        ),
+        (
+            "static method",
+            "let r = 0; if true { r = Num::make(7).value; } ret r;",
+            ExsValue::Int(7),
+        ),
+        (
+            "function",
+            "let r = 0; if true { r = remote(8); } ret r;",
+            ExsValue::Int(8),
+        ),
+        (
+            "custom iterator",
+            "let r = 0; for x in Count{left:3} { r = r + x; } ret r;",
+            ExsValue::Int(3),
+        ),
+        (
+            "assert_eq",
+            "let r = 0; if true { assert_eq(Num{value:1}, Num{value:1}, \"same\"); r = 1; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "literal match",
+            "let r = 0; let v = Num{value:1}; if true { r = match v { 1 => 1, _ => 2 }; } ret r;",
+            ExsValue::Int(2),
+        ),
+    ]);
+}
+
+/// Runs statements calling list helpers that compare items with suspending protocols.
+#[test]
+fn runs_statements_with_suspending_list_helpers() {
+    assert_suspending_cases(&[
+        (
+            "contains",
+            "let r = 0; if [Num{value:1}].contains(Num{value:1}) { r = 1; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "index_of",
+            "let r = -1; if true { r = [Num{value:1}].index_of(Num{value:1}); } ret r;",
+            ExsValue::Int(0),
+        ),
+        (
+            "sort",
+            "let l = [Num{value:2}, Num{value:1}]; if true { l.sort(); } ret l[0].value;",
+            ExsValue::Int(1),
+        ),
+        (
+            "sorted",
+            "let r = 0; if true { r = [Num{value:2}, Num{value:1}].sorted()[0].value; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "min",
+            "let r = 0; if true { r = [Num{value:2}, Num{value:1}].min().value; } ret r;",
+            ExsValue::Int(1),
+        ),
+        (
+            "unique",
+            "let r = 0; if true { r = [Num{value:1}, Num{value:1}].unique().length(); } ret r;",
+            ExsValue::Int(1),
+        ),
+    ]);
+}
+
+/// Runs loops of `par` tasks, which restart at checkpoints, reaching suspending units.
+#[test]
+fn runs_parallel_loops_reaching_suspending_units() {
+    let ints = |values: &[i64]| ExsValue::List(values.iter().copied().map(ExsValue::Int).collect());
+    assert_suspending_cases(&[
+        (
+            "while with == and contains",
+            "let out = []; let tasks = [() => { let n = 0; while n < 50 { if Num{value:n} == Num{value:7} { out.push(n); } n = n + 1; } ret 1; }, () => { let n = 0; while n < 50 { if [n].contains(9) { out.push(n); } n = n + 1; } ret 2; }]; par(tasks); ret out.sorted();",
+            ints(&[7, 9]),
+        ),
+        (
+            "for with ==",
+            "let out = []; let tasks = [() => { for n in 0..20 { if Num{value:n} == Num{value:3} { out.push(n); } } ret 1; }]; par(tasks); ret out;",
+            ints(&[3]),
+        ),
+        (
+            "custom iterator in while",
+            "let out = []; let tasks = [() => { let n = 0; while n < 2 { for x in Count{left:2} { out.push(x); } n = n + 1; } ret 1; }]; par(tasks); ret out;",
+            ints(&[1, 0, 1, 0]),
+        ),
+    ]);
+}
