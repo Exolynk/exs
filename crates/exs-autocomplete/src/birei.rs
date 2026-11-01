@@ -4,8 +4,8 @@ use std::pin::Pin;
 use birei::code_editor::{
     CodeCompletionItem, CodeCompletionKind, CodeDiagnostic, CodeDiagnosticSeverity,
     CodeLanguageService, CompletionRequest, CompletionResponse, DiagnosticsRequest,
-    DiagnosticsResponse, HighlightRequest, HighlightResponse, HighlightSpan, IndentAction,
-    IndentRequest, IndentResponse, TextEdit,
+    DiagnosticsResponse, HighlightRequest, HighlightResponse, HighlightSpan, HoverRequest,
+    HoverResponse, IndentAction, IndentRequest, IndentResponse, TextEdit,
 };
 use exs_compiler::{HighlightKind, SourceInput, check_syntax, highlight, source_lex};
 
@@ -59,6 +59,60 @@ impl ExsBireiLanguageService {
             replace: response.replace,
         }
     }
+}
+
+impl ExsBireiLanguageService {
+    /// Describes the identifier at `offset` with the documentation of its completion item.
+    ///
+    /// Completing at the end of the identifier resolves it in its context, such as a module
+    /// path or a value's type, so the item named like the identifier describes it.
+    fn hover_response(&self, source: &str, offset: usize) -> Option<HoverResponse> {
+        let range = identifier_at(source, offset)?;
+        let lexed = source_lex(SourceInput {
+            source_id: "<birei>",
+            text: source,
+        });
+        if lexed.is_comment_position(range.start) {
+            return None;
+        }
+        let name = &source[range.clone()];
+        let item = self
+            .engine
+            .complete(ExsCompletionRequest {
+                source,
+                cursor: range.end,
+            })
+            .items
+            .into_iter()
+            .find(|item| item.label == name)?;
+        let (title, documentation) = match (item.detail, item.documentation) {
+            (detail, Some(documentation)) => (detail, documentation),
+            (Some(detail), None) => (None, detail),
+            (None, None) => return None,
+        };
+        Some(HoverResponse {
+            range,
+            title,
+            documentation,
+        })
+    }
+}
+
+/// Returns the range of the identifier containing or ending at byte `offset`.
+fn identifier_at(source: &str, offset: usize) -> Option<std::ops::Range<usize>> {
+    let offset = clamp_byte_offset(source, offset);
+    let is_identifier = |character: char| character.is_alphanumeric() || character == '_';
+    let start = source[..offset]
+        .char_indices()
+        .rev()
+        .take_while(|(_, character)| is_identifier(*character))
+        .last()
+        .map_or(offset, |(index, _)| index);
+    let end = source[offset..]
+        .char_indices()
+        .find(|(_, character)| !is_identifier(*character))
+        .map_or(source.len(), |(index, _)| offset + index);
+    (start < end).then_some(start..end)
 }
 
 impl CodeLanguageService for ExsBireiLanguageService {
@@ -135,6 +189,14 @@ impl CodeLanguageService for ExsBireiLanguageService {
             .collect();
             DiagnosticsResponse { items }
         })
+    }
+
+    /// Describes the identifier at the hovered position or caret.
+    fn hover<'a>(
+        &'a self,
+        request: HoverRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Option<HoverResponse>> + 'a>> {
+        Box::pin(async move { self.hover_response(request.text, request.offset) })
     }
 }
 
@@ -318,6 +380,27 @@ mod tests {
         assert_eq!(
             reload.documentation.as_deref(),
             Some("Reloads the browser page.")
+        );
+    }
+
+    /// Describes library functions in their module path from their documentation.
+    #[test]
+    fn describes_the_hovered_identifier() {
+        let service = ExsBireiLanguageService::new(
+            CompletionEngine::default()
+                .with_library("exo::ui", "/// Reloads the browser page.\nfn reload() {}"),
+        );
+        let source = "fn main() { exo::ui::reload(); }";
+        let offset = source.find("reload").unwrap_or_default() + 2;
+        let hover = service
+            .hover_response(source, offset)
+            .expect("reload description");
+        assert_eq!(hover.documentation, "Reloads the browser page.");
+        assert_eq!(&source[hover.range], "reload");
+        assert!(
+            service
+                .hover_response(source, source.find('(').unwrap_or_default() + 1)
+                .is_none()
         );
     }
 
