@@ -118,6 +118,44 @@ fn runs_for_loops_and_conditionals() {
     );
 }
 
+/// Keeps statements calling a list helper that runs as a frame, such as `contains` when an
+/// `Eq` implementation calls the host, in the graph instead of calling it synchronously.
+#[test]
+fn keeps_statements_with_frame_list_helpers_in_the_graph() {
+    assert_both(
+        r#"
+        type Tag { name: String }
+
+        impl Eq for Tag {
+            fn eq(self, other: Any) -> Bool {
+                Host::call("echo", 0);
+                ret other is Tag && self.name == other.name;
+            }
+        }
+
+        fn main() -> List {
+            {HOST}
+            let names = ["a"];
+            if !names.contains("b") { names.push("b"); }
+            if !names.contains("a") { names.push("a"); }
+            let found = -1;
+            for name in ["x", "b"] {
+                if names.index_of(name) != None { found = names.index_of(name); }
+            }
+            ret [names, found];
+        }
+        "#,
+        &[],
+        &ExsValue::List(vec![
+            ExsValue::List(vec![
+                ExsValue::String("a".to_owned()),
+                ExsValue::String("b".to_owned()),
+            ]),
+            ExsValue::Int(1),
+        ]),
+    );
+}
+
 /// Returns from inside a loop and keeps assignments to captured bindings.
 #[test]
 fn returns_from_loops_and_shares_captured_bindings() {

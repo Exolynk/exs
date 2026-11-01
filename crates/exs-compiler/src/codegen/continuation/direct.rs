@@ -266,7 +266,17 @@ impl<'source, 'function> GraphBuilder<'source, 'function> {
             Operation::DirectCall { signature, .. } => {
                 self.frame_functions.contains(&signature.function_id)
             }
-            Operation::InstanceCall { targets, .. } => frames(targets),
+            // The prelude helper of a list method, such as `contains`, may run as a frame too.
+            Operation::InstanceCall {
+                method,
+                arguments,
+                targets,
+                ..
+            } => {
+                frames(targets)
+                    || crate::prelude::method_helper(method, arguments.len())
+                        .is_some_and(|helper| self.frame_layouts.contains_key(helper.key))
+            }
             Operation::Operator {
                 operator, targets, ..
             } => {
