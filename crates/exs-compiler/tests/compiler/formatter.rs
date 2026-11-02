@@ -210,3 +210,47 @@ fn formats_expression_closures() {
         "{formatted}"
     );
 }
+
+/// Keeps closures meaning the same: Object bodies stay parenthesized, variadic parameters keep
+/// their `...`, and closures followed by a method call stay parenthesized.
+#[test]
+fn formats_closures_without_changing_their_meaning() {
+    let source = "fn main()->Any{let make=()=>({a:1});let rest=(first,more...)=>more;\
+        let typed=(value:Int,more:Int...)=>more;let text=((x)=>x).to_string();\
+        let negated=!((x)=>x).to_string().is_empty();let passed=[(x)=>x*2];\
+        ret [make(),rest(1,2),typed(1,2),text,negated,passed];}";
+    let formatted = match format(SourceInput {
+        source_id: "./main.exs",
+        text: source,
+    }) {
+        Ok(formatted) => formatted,
+        Err(error) => panic!("formatting failed: {error}"),
+    };
+    for expected in [
+        "let make = () => ({a: 1});",
+        "let rest = (first, more...) => more;",
+        "let typed = (value: Int, more: Int...) => more;",
+        "let text = ((x) => x).to_string();",
+        "let negated = !((x) => x).to_string().is_empty();",
+        "let passed = [(x) => x * 2];",
+    ] {
+        assert!(formatted.contains(expected), "{expected}\n{formatted}");
+    }
+    let reformatted = match format(SourceInput {
+        source_id: "./main.exs",
+        text: &formatted,
+    }) {
+        Ok(reformatted) => reformatted,
+        Err(error) => panic!("reformatting failed: {error}"),
+    };
+    assert_eq!(reformatted, formatted);
+    if let Err(error) = compile(
+        SourceInput {
+            source_id: "./main.exs",
+            text: &formatted,
+        },
+        CompileOptions::default(),
+    ) {
+        panic!("formatted source does not compile: {error}");
+    }
+}

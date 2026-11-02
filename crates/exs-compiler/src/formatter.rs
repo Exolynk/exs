@@ -610,21 +610,7 @@ fn function_header(
     parameters: &[Parameter<'_>],
     return_type: Option<&TypeAnnotation<'_>>,
 ) -> String {
-    let parameters = parameters
-        .iter()
-        .map(|parameter| {
-            let rendered = parameter.type_annotation.as_ref().map_or_else(
-                || parameter.name.name.clone(),
-                |annotation| format!("{}: {}", parameter.name.name, type_annotation(annotation)),
-            );
-            if parameter.variadic {
-                format!("{rendered}...")
-            } else {
-                rendered
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let parameters = render_parameters(parameters);
     let return_type = return_type.map_or_else(String::new, |annotation| {
         format!(" -> {}", type_annotation(annotation))
     });
@@ -733,11 +719,14 @@ fn expression_at(expression: &Expression<'_>, parent_precedence: u8) -> String {
                     value: Some(value),
                     span,
                 },
-            ] if *span == body.span => format!(
-                "({}) => {}",
-                render_parameters(parameters),
-                render_expression(value)
-            ),
+            ] if *span == body.span => {
+                // An Object body needs parentheses, or it would read as a block body.
+                let value = match value {
+                    Expression::Object { .. } => format!("({})", render_expression(value)),
+                    value => render_expression(value),
+                };
+                format!("({}) => {value}", render_parameters(parameters))
+            }
             _ => format!(
                 "({}) => {}",
                 render_parameters(parameters),
@@ -1002,10 +991,15 @@ fn render_parameters(parameters: &[Parameter<'_>]) -> String {
     parameters
         .iter()
         .map(|parameter| {
-            parameter.type_annotation.as_ref().map_or_else(
+            let rendered = parameter.type_annotation.as_ref().map_or_else(
                 || parameter.name.name.clone(),
                 |annotation| format!("{}: {}", parameter.name.name, type_annotation(annotation)),
-            )
+            );
+            if parameter.variadic {
+                format!("{rendered}...")
+            } else {
+                rendered
+            }
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -1070,6 +1064,9 @@ fn expression_precedence(expression: &Expression<'_>) -> u8 {
             BinaryOperator::Add | BinaryOperator::Subtract => 5,
             BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => 6,
         },
+        // A closure body extends as far as possible, so a closure needs parentheses wherever
+        // an operator, call or method follows or encloses it.
+        Expression::Closure { .. } => 0,
         Expression::IsType { .. } => 4,
         Expression::Unary { .. } => 7,
         Expression::Propagate { .. }
