@@ -452,10 +452,10 @@ impl<'a> Parser<'a> {
         Ok(TypeAnnotation { members, span })
     }
 
-    /// Parses one source-visible type name.
+    /// Parses one source-visible type name with any number of `::` path segments.
     pub(super) fn type_name(&mut self) -> Result<TypeName<'a>, CompileDiagnostic<'a>> {
         let (mut name, mut span) = self.type_name_component("expected type name")?;
-        if self.matches(&TokenKind::DoubleColon) {
+        while self.matches(&TokenKind::DoubleColon) {
             let (member, member_span) =
                 self.type_name_component("expected type name after `::`")?;
             name.push_str("::");

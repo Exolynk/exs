@@ -40,7 +40,7 @@ fn resolver() -> (LibraryResolver, Rc<RefCell<Vec<String>>>) {
             ),
             (
                 "exo::db",
-                "fn query(id: Int) -> exo::Record { ret exo::Record::new(id); } fn count() -> Int { ret 3; }",
+                "type Row { id: Int } fn query(id: Int) -> exo::Record { ret exo::Record::new(id); } fn count() -> Int { ret 3; }",
             ),
             ("unused", "fn never() -> Int { ret 0; }"),
         ]),
@@ -82,6 +82,24 @@ fn names_libraries_without_imports() {
             panic!("{text}\n{error}");
         }
     }
+}
+
+/// Names types of nested library modules by their full path in every type position.
+#[test]
+fn names_types_of_nested_library_modules() {
+    for text in [
+        "fn main(value: Any) -> Bool { ret value is exo::db::Row; }",
+        "fn id(row: exo::db::Row) -> Int { ret row.id; } fn main() -> Int { ret 1; }",
+        "fn count(rows: List<exo::db::Row>) -> Int { ret rows.length(); } fn main() -> Int { ret 1; }",
+        "fn find() -> exo::db::Row | None { ret None; } fn main() -> Int { ret 1; }",
+    ] {
+        if let Err(error) = compile_text(text) {
+            panic!("{text}\n{error}");
+        }
+    }
+    let error = compile_text("fn main(value: Any) -> Bool { ret value is exo::db::Missing; }")
+        .expect_err("an unknown type of a nested module is rejected");
+    assert!(error.contains("E0216"), "{error}");
 }
 
 /// Loads only the library modules a script names.
