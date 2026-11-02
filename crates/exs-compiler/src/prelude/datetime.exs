@@ -411,7 +411,8 @@ impl DateTime {
         };
     }
 
-    /// Parses a strict whole-second RFC 3339 timestamp with Z or a ±HH:MM offset.
+    /// Parses an RFC 3339 timestamp with Z or a ±HH:MM offset. Fractional seconds of up to
+    /// nine digits are accepted; more digits return a ParseError.
     fn parse_rfc3339(value: String) -> DateTime | Error {
         let parsed = __exs_datetime_parse_rfc3339_runtime(value)?;
         ret DateTime {

@@ -698,7 +698,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
                 },
                 StandardMethod {
                     signature: "repeat(count: Int) -> String | Error",
-                    description: "Returns a new String repeated a non-negative number of times.",
+                    description: "Returns a new String repeated a non-negative number of times. A negative count returns a TypeError, and a count beyond the supported range a ValueError.",
                     example: "let divider = \"-\".repeat(3);",
                 },
                 StandardMethod {
@@ -770,7 +770,7 @@ pub fn standard_library_types() -> Vec<StandardType> {
                 },
                 StandardMethod {
                     signature: "repeat(count: Int) -> Bytes | Error",
-                    description: "Returns new Bytes repeated a non-negative number of times.",
+                    description: "Returns new Bytes repeated a non-negative number of times. A negative count returns a TypeError, and a count beyond the supported range a ValueError.",
                     example: "let padded = b\"0\".repeat(4);",
                 },
                 StandardMethod {
