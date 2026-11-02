@@ -17,6 +17,7 @@ const DEFAULT_MAX_COLLECTION_ENTRIES: usize = 65_536;
 /// This representation contains only values that can safely cross the Wasm-host boundary. Runtime
 /// references, object identities, and cycles are never exposed through this type.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 pub enum ExsValue {
     /// The absence of a value, such as a missing Object key.
     None,
@@ -58,6 +59,7 @@ pub enum ExsValue {
 
 /// The severity of one ExS language Error.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 pub enum ErrorSeverity {
     /// A language error from which execution may safely continue.
     Recoverable,
@@ -67,10 +69,12 @@ pub enum ErrorSeverity {
 
 /// One source position assigned by the compiler.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 pub struct SourcePositionId(pub u32);
 
 /// One language-level call frame stored in an Error trace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 pub struct ExsStackFrame {
     /// Compiler-assigned source function identifier.
     pub function_id: u32,
@@ -80,6 +84,7 @@ pub struct ExsStackFrame {
 
 /// A host-safe ExS language Error.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 pub struct ExsError {
     /// Whether execution may continue after this Error.
     pub severity: ErrorSeverity,
