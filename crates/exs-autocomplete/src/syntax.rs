@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use exs_compiler::{SourceInput, SourceToken, source_lex};
+use exs_compiler::{Source, SourceToken, source_lex};
 
 /// One compiler-produced token used by tolerant completion analysis.
 pub(crate) type Token = SourceToken;
@@ -23,7 +23,7 @@ pub(crate) struct DocumentSymbols {
 /// One name a `use` declaration brings into scope.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UseBinding {
-    /// The full path the name stands for, such as `exo::ui::reload`.
+    /// The full path the name stands for, such as `app::ui::reload`.
     pub(crate) target: String,
     /// The name in scope, such as `reload` or an alias.
     pub(crate) alias: String,
@@ -71,11 +71,7 @@ pub(crate) enum FunctionHeaderContext {
 
 /// Returns compiler-produced tokens for tolerant completion analysis.
 pub(crate) fn tokenize(source: &str) -> Vec<Token> {
-    source_lex(SourceInput {
-        source_id: "<autocomplete>",
-        text: source,
-    })
-    .tokens
+    source_lex(Source::new("<autocomplete>", source)).tokens
 }
 
 /// Collects declarations and their preceding documentation comments from source.

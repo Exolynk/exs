@@ -1,8 +1,7 @@
 //! Generated documentation selection for the browser playground.
 
 use exs_compiler::{
-    DocumentationPage, MarkdownOptions, ModuleResolver, ResolvedSource, SourceInput,
-    document_with_resolver,
+    CompileOptions, DocumentationPage, MarkdownOptions, ModuleResolver, Source, document,
 };
 
 /// Stable source identifier used for editor diagnostics and generated documentation paths.
@@ -13,7 +12,7 @@ struct PlaygroundDocumentationResolver;
 
 impl ModuleResolver for PlaygroundDocumentationResolver {
     /// Reports that relative imports cannot be loaded in the browser playground.
-    fn resolve(&mut self, _importer: &str, _path: &str) -> Result<ResolvedSource, String> {
+    fn resolve(&self, _importer: &str, _path: &str) -> Result<Source<'_>, String> {
         Err(String::from(
             "imports are unavailable in the browser playground documentation view",
         ))
@@ -22,14 +21,12 @@ impl ModuleResolver for PlaygroundDocumentationResolver {
 
 /// Generates standard-library and active-source documentation pages for the documentation pane.
 pub(crate) fn documentation_pages(source: &str) -> Result<Vec<DocumentationPage>, String> {
-    let mut resolver = PlaygroundDocumentationResolver;
-    let mut pages = document_with_resolver(
-        SourceInput {
-            source_id: PLAYGROUND_SOURCE_ID,
-            text: source,
-        },
-        &mut resolver,
-    )?
+    let resolver = PlaygroundDocumentationResolver;
+    let mut pages = document(
+        Source::new(PLAYGROUND_SOURCE_ID, source),
+        CompileOptions::default().resolver(&resolver),
+    )
+    .map_err(|error| error.to_string())?
     .markdown(&MarkdownOptions::default())
     .pages;
     pages.sort_by(|left, right| {

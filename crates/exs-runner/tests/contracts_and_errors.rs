@@ -94,15 +94,10 @@ fn accepts_error_values_in_function_type_contracts() {
             ret fail(input);
         }
         "#,
-        ExsValue::Error(ExsError {
-            severity: ErrorSeverity::Recoverable,
-            kind: "Expected".to_owned(),
-            message: "expected failure".to_owned(),
-            data: Box::new(ExsValue::None),
-            origin: None,
-            trace: Vec::new(),
-            cause: None,
-        }),
+        ExsValue::Error(ExsError::recoverable(
+            "Expected".to_owned(),
+            "expected failure".to_owned(),
+        )),
     );
     let ExsValue::Error(error) = result else {
         panic!("typed Error value was not returned");
@@ -168,15 +163,10 @@ fn propagates_option_and_result_values() {
         ),
         ExsValue::Int(42),
     );
-    let error = ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "Example".to_owned(),
-        message: "example error".to_owned(),
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    });
+    let error = ExsValue::Error(ExsError::recoverable(
+        "Example".to_owned(),
+        "example error".to_owned(),
+    ));
     assert_eq!(
         execute_source(
             "fn main(input) { let value = input?; ret value; }",
@@ -243,15 +233,10 @@ fn escalates_error_propagation_without_error_return_type() {
         fn missing(value) -> Int | None { ret value?; }
         fn main(input) -> Int | None | Error { ret missing(input); }
     "#;
-    let input = ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "Example".to_owned(),
-        message: "example error".to_owned(),
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    });
+    let input = ExsValue::Error(ExsError::recoverable(
+        "Example".to_owned(),
+        "example error".to_owned(),
+    ));
     for source in [source.to_owned(), resumable(source)] {
         let ExsValue::Error(error) = execute_source(&source, input.clone()) else {
             panic!("Error propagation did not fail");
@@ -303,15 +288,10 @@ fn captures_direct_function_error_trace() {
 /// Tests host-provided Error values through source-level is Error.
 #[test]
 fn tests_error_values_in_source() {
-    let error = ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "Example".to_owned(),
-        message: "example error".to_owned(),
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    });
+    let error = ExsValue::Error(ExsError::recoverable(
+        "Example".to_owned(),
+        "example error".to_owned(),
+    ));
     assert_eq!(
         execute_source("fn main(input) { ret input is Error; }", error),
         ExsValue::Bool(true),

@@ -1,9 +1,11 @@
 [package]
 name = "exs-layout"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Internal crate of ExS: the memory layout of values in linear memory. Use the exs crate; this one has no stability promise"
 
 [lints]
 workspace = true

@@ -68,6 +68,19 @@ pub(crate) fn type_names() -> impl Iterator<Item = &'static str> {
         .chain(["Bytes", "Int", "Float", "Object", "Math"])
 }
 
+/// Prelude types the compiler itself builds or names for syntax such as ranges and `for` loops,
+/// which a program cannot redeclare.
+const CORE_TYPES: &[&str] = &["HostStream", "IteratorStep", "Range"];
+
+/// Returns whether a program's own declaration named `name` takes the place of a prelude type,
+/// so that adding a prelude type never breaks a program declaring one of that name.
+pub(crate) fn is_shadowable(name: &str) -> bool {
+    !CORE_TYPES.contains(&name)
+        && sources()
+            .iter()
+            .any(|source| source.type_names.contains(&name))
+}
+
 /// The private prelude function that compares two composites of one kind part by part for
 /// the built-in `==`.
 pub(crate) const EQUALITY_HELPER: &str = "__exs_equal";

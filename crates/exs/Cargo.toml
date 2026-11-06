@@ -1,0 +1,49 @@
+[package]
+name = "exs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Embeddable extension language: compile ExS scripts to WebAssembly and run them safely on a server or in the browser"
+readme = "../../README.md"
+keywords = ["scripting", "language", "wasm", "embedded", "extension"]
+categories = ["compilers", "wasm"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["compiler", "server", "serde"]
+# Compiles ExS source to WebAssembly modules.
+compiler = ["dep:exs-compiler", "exs-libs?/compiler"]
+# Runs modules natively with Wasmtime.
+server = ["dep:exs-runner", "exs-runner/server", "exs-libs?/server"]
+# Runs modules in a browser through wasm-bindgen; for the wasm32 target.
+browser = ["dep:exs-runner", "exs-runner/browser", "exs-libs?/browser"]
+# Typed host functions and conversions between Rust types and values.
+serde = ["exs-abi/serde", "exs-runner?/serde"]
+# Syntax highlighting, editor completions and API documentation.
+tooling = ["compiler", "dep:exs-autocomplete"]
+# Optional library modules for scripts, one feature per library.
+json = ["dep:exs-libs", "exs-libs/json"]
+url = ["dep:exs-libs", "exs-libs/url"]
+rand = ["dep:exs-libs", "exs-libs/rand"]
+http = ["dep:exs-libs", "exs-libs/http"]
+
+[dependencies]
+exs-abi.workspace = true
+exs-autocomplete = { workspace = true, optional = true }
+exs-compiler = { workspace = true, optional = true }
+exs-libs = { workspace = true, optional = true }
+exs-runner = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+
+[[test]]
+name = "embedding"
+required-features = ["compiler", "server", "serde", "json"]
+
+[package.metadata.docs.rs]
+features = ["tooling", "json", "url", "rand", "http"]

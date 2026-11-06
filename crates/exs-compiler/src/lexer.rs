@@ -383,7 +383,17 @@ pub fn lex<'a>(source: SourceInput<'a>) -> Lexed<'a> {
                         break;
                     }
                 }
-                keyword_or_identifier(&source.text[start..index])
+                let word = &source.text[start..index];
+                if RESERVED_WORDS.contains(&word) {
+                    diagnostics.push(diagnostic(
+                        source,
+                        start,
+                        index,
+                        "E0011",
+                        format!("`{word}` is reserved for future language features"),
+                    ));
+                }
+                keyword_or_identifier(word)
             } else {
                 index += character.len_utf8();
                 if !character.is_ascii() {
@@ -1269,6 +1279,10 @@ fn valid_digit_segment(segment: &str) -> bool {
         && !segment.ends_with('_')
         && !segment.contains("__")
 }
+
+/// Words without a meaning yet that programs cannot use as identifiers, so a later language
+/// version can give them one without breaking programs.
+const RESERVED_WORDS: &[&str] = &["async", "await", "loop", "return", "struct", "yield"];
 
 fn keyword_or_identifier(value: &str) -> TokenKind {
     match value {

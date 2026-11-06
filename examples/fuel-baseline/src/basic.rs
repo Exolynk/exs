@@ -2,7 +2,7 @@
 
 use std::hint::black_box;
 
-use exs_guest::{ExsValue, Vec};
+use exs_guest::ExsValue;
 
 /// Returns the first input as an Int, or 0.
 fn limit(inputs: &[ExsValue]) -> i64 {
@@ -24,7 +24,7 @@ pub(crate) fn field<'a>(value: &'a ExsValue, key: &str) -> Option<&'a ExsValue> 
 
 /// Returns immediately, measuring the fixed ABI and runtime overhead.
 pub(crate) async fn empty_main(_inputs: Vec<ExsValue>) -> ExsValue {
-    ExsValue::None
+    ExsValue::Unit
 }
 
 /// Returns `true` like a trivial show function.

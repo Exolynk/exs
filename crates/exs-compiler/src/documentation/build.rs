@@ -18,7 +18,7 @@ use crate::ast::{
 };
 use crate::codegen::standard::{self as codegen_standard, StandardTraitDescriptor};
 use crate::loaded_project::{LoadedProject, parse_source};
-use crate::{CompileLimits, ModuleResolver, SourceInput};
+use crate::{CompileError, CompileLimits, CompileOptions, SourceInput};
 
 /// Name of the standard-library module.
 const STD: &str = "std";
@@ -33,26 +33,27 @@ const AUTOMATIC: &str = "Automatically Provided Methods";
 const STD_DESCRIPTION: &str = "Built-in standard items are globally available in ExS source and may also be written with the `std::` qualifier; importing `std` is neither required nor allowed. Every source-visible value provides `clone() -> T | Error`, where `T` is the receiver type.";
 
 /// Documents the standard library, `source`, its imports, and the libraries they name.
-pub(crate) fn project<R: ModuleResolver>(
+pub(crate) fn project(
     source: SourceInput<'_>,
-    resolver: &mut R,
-) -> Result<ApiDocumentation, String> {
-    let project = LoadedProject::load(source, resolver, CompileLimits::default())?;
+    options: CompileOptions<'_>,
+) -> Result<ApiDocumentation, CompileError> {
+    let project = LoadedProject::load(source, options.module_resolver(), options.limits)?;
     project.validate_no_cycles()?;
     build(&project)
 }
 
 /// Documents the standard library and every library module `resolver` lists.
-pub(crate) fn libraries<R: ModuleResolver>(resolver: &mut R) -> Result<ApiDocumentation, String> {
+pub(crate) fn libraries(options: CompileOptions<'_>) -> Result<ApiDocumentation, CompileError> {
+    let resolver = options.module_resolver();
     let paths = resolver.libraries();
-    let project = LoadedProject::load_libraries(&paths, resolver, CompileLimits::default())?;
+    let project = LoadedProject::load_libraries(&paths, resolver, options.limits)?;
     build(&project)
 }
 
 /// Builds the documentation of the standard library and every loaded module.
-fn build(project: &LoadedProject) -> Result<ApiDocumentation, String> {
+fn build(project: &LoadedProject) -> Result<ApiDocumentation, CompileError> {
     let mut modules = standard()?;
-    let parsed = project.parse_modules()?;
+    let parsed = project.parse_modules(false)?;
     let mut libraries = Vec::new();
     let mut files = Vec::new();
     for (module, file) in parsed.iter().zip(project.files()) {
@@ -115,13 +116,14 @@ fn make_unique(modules: &mut [ModuleDocs]) {
 }
 
 /// Returns the prelude modules with their source text.
-fn prelude() -> Result<Vec<(Module<'static>, &'static str)>, String> {
+fn prelude() -> Result<Vec<(Module<'static>, &'static str)>, CompileError> {
     crate::prelude::source_inputs()
         .into_iter()
         .map(|source| {
             parse_source(
                 source.source_id,
                 source.text,
+                false,
                 CompileLimits::default().max_nesting,
             )
             .map(|module| (module, source.text))
@@ -130,7 +132,7 @@ fn prelude() -> Result<Vec<(Module<'static>, &'static str)>, String> {
 }
 
 /// Returns the names of every standard trait, built in or declared by the prelude.
-fn std_trait_names() -> Result<Vec<String>, String> {
+fn std_trait_names() -> Result<Vec<String>, CompileError> {
     let mut names = codegen_standard::traits()
         .iter()
         .map(|descriptor| descriptor.name.to_owned())
@@ -147,7 +149,7 @@ fn std_trait_names() -> Result<Vec<String>, String> {
 }
 
 /// Documents the standard library: `std` and its `test` submodule.
-fn standard() -> Result<Vec<ModuleDocs>, String> {
+fn standard() -> Result<Vec<ModuleDocs>, CompileError> {
     let prelude = prelude()?;
     let std_traits = std_trait_names()?;
     let declared = |name: &str| {

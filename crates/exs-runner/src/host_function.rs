@@ -10,6 +10,7 @@ use exs_abi::ExsValue;
 pub type HostFuture = Pin<Box<dyn Future<Output = ExsValue> + Send>>;
 
 /// The result of requesting one value from a host-owned pull stream.
+#[non_exhaustive]
 pub enum HostStreamItem {
     /// One stream value is available.
     Item(ExsValue),
@@ -74,6 +75,7 @@ where
 }
 
 /// The result of starting one registered host function.
+#[non_exhaustive]
 pub enum HostCall {
     /// A synchronous function completed without suspending.
     Ready(ExsValue),

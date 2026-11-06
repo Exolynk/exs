@@ -180,50 +180,6 @@ fn with_span<'a>(value: Expression<'a>, span: SourceSpan<'a>) -> Expression<'a> 
     }
 }
 
-/// Resolves the constants of the single source `module` and substitutes them into it.
-pub(crate) fn inline_single<'a>(module: &mut Module<'a>) -> Result<(), CompileDiagnostics<'a>> {
-    let mut declared: HashSet<&str> = module
-        .functions
-        .iter()
-        .map(|declaration| declaration.name.name.as_str())
-        .chain(
-            module
-                .types
-                .iter()
-                .map(|declaration| declaration.name.name.as_str()),
-        )
-        .chain(
-            module
-                .enums
-                .iter()
-                .map(|declaration| declaration.name.name.as_str()),
-        )
-        .chain(
-            module
-                .traits
-                .iter()
-                .map(|declaration| declaration.name.name.as_str()),
-        )
-        .collect();
-    for declaration in &module.constants {
-        if !declared.insert(&declaration.name.name) {
-            return Err(error(
-                "E0122",
-                declaration.name.span,
-                format!("duplicate declaration `{}`", declaration.name.name),
-            ));
-        }
-    }
-    let names: HashMap<String, String> = module
-        .constants
-        .iter()
-        .map(|declaration| (declaration.name.name.clone(), declaration.name.name.clone()))
-        .collect();
-    let values = Declared::new(std::slice::from_ref(module), |_, name| name.to_owned())
-        .resolve(std::slice::from_ref(&names))?;
-    inline(module, &values, &HashSet::new())
-}
-
 /// Substitutes the constants `visible` names, by the names the module spells, into every
 /// reference of `module` that no local binding shadows, and rejects assignments to them.
 /// `private` names constants of other libraries that `module` may not use.

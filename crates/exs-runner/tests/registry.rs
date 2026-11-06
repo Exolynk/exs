@@ -3,9 +3,7 @@
 use std::task::{Context, Poll, Waker};
 
 use exs_abi::BuiltinHostOperation;
-use exs_runner::{
-    ErrorSeverity, ExsError, ExsValue, HostCall, HostFunctionRegistry, RegistryError,
-};
+use exs_runner::{ExsError, ExsValue, HostCall, HostFunctionRegistry, RegistryError};
 
 /// Polls an immediately ready host future without adding an executor dependency.
 fn complete(mut future: exs_runner::HostFuture) -> ExsValue {
@@ -24,15 +22,10 @@ fn starts_synchronous_host_functions() {
     registry
         .fn_sync_raw("join", |arguments: Vec<ExsValue>| {
             assert_eq!(arguments, vec![ExsValue::String("Ada".to_owned())]);
-            ExsValue::Error(ExsError {
-                severity: ErrorSeverity::Recoverable,
-                kind: "HostFailure".to_owned(),
-                message: "not available".to_owned(),
-                data: Box::new(ExsValue::None),
-                origin: None,
-                trace: Vec::new(),
-                cause: None,
-            })
+            ExsValue::Error(ExsError::recoverable(
+                "HostFailure".to_owned(),
+                "not available".to_owned(),
+            ))
         })
         .unwrap();
 

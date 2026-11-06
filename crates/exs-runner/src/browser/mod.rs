@@ -5,24 +5,25 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::time::Duration;
 
 use exs_abi::{
-    ABI_VERSION, ErrorSeverity, ExsError, ExsValue, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
-    SourcePositionId, is_reserved_host_name,
+    ABI_VERSION, ExsError, ExsValue, MIN_SUPPORTED_ABI_VERSION,
+    STANDARD_ITERATOR_STEP_TYPE_IDENTITY, SourcePositionId, is_reserved_host_name,
 };
 use js_sys::{Array, Error as JsError, Function, Promise, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
-use crate::RunnerError;
 #[cfg(feature = "serde")]
 use crate::typed_registry::{decode_typed_request, typed_encode_error};
+use crate::{ExecutionCancellation, ExecutionOptions, ExecutionReport, RunnerError};
 #[cfg(feature = "serde")]
 use serde::{Serialize, de::DeserializeOwned};
 
 mod bindings;
-mod direct;
 mod host;
+mod images;
 mod runner;
 
 use host::{
@@ -36,6 +37,7 @@ pub use runner::{BrowserRunner, BrowserRunnerConfig};
 type BrowserHostFuture = Pin<Box<dyn Future<Output = ExsValue> + 'static>>;
 
 /// The result of requesting one value from a browser host-owned pull stream.
+#[non_exhaustive]
 pub enum BrowserHostStreamItem {
     /// One stream value is available.
     Item(ExsValue),
@@ -434,6 +436,7 @@ where
 
 /// An error caused by browser host-function registration or lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BrowserRegistryError {
     /// A registration name was empty.
     EmptyName,

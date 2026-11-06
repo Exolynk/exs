@@ -20,7 +20,7 @@ fn host_functions() -> Vec<(&'static str, HostFunction)> {
 }
 
 /// Registers the host functions of every enabled library with the runner's registry; `http`
-/// sends its requests with [`crate::http::DefaultTransport`].
+/// sends its requests with `http::DefaultTransport`.
 ///
 /// # Errors
 ///

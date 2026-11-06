@@ -7,7 +7,7 @@ use std::{sync::mpsc, thread};
 
 use exs_abi::ExsValue;
 use exs_runner::{
-    ExecutionCancellation, LimitKind, ProtectionLevel, RunnerError, ServerRunner,
+    ExecutionCancellation, ExecutionOptions, LimitKind, ProtectionLevel, RunnerError, ServerRunner,
     ServerRunnerConfig,
 };
 use support::{block_on, compile_source, runner_test_module};
@@ -19,12 +19,13 @@ fn runner(
     timeout: Duration,
     protection: ProtectionLevel,
 ) -> ServerRunner {
-    ServerRunner::new(ServerRunnerConfig {
-        max_memory_bytes,
-        max_fuel,
-        timeout,
-        protection,
-        ..ServerRunnerConfig::default()
+    ServerRunner::new({
+        let mut options = ServerRunnerConfig::default();
+        options.max_memory_bytes = max_memory_bytes;
+        options.max_fuel = max_fuel;
+        options.timeout = timeout;
+        options.protection = protection;
+        options
     })
 }
 
@@ -38,8 +39,7 @@ fn rejects_wasm_memory_over_the_configured_limit() {
         Duration::from_secs(10),
         ProtectionLevel::Standard,
     );
-    let result =
-        block_on(runner.execute(wasm.as_bytes(), "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(wasm.as_bytes(), "main", &[]));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Memory))
@@ -56,7 +56,7 @@ fn rejects_wasm_over_the_derived_module_size_limit() {
         Duration::from_secs(10),
         ProtectionLevel::High,
     );
-    let result = block_on(runner.execute(&wasm, "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(&wasm, "main", &[]));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Module))
@@ -73,8 +73,7 @@ fn rejects_execution_after_the_configured_fuel_budget() {
         Duration::from_secs(10),
         ProtectionLevel::Standard,
     );
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Fuel))
@@ -91,8 +90,7 @@ fn rejects_guest_execution_after_the_configured_timeout() {
         Duration::from_millis(10),
         ProtectionLevel::Standard,
     );
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Timeout))
@@ -127,9 +125,10 @@ fn cancels_an_active_guest_execution() {
             .is_ok()
     );
     let cancellation = ExecutionCancellation::new();
-    let execution_cancellation = cancellation.clone();
+    let options = ExecutionOptions::with_cancellation(&cancellation);
     let execution = thread::spawn(move || {
-        block_on(runner.execute(&compiled.wasm, "main", &[], &execution_cancellation))
+        block_on(runner.execute_with(&compiled.wasm, "main", &[], &options))
+            .map(|report| report.value)
     });
     started_receiver
         .recv_timeout(Duration::from_secs(30))
@@ -155,8 +154,7 @@ fn rejects_pending_host_call_after_the_configured_timeout() {
             .fn_async_raw("wait", |_| std::future::pending::<ExsValue>())
             .is_ok()
     );
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Timeout))
@@ -173,8 +171,7 @@ fn rejects_wasm_table_over_the_derived_limit() {
         Duration::from_secs(10),
         ProtectionLevel::High,
     );
-    let result =
-        block_on(runner.execute(wasm.as_bytes(), "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(wasm.as_bytes(), "main", &[]));
     assert!(result.is_err());
 }
 
@@ -183,8 +180,7 @@ fn rejects_wasm_table_over_the_derived_limit() {
 fn rejects_wasm_with_multiple_memories() {
     let wasm = runner_test_module(1, "(memory 1)", "i32.const 0");
     let runner = ServerRunner::default();
-    let result =
-        block_on(runner.execute(wasm.as_bytes(), "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(wasm.as_bytes(), "main", &[]));
     assert!(result.is_err());
 }
 
@@ -203,8 +199,7 @@ fn executes_compiled_exs_with_every_protection_level() {
             Duration::from_secs(10),
             protection,
         );
-        let result =
-            block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+        let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
         assert!(matches!(result, Ok(ExsValue::Int(42))));
     }
 }
@@ -214,7 +209,16 @@ fn executes_compiled_exs_with_every_protection_level() {
 fn reports_malformed_wasm_as_a_runner_error() {
     let runner = ServerRunner::default();
     let cancellation = ExecutionCancellation::new();
-    assert!(block_on(runner.execute(&[0], "main", &[], &cancellation)).is_err());
+    assert!(
+        block_on(runner.execute_with(
+            &[0],
+            "main",
+            &[],
+            &ExecutionOptions::with_cancellation(&cancellation)
+        ))
+        .map(|report| report.value)
+        .is_err()
+    );
 }
 
 /// Rejects a valid Wasm module that cannot participate in runner task metering.
@@ -223,7 +227,13 @@ fn rejects_modules_missing_runner_task_metering_imports() {
     let runner = ServerRunner::default();
     let cancellation = ExecutionCancellation::new();
     let empty_wasm_module = [0, 97, 115, 109, 1, 0, 0, 0];
-    let result = block_on(runner.execute(&empty_wasm_module, "main", &[], &cancellation));
+    let result = block_on(runner.execute_with(
+        &empty_wasm_module,
+        "main",
+        &[],
+        &ExecutionOptions::with_cancellation(&cancellation),
+    ))
+    .map(|report| report.value);
     assert!(matches!(result, Err(RunnerError::Abi(message)) if message.contains("task-metering")));
 }
 
@@ -242,8 +252,7 @@ fn yields_to_the_executor_while_guest_code_runs() {
         Duration::from_millis(200),
         ProtectionLevel::Standard,
     );
-    let cancellation = ExecutionCancellation::new();
-    let mut execution = pin!(runner.execute(&compiled.wasm, "main", &[], &cancellation));
+    let mut execution = pin!(runner.execute(&compiled.wasm, "main", &[]));
     let mut context = Context::from_waker(Waker::noop());
     let mut yields = 0_u32;
     let result = loop {
@@ -280,10 +289,9 @@ fn times_out_many_pending_executions_together() {
             .fn_async_raw("wait", |_| std::future::pending::<ExsValue>())
             .is_ok()
     );
-    let cancellation = ExecutionCancellation::new();
     let mut executions: Vec<Pin<Box<dyn Future<Output = _>>>> = (0..200)
         .map(|_| {
-            Box::pin(runner.execute(&compiled.wasm, "main", &[], &cancellation))
+            Box::pin(runner.execute(&compiled.wasm, "main", &[]))
                 as Pin<Box<dyn Future<Output = _>>>
         })
         .collect();
@@ -328,10 +336,11 @@ impl exs_runner::RunnerTimer for ImmediateTimer {
 
 /// Creates a runner with a 10 second timeout that uses `timer`.
 fn runner_with_timer(timer: std::sync::Arc<ImmediateTimer>) -> ServerRunner {
-    ServerRunner::new(ServerRunnerConfig {
-        timeout: Duration::from_secs(10),
-        timer: Some(timer),
-        ..ServerRunnerConfig::default()
+    ServerRunner::new({
+        let mut options = ServerRunnerConfig::default();
+        options.timeout = Duration::from_secs(10);
+        options.timer = Some(timer);
+        options
     })
 }
 
@@ -343,8 +352,7 @@ fn host_sleep_uses_the_configured_timer() {
     let timer = std::sync::Arc::new(ImmediateTimer::default());
     let runner = runner_with_timer(timer.clone());
     let started = std::time::Instant::now();
-    let report =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    let report = block_on(runner.execute(&compiled.wasm, "main", &[]));
     assert!(matches!(report, Ok(ExsValue::Int(42))));
     let deadlines = timer
         .deadlines
@@ -369,12 +377,58 @@ fn configured_timer_signals_the_deadline_of_pending_host_calls() {
             .is_ok()
     );
     let started = std::time::Instant::now();
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
     assert!(matches!(
         result,
         Err(RunnerError::LimitExceeded(LimitKind::Timeout))
     ));
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(timer.deadlines.lock().map(|d| d.len()).unwrap_or(0), 1);
+}
+
+/// Collects garbage when the image of a result does not fit next to it.
+#[test]
+fn collects_garbage_to_make_room_for_a_result_image() {
+    let compiled = compile_source(
+        r#"
+        fn main() -> String {
+            let index = 0;
+            while index < 20 {
+                let garbage = "x".repeat(524288);
+                index = index + 1;
+            }
+            ret "y".repeat(200000);
+        }
+        "#,
+    );
+    let runner = runner(
+        3 * 1024 * 1024,
+        u64::MAX,
+        Duration::from_secs(20),
+        ProtectionLevel::Standard,
+    );
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
+    assert!(
+        matches!(&result, Ok(ExsValue::String(text)) if text.len() == 200_000),
+        "{:?}",
+        result.map(|_| ())
+    );
+}
+
+/// Reports the memory limit for a result whose image does not fit next to the live value.
+#[test]
+fn reports_the_memory_limit_when_a_result_image_does_not_fit() {
+    let compiled = compile_source(r#"fn main() -> String { ret "x".repeat(3145728); }"#);
+    let runner = runner(
+        4 * 1024 * 1024,
+        u64::MAX,
+        Duration::from_secs(20),
+        ProtectionLevel::Standard,
+    );
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
+    assert!(
+        matches!(result, Err(RunnerError::LimitExceeded(LimitKind::Memory))),
+        "{:?}",
+        result.map(|_| ())
+    );
 }

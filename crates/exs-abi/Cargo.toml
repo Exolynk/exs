@@ -1,9 +1,11 @@
 [package]
 name = "exs-abi"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Internal crate of ExS: the value model and boundary format shared by compiler, runtime and runners. Use the exs crate; this one has no stability promise"
 
 [lints]
 workspace = true
@@ -13,3 +15,7 @@ serde = { workspace = true, optional = true }
 
 [features]
 serde = ["dep:serde"]
+
+[[test]]
+name = "serde"
+required-features = ["serde"]

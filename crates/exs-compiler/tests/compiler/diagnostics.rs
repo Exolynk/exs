@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use exs_compiler::{CompileOptions, SourceInput, check_syntax, compile_with_resolver_diagnostics};
+use exs_compiler::{CompileOptions, Source, check_syntax, compile};
 
 use super::TestResolver;
 
@@ -10,10 +10,7 @@ use super::TestResolver;
 #[test]
 fn syntax_check_locates_errors() {
     let text = "fn main() {\n    let value = ;\n}\n";
-    let diagnostics = check_syntax(SourceInput {
-        source_id: "check.exs",
-        text,
-    });
+    let diagnostics = check_syntax(Source::new("check.exs", text));
     assert!(!diagnostics.is_empty());
     let first = &diagnostics[0];
     let line = text[..first.start_byte as usize].matches('\n').count();
@@ -23,10 +20,10 @@ fn syntax_check_locates_errors() {
 /// Valid syntax passes the check, also without `fn main()` and with unknown names.
 #[test]
 fn syntax_check_accepts_valid_source() {
-    let diagnostics = check_syntax(SourceInput {
-        source_id: "check.exs",
-        text: "fn helper() -> Int {\n    ret missing;\n}\n",
-    });
+    let diagnostics = check_syntax(Source::new(
+        "check.exs",
+        "fn helper() -> Int {\n    ret missing;\n}\n",
+    ));
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
@@ -34,16 +31,12 @@ fn syntax_check_accepts_valid_source() {
 #[test]
 fn compilation_locates_semantic_errors() {
     let text = "fn main() -> Int {\n    ret missing;\n}\n";
-    let mut resolver = TestResolver {
+    let resolver = TestResolver {
         sources: HashMap::new(),
     };
-    let failure = match compile_with_resolver_diagnostics(
-        SourceInput {
-            source_id: "semantic.exs",
-            text,
-        },
-        CompileOptions::default(),
-        &mut resolver,
+    let failure = match compile(
+        Source::new("semantic.exs", text),
+        CompileOptions::default().resolver(&resolver),
     ) {
         Ok(_) => panic!("an unknown binding compiled"),
         Err(failure) => failure,
@@ -63,16 +56,12 @@ fn compilation_locates_semantic_errors() {
 #[test]
 fn compilation_locates_syntax_errors() {
     let text = "fn main() -> Int {\n    ret 1\n}\n";
-    let mut resolver = TestResolver {
+    let resolver = TestResolver {
         sources: HashMap::new(),
     };
-    let failure = match compile_with_resolver_diagnostics(
-        SourceInput {
-            source_id: "syntax.exs",
-            text,
-        },
-        CompileOptions::default(),
-        &mut resolver,
+    let failure = match compile(
+        Source::new("syntax.exs", text),
+        CompileOptions::default().resolver(&resolver),
     ) {
         Ok(_) => panic!("a missing semicolon compiled"),
         Err(failure) => failure,

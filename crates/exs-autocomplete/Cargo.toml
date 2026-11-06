@@ -1,17 +1,14 @@
 [package]
 name = "exs-autocomplete"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Internal crate of ExS: completion support for ExS source. Use the exs crate; this one has no stability promise"
 
 [lints]
 workspace = true
 
-[features]
-default = []
-birei = ["dep:birei"]
-
 [dependencies]
-birei = { git = "https://github.com/Exolynk/birei", branch = "main", optional = true }
-exs-compiler = { path = "../exs-compiler" }
+exs-compiler.workspace = true

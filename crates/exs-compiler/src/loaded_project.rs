@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::ast::{ImportDeclaration, Module};
 use crate::lexer::{FormattedStringPart, Token, TokenKind};
-use crate::{CompileLimits, ModuleResolver, ResolvedSource, SourceInput};
+use crate::{CompileError, CompileLimits, ModuleResolver, Source, SourceInput, SourceSpan};
 
 /// A fully resolved project source unit.
 pub(crate) struct LoadedSource {
@@ -15,7 +15,7 @@ pub(crate) struct LoadedSource {
     pub(crate) display_path: String,
     /// Complete UTF-8 source text.
     pub(crate) text: String,
-    /// The path of the library module this source provides, such as `exo::db`, or `None`
+    /// The path of the library module this source provides, such as `app::db`, or `None`
     /// for a source of the project.
     pub(crate) library: Option<String>,
 }
@@ -47,19 +47,16 @@ impl LoadedProject {
     /// loaded sources name, within the size and module limits of `limits`.
     ///
     /// A library module is loaded when a source names a path the resolver provides as a
-    /// library, such as `log` in `log::info` or `exo::db` in `use exo::db::query;`, so
+    /// library, such as `log` in `log::info` or `app::db` in `use app::db::query;`, so
     /// unused libraries cost nothing. Importing a library by its path is an error.
-    pub(crate) fn load<R: ModuleResolver>(
+    pub(crate) fn load(
         source: SourceInput<'_>,
-        resolver: &mut R,
+        resolver: &dyn ModuleResolver,
         limits: CompileLimits,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, CompileError> {
         let mut loader = Loader::new(limits);
         loader.add(
-            ResolvedSource {
-                source_id: source.source_id.to_owned(),
-                text: source.text.to_owned(),
-            },
+            Source::new(source.source_id, source.text),
             root_display_path(source.source_id),
             None,
         )?;
@@ -67,17 +64,18 @@ impl LoadedProject {
     }
 
     /// Loads the library modules at `paths`, which must exist, and everything they reach.
-    pub(crate) fn load_libraries<R: ModuleResolver>(
+    pub(crate) fn load_libraries(
         paths: &[String],
-        resolver: &mut R,
+        resolver: &dyn ModuleResolver,
         limits: CompileLimits,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, CompileError> {
         let mut loader = Loader::new(limits);
         for path in paths {
             if loader.library(resolver, path)?.is_none() {
                 return Err(format!(
                     "library `{path}` is listed but the resolver does not provide it"
-                ));
+                )
+                .into());
             }
         }
         loader.load_reachable(resolver)
@@ -93,16 +91,28 @@ impl LoadedProject {
         &self.edges
     }
 
-    /// Parses every loaded source for one consumer-specific workflow.
-    pub(crate) fn parse_modules(&self) -> Result<Vec<Module<'_>>, String> {
+    /// Parses every loaded source for one consumer-specific workflow; `require_main` asks the
+    /// root source to declare a function.
+    pub(crate) fn parse_modules(
+        &self,
+        require_main: bool,
+    ) -> Result<Vec<Module<'_>>, CompileError> {
         self.files
             .iter()
-            .map(|file| parse_source(&file.source_id, &file.text, self.max_nesting))
+            .enumerate()
+            .map(|(index, file)| {
+                parse_source(
+                    &file.source_id,
+                    &file.text,
+                    require_main && index == 0,
+                    self.max_nesting,
+                )
+            })
             .collect()
     }
 
     /// Rejects the loaded graph when any relative-import cycle exists.
-    pub(crate) fn validate_no_cycles(&self) -> Result<(), String> {
+    pub(crate) fn validate_no_cycles(&self) -> Result<(), CompileError> {
         let Some(cycle) = find_cycle(&self.edges) else {
             return Ok(());
         };
@@ -111,9 +121,12 @@ impl LoadedProject {
             .map(|index| self.files[*index].source_id.as_str())
             .collect::<Vec<_>>()
             .join(" -> ");
-        Err(format!(
-            "{}: import cycle: {chain}",
-            self.files[0].source_id
+        let root = &self.files[0];
+        Err(CompileError::at(
+            "E0233",
+            SourceSpan::empty(&root.source_id),
+            &root.text,
+            format!("import cycle: {chain}"),
         ))
     }
 }
@@ -149,32 +162,35 @@ impl Loader {
     }
 
     /// Loads every relative import and library module the loaded sources reach.
-    fn load_reachable<R: ModuleResolver>(
+    fn load_reachable(
         mut self,
-        resolver: &mut R,
-    ) -> Result<LoadedProject, String> {
+        resolver: &dyn ModuleResolver,
+    ) -> Result<LoadedProject, CompileError> {
         let mut index = 0;
         while index < self.files.len() {
             let source_id = self.files[index].source_id.clone();
             let text = self.files[index].text.clone();
-            let scanned = scan_source(&source_id, &text)?;
+            let scanned = scan_source(&source_id, &text, self.limits.max_nesting)?;
             for import in scanned.imports {
                 if self.library(resolver, &import.path)?.is_some() {
-                    return Err(format!(
-                        "{}:{}-{}: `{}` is a library and needs no import; remove the import and name it as `{}::...` or bring items into scope with `use`",
-                        source_id,
-                        import.span.start_byte,
-                        import.span.end_byte,
-                        import.path,
-                        import.path
+                    return Err(CompileError::at(
+                        "E0233",
+                        import.span,
+                        &text,
+                        format!(
+                            "`{}` is a library and needs no import; remove the import and name it as `{}::...` or bring items into scope with `use`",
+                            import.path, import.path
+                        ),
                     ));
                 }
                 let resolved = resolver
                     .resolve(&source_id, &import.path)
                     .map_err(|error| {
-                        format!(
-                            "{}:{}-{}: could not resolve import `{}`: {error}",
-                            source_id, import.span.start_byte, import.span.end_byte, import.path
+                        CompileError::at(
+                            "E0233",
+                            import.span,
+                            &text,
+                            format!("could not resolve import `{}`: {error}", import.path),
                         )
                     })?;
                 let target = self.add(resolved, import.path.clone(), None)?;
@@ -209,34 +225,37 @@ impl Loader {
     /// Adds `source` unless a source of its identity is loaded already, and returns its index.
     fn add(
         &mut self,
-        source: ResolvedSource,
+        source: Source<'_>,
         display_path: String,
         library: Option<String>,
-    ) -> Result<usize, String> {
-        if let Some(index) = self.indices.get(&source.source_id) {
+    ) -> Result<usize, CompileError> {
+        if let Some(index) = self.indices.get(source.id.as_ref()) {
             return Ok(*index);
         }
         if self.files.len() >= self.limits.max_modules {
-            return Err(format!(
-                "{}: the project exceeds the limit of {} modules",
-                self.files
-                    .first()
-                    .map_or(source.source_id.as_str(), |root| root.source_id.as_str()),
-                self.limits.max_modules
+            let (source_id, text) = self
+                .files
+                .first()
+                .map_or((source.id.as_ref(), source.text.as_ref()), |root| {
+                    (root.source_id.as_str(), root.text.as_str())
+                });
+            return Err(CompileError::at(
+                "E0010",
+                SourceSpan::empty(source_id),
+                text,
+                format!(
+                    "the project exceeds the limit of {} modules",
+                    self.limits.max_modules
+                ),
             ));
         }
-        self.total_bytes = check_size(
-            &source.source_id,
-            source.text.len(),
-            self.total_bytes,
-            self.limits,
-        )?;
+        self.total_bytes = check_size(&source.id, &source.text, self.total_bytes, self.limits)?;
         let index = self.files.len();
-        self.indices.insert(source.source_id.clone(), index);
+        self.indices.insert(source.id.clone().into_owned(), index);
         self.files.push(LoadedSource {
-            source_id: source.source_id,
+            source_id: source.id.into_owned(),
             display_path,
-            text: source.text,
+            text: source.text.into_owned(),
             library,
         });
         self.edges.push(Vec::new());
@@ -245,11 +264,11 @@ impl Loader {
 
     /// Loads the library module at `path` if the resolver provides one, asking it once per
     /// path, and returns its index.
-    fn library<R: ModuleResolver>(
+    fn library(
         &mut self,
-        resolver: &mut R,
+        resolver: &dyn ModuleResolver,
         path: &str,
-    ) -> Result<Option<usize>, String> {
+    ) -> Result<Option<usize>, CompileError> {
         if let Some(index) = self.libraries.get(path) {
             return Ok(*index);
         }
@@ -267,20 +286,28 @@ struct ScannedSource<'a> {
     /// Its import declarations.
     imports: Vec<ImportDeclaration<'a>>,
     /// Every qualified path it spells whose first segment starts with a lowercase letter,
-    /// such as `exo::db::query`; library names are lowercase.
+    /// such as `app::db::query`; library names are lowercase.
     paths: Vec<String>,
 }
 
-/// Scans one source for its imports and the qualified paths it names, and renders its
-/// lexical diagnostics or the syntax diagnostics of its imports; the rest of the source is
-/// parsed once, later.
-fn scan_source<'a>(source_id: &'a str, text: &'a str) -> Result<ScannedSource<'a>, String> {
+/// Scans one source for its imports and the qualified paths it names. A source with lexical
+/// errors fails with them and its syntax errors, one with invalid imports with their syntax
+/// errors; the rest of a valid source is parsed once, later.
+fn scan_source<'a>(
+    source_id: &'a str,
+    text: &'a str,
+    max_nesting: usize,
+) -> Result<ScannedSource<'a>, CompileError> {
     let lexed = crate::lexer::lex(SourceInput { source_id, text });
     if !lexed.diagnostics.is_empty() {
-        return Err(lexed.diagnostics.render(text));
+        let lexical = CompileError::from_diagnostics(&lexed.diagnostics, text);
+        return Err(parse_tokens(source_id, text, lexed, false, max_nesting)
+            .err()
+            .unwrap_or(lexical));
     }
     let paths = qualified_paths(&lexed.tokens);
-    let imports = crate::parser::parse_imports(lexed.tokens).map_err(|error| error.render(text))?;
+    let imports = crate::parser::parse_imports(lexed.tokens)
+        .map_err(|error| CompileError::from_diagnostics(&error, text))?;
     Ok(ScannedSource { imports, paths })
 }
 
@@ -324,7 +351,7 @@ fn collect_paths(tokens: &[Token<'_>], paths: &mut Vec<String>) {
             path.push_str(segment);
             next += 2;
         }
-        // `use exo::{Record};` and `use log;` name a library by a single segment.
+        // `use app::{Record};` and `use log;` name a library by a single segment.
         let names_group = matches!(
             (
                 tokens.get(next).map(|token| &token.kind),
@@ -343,40 +370,75 @@ fn collect_paths(tokens: &[Token<'_>], paths: &mut Vec<String>) {
     }
 }
 
-/// Parses one non-root source module, nesting at most `max_nesting` levels deep, and renders
-/// lexical or syntax diagnostics.
+/// Parses one source module, nesting at most `max_nesting` levels deep; `require_main` asks it
+/// to declare a function.
 pub(crate) fn parse_source<'a>(
     source_id: &'a str,
     text: &'a str,
+    require_main: bool,
     max_nesting: usize,
-) -> Result<Module<'a>, String> {
+) -> Result<Module<'a>, CompileError> {
     let lexed = crate::lexer::lex(SourceInput { source_id, text });
-    if !lexed.diagnostics.is_empty() {
-        return Err(lexed.diagnostics.render(text));
-    }
-    crate::parser::parse_with_nesting(source_id, lexed.tokens, false, max_nesting)
-        .map_err(|error| error.render(text))
+    parse_tokens(source_id, text, lexed, require_main, max_nesting)
 }
 
-/// Checks the `bytes` of source `source_id` against the limits, given the `total` bytes of the
+/// Parses the tokens of `lexed`, failing with its lexical errors and the syntax errors in
+/// source order.
+fn parse_tokens<'a>(
+    source_id: &'a str,
+    text: &'a str,
+    lexed: crate::lexer::Lexed<'a>,
+    require_main: bool,
+    max_nesting: usize,
+) -> Result<Module<'a>, CompileError> {
+    let mut diagnostics = lexed.diagnostics;
+    let parsed =
+        crate::parser::parse_with_nesting(source_id, lexed.tokens, require_main, max_nesting);
+    let module = match parsed {
+        Ok(module) => Some(module),
+        Err(syntax) => {
+            diagnostics.extend(syntax);
+            None
+        }
+    };
+    match module {
+        Some(module) if diagnostics.is_empty() => Ok(module),
+        _ => {
+            diagnostics.sort_by_span();
+            Err(CompileError::from_diagnostics(&diagnostics, text))
+        }
+    }
+}
+
+/// Checks the source `text` of `source_id` against the limits, given the `total` bytes of the
 /// sources loaded before it, and returns the new total.
 fn check_size(
     source_id: &str,
-    bytes: usize,
+    text: &str,
     total: usize,
     limits: CompileLimits,
-) -> Result<usize, String> {
-    if bytes > limits.max_source_bytes {
-        return Err(format!(
-            "{source_id}: source exceeds the limit of {} bytes",
-            limits.max_source_bytes
+) -> Result<usize, CompileError> {
+    if text.len() > limits.max_source_bytes {
+        return Err(CompileError::at(
+            "E0010",
+            SourceSpan::empty(source_id),
+            text,
+            format!(
+                "source exceeds the limit of {} bytes",
+                limits.max_source_bytes
+            ),
         ));
     }
-    let total = total.saturating_add(bytes);
+    let total = total.saturating_add(text.len());
     if total > limits.max_total_source_bytes {
-        return Err(format!(
-            "{source_id}: the project's sources exceed the limit of {} bytes",
-            limits.max_total_source_bytes
+        return Err(CompileError::at(
+            "E0010",
+            SourceSpan::empty(source_id),
+            text,
+            format!(
+                "the project's sources exceed the limit of {} bytes",
+                limits.max_total_source_bytes
+            ),
         ));
     }
     Ok(total)

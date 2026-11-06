@@ -85,6 +85,7 @@ impl Serialize for JsonOutput<'_> {
                 "the Error `{}` has no JSON form",
                 error.kind
             ))),
+            _ => Err(S::Error::custom("this value has no JSON form")),
         }
     }
 }

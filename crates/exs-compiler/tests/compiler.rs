@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use exs_compiler::{
-    CompileOptions, ModuleResolver, ResolvedSource, SourceInput, compile, compile_with_resolver,
-    document_with_resolver, format, read_debug_info,
+    CompileOptions, ModuleResolver, Source, compile, document, format, read_debug_info,
 };
 use wasmparser::{Parser, Payload, Validator};
 
@@ -39,13 +38,13 @@ struct TestResolver {
 
 impl ModuleResolver for TestResolver {
     /// Resolves a test import through the preconfigured source table.
-    fn resolve(&mut self, _importer: &str, path: &str) -> Result<ResolvedSource, String> {
+    fn resolve(&self, _importer: &str, path: &str) -> Result<Source<'_>, String> {
         let source_id = path.to_owned();
         let text = self
             .sources
             .get(&source_id)
             .cloned()
             .ok_or_else(|| format!("missing test source {path}"))?;
-        Ok(ResolvedSource { source_id, text })
+        Ok(Source::new(source_id, text))
     }
 }

@@ -1,18 +1,29 @@
 [package]
 name = "exs-guest"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Write ExS extensions in Rust: WebAssembly guests that any ExS runner executes"
+keywords = ["exs", "guest", "wasm", "extension"]
+categories = ["wasm", "no-std"]
 
 [lints]
 workspace = true
 
 [features]
 default = ["std"]
+# Without it, a guest for wasm32 is `no_std` and this crate supplies its allocator and panic
+# handler.
 std = []
-no-std = []
+# Adds `decode` and `encode`, which convert between Rust types and `ExsValue`.
+serde = ["dep:serde", "exs-abi/serde"]
 
 [dependencies]
 dlmalloc.workspace = true
-exs-abi = { path = "../exs-abi" }
+exs-abi.workspace = true
+serde = { workspace = true, optional = true }
+
+[package.metadata.docs.rs]
+features = ["serde"]

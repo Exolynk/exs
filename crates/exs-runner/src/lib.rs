@@ -20,9 +20,9 @@ use self::limits::ExecutionLimits;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, BoundaryError, CANCEL_EXPORT, INPUT_ALLOC_EXPORT,
-    RESULT_IMAGE_EXPORT, RESUME_HOST_EXPORT, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
-    RUNNER_TASK_RELEASE_IMPORT, START_EXPORT_PREFIX, STATUS_CANCELLED, STATUS_COMPLETE,
-    STATUS_PENDING,
+    MIN_SUPPORTED_ABI_VERSION, RESULT_IMAGE_EXPORT, RESUME_HOST_EXPORT, RUNNER_IMPORT_MODULE,
+    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, START_EXPORT_PREFIX, STATUS_CANCELLED,
+    STATUS_COMPLETE, STATUS_PENDING,
 };
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use wasmtime::{Instance, Module, Store};
@@ -34,7 +34,10 @@ use wasmtime::{Instance, Module, Store};
 mod arguments;
 #[cfg(all(feature = "browser", target_arch = "wasm32"))]
 mod browser;
-#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+#[cfg(any(
+    all(feature = "server", not(target_arch = "wasm32")),
+    all(feature = "browser", target_arch = "wasm32")
+))]
 mod cancellation;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod compiler;
@@ -42,8 +45,6 @@ mod compiler;
 mod config;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod deadline;
-#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-mod direct;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod guest_limiter;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -64,17 +65,15 @@ mod limits;
 mod module_cache;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod registry;
-#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+#[cfg(any(
+    all(feature = "server", not(target_arch = "wasm32")),
+    all(feature = "browser", target_arch = "wasm32")
+))]
 mod report;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 mod timer;
 #[cfg(feature = "serde")]
 mod typed_registry;
-#[cfg(any(
-    all(feature = "server", not(target_arch = "wasm32")),
-    all(feature = "browser", target_arch = "wasm32")
-))]
-mod value_reader;
 
 #[cfg(all(feature = "browser", target_arch = "wasm32"))]
 pub use self::browser::{
@@ -82,8 +81,11 @@ pub use self::browser::{
     BrowserHostStreamFuture, BrowserHostStreamItem, BrowserRegistryError, BrowserRunner,
     BrowserRunnerConfig,
 };
-#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
-pub use self::cancellation::ExecutionCancellation;
+#[cfg(any(
+    all(feature = "server", not(target_arch = "wasm32")),
+    all(feature = "browser", target_arch = "wasm32")
+))]
+pub use self::cancellation::{ExecutionCancellation, ExecutionOptions};
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::compiler::CompilerStrategy;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
@@ -98,7 +100,10 @@ pub use self::limits::{LimitKind, ProtectionLevel};
 pub use self::module_cache::SharedModuleCache;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::registry::{HostFunctionRegistry, RegistryError};
-#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+#[cfg(any(
+    all(feature = "server", not(target_arch = "wasm32")),
+    all(feature = "browser", target_arch = "wasm32")
+))]
 pub use self::report::ExecutionReport;
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 pub use self::timer::RunnerTimer;
@@ -165,25 +170,33 @@ impl ServerRunner {
         wasm: &[u8],
         function: &str,
         inputs: &[ExsValue],
-        cancellation: &ExecutionCancellation,
     ) -> Result<ExsValue, RunnerError> {
-        self.execute_with_report(wasm, function, inputs, cancellation)
+        self.execute_with(wasm, function, inputs, &ExecutionOptions::default())
             .await
             .map(|report| report.value)
     }
 
-    /// Executes one named public function like [`Self::execute`] and reports consumed fuel.
+    /// Executes one named public function like [`Self::execute`] under `options` and reports its
+    /// resource usage.
     ///
     /// # Errors
     ///
-    /// Returns the same errors as [`Self::execute`].
-    pub async fn execute_with_report(
+    /// Returns the same errors as [`Self::execute`], and `Cancelled` once its cancellation fires.
+    pub async fn execute_with(
         &self,
         wasm: &[u8],
         function: &str,
         inputs: &[ExsValue],
-        cancellation: &ExecutionCancellation,
+        options: &ExecutionOptions,
     ) -> Result<ExecutionReport, RunnerError> {
+        let never_cancelled;
+        let cancellation = match &options.cancellation {
+            Some(cancellation) => cancellation,
+            None => {
+                never_cancelled = ExecutionCancellation::new();
+                &never_cancelled
+            }
+        };
         if cancellation.is_cancelled() {
             return Err(RunnerError::Cancelled);
         }
@@ -220,15 +233,13 @@ impl ServerRunner {
             .await
             .map_err(wasmtime_error)?;
         check_abi(&mut store, &instance).await?;
-        if direct::is_direct(&mut store, &instance) {
-            store.data_mut().use_direct_boundary();
-        } else if instance
+        store.data_mut().refuse_memory_growth();
+        if instance
             .get_typed_func::<(), i64>(&mut store, RESULT_IMAGE_EXPORT)
             .is_err()
         {
             return Err(RunnerError::Abi(format!(
-                "module exports neither `{}` nor `{RESULT_IMAGE_EXPORT}`",
-                exs_abi::RESULT_VALUE_EXPORT
+                "module does not export `{RESULT_IMAGE_EXPORT}`"
             )));
         }
         let compile_time = execution_started_at.elapsed();
@@ -260,11 +271,9 @@ impl ServerRunner {
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
                     }
-                    let result = if store.data().boundary() == host_abi::Boundary::Direct {
-                        direct::result(&mut store, &instance, &self.limits).await?
-                    } else {
-                        result(&mut store, &instance, &self.limits).await?
-                    };
+                    let result = result(&mut store, &instance, &self.limits)
+                        .await
+                        .map_err(|error| result_error(&store, error))?;
                     let execution_time = run_started_at.elapsed();
                     if deadline.is_expired() {
                         return Err(RunnerError::LimitExceeded(LimitKind::Timeout));
@@ -370,6 +379,7 @@ impl Default for ServerRunner {
 
 /// A technical error from Wasm loading or execution.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RunnerError {
     /// The root execution exceeded one configured hard resource limit.
     LimitExceeded(LimitKind),
@@ -377,6 +387,15 @@ pub enum RunnerError {
     Wasm(String),
     /// A mandatory ABI export was absent or incompatible.
     Abi(String),
+    /// The module was built for an ABI version outside the range this runner executes.
+    AbiMismatch {
+        /// The ABI version the module reports.
+        module: i32,
+        /// The oldest ABI version the runner executes.
+        min: u32,
+        /// The newest ABI version the runner executes.
+        max: u32,
+    },
     /// The runner cannot make progress because no host completion can resume the scheduler.
     Deadlock(String),
     /// The caller cancelled the currently pending execution.
@@ -391,6 +410,10 @@ impl fmt::Display for RunnerError {
             Self::LimitExceeded(kind) => write!(formatter, "execution limit exceeded: {kind}"),
             Self::Wasm(message) => write!(formatter, "WebAssembly error: {message}"),
             Self::Abi(message) => write!(formatter, "ABI error: {message}"),
+            Self::AbiMismatch { module, min, max } => write!(
+                formatter,
+                "module uses ABI version {module}, this runner executes versions {min} to {max}"
+            ),
             Self::Deadlock(message) => write!(formatter, "scheduler deadlock: {message}"),
             Self::Cancelled => formatter.write_str("execution cancelled"),
             Self::Status(status) => write!(formatter, "unexpected execution status: {status}"),
@@ -561,7 +584,7 @@ async fn write_response(
     Ok((pointer, length))
 }
 
-/// Decodes the result image of a completed Rust guest.
+/// Decodes the result image of a completed module.
 #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 async fn result(
     store: &mut Store<host_abi::HostAbiState>,
@@ -590,6 +613,17 @@ async fn result(
         BoundaryError::PayloadLimitExceeded => RunnerError::LimitExceeded(LimitKind::Result),
         error => boundary_error(error, "invalid result image"),
     })
+}
+
+/// Reports a module that ran out of memory writing its result image as the memory limit.
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+fn result_error(store: &Store<host_abi::HostAbiState>, error: RunnerError) -> RunnerError {
+    match error {
+        RunnerError::Wasm(_) if store.data().memory_refused() => {
+            RunnerError::LimitExceeded(LimitKind::Memory)
+        }
+        error => error,
+    }
 }
 
 /// Encodes ordered main arguments and writes them to the runtime-owned input buffer.
@@ -654,10 +688,12 @@ async fn check_abi(
         .call_async(&mut *store, ())
         .await
         .map_err(wasmtime_error)?;
-    if version != ABI_VERSION.cast_signed() {
-        return Err(RunnerError::Abi(format!(
-            "expected ABI version {ABI_VERSION}, received {version}"
-        )));
+    if !(MIN_SUPPORTED_ABI_VERSION.cast_signed()..=ABI_VERSION.cast_signed()).contains(&version) {
+        return Err(RunnerError::AbiMismatch {
+            module: version,
+            min: MIN_SUPPORTED_ABI_VERSION,
+            max: ABI_VERSION,
+        });
     }
     Ok(())
 }

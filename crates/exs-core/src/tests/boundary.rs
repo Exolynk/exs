@@ -4,7 +4,7 @@ use exs_abi::{BoundaryLimits, ExsValue};
 use exs_layout::ValueRef;
 
 use super::heap::{VM, VecMemory};
-use super::walk::walked;
+use super::image_writer::written;
 use crate::{Memory, Number, image_inputs, init_execution, number, reserve_input};
 
 /// Address of the root slots receiving decoded arguments in these tests.
@@ -80,16 +80,16 @@ fn encodes_scalar_results() {
         i64::MAX,
     ] {
         let raw = crate::int_value(&mut memory, VM, value).expect("memory has room");
-        assert_eq!(walked(&memory, VM, raw), Ok(ExsValue::Int(value)));
+        assert_eq!(written(&mut memory, VM, raw), Ok(ExsValue::Int(value)));
     }
     let raw = crate::float_value(&mut memory, VM, -2.25).expect("memory has room");
-    assert_eq!(walked(&memory, VM, raw), Ok(ExsValue::Float(-2.25)));
+    assert_eq!(written(&mut memory, VM, raw), Ok(ExsValue::Float(-2.25)));
     for (raw, expected) in [
         (ValueRef::NONE.raw(), ExsValue::None),
         (ValueRef::FALSE.raw(), ExsValue::Bool(false)),
         (ValueRef::TRUE.raw(), ExsValue::Bool(true)),
     ] {
-        assert_eq!(walked(&memory, VM, raw), Ok(expected));
+        assert_eq!(written(&mut memory, VM, raw), Ok(expected));
     }
 }
 
@@ -102,6 +102,9 @@ fn round_trips_strings() {
         let raw = memory.load_u64(SLOTS);
         let object = crate::string_object(raw).expect("decoded a String");
         assert_eq!(memory.load_u32(object + 4), text.chars().count() as u32);
-        assert_eq!(walked(&memory, VM, raw), Ok(ExsValue::String(text.into())));
+        assert_eq!(
+            written(&mut memory, VM, raw),
+            Ok(ExsValue::String(text.into()))
+        );
     }
 }

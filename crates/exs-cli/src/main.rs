@@ -11,11 +11,10 @@ use std::process::ExitCode;
 use std::task::{Context, Poll, Waker};
 
 use exs_compiler::{
-    CompileOptions, MarkdownOptions, ModuleDebugInfo, ModuleResolver, ResolvedSource, SourceInput,
-    compile_tests_with_resolver, compile_with_resolver, document_with_resolver, format, has_tests,
-    read_debug_info,
+    CompileOptions, MarkdownOptions, ModuleDebugInfo, ModuleResolver, Source, compile,
+    compile_tests, document, format, read_debug_info, test_descriptions,
 };
-use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
+use exs_runner::{ExsValue, ServerRunner};
 
 /// Runs the `ExS` command-line interface.
 fn main() -> ExitCode {
@@ -34,6 +33,10 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         return Err(usage());
     };
     match command {
+        "--version" | "-V" if arguments.len() == 1 => {
+            println!("exs {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         "check" if arguments.len() == 2 => {
             let _module = compile_source(&arguments[1], CompileOptions::default())?;
             Ok(())
@@ -79,14 +82,12 @@ fn generate_docs(path: &str, output: &str) -> Result<(), String> {
     let canonical =
         fs::canonicalize(path).map_err(|error| format!("could not resolve {path}: {error}"))?;
     let source_id = canonical.to_string_lossy().into_owned();
-    let mut resolver = FileResolver;
-    let documentation = document_with_resolver(
-        SourceInput {
-            source_id: &source_id,
-            text: &source,
-        },
-        &mut resolver,
-    )?
+    let resolver = FileResolver;
+    let documentation = document(
+        Source::new(&source_id, &source),
+        CompileOptions::default().resolver(&resolver),
+    )
+    .map_err(|error| error.to_string())?
     .markdown(&MarkdownOptions::default());
     let output = Path::new(output);
     for page in documentation.pages {
@@ -109,14 +110,12 @@ fn generate_llm_docs(path: &str, output: &str) -> Result<(), String> {
     let canonical =
         fs::canonicalize(path).map_err(|error| format!("could not resolve {path}: {error}"))?;
     let source_id = canonical.to_string_lossy().into_owned();
-    let mut resolver = FileResolver;
-    let documentation = document_with_resolver(
-        SourceInput {
-            source_id: &source_id,
-            text: &source,
-        },
-        &mut resolver,
-    )?
+    let resolver = FileResolver;
+    let documentation = document(
+        Source::new(&source_id, &source),
+        CompileOptions::default().resolver(&resolver),
+    )
+    .map_err(|error| error.to_string())?
     .llm();
     fs::write(output, documentation).map_err(|error| format!("could not write {output}: {error}"))
 }
@@ -125,11 +124,7 @@ fn generate_llm_docs(path: &str, output: &str) -> Result<(), String> {
 fn format_file(path: &str) -> Result<(), String> {
     let source =
         fs::read_to_string(path).map_err(|error| format!("could not read {path}: {error}"))?;
-    let formatted = format(SourceInput {
-        source_id: path,
-        text: &source,
-    })
-    .map_err(|error| error.render(&source))?;
+    let formatted = format(Source::new(path, &source)).map_err(|error| error.to_string())?;
     fs::write(path, formatted).map_err(|error| format!("could not write {path}: {error}"))
 }
 
@@ -143,15 +138,12 @@ fn compile_source(
     let canonical =
         fs::canonicalize(path).map_err(|error| format!("could not resolve {path}: {error}"))?;
     let source_id = canonical.to_string_lossy().into_owned();
-    let mut resolver = FileResolver;
-    compile_with_resolver(
-        SourceInput {
-            source_id: &source_id,
-            text: &source,
-        },
-        options,
-        &mut resolver,
+    let resolver = FileResolver;
+    compile(
+        Source::new(&source_id, &source),
+        options.resolver(&resolver),
     )
+    .map_err(|error| error.to_string())
 }
 
 /// Compiles one test-bearing source file with its internal test dispatcher entry point.
@@ -161,18 +153,17 @@ fn compile_tests_source(path: &Path) -> Result<exs_compiler::CompiledTests, Stri
     let canonical = fs::canonicalize(path)
         .map_err(|error| format!("could not resolve {}: {error}", path.display()))?;
     let source_id = canonical.to_string_lossy().into_owned();
-    let mut resolver = FileResolver;
-    compile_tests_with_resolver(
-        SourceInput {
-            source_id: &source_id,
-            text: &source,
-        },
-        CompileOptions {
-            embed_sources: true,
-            ..CompileOptions::default()
-        },
-        &mut resolver,
+    let resolver = FileResolver;
+    compile_tests(
+        Source::new(&source_id, &source),
+        {
+            let mut options = CompileOptions::default();
+            options.embed_sources = true;
+            options
+        }
+        .resolver(&resolver),
     )
+    .map_err(|error| error.to_string())
 }
 
 /// Discovers, compiles, and executes source tests below one optional path.
@@ -180,7 +171,6 @@ fn run_tests(path: Option<&str>) -> Result<(), String> {
     let root = Path::new(path.unwrap_or("."));
     let sources = discover_test_sources(root)?;
     let runner = cli_runner()?;
-    let cancellation = ExecutionCancellation::new();
     let mut passed = 0_usize;
     let mut failed = 0_usize;
     for source in sources {
@@ -189,12 +179,8 @@ fn run_tests(path: Option<&str>) -> Result<(), String> {
         for (index, test) in compiled.tests.iter().enumerate() {
             let test_index = i64::try_from(index)
                 .map_err(|_| format!("{}: too many tests", source.display()))?;
-            let result = block_on(runner.execute(
-                &compiled.wasm,
-                "main",
-                &[ExsValue::Int(test_index)],
-                &cancellation,
-            ));
+            let result =
+                block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(test_index)]));
             match result {
                 Ok(ExsValue::Error(error)) => {
                     failed += 1;
@@ -270,11 +256,9 @@ fn is_test_source(path: &Path) -> Result<bool, String> {
     }
     let source = fs::read_to_string(path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    has_tests(SourceInput {
-        source_id: &path.to_string_lossy(),
-        text: &source,
-    })
-    .map_err(|error| format!("{}: {error}", path.display()))
+    test_descriptions(Source::new(path.to_string_lossy(), &source))
+        .map(|descriptions| !descriptions.is_empty())
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Resolves CLI imports through canonical local filesystem paths and provides the
@@ -283,7 +267,7 @@ struct FileResolver;
 
 impl ModuleResolver for FileResolver {
     /// Resolves one relative `.exs` import and reads its UTF-8 contents.
-    fn resolve(&mut self, importer: &str, path: &str) -> Result<ResolvedSource, String> {
+    fn resolve(&self, importer: &str, path: &str) -> Result<Source<'_>, String> {
         if !path.starts_with("./") && !path.starts_with("../") {
             return Err("imports must use a relative `./` or `../` path".to_owned());
         }
@@ -300,22 +284,16 @@ impl ModuleResolver for FileResolver {
             .map_err(|error| format!("could not resolve file: {error}"))?;
         let text =
             fs::read_to_string(&path).map_err(|error| format!("could not read file: {error}"))?;
-        Ok(ResolvedSource {
-            source_id: path.to_string_lossy().into_owned(),
-            text,
-        })
+        Ok(Source::new(path.to_string_lossy().into_owned(), text))
     }
 
     /// Returns the `exs-libs` library at `path`, such as `json` or `url`.
-    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
-        exs_libs::source(path).map(|text| ResolvedSource {
-            source_id: path.to_owned(),
-            text: text.to_owned(),
-        })
+    fn library(&self, path: &str) -> Option<Source<'_>> {
+        exs_libs::source(path).map(|text| Source::new(path.to_owned(), text.to_owned()))
     }
 
     /// Returns every `exs-libs` library.
-    fn libraries(&mut self) -> Vec<String> {
+    fn libraries(&self) -> Vec<String> {
         exs_libs::libraries()
     }
 }
@@ -328,20 +306,17 @@ fn run_program(path: &str, function: &str, inputs: &[exs_runner::ExsValue]) -> R
     {
         fs::read(path).map_err(|error| format!("could not read {path}: {error}"))?
     } else {
-        compile_source(
-            path,
-            CompileOptions {
-                embed_sources: true,
-                ..CompileOptions::default()
-            },
-        )?
+        compile_source(path, {
+            let mut options = CompileOptions::default();
+            options.embed_sources = true;
+            options
+        })?
         .wasm
     };
     let debug_info = read_debug_info(&wasm).ok();
     let runner = cli_runner()?;
-    let cancellation = ExecutionCancellation::new();
-    let result = block_on(runner.execute(&wasm, function, inputs, &cancellation))
-        .map_err(|error| error.to_string())?;
+    let result =
+        block_on(runner.execute(&wasm, function, inputs)).map_err(|error| error.to_string())?;
     match result {
         exs_runner::ExsValue::Error(error) => Err(format_error(&error, debug_info.as_ref())),
         result => {
@@ -478,6 +453,7 @@ fn format_result(result: &exs_runner::ExsValue) -> String {
                 format!("{type_name}::{variant}({fields})")
             }
         }
+        _ => "<unknown value>".to_owned(),
     }
 }
 
@@ -623,5 +599,5 @@ fn line_and_column(source: &str, offset: u32) -> (usize, usize) {
 
 /// Returns CLI usage text.
 fn usage() -> String {
-    "usage: exs check <file.exs> | exs fmt <file.exs> | exs docs <file.exs> -o <directory> | exs docs <file.exs> -o <file.md> --llm | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...] | exs call <file.exs|file.wasm> <function> [-- <value> ...] | exs test [file.exs|directory]".to_owned()
+    "usage: exs --version | exs check <file.exs> | exs fmt <file.exs> | exs docs <file.exs> -o <directory> | exs docs <file.exs> -o <file.md> --llm | exs compile <file.exs> -o <file.wasm> | exs run <file.exs|file.wasm> [-- <value> ...] | exs call <file.exs|file.wasm> <function> [-- <value> ...] | exs test [file.exs|directory]".to_owned()
 }

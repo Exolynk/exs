@@ -7,8 +7,8 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use exs_abi::ExsValue;
-use exs_compiler::{CompileOptions, SourceInput, compile};
-use exs_runner::{ExecutionCancellation, ServerRunner};
+use exs_compiler::{CompileOptions, Source, compile};
+use exs_runner::ServerRunner;
 
 /// Compiles source text for native runner integration tests; the sources are trusted, so
 /// only their nesting is limited, not their size.
@@ -16,13 +16,7 @@ pub fn compile_source(source: &str) -> exs_compiler::CompiledModule {
     let mut options = CompileOptions::default();
     options.limits.max_source_bytes = usize::MAX;
     options.limits.max_total_source_bytes = usize::MAX;
-    match compile(
-        SourceInput {
-            source_id: "test.exs",
-            text: source,
-        },
-        options,
-    ) {
+    match compile(Source::new("test.exs", source), options) {
         Ok(module) => module,
         Err(error) => panic!("compilation failed: {error}"),
     }
@@ -37,8 +31,7 @@ pub fn execute_source(source: &str, input: ExsValue) -> ExsValue {
 pub fn execute_source_with_inputs(source: &str, inputs: &[ExsValue]) -> ExsValue {
     let compiled = compile_source(source);
     let runner = ServerRunner::default();
-    let cancellation = ExecutionCancellation::new();
-    match block_on(runner.execute(&compiled.wasm, "main", inputs, &cancellation)) {
+    match block_on(runner.execute(&compiled.wasm, "main", inputs)) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     }

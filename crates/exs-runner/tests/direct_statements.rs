@@ -4,7 +4,7 @@
 mod support;
 
 use exs_abi::ExsValue;
-use exs_runner::{ExecutionCancellation, ServerRunner};
+use exs_runner::ServerRunner;
 use support::{block_on, compile_source};
 
 /// Runs `main` of `source` with `inputs`, once as written and once with `{HOST}` replaced by
@@ -22,12 +22,7 @@ fn run_both(source: &str, inputs: &[ExsValue]) -> (ExsValue, ExsValue) {
                 })
                 .is_ok()
         );
-        match block_on(runner.execute(
-            &compiled.wasm,
-            "main",
-            inputs,
-            &ExecutionCancellation::new(),
-        )) {
+        match block_on(runner.execute(&compiled.wasm, "main", inputs)) {
             Ok(result) => result,
             Err(error) => panic!("execution failed: {error}"),
         }
@@ -248,12 +243,7 @@ fn interleaves_parallel_tasks_with_long_loops() {
         "#,
     );
     let runner = ServerRunner::default();
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };

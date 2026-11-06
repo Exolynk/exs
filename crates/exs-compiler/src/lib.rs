@@ -1,5 +1,7 @@
 //! `ExS` source compiler.
 
+use std::fmt;
+
 mod ast;
 mod codegen;
 mod constants;
@@ -15,15 +17,14 @@ mod loaded_project;
 mod module_graph;
 mod parser;
 mod prelude;
+mod sources;
 
 pub use codegen::source_map::{
     DebugInfoError, EmbeddedSource, FunctionDebugInfo, ModuleDebugInfo, SourcePosition,
     read_debug_info,
 };
-pub use diagnostic::{
-    CompileDiagnostic, CompileDiagnosticCategory, CompileDiagnostics, CompileFailure, RelatedSpan,
-    SourceDiagnostic, SourceSpan,
-};
+pub use diagnostic::{CompileError, SourceDiagnostic};
+pub(crate) use diagnostic::{RelatedSpan, SourceSpan};
 pub use documentation::{
     ApiDocumentation, CompactForm, ItemDocs, ItemKind, ItemRef, MarkdownOptions, MemberDocs,
     ModuleDocs, ModuleOrigin, PageInfo, PageKind, PageLayout, SectionDocs, StandardEnum,
@@ -37,27 +38,58 @@ pub use highlighting::{
     highlight, source_lex, tokens,
 };
 pub use limits::CompileLimits;
+pub use sources::{Source, Sources};
 
-/// Immutable source input supplied to the compiler.
+/// The borrowed source text the compiler passes work on.
 #[derive(Debug, Clone, Copy)]
-pub struct SourceInput<'a> {
+pub(crate) struct SourceInput<'a> {
     /// The human-readable source identity used in diagnostics.
-    pub source_id: &'a str,
+    pub(crate) source_id: &'a str,
     /// UTF-8 `ExS` source text.
-    pub text: &'a str,
+    pub(crate) text: &'a str,
 }
 
-/// Compiler options controlling optional executable-module metadata.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CompileOptions {
+/// How one source compiles.
+#[derive(Clone, Copy, Default)]
+#[non_exhaustive]
+pub struct CompileOptions<'a> {
     /// Whether to embed the original source text in the `exs.sources` custom section.
     pub embed_sources: bool,
     /// Resource limits of the compilation.
     pub limits: CompileLimits,
+    /// Provides the imports and library modules the source names.
+    resolver: Option<&'a dyn ModuleResolver>,
+}
+
+impl fmt::Debug for CompileOptions<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CompileOptions")
+            .field("embed_sources", &self.embed_sources)
+            .field("limits", &self.limits)
+            .field("resolver", &self.resolver.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> CompileOptions<'a> {
+    /// Returns these options with `resolver` providing the imports and library modules; without
+    /// one, a source can use neither.
+    #[must_use]
+    pub fn resolver(mut self, resolver: &'a dyn ModuleResolver) -> Self {
+        self.resolver = Some(resolver);
+        self
+    }
+
+    /// Returns the resolver of the compilation.
+    pub(crate) fn module_resolver(&self) -> &'a dyn ModuleResolver {
+        self.resolver.unwrap_or(&NoResolver)
+    }
 }
 
 /// A linked, executable `ExS` WebAssembly module.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CompiledModule {
     /// The complete linked WebAssembly module.
     pub wasm: Vec<u8>,
@@ -65,6 +97,7 @@ pub struct CompiledModule {
 
 /// One test case compiled into a test executable module.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct CompiledTest {
     /// Human-readable test description written in source.
     pub description: String,
@@ -72,6 +105,7 @@ pub struct CompiledTest {
 
 /// A compiled executable module and its source-declared test cases.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CompiledTests {
     /// The complete linked WebAssembly module with an internal test dispatcher entry point.
     pub wasm: Vec<u8>,
@@ -90,131 +124,89 @@ pub struct DocumentationPage {
 
 /// Generated Markdown documentation pages.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Documentation {
     /// The index page, then one page per module and, in the per-item layout, one page per
     /// type, enum, trait, and namespace.
     pub pages: Vec<DocumentationPage>,
 }
 
-/// One source file returned by a module resolver.
-#[derive(Debug, Clone)]
-pub struct ResolvedSource {
-    /// Canonical, stable identity of the resolved source file.
-    pub source_id: String,
-    /// UTF-8 `ExS` source text.
-    pub text: String,
-}
-
-/// Loads a relative import without coupling the compiler to a storage system.
+/// Tells the compiler where the code a source names comes from: the application decides how
+/// imports and library modules load, and a script reaches nothing else.
+///
+/// [`Sources`] implements it for sources known up front.
 pub trait ModuleResolver {
     /// Resolves `path` relative to the source identified by `importer`.
-    fn resolve(&mut self, importer: &str, path: &str) -> Result<ResolvedSource, String>;
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the import cannot load, which the compilation reports at the import.
+    fn resolve(&self, importer: &str, path: &str) -> Result<Source<'_>, String>;
 
-    /// Returns the library module at `path`, such as `log` or `exo::db`, which every module
+    /// Returns the library module at `path`, such as `log` or `app::db`, which every module
     /// may name without importing it, or `None` when the embedder provides no library module
     /// there. Library names start with a lowercase letter.
-    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
+    fn library(&self, path: &str) -> Option<Source<'_>> {
         let _ = path;
         None
     }
 
     /// Returns the path of every library module the embedder provides, such as `log` and
-    /// `exo::db`; [`document_libraries`] documents them. The default provides none.
-    fn libraries(&mut self) -> Vec<String> {
+    /// `app::db`; [`document_libraries`] documents them. The default provides none.
+    fn libraries(&self) -> Vec<String> {
         Vec::new()
     }
 }
 
-/// Compiles one `ExS` module against the core library template.
-pub fn compile<'a>(
-    source: SourceInput<'a>,
-    options: CompileOptions,
-) -> Result<CompiledModule, CompileDiagnostics<'a>> {
-    if source.text.len() > options.limits.max_source_bytes {
-        return Err(CompileDiagnostics::from(CompileDiagnostic::new(
-            "E0010",
-            SourceSpan::empty(source.source_id),
-            format!(
-                "source exceeds the limit of {} bytes",
-                options.limits.max_source_bytes
-            ),
-        )));
+/// The resolver of a compilation without one, which provides nothing.
+struct NoResolver;
+
+impl ModuleResolver for NoResolver {
+    fn resolve(&self, _importer: &str, _path: &str) -> Result<Source<'_>, String> {
+        Err("this compilation has no resolver; see `CompileOptions::resolver`".to_owned())
     }
-    let lexed = lexer::lex(source);
-    let mut diagnostics = lexed.diagnostics;
-    let parsed = parser::parse_with_nesting(
-        source.source_id,
-        lexed.tokens,
-        true,
-        options.limits.max_nesting,
-    );
-    let mut module = match parsed {
-        Ok(module) => module,
-        Err(parser_diagnostics) => {
-            diagnostics.extend(parser_diagnostics);
-            diagnostics.sort_by_span();
-            return Err(diagnostics);
-        }
-    };
-    if !diagnostics.is_empty() {
-        diagnostics.sort_by_span();
-        return Err(diagnostics);
-    }
-    module_graph::hide_prelude_private(&mut module);
-    constants::inline_single(&mut module)?;
-    let mut prelude = prelude::parse()?;
-    prelude.types.append(&mut module.types);
-    prelude.enums.append(&mut module.enums);
-    prelude.traits.append(&mut module.traits);
-    prelude.implementations.append(&mut module.implementations);
-    let mut functions = std::mem::take(&mut module.functions);
-    functions.append(&mut prelude.functions);
-    prelude.functions = functions;
-    let mut sources = prelude::source_inputs();
-    sources.push(source);
-    let wasm = codegen::compile_project_module(&mut prelude, &sources, options)?;
-    Ok(CompiledModule { wasm })
 }
 
-/// Compiles an entry source and every file reachable through its imports.
-///
-/// The resolver owns path resolution, source loading, and canonical source identities.
+/// Compiles an entry source and everything the resolver of `options` provides for it.
 ///
 /// # Errors
 ///
-/// Returns a rendered diagnostic report when parsing, resolution, or compilation fails.
-pub fn compile_with_resolver<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
-) -> Result<CompiledModule, String> {
-    module_graph::compile(source, options, resolver)
+/// Returns the rendered report and the located diagnostics when parsing, resolution, or
+/// compilation fails.
+pub fn compile(
+    source: Source<'_>,
+    options: CompileOptions<'_>,
+) -> Result<CompiledModule, CompileError> {
+    module_graph::compile(source.input(), options)
 }
 
-/// Determines whether one source unit declares at least one source test.
+/// Compiles the test dispatcher of a source like [`compile`], with an internal entry point for
+/// the tests the entry source declares.
 ///
 /// # Errors
 ///
-/// Returns rendered lexer or parser diagnostics when the source is invalid.
-pub fn has_tests(source: SourceInput<'_>) -> Result<bool, String> {
-    let lexed = lexer::lex(source);
-    if !lexed.diagnostics.is_empty() {
-        return Err(lexed.diagnostics.render(source.text));
-    }
-    parser::parse(source.source_id, lexed.tokens, false)
-        .map(|module| !module.tests.is_empty())
-        .map_err(|error| error.render(source.text))
+/// Returns the rendered report and the located diagnostics when parsing, resolution, or
+/// compilation fails.
+pub fn compile_tests(
+    source: Source<'_>,
+    options: CompileOptions<'_>,
+) -> Result<CompiledTests, CompileError> {
+    module_graph::compile_tests(source.input(), options)
 }
 
 /// Returns source-declared test descriptions in declaration order.
 ///
 /// # Errors
 ///
-/// Returns rendered lexer or parser diagnostics when the source is invalid.
-pub fn test_descriptions(source: SourceInput<'_>) -> Result<Vec<String>, String> {
+/// Returns the rendered report and the located diagnostics when the source is invalid.
+pub fn test_descriptions(source: Source<'_>) -> Result<Vec<String>, CompileError> {
+    let source = source.input();
     let lexed = lexer::lex(source);
     if !lexed.diagnostics.is_empty() {
-        return Err(lexed.diagnostics.render(source.text));
+        return Err(CompileError::from_diagnostics(
+            &lexed.diagnostics,
+            source.text,
+        ));
     }
     parser::parse(source.source_id, lexed.tokens, false)
         .map(|module| {
@@ -224,37 +216,7 @@ pub fn test_descriptions(source: SourceInput<'_>) -> Result<Vec<String>, String>
                 .map(|test| test.description)
                 .collect()
         })
-        .map_err(|error| error.render(source.text))
-}
-
-/// Compiles an entry source and every file reachable through its imports, keeping the
-/// diagnostics of the entry source with their positions.
-///
-/// # Errors
-///
-/// Returns the rendered report and the located entry-source diagnostics when parsing,
-/// resolution, or compilation fails.
-pub fn compile_with_resolver_diagnostics<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
-) -> Result<CompiledModule, CompileFailure> {
-    module_graph::compile_detailed(source, options, resolver)
-}
-
-/// Compiles the test dispatcher of one source graph, keeping the diagnostics of the entry
-/// source with their positions.
-///
-/// # Errors
-///
-/// Returns the rendered report and the located entry-source diagnostics when parsing,
-/// resolution, or compilation fails.
-pub fn compile_tests_with_resolver_diagnostics<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
-) -> Result<CompiledTests, CompileFailure> {
-    module_graph::compile_tests_detailed(source, options, resolver)
+        .map_err(|error| CompileError::from_diagnostics(&error, source.text))
 }
 
 /// Checks the lexical and syntactic validity of one source unit.
@@ -263,28 +225,15 @@ pub fn compile_tests_with_resolver_diagnostics<R: ModuleResolver>(
 /// compiles, and it does not require `fn main()`. Semantic errors are reported by the
 /// compilation functions.
 #[must_use]
-pub fn check_syntax(source: SourceInput<'_>) -> Vec<SourceDiagnostic> {
+pub fn check_syntax(source: Source<'_>) -> Vec<SourceDiagnostic> {
+    let source = source.input();
     let lexed = lexer::lex(source);
-    if !lexed.diagnostics.is_empty() {
-        return SourceDiagnostic::located_in(&lexed.diagnostics, source.source_id);
+    let mut diagnostics = lexed.diagnostics;
+    if let Err(syntax) = parser::parse(source.source_id, lexed.tokens, false) {
+        diagnostics.extend(syntax);
     }
-    match parser::parse(source.source_id, lexed.tokens, false) {
-        Ok(_) => Vec::new(),
-        Err(diagnostics) => SourceDiagnostic::located_in(&diagnostics, source.source_id),
-    }
-}
-
-/// Compiles one source graph with an internal entry point for source-declared tests.
-///
-/// # Errors
-///
-/// Returns a rendered diagnostic report when parsing, resolution, or compilation fails.
-pub fn compile_tests_with_resolver<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
-) -> Result<CompiledTests, String> {
-    module_graph::compile_tests(source, options, resolver)
+    diagnostics.sort_by_span();
+    SourceDiagnostic::located_in(&diagnostics, source.source_id)
 }
 
 /// Formats one syntactically valid ExS source unit into the canonical source layout.
@@ -293,36 +242,36 @@ pub fn compile_tests_with_resolver<R: ModuleResolver>(
 ///
 /// # Errors
 ///
-/// Returns lexer or parser diagnostics when the input cannot be formatted safely.
-pub fn format<'a>(source: SourceInput<'a>) -> Result<String, CompileDiagnostics<'a>> {
-    formatter::format(source)
+/// Returns the rendered report and the located diagnostics when the input cannot be formatted
+/// safely.
+pub fn format(source: Source<'_>) -> Result<String, CompileError> {
+    let source = source.input();
+    formatter::format(source).map_err(|error| CompileError::from_diagnostics(&error, source.text))
 }
 
-/// Documents the standard library, `source`, every module it imports, and every library
-/// module they name.
+/// Documents the standard library, `source`, every module it imports, and every library module
+/// they name; `options` provide the resolver and limits.
 ///
-/// The resolver owns import loading and canonical source identities. Render the result with
-/// [`ApiDocumentation::markdown`] or [`ApiDocumentation::llm`]; neither touches the
-/// filesystem.
+/// Render the result with [`ApiDocumentation::markdown`] or [`ApiDocumentation::llm`]; neither
+/// touches the filesystem.
 ///
 /// # Errors
 ///
-/// Returns a rendered diagnostic report when source loading or parsing fails.
-pub fn document_with_resolver<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    resolver: &mut R,
-) -> Result<ApiDocumentation, String> {
-    documentation::project(source, resolver)
+/// Returns the rendered report when source loading or parsing fails.
+pub fn document(
+    source: Source<'_>,
+    options: CompileOptions<'_>,
+) -> Result<ApiDocumentation, CompileError> {
+    documentation::project(source.input(), options)
 }
 
-/// Documents the standard library and every library module [`ModuleResolver::libraries`]
-/// lists.
+/// Documents the standard library and every library module the resolver of `options` lists.
 ///
 /// # Errors
 ///
-/// Returns a rendered diagnostic report when a listed library is missing or does not parse.
-pub fn document_libraries<R: ModuleResolver>(resolver: &mut R) -> Result<ApiDocumentation, String> {
-    documentation::libraries(resolver)
+/// Returns the rendered report when a listed library is missing or does not parse.
+pub fn document_libraries(options: CompileOptions<'_>) -> Result<ApiDocumentation, CompileError> {
+    documentation::libraries(options)
 }
 
 impl ApiDocumentation {

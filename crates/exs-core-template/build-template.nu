@@ -17,3 +17,7 @@ cargo rustc -p exs-core-template --features template --target wasm32-unknown-unk
 
 let template = ($crate_dir | path join "exs-core-template.wasm")
 cp target/wasm32-unknown-unknown/release/exs_core_template.wasm $template
+
+# The test that the template matches its sources compares with this record.
+hide-env RUSTFLAGS
+cargo run -q -p exs-compatibility --bin stamp_template

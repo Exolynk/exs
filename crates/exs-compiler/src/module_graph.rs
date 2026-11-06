@@ -6,10 +6,11 @@ use crate::ast::{
     BinaryOperator, Block, Expression, FunctionDeclaration, Identifier, Module, Parameter,
     Statement, TestDeclaration, TypeAnnotation, Visibility,
 };
+use crate::diagnostic::CompileDiagnostics;
 use crate::loaded_project::{ImportEdge, LoadedProject, LoadedSource};
 use crate::{
-    CompileFailure, CompileOptions, CompiledModule, CompiledTest, CompiledTests, ModuleResolver,
-    SourceInput,
+    CompileError, CompileOptions, CompiledModule, CompiledTest, CompiledTests, SourceInput,
+    SourceSpan,
 };
 
 /// Compiler-private name assigned to a production root entry while testing.
@@ -18,40 +19,20 @@ const PROGRAM_MAIN: &str = "$exs_program_main";
 /// Compiler-private name assigned to the generated test dispatcher entry.
 const TEST_MAIN: &str = "main";
 
-/// Compiles a resolved source graph into one linked executable module.
-pub(super) fn compile<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
-) -> Result<CompiledModule, String> {
-    compile_detailed(source, options, resolver).map_err(|failure| failure.report)
-}
-
 /// Compiles a resolved source graph, keeping located entry-source diagnostics on failure.
-pub(super) fn compile_detailed<R: ModuleResolver>(
+pub(super) fn compile(
     source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
-) -> Result<CompiledModule, CompileFailure> {
-    compile_target(source, options, resolver, false).map(|(module, _)| module)
-}
-
-/// Compiles one resolved source graph with an internal test dispatcher entry point.
-pub(super) fn compile_tests<R: ModuleResolver>(
-    source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
-) -> Result<CompiledTests, String> {
-    compile_tests_detailed(source, options, resolver).map_err(|failure| failure.report)
+    options: CompileOptions<'_>,
+) -> Result<CompiledModule, CompileError> {
+    compile_target(source, options, false).map(|(module, _)| module)
 }
 
 /// Compiles the test dispatcher, keeping located entry-source diagnostics on failure.
-pub(super) fn compile_tests_detailed<R: ModuleResolver>(
+pub(super) fn compile_tests(
     source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
-) -> Result<CompiledTests, CompileFailure> {
-    let (module, tests) = compile_target(source, options, resolver, true)?;
+    options: CompileOptions<'_>,
+) -> Result<CompiledTests, CompileError> {
+    let (module, tests) = compile_target(source, options, true)?;
     Ok(CompiledTests {
         wasm: module.wasm,
         tests,
@@ -59,40 +40,33 @@ pub(super) fn compile_tests_detailed<R: ModuleResolver>(
 }
 
 /// Compiles one source graph for either production or individual source-test execution.
-fn compile_target<R: ModuleResolver>(
+fn compile_target(
     source: SourceInput<'_>,
-    options: CompileOptions,
-    resolver: &mut R,
+    options: CompileOptions<'_>,
     test_target: bool,
-) -> Result<(CompiledModule, Vec<CompiledTest>), CompileFailure> {
-    let project = LoadedProject::load(source, resolver, options.limits)?;
+) -> Result<(CompiledModule, Vec<CompiledTest>), CompileError> {
+    let project = LoadedProject::load(source, options.module_resolver(), options.limits)?;
     validate_import_names(&project)?;
     project.validate_no_cycles()?;
     let files = project.files();
     let edges = project.edges();
-    let mut modules = project.parse_modules().map_err(|report| CompileFailure {
-        report,
-        // Parsing reports rendered text; the syntax check locates the entry-source errors.
-        diagnostics: crate::check_syntax(SourceInput {
-            source_id: &files[0].source_id,
-            text: &files[0].text,
-        }),
-    })?;
+    let mut modules = project.parse_modules(!test_target)?;
     let mut exports = Vec::new();
     for (index, module) in modules.iter().enumerate() {
         if index != 0
-            && module
+            && let Some(main) = module
                 .functions
                 .iter()
-                .any(|function| function.name.name == "main")
+                .find(|function| function.name.name == "main")
         {
-            return Err(format!(
-                "{}: imported modules must not declare fn main()",
-                files[index].source_id
-            )
-            .into());
+            return Err(CompileError::at(
+                "E0235",
+                main.name.span,
+                &files[index].text,
+                "imported modules must not declare fn main()",
+            ));
         }
-        exports.push(collect_exports(module, index)?);
+        exports.push(collect_exports(module, index, &files[index].text)?);
     }
     let libraries: HashMap<&str, usize> = files
         .iter()
@@ -118,7 +92,7 @@ fn compile_target<R: ModuleResolver>(
     } else {
         Vec::new()
     };
-    let tests = test_metadata(&root_tests, &files[0].source_id)?;
+    let tests = test_metadata(&root_tests, &files[0].text)?;
     let mut combined = Module {
         imports: Vec::new(),
         uses: Vec::new(),
@@ -141,11 +115,12 @@ fn compile_target<R: ModuleResolver>(
             &libraries,
             &library_bindings,
             &prelude_private,
+            &files[index],
         )?);
     }
     let constants = crate::constants::Declared::new(&modules, canonical)
         .resolve(&all_bindings)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| project_error(&error, files))?;
     for (index, mut bindings) in all_bindings.into_iter().enumerate() {
         let visible = bindings
             .iter()
@@ -166,10 +141,10 @@ fn compile_target<R: ModuleResolver>(
             .map(|(name, _)| name.clone())
             .collect();
         crate::constants::inline(&mut modules[index], &visible, &private)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| project_error(&error, files))?;
         if test_target && index == 0 {
             crate::constants::inline_tests(&mut root_tests, &visible, &private)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| project_error(&error, files))?;
         }
         if test_target && index == 0 {
             if let Some(function) = modules[index]
@@ -200,9 +175,17 @@ fn compile_target<R: ModuleResolver>(
         combined.functions.append(&mut modules[index].functions);
     }
     if test_target {
+        if root_tests.is_empty() {
+            return Err(CompileError::at(
+                "E0235",
+                SourceSpan::empty(&files[0].source_id),
+                &files[0].text,
+                "test source declares no tests",
+            ));
+        }
         append_test_functions(&mut combined, &root_tests)?;
     }
-    let mut prelude = crate::prelude::parse().map_err(|error| error.to_string())?;
+    let mut prelude = crate::prelude::parse().map_err(|error| project_error(&error, files))?;
     prelude.types.append(&mut combined.types);
     prelude.enums.append(&mut combined.enums);
     prelude.traits.append(&mut combined.traits);
@@ -219,11 +202,12 @@ fn compile_target<R: ModuleResolver>(
         .count()
         != 1
     {
-        return Err(format!(
-            "{}: root module must declare exactly one fn main()",
-            files[0].source_id
-        )
-        .into());
+        return Err(CompileError::at(
+            "E0235",
+            SourceSpan::empty(&files[0].source_id),
+            &files[0].text,
+            "root module must declare exactly one fn main()",
+        ));
     }
     let mut source_inputs = crate::prelude::source_inputs();
     source_inputs.extend(files.iter().map(|file| SourceInput {
@@ -231,27 +215,51 @@ fn compile_target<R: ModuleResolver>(
         text: &file.text,
     }));
     let wasm = crate::codegen::compile_project_module(&mut combined, &source_inputs, options)
-        .map_err(|error| {
-            CompileFailure::from_diagnostics(&error, &files[0].source_id, &files[0].text)
-        })?;
+        .map_err(|error| project_error(&error, files))?;
     Ok((CompiledModule { wasm }, tests))
 }
 
-/// Validates source test names and returns runner-visible metadata in declaration order.
+/// Creates the failure of `diagnostics`, located in the sources of the project or the prelude.
+fn project_error(diagnostics: &CompileDiagnostics<'_>, files: &[LoadedSource]) -> CompileError {
+    let prelude = crate::prelude::source_inputs();
+    CompileError::from_sources(diagnostics, |source_id| {
+        files
+            .iter()
+            .find(|file| file.source_id == source_id)
+            .map(|file| file.text.as_str())
+            .or_else(|| {
+                prelude
+                    .iter()
+                    .find(|source| source.source_id == source_id)
+                    .map(|source| source.text)
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// Validates source test names of the root source `text` and returns runner-visible metadata in
+/// declaration order.
 fn test_metadata(
     tests: &[TestDeclaration<'_>],
-    source_id: &str,
-) -> Result<Vec<CompiledTest>, String> {
+    text: &str,
+) -> Result<Vec<CompiledTest>, CompileError> {
     let mut names = HashSet::new();
     let mut metadata = Vec::with_capacity(tests.len());
     for test in tests {
         if test.description.is_empty() {
-            return Err(format!("{source_id}: test descriptions must not be empty"));
+            return Err(CompileError::at(
+                "E0235",
+                test.span,
+                text,
+                "test descriptions must not be empty",
+            ));
         }
         if !names.insert(test.description.as_str()) {
-            return Err(format!(
-                "{source_id}: duplicate test description `{}`",
-                test.description
+            return Err(CompileError::at(
+                "E0235",
+                test.span,
+                text,
+                format!("duplicate test description `{}`", test.description),
             ));
         }
         metadata.push(CompiledTest {
@@ -265,10 +273,7 @@ fn test_metadata(
 fn append_test_functions<'a>(
     module: &mut Module<'a>,
     tests: &[TestDeclaration<'a>],
-) -> Result<(), String> {
-    if tests.is_empty() {
-        return Err("test source declares no tests".to_owned());
-    }
+) -> Result<(), CompileError> {
     for (index, test) in tests.iter().enumerate() {
         module.functions.push(FunctionDeclaration {
             visibility: Visibility::Private,
@@ -369,51 +374,85 @@ struct Exports {
 }
 
 /// Collects direct declarations that another module may import.
-fn collect_exports(module: &Module<'_>, index: usize) -> Result<Exports, String> {
+fn collect_exports(module: &Module<'_>, index: usize, text: &str) -> Result<Exports, CompileError> {
     let mut exports = HashMap::new();
     let mut private = HashSet::new();
-    for (name, visibility) in module
+    let declarations = module
         .functions
         .iter()
-        .map(|item| (&item.name.name, item.visibility))
+        .map(|item| (&item.name, item.visibility, DeclarationKind::Function))
         .chain(
             module
                 .types
                 .iter()
-                .map(|item| (&item.name.name, item.visibility)),
+                .map(|item| (&item.name, item.visibility, DeclarationKind::Nominal)),
         )
         .chain(
             module
                 .enums
                 .iter()
-                .map(|item| (&item.name.name, item.visibility)),
+                .map(|item| (&item.name, item.visibility, DeclarationKind::Nominal)),
         )
         .chain(
             module
                 .traits
                 .iter()
-                .map(|item| (&item.name.name, item.visibility)),
+                .map(|item| (&item.name, item.visibility, DeclarationKind::Nominal)),
         )
         .chain(
             module
                 .constants
                 .iter()
-                .map(|item| (&item.name.name, item.visibility)),
-        )
-    {
+                .map(|item| (&item.name, item.visibility, DeclarationKind::Constant)),
+        );
+    let mut kinds = HashMap::new();
+    for (identifier, visibility, kind) in declarations {
+        let name = &identifier.name;
         if visibility == Visibility::Private {
             private.insert(name.clone());
         }
         if name == "Self" {
-            return Err("`Self` is reserved for trait type annotations".to_owned());
+            return Err(CompileError::at(
+                "E0219",
+                identifier.span,
+                text,
+                "`Self` is reserved for trait type annotations",
+            ));
         }
         if matches!(name.as_str(), "assert" | "assert_eq") {
-            return Err(format!("`{name}` is a reserved standard-library function"));
+            return Err(CompileError::at(
+                "E0219",
+                identifier.span,
+                text,
+                format!("`{name}` is a reserved standard-library function"),
+            ));
         }
-        let canonical = canonical(index, name);
-        if exports.insert(name.clone(), canonical).is_some() {
-            return Err(format!("duplicate exported declaration `{name}`"));
+        // Compilation reports declarations of one kind that share a name, each of them located.
+        match kinds.insert(name.as_str(), kind) {
+            Some(_) if kind == DeclarationKind::Constant => {
+                return Err(CompileError::at(
+                    "E0122",
+                    identifier.span,
+                    text,
+                    format!("duplicate declaration `{name}`"),
+                ));
+            }
+            Some(previous) if previous != kind => {
+                return Err(CompileError::at(
+                    "E0219",
+                    identifier.span,
+                    text,
+                    format!("duplicate exported declaration `{name}`"),
+                ));
+            }
+            _ => {}
         }
+        let canonical = if kind == DeclarationKind::Nominal {
+            nominal_symbol(index, name)
+        } else {
+            canonical(index, name)
+        };
+        exports.insert(name.clone(), canonical);
     }
     for declaration in &module.enums {
         for variant in &declaration.variants {
@@ -421,10 +460,12 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<Exports, String>
             if declaration.visibility == Visibility::Private {
                 private.insert(name.clone());
             }
-            let canonical = canonical(index, &name);
-            if exports.insert(name.clone(), canonical).is_some() {
-                return Err(format!("duplicate exported declaration `{name}`"));
-            }
+            let canonical = format!(
+                "{}::{}",
+                nominal_symbol(index, &declaration.name.name),
+                variant.name.name
+            );
+            exports.insert(name, canonical);
         }
     }
     Ok(Exports {
@@ -433,8 +474,19 @@ fn collect_exports(module: &Module<'_>, index: usize) -> Result<Exports, String>
     })
 }
 
+/// What a top-level declaration declares, as far as sharing a name matters.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DeclarationKind {
+    /// A function.
+    Function,
+    /// A type, enum or trait.
+    Nominal,
+    /// A constant.
+    Constant,
+}
+
 /// Returns the package of every loaded source: its library's name for a library module,
-/// such as `exo` for `exo::db`, else the package of the source importing it, empty for the
+/// such as `app` for `app::db`, else the package of the source importing it, empty for the
 /// project.
 fn packages(files: &[LoadedSource], edges: &[Vec<ImportEdge>]) -> Vec<String> {
     let mut packages: Vec<Option<String>> = files
@@ -499,22 +551,6 @@ struct LibraryBinding {
 /// Prefix of the binding of a name the module may not use because it is private elsewhere.
 pub(crate) const PRIVATE_PREFIX: &str = "$private:";
 
-/// Hides the prelude's private functions from the single source `module`, which neither
-/// declares them nor belongs to the prelude.
-pub(crate) fn hide_prelude_private(module: &mut Module<'_>) {
-    let declared: HashSet<&str> = module
-        .functions
-        .iter()
-        .map(|function| function.name.name.as_str())
-        .collect();
-    let bindings = crate::prelude::private_functions()
-        .into_iter()
-        .filter(|name| !declared.contains(name))
-        .map(|name| (name.to_owned(), hidden(name)))
-        .collect::<HashMap<_, _>>();
-    rewrite_module(module, 0, &bindings);
-}
-
 /// Returns the binding of `name`, private to another package, which diagnostics name.
 fn hidden(name: &str) -> String {
     format!("{PRIVATE_PREFIX}{name}")
@@ -533,8 +569,10 @@ fn bindings_for(
     libraries: &HashMap<&str, usize>,
     library_bindings: &HashMap<String, LibraryBinding>,
     prelude_private: &[&str],
-) -> Result<HashMap<String, String>, String> {
-    let mut bindings = collect_exports(module, index)?.names;
+    file: &LoadedSource,
+) -> Result<HashMap<String, String>, CompileError> {
+    let text = file.text.as_str();
+    let mut bindings = collect_exports(module, index, text)?.names;
     for (name, binding) in library_bindings {
         let canonical = match &binding.private_to {
             Some(owner) if owner != package => hidden(name),
@@ -551,23 +589,37 @@ fn bindings_for(
     let mut namespaces: HashMap<&str, HashSet<&str>> = HashMap::new();
     for edge in edges {
         let alias = &edge.namespace;
+        let edge_error = |message: String| {
+            CompileError::at(
+                "E0233",
+                SourceSpan {
+                    source_id: &file.source_id,
+                    start_byte: edge.start_byte,
+                    end_byte: edge.end_byte,
+                },
+                text,
+                message,
+            )
+        };
         if alias == "std" {
-            return Err("`std` is a reserved built-in type namespace".to_owned());
+            return Err(edge_error(
+                "`std` is a reserved built-in type namespace".to_owned(),
+            ));
         }
         if libraries
             .keys()
             .any(|path| path.split("::").next() == Some(alias.as_str()))
         {
-            return Err(format!(
+            return Err(edge_error(format!(
                 "import namespace `{alias}` collides with the library of the same name"
-            ));
+            )));
         }
         let names = namespaces.entry(alias).or_default();
         for (name, canonical) in &exports[edge.target].names {
             if !names.insert(name) {
-                return Err(format!(
+                return Err(edge_error(format!(
                     "duplicate export `{name}` in merged namespace `{alias}`"
-                ));
+                )));
             }
             bindings.insert(format!("{alias}::{name}"), canonical.clone());
         }
@@ -585,19 +637,23 @@ fn bindings_for(
                 .map_or(&item.name.name, |alias| &alias.name);
             let Some(canonical) = bindings.get(&source).cloned() else {
                 use_module(&mut bindings, &source, local, libraries)
-                    .map_err(|error| format!("{}: {error}", declaration.span.source_id))?;
+                    .map_err(|error| CompileError::at("E0234", declaration.span, text, error))?;
                 continue;
             };
             if canonical.starts_with(PRIVATE_PREFIX) {
-                return Err(format!(
-                    "{}: `{source}` is private to its library",
-                    declaration.span.source_id
+                return Err(CompileError::at(
+                    "E0234",
+                    declaration.span,
+                    text,
+                    format!("`{source}` is private to its library"),
                 ));
             }
             if bindings.insert(local.clone(), canonical).is_some() {
-                return Err(format!(
-                    "{}: used name `{local}` collides with an existing declaration",
-                    declaration.span.source_id
+                return Err(CompileError::at(
+                    "E0234",
+                    declaration.span,
+                    text,
+                    format!("used name `{local}` collides with an existing declaration"),
                 ));
             }
             let variant_prefix = format!("{source}::");
@@ -611,9 +667,13 @@ fn bindings_for(
             for (variant, canonical) in variants {
                 let variant_local = format!("{local}::{variant}");
                 if bindings.insert(variant_local.clone(), canonical).is_some() {
-                    return Err(format!(
-                        "{}: used enum variant `{variant_local}` collides with an existing declaration",
-                        declaration.span.source_id
+                    return Err(CompileError::at(
+                        "E0234",
+                        declaration.span,
+                        text,
+                        format!(
+                            "used enum variant `{variant_local}` collides with an existing declaration"
+                        ),
                     ));
                 }
             }
@@ -658,7 +718,7 @@ fn use_module(
 /// Rewrites declared and referenced top-level symbols to linker-stable canonical names.
 fn rewrite_module(module: &mut Module<'_>, index: usize, bindings: &HashMap<String, String>) {
     for declaration in &mut module.types {
-        rename(&mut declaration.name, index);
+        rename_nominal(&mut declaration.name, index);
         for field in &mut declaration.fields {
             if let Some(annotation) = &mut field.type_annotation {
                 rewrite_annotation(annotation, bindings);
@@ -666,7 +726,7 @@ fn rewrite_module(module: &mut Module<'_>, index: usize, bindings: &HashMap<Stri
         }
     }
     for declaration in &mut module.enums {
-        rename(&mut declaration.name, index);
+        rename_nominal(&mut declaration.name, index);
         for variant in &mut declaration.variants {
             for field in &mut variant.fields {
                 if let Some(annotation) = &mut field.type_annotation {
@@ -676,7 +736,7 @@ fn rewrite_module(module: &mut Module<'_>, index: usize, bindings: &HashMap<Stri
         }
     }
     for declaration in &mut module.traits {
-        rename(&mut declaration.name, index);
+        rename_nominal(&mut declaration.name, index);
         for method in &mut declaration.methods {
             rewrite_function_parts(
                 &mut method.parameters,
@@ -1019,6 +1079,21 @@ fn rename(identifier: &mut Identifier<'_>, index: usize) {
     }
 }
 
+/// Renames a type, enum or trait declaration to its unique linked symbol key.
+fn rename_nominal(identifier: &mut Identifier<'_>, index: usize) {
+    identifier.name = nominal_symbol(index, &identifier.name);
+}
+
+/// Builds the linker key of one type, enum or trait: the root source's declarations keep their
+/// names unless they take the place of a prelude type.
+fn nominal_symbol(index: usize, name: &str) -> String {
+    if index == 0 && crate::prelude::is_shadowable(name) {
+        format!("$module0::{name}")
+    } else {
+        canonical(index, name)
+    }
+}
+
 /// Builds a private linker key for one declaration in an imported source.
 fn canonical(index: usize, name: &str) -> String {
     if index == 0 {
@@ -1036,16 +1111,23 @@ fn is_identifier(name: &str) -> bool {
 }
 
 /// Validates namespaces whose legality is specific to executable module linking.
-fn validate_import_names(project: &LoadedProject) -> Result<(), String> {
+fn validate_import_names(project: &LoadedProject) -> Result<(), CompileError> {
     for (source_index, edges) in project.edges().iter().enumerate() {
         for edge in edges {
             if !is_identifier(&edge.namespace) {
-                return Err(format!(
-                    "{}:{}-{}: import namespace `{}` is not a valid identifier; use `as`",
-                    project.files()[source_index].source_id,
-                    edge.start_byte,
-                    edge.end_byte,
-                    edge.namespace
+                let file = &project.files()[source_index];
+                return Err(CompileError::at(
+                    "E0233",
+                    SourceSpan {
+                        source_id: &file.source_id,
+                        start_byte: edge.start_byte,
+                        end_byte: edge.end_byte,
+                    },
+                    &file.text,
+                    format!(
+                        "import namespace `{}` is not a valid identifier; use `as`",
+                        edge.namespace
+                    ),
                 ));
             }
         }

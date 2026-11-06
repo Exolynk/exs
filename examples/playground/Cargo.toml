@@ -4,6 +4,7 @@ version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [lints]
 workspace = true
@@ -13,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 birei = { git = "https://github.com/Exolynk/birei", branch = "main", features = ["embedded"] }
-exs-autocomplete = { path = "../../crates/exs-autocomplete", features = ["birei"] }
+exs-autocomplete = { path = "../../crates/exs-autocomplete" }
 exs-compiler = { path = "../../crates/exs-compiler" }
 exs-runner = { path = "../../crates/exs-runner", default-features = false, features = ["browser", "serde"] }
 leptos = { version = "0.8", features = ["csr"] }

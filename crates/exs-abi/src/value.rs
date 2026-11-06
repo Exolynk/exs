@@ -18,6 +18,7 @@ const DEFAULT_MAX_COLLECTION_ENTRIES: usize = 65_536;
 /// references, object identities, and cycles are never exposed through this type.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[non_exhaustive]
 pub enum ExsValue {
     /// The absence of a value, such as a missing Object key.
     None,
@@ -41,7 +42,7 @@ pub enum ExsValue {
     Object(Vec<(String, ExsValue)>),
     /// A value of a nominal Object type with its opaque type identity and named fields.
     Typed {
-        /// Resolver-derived nominal type identity, such as `exo::dom::Div`.
+        /// Resolver-derived nominal type identity, such as `app::dom::Div`.
         type_id: String,
         /// Field names and values in entry order.
         fields: Vec<(String, ExsValue)>,
@@ -85,6 +86,7 @@ pub struct ExsStackFrame {
 /// A host-safe ExS language Error.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[non_exhaustive]
 pub struct ExsError {
     /// Whether execution may continue after this Error.
     pub severity: ErrorSeverity,
@@ -102,8 +104,84 @@ pub struct ExsError {
     pub cause: Option<Box<ExsValue>>,
 }
 
+impl From<ExsError> for ExsValue {
+    /// Returns the language value of `error`.
+    fn from(error: ExsError) -> Self {
+        Self::Error(error)
+    }
+}
+
+impl<T: Into<Self>> From<Result<T, ExsError>> for ExsValue {
+    /// Returns the value of `result`, or the language value of its Error.
+    fn from(result: Result<T, ExsError>) -> Self {
+        match result {
+            Ok(value) => value.into(),
+            Err(error) => Self::Error(error),
+        }
+    }
+}
+
+impl ExsError {
+    /// Returns an Error of `severity` with `kind` and `message`, without data, origin, trace or
+    /// cause.
+    pub fn new(
+        severity: ErrorSeverity,
+        kind: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            severity,
+            kind: kind.into(),
+            message: message.into(),
+            data: Box::new(ExsValue::None),
+            origin: None,
+            trace: Vec::new(),
+            cause: None,
+        }
+    }
+
+    /// Returns a recoverable Error, a value the program can handle.
+    pub fn recoverable(kind: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(ErrorSeverity::Recoverable, kind, message)
+    }
+
+    /// Returns a fatal Error, which ends the execution.
+    pub fn fatal(kind: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(ErrorSeverity::Fatal, kind, message)
+    }
+
+    /// Attaches language data.
+    #[must_use]
+    pub fn with_data(mut self, data: ExsValue) -> Self {
+        self.data = Box::new(data);
+        self
+    }
+
+    /// Sets the source position that created the Error.
+    #[must_use]
+    pub fn with_origin(mut self, origin: Option<SourcePositionId>) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// Sets the language-level call frames, from innermost to outermost.
+    #[must_use]
+    pub fn with_trace(mut self, trace: Vec<ExsStackFrame>) -> Self {
+        self.trace = trace;
+        self
+    }
+
+    /// Attaches a prior Error or related language value.
+    #[must_use]
+    pub fn with_cause(mut self, cause: ExsValue) -> Self {
+        self.cause = Some(Box::new(cause));
+        self
+    }
+}
+
 /// Why a value could not cross the runner boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum BoundaryError {
     /// The input does not hold a well-formed value.
     Malformed,

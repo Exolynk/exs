@@ -4,10 +4,10 @@ use super::*;
 #[test]
 fn compiles_floating_point_literals() {
     let module = compile(
-        SourceInput {
-            source_id: "float.exs",
-            text: "fn main(input) { ret 1.0 + 0.25 + 1e2 + 2.5e-3; }",
-        },
+        Source::new(
+            "float.exs",
+            "fn main(input) { ret 1.0 + 0.25 + 1e2 + 2.5e-3; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -17,10 +17,10 @@ fn compiles_floating_point_literals() {
 #[test]
 fn compiles_function_type_annotations() {
     let module = compile(
-        SourceInput {
-            source_id: "types.exs",
-            text: "fn convert(value: Int, offset: Float) -> Float | Error { ret value + offset; } fn main(input) { ret convert(input, 0.5); }",
-        },
+        Source::new(
+            "types.exs",
+            "fn convert(value: Int, offset: Float) -> Float | Error { ret value + offset; } fn main(input) { ret convert(input, 0.5); }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -30,10 +30,10 @@ fn compiles_function_type_annotations() {
 #[test]
 fn compiles_nominal_types_and_implementations() {
     let module = compile(
-        SourceInput {
-            source_id: "nominal-types.exs",
-            text: "type User { name: String, nickname: String | None, metadata, } impl User { fn display(self) -> String { ret self.name; } fn named(name: String) -> User { ret User { name: name }; } } fn main() -> String { let user = User::named(\"Ada\"); ret user.display(); }",
-        },
+        Source::new(
+            "nominal-types.exs",
+            "type User { name: String, nickname: String | None, metadata, } impl User { fn display(self) -> String { ret self.name; } fn named(name: String) -> User { ret User { name: name }; } } fn main() -> String { let user = User::named(\"Ada\"); ret user.display(); }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
@@ -43,10 +43,10 @@ fn compiles_nominal_types_and_implementations() {
 #[test]
 fn compiles_enums_and_implementations() {
     let module = compile(
-        SourceInput {
-            source_id: "enums.exs",
-            text: "enum Color { Rgb(red: Int, green: Int, blue: Int), Transparent, } trait Rank { fn rank(self) -> Int; } impl Color { fn channels(self) -> Int { ret 3; } } impl Rank for Color { fn rank(self) -> Int { ret self.channels(); } } fn main() -> Int { let color = Color::Rgb(255, 0, 128); let transparent = Color::Transparent; ret color.rank() + transparent.channels(); }",
-        },
+        Source::new(
+            "enums.exs",
+            "enum Color { Rgb(red: Int, green: Int, blue: Int), Transparent, } trait Rank { fn rank(self) -> Int; } impl Color { fn channels(self) -> Int { ret 3; } } impl Rank for Color { fn rank(self) -> Int { ret self.channels(); } } fn main() -> Int { let color = Color::Rgb(255, 0, 128); let transparent = Color::Transparent; ret color.rank() + transparent.channels(); }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
@@ -56,10 +56,10 @@ fn compiles_enums_and_implementations() {
 #[test]
 fn compiles_exhaustive_enum_match_expressions() {
     let module = compile(
-        SourceInput {
-            source_id: "enum-match.exs",
-            text: "enum Color { Rgb(red: Int, green: Int, blue: Int), Transparent, } fn main() -> Int { let color = Color::Rgb(255, 0, 128); ret match color { Color::Rgb(red, green, blue) => red + green + blue, Color::Transparent => 0, }; }",
-        },
+        Source::new(
+            "enum-match.exs",
+            "enum Color { Rgb(red: Int, green: Int, blue: Int), Transparent, } fn main() -> Int { let color = Color::Rgb(255, 0, 128); ret match color { Color::Rgb(red, green, blue) => red + green + blue, Color::Transparent => 0, }; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
@@ -69,10 +69,10 @@ fn compiles_exhaustive_enum_match_expressions() {
 #[test]
 fn rejects_non_exhaustive_enum_match_expressions() {
     let error = match compile(
-        SourceInput {
-            source_id: "enum-match-error.exs",
-            text: "enum Color { Red, Blue, } fn main(value: Color) -> Int { ret match value { Color::Red => 1, }; }",
-        },
+        Source::new(
+            "enum-match-error.exs",
+            "enum Color { Red, Blue, } fn main(value: Color) -> Int { ret match value { Color::Red => 1, }; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("non-exhaustive match compiled"),
@@ -88,19 +88,18 @@ fn rejects_non_exhaustive_enum_match_expressions() {
 /// Resolves imported enum declarations and their variants through a `use` alias.
 #[test]
 fn compiles_used_imported_enum_constructors() {
-    let mut resolver = TestResolver {
+    let resolver = TestResolver {
         sources: HashMap::from([(
             "./colors.exs".to_owned(),
             "enum Color { Rgb(red: Int, green: Int, blue: Int), }".to_owned(),
         )]),
     };
-    let module = compile_with_resolver(
-        SourceInput {
-            source_id: "./main.exs",
-            text: "import \"./colors.exs\" as colors; use colors::{Color}; fn main() -> Color { ret Color::Rgb(255, 0, 128); }",
-        },
-        CompileOptions::default(),
-        &mut resolver,
+    let module = compile(
+        Source::new(
+            "./main.exs",
+            "import \"./colors.exs\" as colors; use colors::{Color}; fn main() -> Color { ret Color::Rgb(255, 0, 128); }",
+        ),
+        CompileOptions::default().resolver(&resolver),
     );
     assert!(module.is_ok(), "{module:?}");
 }
@@ -109,10 +108,10 @@ fn compiles_used_imported_enum_constructors() {
 #[test]
 fn validates_wasm_for_nominal_object_construction() {
     let compiled = match compile(
-        SourceInput {
-            source_id: "nominal-validation.exs",
-            text: "type User { name: String, } fn main(input) -> String { let user = User { name: \"Ada\" }; ret user.name; }",
-        },
+        Source::new(
+            "nominal-validation.exs",
+            "type User { name: String, } fn main(input) -> String { let user = User { name: \"Ada\" }; ret user.name; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(compiled) => compiled,
@@ -127,10 +126,10 @@ fn validates_wasm_for_nominal_object_construction() {
 #[test]
 fn allows_nominal_implementation_method_names() {
     let result = compile(
-        SourceInput {
-            source_id: "reserved-method.exs",
-            text: "type User {} impl User { fn keys(self) { ret None; } } fn main() { ret None; }",
-        },
+        Source::new(
+            "reserved-method.exs",
+            "type User {} impl User { fn keys(self) { ret None; } } fn main() { ret None; }",
+        ),
         CompileOptions::default(),
     );
     assert!(result.is_ok(), "{result:?}");
@@ -140,10 +139,10 @@ fn allows_nominal_implementation_method_names() {
 #[test]
 fn rejects_an_unknown_function_type() {
     let result = compile(
-        SourceInput {
-            source_id: "unknown-type.exs",
-            text: "fn value(input: Unknown) { ret input; } fn main(input) { ret value(input); }",
-        },
+        Source::new(
+            "unknown-type.exs",
+            "fn value(input: Unknown) { ret input; } fn main(input) { ret value(input); }",
+        ),
         CompileOptions::default(),
     );
     let error = match result {
@@ -162,10 +161,7 @@ fn rejects_propagation_without_an_error_return_type() {
              fn main(input) {{ ret value(input); }}"
         );
         let result = compile(
-            SourceInput {
-                source_id: "strict-return.exs",
-                text: &text,
-            },
+            Source::new("strict-return.exs", &text),
             CompileOptions::default(),
         );
         let error = match result {
@@ -180,10 +176,10 @@ fn rejects_propagation_without_an_error_return_type() {
 #[test]
 fn compiles_typed_multi_parameter_main() {
     let module = compile(
-        SourceInput {
-            source_id: "typed-main.exs",
-            text: "fn main(first: Int, second: Float) -> Float { ret first + second; }",
-        },
+        Source::new(
+            "typed-main.exs",
+            "fn main(first: Int, second: Float) -> Float { ret first + second; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -193,10 +189,10 @@ fn compiles_typed_multi_parameter_main() {
 #[test]
 fn compiles_std_qualified_builtin_type_annotations() {
     let module = compile(
-        SourceInput {
-            source_id: "std-types.exs",
-            text: "fn main(any: std::Any, none: std::None, error: std::Error, boolean: std::Bool, integer: std::Int, float: std::Float, string: std::String, list: std::List, object: std::Object, function: std::Fn) -> std::Int { ret integer; }",
-        },
+        Source::new(
+            "std-types.exs",
+            "fn main(any: std::Any, none: std::None, error: std::Error, boolean: std::Bool, integer: std::Int, float: std::Float, string: std::String, list: std::List, object: std::Object, function: std::Fn) -> std::Int { ret integer; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
@@ -206,10 +202,7 @@ fn compiles_std_qualified_builtin_type_annotations() {
 #[test]
 fn compiles_utf8_string_literals() {
     let module = compile(
-        SourceInput {
-            source_id: "string.exs",
-            text: r#"fn main(input) { ret "Hi \u{1f642}\n"; }"#,
-        },
+        Source::new("string.exs", r#"fn main(input) { ret "Hi \u{1f642}\n"; }"#),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -219,9 +212,9 @@ fn compiles_utf8_string_literals() {
 #[test]
 fn compiles_hash_delimited_multiline_string_literals() {
     let module = compile(
-        SourceInput {
-            source_id: "multiline-string.exs",
-            text: r###"
+        Source::new(
+            "multiline-string.exs",
+            r###"
             fn main() -> List {
                 let raw = r##"first
   "# remains raw
@@ -233,7 +226,7 @@ last"##;
                 ret [raw, dedented];
             }
             "###,
-        },
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -243,10 +236,10 @@ last"##;
 #[test]
 fn rejects_unterminated_hash_delimited_string_literals() {
     let error = compile(
-        SourceInput {
-            source_id: "unterminated-raw-string.exs",
-            text: "fn main() { ret r#\"missing closing delimiter; }",
-        },
+        Source::new(
+            "unterminated-raw-string.exs",
+            "fn main() { ret r#\"missing closing delimiter; }",
+        ),
         CompileOptions::default(),
     )
     .expect_err("unterminated raw string compiled");
@@ -262,10 +255,10 @@ fn rejects_unterminated_hash_delimited_string_literals() {
 #[test]
 fn compiles_list_syntax() {
     let module = compile(
-        SourceInput {
-            source_id: "list.exs",
-            text: "fn main(input) { let values = [input, 2]; values.push(3); values[1] = 4; ret values[0]; }",
-        },
+        Source::new(
+            "list.exs",
+            "fn main(input) { let values = [input, 2]; values.push(3); values[1] = 4; ret values[0]; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -275,10 +268,10 @@ fn compiles_list_syntax() {
 #[test]
 fn compiles_object_syntax() {
     let module = compile(
-        SourceInput {
-            source_id: "object.exs",
-            text: "fn main(input) { let key = \"name\"; let value = { name: input, \"role\": \"admin\" }; value[key] = \"Ada\"; value.score = 42; ret value.has(\"score\"); }",
-        },
+        Source::new(
+            "object.exs",
+            "fn main(input) { let key = \"name\"; let value = { name: input, \"role\": \"admin\" }; value[key] = \"Ada\"; value.score = 42; ret value.has(\"score\"); }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -288,10 +281,10 @@ fn compiles_object_syntax() {
 #[test]
 fn compiles_while_for_break_and_continue_syntax() {
     let module = compile(
-        SourceInput {
-            source_id: "loops.exs",
-            text: "fn main(input) { let value = 0; while value < 3 { value = value + 1; } for item in [1, 2] { if item == 1 { continue; } break; } ret value; }",
-        },
+        Source::new(
+            "loops.exs",
+            "fn main(input) { let value = 0; while value < 3 { value = value + 1; } for item in [1, 2] { if item == 1 { continue; } break; } ret value; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -301,10 +294,7 @@ fn compiles_while_for_break_and_continue_syntax() {
 #[test]
 fn rejects_break_outside_a_loop() {
     let result = compile(
-        SourceInput {
-            source_id: "break.exs",
-            text: "fn main(input) { break; ret input; }",
-        },
+        Source::new("break.exs", "fn main(input) { break; ret input; }"),
         CompileOptions::default(),
     );
     let error = match result {
@@ -318,10 +308,10 @@ fn rejects_break_outside_a_loop() {
 #[test]
 fn validates_the_error_constructor_arity() {
     let wrong_arity = compile(
-        SourceInput {
-            source_id: "error.exs",
-            text: "fn main(input) { ret Error(\"Kind\", \"message\"); }",
-        },
+        Source::new(
+            "error.exs",
+            "fn main(input) { ret Error(\"Kind\", \"message\"); }",
+        ),
         CompileOptions::default(),
     );
     let error = match wrong_arity {
@@ -335,10 +325,10 @@ fn validates_the_error_constructor_arity() {
 #[test]
 fn compiles_error_constructor_in_a_suspendable_function() {
     let module = compile(
-        SourceInput {
-            source_id: "suspendable-error.exs",
-            text: "fn main() { Host::call(\"noop\"); Error(\"test\", \"lala\", {}); }",
-        },
+        Source::new(
+            "suspendable-error.exs",
+            "fn main() { Host::call(\"noop\"); Error(\"test\", \"lala\", {}); }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -348,13 +338,7 @@ fn compiles_error_constructor_in_a_suspendable_function() {
 #[test]
 fn reports_a_missing_statement_semicolon() {
     let source = "fn main(input) { let value = 1 ret value; }";
-    let result = compile(
-        SourceInput {
-            source_id: "test.exs",
-            text: source,
-        },
-        CompileOptions::default(),
-    );
+    let result = compile(Source::new("test.exs", source), CompileOptions::default());
     let error = match result {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
         Err(error) => error,
@@ -372,22 +356,15 @@ fn main() {
 }
 "#;
     let error = match compile(
-        SourceInput {
-            source_id: "syntax-errors.exs",
-            text: source,
-        },
+        Source::new("syntax-errors.exs", source),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
         Err(error) => error,
     };
     assert_eq!(error.diagnostics.len(), 2);
-    assert!(
-        error.diagnostics.iter().all(
-            |diagnostic| diagnostic.category == exs_compiler::CompileDiagnosticCategory::Syntax
-        )
-    );
-    let rendered = error.render(source);
+    assert!(error.report.contains("(compile syntax)"), "{error}");
+    let rendered = &error.report;
     assert!(rendered.contains("error: E0103 (compile syntax)"));
     assert!(rendered.contains("origin: syntax-errors.exs:3:"));
     assert!(rendered.contains("ret value"));
@@ -406,80 +383,55 @@ fn duplicate(other: AlsoUndefined) { ret other; }
 fn main() { ret None; }
 "#;
     let error = match compile(
-        SourceInput {
-            source_id: "semantic-errors.exs",
-            text: source,
-        },
+        Source::new("semantic-errors.exs", source),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
         Err(error) => error,
     };
     assert!(error.diagnostics.len() >= 6, "{error:?}");
-    assert!(
-        error
-            .diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.category
-                == exs_compiler::CompileDiagnosticCategory::Semantic)
-    );
-    assert!(
-        error
-            .diagnostics
-            .iter()
-            .any(|diagnostic| !diagnostic.related.is_empty())
-    );
+    assert!(error.report.contains("(compile semantic)"), "{error}");
+    assert!(error.report.contains("previous"), "{error}");
 }
 
 /// Collects independent function-body lowering diagnostics before rejecting the module.
 #[test]
 fn collects_multiple_function_body_diagnostics() {
     let error = match compile(
-        SourceInput {
-            source_id: "body-errors.exs",
-            text: "fn first() { ret missing_first; } fn second() { ret missing_second; } fn main() { ret None; }",
-        },
+        Source::new(
+            "body-errors.exs",
+            "fn first() { ret missing_first; } fn second() { ret missing_second; } fn main() { ret None; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
         Err(error) => error,
     };
     assert_eq!(error.diagnostics.len(), 2, "{error:?}");
-    assert!(error.diagnostics.iter().all(|diagnostic| {
-        diagnostic.category == exs_compiler::CompileDiagnosticCategory::Semantic
-    }));
+    assert!(error.report.contains("(compile semantic)"), "{error}");
 }
 
 /// Collects malformed tokens while continuing to lex later source text.
 #[test]
 fn collects_multiple_lexical_diagnostics() {
     let error = match compile(
-        SourceInput {
-            source_id: "lexical-errors.exs",
-            text: "@ # fn main() { ret None; }",
-        },
+        Source::new("lexical-errors.exs", "@ # fn main() { ret None; }"),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
         Err(error) => error,
     };
     assert_eq!(error.diagnostics.len(), 2, "{error:?}");
-    assert!(
-        error
-            .diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.category
-                == exs_compiler::CompileDiagnosticCategory::Lexical)
-    );
+    assert!(error.report.contains("(compile lexical)"), "{error}");
 }
 
 /// Rejects non-ASCII spellings in every source position that requires an identifier.
 #[test]
 fn rejects_non_ascii_identifiers() {
     let error = match compile(
-        SourceInput {
-            source_id: "unicode-identifiers.exs",
-            text: concat!(
+        Source::new(
+            "unicode-identifiers.exs",
+            concat!(
                 "import \"./math.exs\" as caf\u{00e9};\n",
                 "fn main() {\n",
                 "    let object = {caf\u{00e9}: 1};\n",
@@ -487,26 +439,28 @@ fn rejects_non_ascii_identifiers() {
                 "    ret caf\u{00e9};\n",
                 "}\n",
             ),
-        },
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
         Err(error) => error,
     };
     assert_eq!(error.diagnostics.len(), 4, "{error:?}");
-    assert!(error.diagnostics.iter().all(|diagnostic| {
-        diagnostic.category == exs_compiler::CompileDiagnosticCategory::Lexical
-            && diagnostic.message.contains("identifiers use ASCII letters")
-    }));
+    assert!(
+        error
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { diagnostic.message.contains("identifiers use ASCII letters") })
+    );
 }
 
 /// Compiles trait contracts, required methods, and inherited default methods.
 #[test]
 fn compiles_traits_and_default_methods() {
     let module = compile(
-        SourceInput {
-            source_id: "traits.exs",
-            text: r#"
+        Source::new(
+            "traits.exs",
+            r#"
 trait Label {
     fn label(self) -> String;
     fn category() -> String { ret "person"; }
@@ -518,7 +472,7 @@ impl Label for User {
 }
 fn main() -> String { ret User::category(); }
 "#,
-        },
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
@@ -528,9 +482,9 @@ fn main() -> String { ret User::category(); }
 #[test]
 fn compiles_trait_self_annotations() {
     let module = compile(
-        SourceInput {
-            source_id: "trait-self.exs",
-            text: r#"
+        Source::new(
+            "trait-self.exs",
+            r#"
 trait Combine {
     fn combine(self, other: Self) -> Self;
 }
@@ -549,7 +503,7 @@ fn main() -> Int {
     ret result.value;
 }
 "#,
-        },
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
@@ -559,10 +513,10 @@ fn main() -> Int {
 #[test]
 fn compiles_standard_add_trait_implementations() {
     let module = compile(
-        SourceInput {
-            source_id: "add.exs",
-            text: "type Number { value: Int } impl std::Add for Number { fn add(self, other: Any) -> Any { ret Number { value: self.value + other.value }; } } fn identity(value: Add) -> Any { ret value; } fn main() -> Int { ret (Number { value: 20 } + Number { value: 22 }).value; }",
-        },
+        Source::new(
+            "add.exs",
+            "type Number { value: Int } impl std::Add for Number { fn add(self, other: Any) -> Any { ret Number { value: self.value + other.value }; } } fn identity(value: Add) -> Any { ret value; } fn main() -> Int { ret (Number { value: 20 } + Number { value: 22 }).value; }",
+        ),
         CompileOptions::default(),
     );
     if let Err(error) = module {
@@ -574,10 +528,10 @@ fn compiles_standard_add_trait_implementations() {
 #[test]
 fn compiles_standard_sub_mul_and_div_trait_implementations() {
     let module = compile(
-        SourceInput {
-            source_id: "arithmetic.exs",
-            text: "type Number { value: Float } impl std::Sub for Number { fn sub(self, other: Any) -> Any { ret Number { value: self.value - other.value }; } } impl std::Mul for Number { fn mul(self, other: Any) -> Any { ret Number { value: self.value * other.value }; } } impl std::Div for Number { fn div(self, other: Any) -> Any { ret Number { value: self.value / other.value }; } } fn identity(value: Sub | Mul | Div) -> Any { ret value; } fn main() -> Float { ret (Number { value: 84.0 } / Number { value: 2.0 }).value; }",
-        },
+        Source::new(
+            "arithmetic.exs",
+            "type Number { value: Float } impl std::Sub for Number { fn sub(self, other: Any) -> Any { ret Number { value: self.value - other.value }; } } impl std::Mul for Number { fn mul(self, other: Any) -> Any { ret Number { value: self.value * other.value }; } } impl std::Div for Number { fn div(self, other: Any) -> Any { ret Number { value: self.value / other.value }; } } fn identity(value: Sub | Mul | Div) -> Any { ret value; } fn main() -> Float { ret (Number { value: 84.0 } / Number { value: 2.0 }).value; }",
+        ),
         CompileOptions::default(),
     );
     if let Err(error) = module {
@@ -589,10 +543,10 @@ fn compiles_standard_sub_mul_and_div_trait_implementations() {
 #[test]
 fn compiles_standard_compare_trait_and_ordering_enum() {
     let module = compile(
-        SourceInput {
-            source_id: "compare.exs",
-            text: "type Version { value: Int } impl std::Compare for Version { fn compare(self, other: Any) -> Ordering { if self.value < other.value { ret Ordering::Less; } if self.value > other.value { ret Ordering::Greater; } ret Ordering::Equal; } } fn identity(value: Compare) -> Ordering { ret value.compare(value); } fn main() -> Bool { ret Version { value: 1 } < Version { value: 2 }; }",
-        },
+        Source::new(
+            "compare.exs",
+            "type Version { value: Int } impl std::Compare for Version { fn compare(self, other: Any) -> Ordering { if self.value < other.value { ret Ordering::Less; } if self.value > other.value { ret Ordering::Greater; } ret Ordering::Equal; } } fn identity(value: Compare) -> Ordering { ret value.compare(value); } fn main() -> Bool { ret Version { value: 1 } < Version { value: 2 }; }",
+        ),
         CompileOptions::default(),
     );
     if let Err(error) = module {
@@ -604,10 +558,10 @@ fn compiles_standard_compare_trait_and_ordering_enum() {
 #[test]
 fn rejects_invalid_standard_add_signature() {
     let error = match compile(
-        SourceInput {
-            source_id: "invalid-add.exs",
-            text: "type Number {} impl Add for Number { fn add(self, other: Int) -> Int { ret 0; } } fn main() { ret None; }",
-        },
+        Source::new(
+            "invalid-add.exs",
+            "type Number {} impl Add for Number { fn add(self, other: Int) -> Int { ret 0; } } fn main() { ret None; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("invalid Add implementation compiled"),
@@ -624,10 +578,10 @@ fn rejects_invalid_standard_add_signature() {
 #[test]
 fn rejects_standard_add_trait_redeclaration() {
     let error = match compile(
-        SourceInput {
-            source_id: "redeclare-add.exs",
-            text: "trait Add { fn add(self, other: Any) -> Any; } fn main() { ret None; }",
-        },
+        Source::new(
+            "redeclare-add.exs",
+            "trait Add { fn add(self, other: Any) -> Any; } fn main() { ret None; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("source Add trait declaration compiled"),
@@ -644,10 +598,7 @@ fn rejects_standard_add_trait_redeclaration() {
 #[test]
 fn rejects_self_outside_trait_context() {
     let error = match compile(
-        SourceInput {
-            source_id: "invalid-self.exs",
-            text: "fn main(value: Self) { ret value; }",
-        },
+        Source::new("invalid-self.exs", "fn main(value: Self) { ret value; }"),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
@@ -662,10 +613,10 @@ fn rejects_self_outside_trait_context() {
 #[test]
 fn compiles_unimplemented_trait_contracts() {
     let module = compile(
-        SourceInput {
-            source_id: "unimplemented-trait.exs",
-            text: "trait Label { fn label(self); } fn main(value: Label | None) { ret value; }",
-        },
+        Source::new(
+            "unimplemented-trait.exs",
+            "trait Label { fn label(self); } fn main(value: Label | None) { ret value; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
@@ -675,10 +626,10 @@ fn compiles_unimplemented_trait_contracts() {
 #[test]
 fn rejects_type_and_trait_name_collisions() {
     let error = match compile(
-        SourceInput {
-            source_id: "trait-name-collision.exs",
-            text: "type Label {} trait Label {} fn main() { ret None; }",
-        },
+        Source::new(
+            "trait-name-collision.exs",
+            "type Label {} trait Label {} fn main() { ret None; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
@@ -688,18 +639,18 @@ fn rejects_type_and_trait_name_collisions() {
         diagnostic
             .message
             .contains("conflicts with an existing type or trait")
-            && !diagnostic.related.is_empty()
     }));
+    assert!(error.report.contains("previous"), "{error}");
 }
 
 /// Rejects a trait implementation that omits a required method.
 #[test]
 fn rejects_missing_required_trait_methods() {
     let error = match compile(
-        SourceInput {
-            source_id: "missing-trait-method.exs",
-            text: "trait Label { fn label(self); } type User {} impl Label for User {} fn main() { ret None; }",
-        },
+        Source::new(
+            "missing-trait-method.exs",
+            "trait Label { fn label(self); } type User {} impl Label for User {} fn main() { ret None; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
@@ -717,9 +668,9 @@ fn rejects_missing_required_trait_methods() {
 #[test]
 fn rejects_duplicate_trait_method_names() {
     let error = match compile(
-        SourceInput {
-            source_id: "duplicate-trait-method.exs",
-            text: r#"
+        Source::new(
+            "duplicate-trait-method.exs",
+            r#"
 trait First { fn display(self) { ret None; } }
 trait Second { fn display(self) { ret None; } }
 type User {}
@@ -727,7 +678,7 @@ impl First for User {}
 impl Second for User {}
 fn main() { ret None; }
 "#,
-        },
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
@@ -745,10 +696,7 @@ fn main() { ret None; }
 #[test]
 fn compiles_zero_parameter_main() {
     let module = compile(
-        SourceInput {
-            source_id: "entry.exs",
-            text: "fn main() { ret 42; }",
-        },
+        Source::new("entry.exs", "fn main() { ret 42; }"),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -758,10 +706,10 @@ fn compiles_zero_parameter_main() {
 #[test]
 fn treats_pub_as_an_unreserved_identifier() {
     let module = compile(
-        SourceInput {
-            source_id: "pub-identifier.exs",
-            text: "fn pub() -> Int { ret 42; } fn main() -> Int { ret pub(); }",
-        },
+        Source::new(
+            "pub-identifier.exs",
+            "fn pub() -> Int { ret 42; } fn main() -> Int { ret pub(); }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok(), "{module:?}");
@@ -771,10 +719,7 @@ fn treats_pub_as_an_unreserved_identifier() {
 #[test]
 fn rejects_removed_pub_function_modifier() {
     let error = match compile(
-        SourceInput {
-            source_id: "pub-modifier.exs",
-            text: "pub fn main() { ret None; }",
-        },
+        Source::new("pub-modifier.exs", "pub fn main() { ret None; }"),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("removed `pub` modifier compiled"),
@@ -800,13 +745,7 @@ fn rejects_invalid_literal_match_arms() {
             "match arms must all be enum variants or all literals",
         ),
     ] {
-        match compile(
-            SourceInput {
-                source_id: "main.exs",
-                text,
-            },
-            CompileOptions::default(),
-        ) {
+        match compile(Source::new("main.exs", text), CompileOptions::default()) {
             Ok(_) => panic!("{text} unexpectedly compiled"),
             Err(error) => assert!(error.to_string().contains(message), "{text}\n{error}"),
         }
@@ -818,22 +757,18 @@ fn rejects_invalid_literal_match_arms() {
 #[test]
 fn compiles_closures_in_unreached_functions() {
     let text = "fn unused() { let f = () => { ret 1; }; ret f(); }\nfn main() { let g = () => { ret 2; }; ret g(); }\ntest \"t\" { assert_eq(1, 1); }";
-    let source = SourceInput {
-        source_id: "./main.exs",
-        text,
-    };
-    assert!(compile(source, CompileOptions::default()).is_ok());
-    let mut resolver = TestResolver {
+    let source = Source::new("./main.exs", text);
+    assert!(compile(source.clone(), CompileOptions::default()).is_ok());
+    let resolver = TestResolver {
         sources: HashMap::new(),
     };
-    let tests =
-        exs_compiler::compile_tests_with_resolver(source, CompileOptions::default(), &mut resolver);
+    let tests = exs_compiler::compile_tests(source, CompileOptions::default().resolver(&resolver));
     assert!(tests.is_ok(), "{:?}", tests.err());
     let error = match compile(
-        SourceInput {
-            source_id: "./main.exs",
-            text: "fn unused() { let f = () => { ret missing; }; ret f(); }\nfn main() { ret 1; }",
-        },
+        Source::new(
+            "./main.exs",
+            "fn unused() { let f = () => { ret missing; }; ret f(); }\nfn main() { ret 1; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("an unknown binding compiled"),
@@ -846,10 +781,7 @@ fn compiles_closures_in_unreached_functions() {
 #[test]
 fn highlights_interpolations_with_escaped_quotes() {
     let text = "fn main(user) { ret f\"{user[\\\"name\\\"]} {user}\"; }";
-    let spans = exs_compiler::highlight(SourceInput {
-        source_id: "./main.exs",
-        text,
-    });
+    let spans = exs_compiler::highlight(Source::new("./main.exs", text));
     let texts = spans
         .iter()
         .map(|span| &text[span.start..span.end])
@@ -859,4 +791,70 @@ fn highlights_interpolations_with_escaped_quotes() {
         3,
         "{texts:?}"
     );
+}
+
+/// Rejects a redeclaration of the prelude types and traits the language itself relies on.
+#[test]
+fn rejects_redeclaring_core_prelude_types() {
+    for text in [
+        "type Range { value } fn main() { ret 1; }",
+        "enum IteratorStep { Done, } fn main() { ret 1; }",
+        "type HostStream { value } fn main() { ret 1; }",
+        "trait Iterator { fn other(self); } fn main() { ret 1; }",
+    ] {
+        let error = match compile(
+            Source::new("core-type.exs", text),
+            CompileOptions::default(),
+        ) {
+            Ok(_) => panic!("{text} compiled"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("E0219"), "{text}: {error}");
+    }
+}
+
+/// Rejects the words reserved for future language features wherever an identifier may stand.
+#[test]
+fn rejects_reserved_words() {
+    for word in ["async", "await", "loop", "return", "struct", "yield"] {
+        let text = format!("fn main() {{ let {word} = 1; ret {word}; }}");
+        let error = match compile(
+            Source::new("reserved.exs", &text),
+            CompileOptions::default(),
+        ) {
+            Ok(_) => panic!("{word} compiled as an identifier"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("E0011"), "{word}: {error}");
+    }
+}
+
+/// Keeps a project's own type and an imported type apart when both are named like a prelude type.
+#[test]
+fn compiles_project_types_named_like_prelude_types() {
+    /// Provides one imported module declaring its own `Duration`.
+    struct Resolver;
+
+    impl exs_compiler::ModuleResolver for Resolver {
+        fn resolve(
+            &self,
+            _importer: &str,
+            _path: &str,
+        ) -> Result<exs_compiler::Source<'_>, String> {
+            Ok(exs_compiler::Source::new(
+                "other.exs".to_owned(),
+                "type Duration { other: Int } fn make() { ret Duration { other: 1 }; }".to_owned(),
+            ))
+        }
+    }
+
+    let module = exs_compiler::compile(
+        Source::new(
+            "app.exs",
+            "import \"./other.exs\" as other; type Duration { value: Int } \
+                   fn main() -> List { ret [Duration { value: 1 }, other::make()]; }",
+        ),
+        CompileOptions::default().resolver(&Resolver),
+    );
+    assert!(module.is_ok(), "{:?}", module.err());
 }

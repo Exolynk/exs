@@ -863,6 +863,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "exs"
+version = "0.2.0"
+dependencies = [
+ "exs-abi",
+ "exs-autocomplete",
+ "exs-compiler",
+ "exs-libs",
+ "exs-runner",
+ "serde",
+]
+
+[[package]]
 name = "exs-abi"
 version = "0.2.0"
 dependencies = [
@@ -873,7 +885,6 @@ dependencies = [
 name = "exs-autocomplete"
 version = "0.2.0"
 dependencies = [
- "birei",
  "exs-compiler",
 ]
 
@@ -895,6 +906,13 @@ dependencies = [
  "exs-compiler",
  "exs-libs",
  "exs-runner",
+]
+
+[[package]]
+name = "exs-compatibility"
+version = "0.2.0"
+dependencies = [
+ "exs",
 ]
 
 [[package]]
@@ -940,6 +958,7 @@ version = "0.2.0"
 dependencies = [
  "dlmalloc",
  "exs-abi",
+ "serde",
 ]
 
 [[package]]
@@ -987,7 +1006,6 @@ version = "0.2.0"
 dependencies = [
  "exs-abi",
  "exs-compiler",
- "exs-core",
  "jiff",
  "js-sys",
  "serde",
@@ -1002,6 +1020,7 @@ version = "0.2.0"
 dependencies = [
  "exs-guest",
  "exs-runner",
+ "serde",
 ]
 
 [[package]]

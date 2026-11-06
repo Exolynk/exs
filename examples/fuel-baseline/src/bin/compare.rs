@@ -16,9 +16,10 @@ mod native {
     use std::time::Duration;
 
     use exs_abi::ExsValue;
-    use exs_compiler::{CompileOptions, SourceInput, compile};
+    use exs_compiler::{CompileOptions, Source, compile};
     use exs_runner::{
-        CompilerStrategy, ExecutionCancellation, ProtectionLevel, ServerRunner, ServerRunnerConfig,
+        CompilerStrategy, ExecutionCancellation, ExecutionOptions, ProtectionLevel, ServerRunner,
+        ServerRunnerConfig,
     };
 
     use super::scenarios::{ALL, Scenario};
@@ -69,10 +70,7 @@ mod native {
         let mut timings = Vec::new();
         for scenario in ALL {
             let compiled = compile(
-                SourceInput {
-                    source_id: "test.exs",
-                    text: scenario.source,
-                },
+                Source::new("test.exs", scenario.source),
                 CompileOptions::default(),
             )
             .map_err(|error| format!("{} does not compile: {error}", scenario.name))?;
@@ -103,13 +101,14 @@ mod native {
 
     /// Creates the runner used for every measurement with one code generator.
     fn measuring_runner(compiler: CompilerStrategy) -> ServerRunner {
-        ServerRunner::new(ServerRunnerConfig {
-            max_memory_bytes: 64 * 1024 * 1024,
-            max_fuel: FUEL_BUDGET,
-            timeout: Duration::from_secs(60),
-            protection: ProtectionLevel::Standard,
-            compiler,
-            ..ServerRunnerConfig::default()
+        ServerRunner::new({
+            let mut options = ServerRunnerConfig::default();
+            options.max_memory_bytes = 64 * 1024 * 1024;
+            options.max_fuel = FUEL_BUDGET;
+            options.timeout = Duration::from_secs(60);
+            options.protection = ProtectionLevel::Standard;
+            options.compiler = compiler;
+            options
         })
     }
 
@@ -124,11 +123,11 @@ mod native {
         let mut compile = Vec::with_capacity(TIMING_RUNS);
         let mut execution = Vec::with_capacity(TIMING_RUNS);
         for _ in 0..TIMING_RUNS {
-            let report = block_on(runner.execute_with_report(
+            let report = block_on(runner.execute_with(
                 wasm,
                 function,
                 &inputs,
-                &ExecutionCancellation::new(),
+                &ExecutionOptions::default(),
             ))
             .map_err(|error| format!("timing {} failed: {error}", scenario.name))?;
             compile.push(report.compile_time);
@@ -202,13 +201,9 @@ mod native {
         label: &str,
     ) -> Result<u64, String> {
         let inputs = (scenario.inputs)();
-        let report = block_on(runner.execute_with_report(
-            wasm,
-            function,
-            &inputs,
-            &ExecutionCancellation::new(),
-        ))
-        .map_err(|error| format!("{label} {} failed: {error}", scenario.name))?;
+        let report =
+            block_on(runner.execute_with(wasm, function, &inputs, &ExecutionOptions::default()))
+                .map_err(|error| format!("{label} {} failed: {error}", scenario.name))?;
         let expected: ExsValue = (scenario.expected)();
         if report.value != expected {
             return Err(format!(

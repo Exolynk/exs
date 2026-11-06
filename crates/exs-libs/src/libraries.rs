@@ -76,9 +76,16 @@ pub fn source(path: &str) -> Option<&'static str> {
 /// enabled library has that path.
 #[cfg(feature = "compiler")]
 #[must_use]
-pub fn library(path: &str) -> Option<exs_compiler::ResolvedSource> {
-    source(path).map(|text| exs_compiler::ResolvedSource {
-        source_id: path.to_owned(),
-        text: text.to_owned(),
-    })
+pub fn library(path: &str) -> Option<exs_compiler::Source<'static>> {
+    source(path).map(|text| exs_compiler::Source::new(path.to_owned(), text))
+}
+
+/// Adds every enabled library to `sources`.
+#[cfg(feature = "compiler")]
+pub fn add_to(sources: &mut exs_compiler::Sources) {
+    for path in libraries() {
+        if let Some(text) = source(&path) {
+            sources.add_library(path, text);
+        }
+    }
 }

@@ -1,9 +1,11 @@
 [package]
 name = "exs-core-template"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Internal crate of ExS: the prebuilt WebAssembly template of the runtime library. Use the exs crate; this one has no stability promise"
 
 [lints]
 workspace = true
@@ -16,4 +18,4 @@ crate-type = ["rlib"]
 template = []
 
 [dependencies]
-exs-core = { path = "../exs-core" }
+exs-core.workspace = true

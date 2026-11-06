@@ -7,10 +7,10 @@ use birei::code_editor::{
     DiagnosticsResponse, HighlightRequest, HighlightResponse, HighlightSpan, HoverRequest,
     HoverResponse, IndentAction, IndentRequest, IndentResponse, TextEdit,
 };
-use exs_compiler::{HighlightKind, SourceInput, check_syntax, highlight, source_lex};
-
-use crate::syntax::tokenize;
-use crate::{CompletionEngine, CompletionKind, CompletionRequest as ExsCompletionRequest};
+use exs_autocomplete::{
+    CompletionEngine, CompletionKind, CompletionRequest as ExsCompletionRequest,
+};
+use exs_compiler::{HighlightKind, Source, check_syntax, highlight, source_lex};
 
 /// Birei language service backed by the reusable ExS completion engine.
 #[derive(Clone, Debug, Default)]
@@ -21,6 +21,7 @@ pub struct ExsBireiLanguageService {
 
 impl ExsBireiLanguageService {
     /// Builds a Birei service using one configured ExS completion engine.
+    #[cfg(test)]
     #[must_use]
     pub fn new(engine: CompletionEngine) -> Self {
         Self { engine }
@@ -33,10 +34,7 @@ impl ExsBireiLanguageService {
         cursor: usize,
         selection_is_collapsed: bool,
     ) -> CompletionResponse {
-        let lexed = source_lex(SourceInput {
-            source_id: "<birei>",
-            text: source,
-        });
+        let lexed = source_lex(Source::new("<birei>", source));
         if !selection_is_collapsed || lexed.is_comment_position(cursor) {
             return CompletionResponse::default();
         }
@@ -68,10 +66,7 @@ impl ExsBireiLanguageService {
     /// path or a value's type, so the item named like the identifier describes it.
     fn hover_response(&self, source: &str, offset: usize) -> Option<HoverResponse> {
         let range = identifier_at(source, offset)?;
-        let lexed = source_lex(SourceInput {
-            source_id: "<birei>",
-            text: source,
-        });
+        let lexed = source_lex(Source::new("<birei>", source));
         if lexed.is_comment_position(range.start) {
             return None;
         }
@@ -128,16 +123,13 @@ impl CodeLanguageService for ExsBireiLanguageService {
     ) -> Pin<Box<dyn Future<Output = HighlightResponse> + 'a>> {
         Box::pin(async move {
             HighlightResponse {
-                spans: highlight(SourceInput {
-                    source_id: "<birei>",
-                    text: request.text,
-                })
-                .into_iter()
-                .map(|span| HighlightSpan {
-                    range: span.start..span.end,
-                    class_name: highlight_class(span.kind),
-                })
-                .collect(),
+                spans: highlight(Source::new("<birei>", request.text))
+                    .into_iter()
+                    .map(|span| HighlightSpan {
+                        range: span.start..span.end,
+                        class_name: highlight_class(span.kind),
+                    })
+                    .collect(),
             }
         })
     }
@@ -176,17 +168,14 @@ impl CodeLanguageService for ExsBireiLanguageService {
         request: DiagnosticsRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = DiagnosticsResponse> + 'a>> {
         Box::pin(async move {
-            let items = check_syntax(SourceInput {
-                source_id: "<birei>",
-                text: request.text,
-            })
-            .into_iter()
-            .map(|diagnostic| CodeDiagnostic {
-                message: diagnostic.message,
-                severity: CodeDiagnosticSeverity::Error,
-                range: diagnostic.start_byte as usize..diagnostic.end_byte as usize,
-            })
-            .collect();
+            let items = check_syntax(Source::new("<birei>", request.text))
+                .into_iter()
+                .map(|diagnostic| CodeDiagnostic {
+                    message: diagnostic.message,
+                    severity: CodeDiagnosticSeverity::Error,
+                    range: diagnostic.start_byte as usize..diagnostic.end_byte as usize,
+                })
+                .collect();
             DiagnosticsResponse { items }
         })
     }
@@ -215,6 +204,7 @@ fn highlight_class(kind: HighlightKind) -> &'static str {
         | HighlightKind::Field
         | HighlightKind::Binding
         | HighlightKind::Variable => "birei-code-editor__token--attribute",
+        _ => "birei-code-editor__token--attribute",
     }
 }
 
@@ -269,7 +259,7 @@ fn newline_indent(text: &str, selection: birei::code_editor::CodeSelection) -> T
 
 /// Returns the indentation of the opening brace matching the closer at `closing_offset`.
 fn closing_brace_indent(text: &str, closing_offset: usize) -> Option<String> {
-    let tokens = tokenize(text);
+    let tokens = source_lex(Source::new("<birei>", text)).tokens;
     let mut openings = Vec::new();
     for token in tokens {
         match token.text.as_str() {
@@ -309,7 +299,9 @@ fn clamp_byte_offset(text: &str, offset: usize) -> usize {
 mod tests {
     use birei::code_editor::{CodeCompletionKind, CodeSelection};
 
-    use super::{CompletionEngine, ExsBireiLanguageService, map_kind, newline_indent};
+    use super::{
+        CompletionEngine, CompletionKind, ExsBireiLanguageService, map_kind, newline_indent,
+    };
 
     /// Preserves the active line's existing indentation when adding a statement line.
     #[test]
@@ -367,9 +359,9 @@ mod tests {
     fn forwards_completion_documentation_to_birei() {
         let service = ExsBireiLanguageService::new(
             CompletionEngine::default()
-                .with_library("exo::ui", "/// Reloads the browser page.\nfn reload() {}"),
+                .with_library("app::ui", "/// Reloads the browser page.\nfn reload() {}"),
         );
-        let source = "exo::ui::re";
+        let source = "app::ui::re";
         let response = service.completion_response(source, source.len(), true);
         let reload = response
             .items
@@ -388,9 +380,9 @@ mod tests {
     fn describes_the_hovered_identifier() {
         let service = ExsBireiLanguageService::new(
             CompletionEngine::default()
-                .with_library("exo::ui", "/// Reloads the browser page.\nfn reload() {}"),
+                .with_library("app::ui", "/// Reloads the browser page.\nfn reload() {}"),
         );
-        let source = "fn main() { exo::ui::reload(); }";
+        let source = "fn main() { app::ui::reload(); }";
         let offset = source.find("reload").unwrap_or_default() + 2;
         let hover = service
             .hover_response(source, offset)
@@ -407,9 +399,6 @@ mod tests {
     /// Maps importable ExS modules to Birei's explicit module category.
     #[test]
     fn maps_modules_to_birei_modules() {
-        assert_eq!(
-            map_kind(crate::CompletionKind::Module),
-            CodeCompletionKind::Module
-        );
+        assert_eq!(map_kind(CompletionKind::Module), CodeCompletionKind::Module);
     }
 }

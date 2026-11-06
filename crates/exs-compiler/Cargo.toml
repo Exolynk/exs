@@ -1,16 +1,18 @@
 [package]
 name = "exs-compiler"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Internal crate of ExS: compiles ExS source to WebAssembly. Use the exs crate; this one has no stability promise"
 
 [lints]
 workspace = true
 
 [dependencies]
-exs-abi = { path = "../exs-abi" }
-exs-core-template = { path = "../exs-core-template" }
-exs-layout = { path = "../exs-layout" }
+exs-abi.workspace = true
+exs-core-template.workspace = true
+exs-layout.workspace = true
 wasm-encoder.workspace = true
 wasmparser.workspace = true

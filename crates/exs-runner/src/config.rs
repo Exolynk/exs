@@ -10,8 +10,9 @@ use crate::{CompilerStrategy, ProtectionLevel, RunnerTimer, SharedModuleCache};
 /// The execution policy and engine settings of one server runner.
 ///
 /// Every field has a default suited to untrusted ExS source; override the fields an
-/// application needs with struct update syntax.
+/// application needs on the value [`Default::default`] returns.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct ServerRunnerConfig {
     /// Maximum linear-memory bytes of one execution.
     pub max_memory_bytes: usize,

@@ -48,7 +48,7 @@ pub struct UseItem<'a> {
 /// One compile-time `use` declaration.
 #[derive(Debug, Clone)]
 pub struct UseDeclaration<'a> {
-    /// The path the items are taken from, such as `exo::db`; empty when a single module
+    /// The path the items are taken from, such as `app::db`; empty when a single module
     /// is used, as in `use log;`.
     pub namespace: Identifier<'a>,
     /// Declarations introduced into the local module scope.
@@ -181,7 +181,7 @@ pub struct FunctionDeclaration<'a> {
     /// Whether the function receives an entry export a runner can call: the public
     /// top-level functions of the root module.
     pub entry: bool,
-    /// The library the function belongs to, such as `exo`; `std` for the prelude and empty
+    /// The library the function belongs to, such as `app`; `std` for the prelude and empty
     /// for the project's own functions. Private declarations are visible within it.
     pub package: String,
     /// Function name.

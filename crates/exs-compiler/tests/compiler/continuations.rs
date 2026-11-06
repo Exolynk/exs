@@ -4,10 +4,10 @@ use super::*;
 #[test]
 fn validates_wasm_for_a_closure_expression() {
     let compiled = match compile(
-        SourceInput {
-            source_id: "closure.exs",
-            text: "fn main() -> Int { let count = 0; let increment = () => { count = count + 1; ret count; }; increment(); ret increment(); }",
-        },
+        Source::new(
+            "closure.exs",
+            "fn main() -> Int { let count = 0; let increment = () => { count = count + 1; ret count; }; increment(); ret increment(); }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(compiled) => compiled,
@@ -22,10 +22,10 @@ fn validates_wasm_for_a_closure_expression() {
 #[test]
 fn compiles_a_resumable_host_call() {
     let compiled = match compile(
-        SourceInput {
-            source_id: "host-call.exs",
-            text: "fn main(input) { ret Host::call(\"echo\", input); }",
-        },
+        Source::new(
+            "host-call.exs",
+            "fn main(input) { ret Host::call(\"echo\", input); }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(compiled) => compiled,
@@ -53,16 +53,11 @@ fn compiles_a_resumable_host_call() {
 #[test]
 fn emits_source_map_and_optional_source_sections() {
     let source = "fn main(input) { ret input + 1; }";
-    let compiled = match compile(
-        SourceInput {
-            source_id: "maps.exs",
-            text: source,
-        },
-        CompileOptions {
-            embed_sources: true,
-            ..CompileOptions::default()
-        },
-    ) {
+    let compiled = match compile(Source::new("maps.exs", source), {
+        let mut options = CompileOptions::default();
+        options.embed_sources = true;
+        options
+    }) {
         Ok(compiled) => compiled,
         Err(error) => panic!("compilation failed: {error}"),
     };
@@ -85,13 +80,8 @@ fn emits_source_map_and_optional_source_sections() {
             && data.ends_with(source.as_bytes())
     }));
 
-    let without_sources = match compile(
-        SourceInput {
-            source_id: "maps.exs",
-            text: source,
-        },
-        CompileOptions::default(),
-    ) {
+    let without_sources = match compile(Source::new("maps.exs", source), CompileOptions::default())
+    {
         Ok(compiled) => compiled,
         Err(error) => panic!("compilation failed: {error}"),
     };

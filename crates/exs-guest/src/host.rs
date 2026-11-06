@@ -10,11 +10,11 @@ use core::task::{Context, Poll};
 
 use exs_abi::{
     HOST_DATETIME_FROM_COMPONENTS_HOST_NAME, HOST_DATETIME_IN_TIMEZONE_HOST_NAME,
-    HOST_ELAPSED_HOST_NAME, HOST_NOW_HOST_NAME, HOST_STREAM_NEXT_HOST_NAME,
+    HOST_ELAPSED_HOST_NAME, HOST_NOW_HOST_NAME, HOST_SLEEP_HOST_NAME, HOST_STREAM_NEXT_HOST_NAME,
     HOST_STREAM_OPEN_HOST_NAME, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
 };
 
-use crate::{ExsValue, begin_host_call, guest_error, take_host_response};
+use crate::{ExsError, ExsValue, begin_host_call, guest_error, take_host_response};
 
 /// The result of advancing one guest-owned Host stream.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,8 +25,9 @@ pub enum IteratorStep {
     Done,
 }
 
-/// One runner-owned Host stream addressed through its opaque integer handle.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// One runner-owned Host stream addressed through its opaque integer handle. The runner releases
+/// it when the execution ends.
+#[derive(Debug)]
 pub struct HostStream {
     /// Handle returned by the runner's stream-open operation.
     handle: i64,
@@ -34,6 +35,7 @@ pub struct HostStream {
 
 /// A wall-clock instant captured by a runner together with its observed local offset.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct DateTime {
     /// Signed whole seconds from the Unix epoch.
     pub unix_seconds: i64,
@@ -45,7 +47,27 @@ pub struct DateTime {
     pub timezone: Option<String>,
 }
 
-/// Starts one named host call from owned argument values and resolves to its decoded response.
+/// The civil date and time [`from_components_in_timezone`] resolves.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DateTimeComponents {
+    /// The year.
+    pub year: i64,
+    /// The month, from 1.
+    pub month: i64,
+    /// The day of the month, from 1.
+    pub day: i64,
+    /// The hour, from 0.
+    pub hour: i64,
+    /// The minute, from 0.
+    pub minute: i64,
+    /// The second, from 0.
+    pub second: i64,
+    /// The nanosecond, from 0.
+    pub nanosecond: i64,
+}
+
+/// Starts one named host call from owned argument values and resolves to its response, which is
+/// the host function's value: an `ExsValue::Error` when it fails, as in `Host::call` of a script.
 #[must_use]
 pub fn call(name: impl Into<String>, arguments: impl IntoIterator<Item = ExsValue>) -> HostCall {
     HostCall {
@@ -56,57 +78,63 @@ pub fn call(name: impl Into<String>, arguments: impl IntoIterator<Item = ExsValu
 }
 
 /// Returns a runner-owned wall-clock snapshot with IANA zone metadata when available.
-pub async fn now() -> Result<DateTime, ExsValue> {
+///
+/// # Errors
+///
+/// Returns the Error of a failed or malformed host response.
+pub async fn now() -> Result<DateTime, ExsError> {
     match call(HOST_NOW_HOST_NAME, []).await {
-        error @ ExsValue::Error(_) => Err(error),
+        ExsValue::Error(error) => Err(error),
         value => date_time_from_value(value),
     }
 }
 
 /// Renders one instant in a runner-resolved IANA time zone.
+///
+/// # Errors
+///
+/// Returns the Error of an unknown time zone or of a failed or malformed host response.
 pub async fn in_timezone(
-    value: DateTime,
+    value: &DateTime,
     timezone: impl Into<String>,
-) -> Result<DateTime, ExsValue> {
+) -> Result<DateTime, ExsError> {
     match call(
         HOST_DATETIME_IN_TIMEZONE_HOST_NAME,
-        [date_time_value(&value), ExsValue::String(timezone.into())],
+        [date_time_value(value), ExsValue::String(timezone.into())],
     )
     .await
     {
-        error @ ExsValue::Error(_) => Err(error),
+        ExsValue::Error(error) => Err(error),
         value => date_time_from_value(value),
     }
 }
 
 /// Resolves civil date and time components in one runner-provided IANA zone.
-#[allow(clippy::too_many_arguments)] // The Host ABI deliberately receives each civil component.
+///
+/// # Errors
+///
+/// Returns the Error of invalid components, an unknown time zone, or a failed or malformed host
+/// response.
 pub async fn from_components_in_timezone(
-    year: i64,
-    month: i64,
-    day: i64,
-    hour: i64,
-    minute: i64,
-    second: i64,
-    nanosecond: i64,
+    components: DateTimeComponents,
     timezone: impl Into<String>,
-) -> Result<DateTime, ExsValue> {
+) -> Result<DateTime, ExsError> {
     match call(
         HOST_DATETIME_FROM_COMPONENTS_HOST_NAME,
         [
-            ExsValue::Int(year),
-            ExsValue::Int(month),
-            ExsValue::Int(day),
-            ExsValue::Int(hour),
-            ExsValue::Int(minute),
-            ExsValue::Int(second),
-            ExsValue::Int(nanosecond),
+            ExsValue::Int(components.year),
+            ExsValue::Int(components.month),
+            ExsValue::Int(components.day),
+            ExsValue::Int(components.hour),
+            ExsValue::Int(components.minute),
+            ExsValue::Int(components.second),
+            ExsValue::Int(components.nanosecond),
             ExsValue::String(timezone.into()),
         ],
     )
     .await
     {
-        error @ ExsValue::Error(_) => Err(error),
+        ExsValue::Error(error) => Err(error),
         value => date_time_from_value(value),
     }
 }
@@ -133,15 +161,46 @@ fn date_time_value(value: &DateTime) -> ExsValue {
 }
 
 /// Returns monotonic time elapsed since this root guest execution began.
-pub async fn elapsed() -> Result<core::time::Duration, ExsValue> {
+///
+/// # Errors
+///
+/// Returns the Error of a failed or malformed host response.
+pub async fn elapsed() -> Result<core::time::Duration, ExsError> {
     match call(HOST_ELAPSED_HOST_NAME, []).await {
-        error @ ExsValue::Error(_) => Err(error),
+        ExsValue::Error(error) => Err(error),
         value => duration_from_value(value),
     }
 }
 
+/// Suspends this execution for `duration`. Other tasks and executions keep running, and the sleep
+/// ends at the execution's deadline at the latest, as `Host::sleep` of a script does.
+///
+/// # Errors
+///
+/// Returns the Error of a failed or malformed host response.
+pub async fn sleep(duration: core::time::Duration) -> Result<(), ExsError> {
+    let request = ExsValue::Object(vec![
+        (
+            "seconds".to_owned(),
+            ExsValue::Int(i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)),
+        ),
+        (
+            "nanoseconds".to_owned(),
+            ExsValue::Int(i64::from(duration.subsec_nanos())),
+        ),
+    ]);
+    match call(HOST_SLEEP_HOST_NAME, [request]).await {
+        ExsValue::Unit => Ok(()),
+        ExsValue::Error(error) => Err(error),
+        value => Err(time_protocol_error(
+            "Host::sleep returned a non-Unit response",
+            value,
+        )),
+    }
+}
+
 /// Decodes one runner-provided DateTime object into the typed guest representation.
-fn date_time_from_value(value: ExsValue) -> Result<DateTime, ExsValue> {
+fn date_time_from_value(value: ExsValue) -> Result<DateTime, ExsError> {
     let ExsValue::Object(entries) = value else {
         return Err(time_protocol_error(
             "Host::now returned a non-DateTime response",
@@ -219,7 +278,7 @@ fn date_time_from_value(value: ExsValue) -> Result<DateTime, ExsValue> {
 }
 
 /// Decodes one runner-provided Duration object into core's standard Duration.
-fn duration_from_value(value: ExsValue) -> Result<core::time::Duration, ExsValue> {
+fn duration_from_value(value: ExsValue) -> Result<core::time::Duration, ExsError> {
     let ExsValue::Object(entries) = value else {
         return Err(time_protocol_error(
             "Host::elapsed returned a non-Duration response",
@@ -268,25 +327,25 @@ fn duration_from_value(value: ExsValue) -> Result<core::time::Duration, ExsValue
 }
 
 /// Builds the fatal guest-boundary Error used for malformed runner time responses.
-fn time_protocol_error(message: &str, value: ExsValue) -> ExsValue {
-    let mut error = guest_error("InvalidHostTimeResponse", message);
-    if let ExsValue::Error(ref mut error_value) = error {
-        *error_value.data = value;
-    }
-    error
+fn time_protocol_error(message: &str, value: ExsValue) -> ExsError {
+    ExsError::fatal("InvalidHostTimeResponse", message).with_data(value)
 }
 
 /// Opens one runner-registered Host stream from a name and ordered factory arguments.
+///
+/// # Errors
+///
+/// Returns the Error of an unknown stream, a failing factory or a malformed host response.
 pub async fn stream(
     name: impl Into<String>,
     arguments: impl IntoIterator<Item = ExsValue>,
-) -> Result<HostStream, ExsValue> {
+) -> Result<HostStream, ExsError> {
     let mut request = Vec::new();
     request.push(ExsValue::String(name.into()));
     request.extend(arguments);
     match call(HOST_STREAM_OPEN_HOST_NAME, request).await {
         ExsValue::Int(handle) => Ok(HostStream { handle }),
-        error @ ExsValue::Error(_) => Err(error),
+        ExsValue::Error(error) => Err(error),
         value => Err(stream_protocol_error(
             "stream open returned a non-integer handle",
             value,
@@ -296,9 +355,13 @@ pub async fn stream(
 
 impl HostStream {
     /// Advances this stream once and decodes its IteratorStep response.
-    pub async fn next(&mut self) -> Result<IteratorStep, ExsValue> {
+    ///
+    /// # Errors
+    ///
+    /// Returns the Error of a failing stream or a malformed host response.
+    pub async fn next(&mut self) -> Result<IteratorStep, ExsError> {
         match call(HOST_STREAM_NEXT_HOST_NAME, [ExsValue::Int(self.handle)]).await {
-            error @ ExsValue::Error(_) => Err(error),
+            ExsValue::Error(error) => Err(error),
             ExsValue::Enum {
                 type_id,
                 variant,
@@ -336,12 +399,8 @@ impl HostStream {
 }
 
 /// Builds the fatal guest-boundary Error used for malformed runner stream responses.
-fn stream_protocol_error(message: &str, value: ExsValue) -> ExsValue {
-    let mut error = guest_error("InvalidHostStreamResponse", message);
-    if let ExsValue::Error(ref mut error_value) = error {
-        *error_value.data = value;
-    }
-    error
+fn stream_protocol_error(message: &str, value: ExsValue) -> ExsError {
+    ExsError::fatal("InvalidHostStreamResponse", message).with_data(value)
 }
 
 /// One lazily started host call future.

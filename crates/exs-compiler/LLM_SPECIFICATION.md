@@ -1,8 +1,8 @@
-# Exolynk Script (ExS) LLM Specification
+# ExS LLM Specification
 
-**Language version:** 0.2.0-draft
+**Language version:** 0.2.0
 
-This compact authoring reference is derived from [`SPECIFICATION.md`](SPECIFICATION.md), which
+This compact authoring reference is derived from the full ExS language specification, which
 remains authoritative. The generated Compact API Reference supplies all standard-library and
 application signatures, types, traits, and enum variants.
 
@@ -17,8 +17,9 @@ application signatures, types, traits, and enum variants.
 - Comments are `//` to end of line or non-nesting `/* ... */`. Adjacent `///` comments document a
   declaration; leading `//!` comments document the module. Identifiers are case-sensitive ASCII
   names beginning with `_` or a letter and then containing letters, digits, or `_`.
-- Reserved words: `as break const continue else enum Error false fn for if impl import in is let
-  match None par private ret trait true type Unit use while`.
+- Reserved words: `as break const continue else enum Error false fn for Host if impl import in is
+  let match None par private ret trait true type Unit use while`, and without a meaning yet: `async
+  await loop return struct yield` (`E0011`).
 - `Int` is signed 64-bit. Decimal Int literals allow `_` and must fit `-2^63..2^63-1`; leading `-`
   is an operator. `Float` is IEEE-754 binary64 and its literal has a decimal point followed by a
   digit, an exponent, or both, so `7.abs()` calls a method of the Int `7`.
@@ -119,6 +120,8 @@ application signatures, types, traits, and enum variants.
 - Trait methods ending `;` are required; those with bodies are defaults. Implementations provide
   required methods and may omit defaults. Trait and nominal type names share a namespace. `Self` is
   valid in trait signatures and in the method signatures of any `impl` block.
+- A type, enum, or trait a module declares takes the place of a prelude type of the same name in
+  that module. `Range`, `IteratorStep`, `HostStream`, and `Iterator` cannot be redeclared (`E0219`).
 - `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Eq`, `Compare`, `ToString`, and `Debug` are reserved with
   the exact signatures listed in the API reference. `Ordering` variants are `Less`, `Equal`,
   `Greater`, and `Unordered`. Interpolation uses `ToString`; `Debug` is an explicit renderer.
@@ -142,18 +145,18 @@ application signatures, types, traits, and enum variants.
   calls of suspendable code; never rely on the interleaving of shared-state mutations.
 - `import "./path.exs" as namespace;` loads a relative module; the filename supplies an omitted
   namespace. Imports/uses come before declarations and cycles are errors.
-- Embedder libraries such as `log` or `exo::db` need no import (importing one is an error): name items by path (`log::info(x)`,
-  `exo::db::load(id)`, `exo::Record { ... }`). `use log::info;`, `use exo::db::{load, save as
-  store};`, and `use exo::db;` (then `db::load(id)`) create read-only names; this also works for
+- Embedder libraries such as `log` or `app::db` need no import (importing one is an error): name items by path (`log::info(x)`,
+  `app::db::load(id)`, `app::Record { ... }`). `use log::info;`, `use app::db::{load, save as
+  store};`, and `use app::db;` (then `db::load(id)`) create read-only names; this also works for
   imported files (`use math::{add as plus};`).
 - Declarations are public by default. `private` before a module-level `fn`/`type`/`enum`/`trait`/
-  `const` or an inherent `impl` method limits it to its package: one library (`exo` and `exo::db`) or the
+  `const` or an inherent `impl` method limits it to its package: one library (`app` and `app::db`) or the
   project (root plus imported files). Outside access is a compile error; an outside call of a
   private instance method behaves like a missing method. Trait implementation methods cannot be
   private; private root functions are not entry points.
 - `Host::call(name, arguments...)` calls a host-provided operation, may suspend, and creates no ExS
   task. The embedding host defines available names, contracts, capabilities, and side effects.
-- Nominal values reach the host with their type identity, such as `exo::dom::Div`; host values
+- Nominal values reach the host with their type identity, such as `app::dom::Div`; host values
   with that identity become values of that type when the program uses it (fields by name, missing
   ones `None`, others dropped) and otherwise behave as Objects that keep their identity.
 - `Host::sleep(duration)` may suspend. Duration is nonnegative normalized `seconds: Int` and

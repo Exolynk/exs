@@ -3,7 +3,7 @@
 mod support;
 
 use exs_abi::ExsValue;
-use exs_runner::{ExecutionCancellation, ServerRunner};
+use exs_runner::ServerRunner;
 use support::{block_on, compile_source, execute_source_with_inputs};
 
 /// Returns the Bools of a List result.
@@ -185,12 +185,7 @@ fn resumes_suspending_eq_implementations() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };

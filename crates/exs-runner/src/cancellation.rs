@@ -1,11 +1,34 @@
 //! Cooperative cancellation for one running ExS execution.
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use std::future::Future;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::task::{Context, Poll, Waker};
+use std::task::Waker;
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
+use std::task::{Context, Poll};
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 use crate::{ExsValue, HostFuture, deadline::ExecutionDeadline};
+
+/// How one execution runs.
+#[derive(Clone, Default)]
+#[non_exhaustive]
+pub struct ExecutionOptions {
+    /// Stops the execution when cancelled; the browser runner honors it between host calls.
+    pub cancellation: Option<ExecutionCancellation>,
+}
+
+impl ExecutionOptions {
+    /// Returns the options of an execution that `cancellation` can stop.
+    #[must_use]
+    pub fn with_cancellation(cancellation: &ExecutionCancellation) -> Self {
+        Self {
+            cancellation: Some(cancellation.clone()),
+        }
+    }
+}
 
 /// Cloneable cancellation control supplied to one runner execution.
 #[derive(Clone, Default)]
@@ -19,6 +42,7 @@ struct CancellationState {
     /// Whether cancellation was requested.
     cancelled: bool,
     /// Monotonic identifier assigned to one registered waker.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     next_waker_id: u64,
     /// Executor wakers currently blocked on cancellable host futures.
     wakers: Vec<(u64, Waker)>,
@@ -64,6 +88,7 @@ impl ExecutionCancellation {
         self.state().cancelled
     }
 
+    #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
     /// Registers or refreshes the executor waker for one pending host future.
     fn register_waker(&self, registration: &mut Option<u64>, waker: &Waker) {
         let mut state = self.state();
@@ -90,6 +115,7 @@ impl ExecutionCancellation {
         *registration = Some(identifier);
     }
 
+    #[cfg(all(feature = "server", not(target_arch = "wasm32")))]
     /// Removes one completed host future's executor waker.
     fn unregister_waker(&self, registration: &mut Option<u64>) {
         let Some(identifier) = registration.take() else {
@@ -111,6 +137,7 @@ impl ExecutionCancellation {
     }
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 /// Why a host future ended before its operation completed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Interruption {
@@ -120,6 +147,7 @@ pub(crate) enum Interruption {
     Timeout,
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 /// Future wrapper that resolves when its host future completes, cancellation is requested, or
 /// the execution deadline is reached.
 pub(crate) struct CancellableHostFuture<'cancellation> {
@@ -135,6 +163,7 @@ pub(crate) struct CancellableHostFuture<'cancellation> {
     registration: Option<u64>,
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl<'cancellation> CancellableHostFuture<'cancellation> {
     /// Wraps one pending host future with the execution cancellation control and deadline.
     pub(crate) fn new(
@@ -158,6 +187,7 @@ impl<'cancellation> CancellableHostFuture<'cancellation> {
     }
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl Future for CancellableHostFuture<'_> {
     type Output = Result<ExsValue, Interruption>;
 
@@ -189,6 +219,7 @@ impl Future for CancellableHostFuture<'_> {
     }
 }
 
+#[cfg(all(feature = "server", not(target_arch = "wasm32")))]
 impl Drop for CancellableHostFuture<'_> {
     /// Releases the registered waker when the runner drops an unfinished execution.
     fn drop(&mut self) {

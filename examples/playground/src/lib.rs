@@ -3,6 +3,8 @@
 #[cfg(any(target_arch = "wasm32", test))]
 mod documentation;
 #[cfg(any(target_arch = "wasm32", test))]
+mod language_service;
+#[cfg(any(target_arch = "wasm32", test))]
 mod markdown;
 
 #[cfg(target_arch = "wasm32")]
@@ -11,9 +13,8 @@ mod browser {
 
     use birei::CodeEditor;
     use birei::code_editor::CodeLanguageService;
-    use exs_autocomplete::ExsBireiLanguageService;
-    use exs_compiler::{CompileOptions, DocumentationPage, SourceInput, compile, format};
-    use exs_runner::{BrowserRunner, BrowserRunnerConfig, Bytes, ExsError, ExsValue};
+    use exs_compiler::{CompileOptions, DocumentationPage, Source, compile, format};
+    use exs_runner::{BrowserHostFunctionRegistry, BrowserRunner, Bytes, ExsError, ExsValue};
     use leptos::prelude::*;
     use leptos::task::spawn_local;
     use serde::{Deserialize, Serialize};
@@ -21,6 +22,7 @@ mod browser {
     use web_sys::Element;
 
     use crate::documentation::{PLAYGROUND_SOURCE_ID, documentation_pages};
+    use crate::language_service::ExsBireiLanguageService;
     use crate::markdown::render_documentation_markdown;
 
     const DEFAULT_SOURCE: &str = r#"type Vehicle {
@@ -204,17 +206,14 @@ fn main() -> Vehicle | Error {
                                 placeholder="Write ExS source..."
                                 on_input=Callback::new(move |next| source_for_change.set(next))
                                 on_change=Callback::new(move |next: String| {
-                                    match format(SourceInput {
-                                        source_id: PLAYGROUND_SOURCE_ID,
-                                        text: &next,
-                                    }) {
+                                    match format(Source::new(PLAYGROUND_SOURCE_ID, &next)) {
                                         Ok(formatted) => {
                                             source_for_change.set(formatted.clone());
                                             editor_status.set(String::from("Formatted"));
                                             refresh_documentation(&formatted);
                                         }
                                         Err(diagnostics) => {
-                                            editor_status.set(diagnostics.render(&next));
+                                            editor_status.set(diagnostics.to_string());
                                         }
                                     }
                                 })
@@ -346,39 +345,26 @@ fn main() -> Vehicle | Error {
     /// Compiles and executes source supplied through the playground editor.
     async fn execute_source(source: String, output: RwSignal<String>) {
         let compiled = match compile(
-            SourceInput {
-                source_id: PLAYGROUND_SOURCE_ID,
-                text: &source,
-            },
+            Source::new(PLAYGROUND_SOURCE_ID, &source),
             CompileOptions::default(),
         ) {
             Ok(compiled) => compiled,
-            Err(diagnostics) => {
-                output.set(format!(
-                    "Compilation failed:\n{}",
-                    diagnostics.render(&source)
-                ));
+            Err(error) => {
+                output.set(format!("Compilation failed:\n{error}"));
                 return;
             }
         };
 
-        let mut configuration = BrowserRunnerConfig::new();
-        if let Err(error) = register_output_hosts(&mut configuration, output) {
+        let mut runner = BrowserRunner::default();
+        if let Err(error) = register_output_hosts(runner.registry_mut(), output) {
             output.set(format!("Could not configure output: {error}"));
             return;
         }
-        if let Err(error) = register_fleet_hosts(&mut configuration) {
+        if let Err(error) = register_fleet_hosts(runner.registry_mut()) {
             output.set(format!("Could not configure fleet services: {error}"));
             return;
         }
-        let runner = match BrowserRunner::new(&compiled.wasm, configuration).await {
-            Ok(runner) => runner,
-            Err(error) => {
-                output.set(format!("Could not prepare execution: {error}"));
-                return;
-            }
-        };
-        match runner.execute("main", &[]).await {
+        match runner.execute(&compiled.wasm, "main", &[]).await {
             Ok(result) => append_output(output, &format!("Result: {result:?}\n")),
             Err(error) => append_output(output, &format!("Execution failed: {error}\n")),
         }
@@ -386,45 +372,38 @@ fn main() -> Vehicle | Error {
 
     /// Registers the `print` and `println` host functions used by playground programs.
     fn register_output_hosts(
-        configuration: &mut BrowserRunnerConfig,
+        registry: &mut BrowserHostFunctionRegistry,
         output: RwSignal<String>,
     ) -> Result<(), exs_runner::BrowserRegistryError> {
-        configuration
-            .registry_mut()
-            .fn_sync_raw("print", move |arguments| {
-                append_output(output, &format_arguments(&arguments));
-                ExsValue::None
-            })?;
+        registry.fn_sync_raw("print", move |arguments| {
+            append_output(output, &format_arguments(&arguments));
+            ExsValue::None
+        })?;
 
-        configuration
-            .registry_mut()
-            .fn_sync_raw("println", move |arguments| {
-                append_output(output, &format!("{}\n", format_arguments(&arguments)));
-                ExsValue::None
-            })
+        registry.fn_sync_raw("println", move |arguments| {
+            append_output(output, &format!("{}\n", format_arguments(&arguments)));
+            ExsValue::None
+        })
     }
 
     /// Registers typed fleet DTO services used by the default playground program.
     fn register_fleet_hosts(
-        configuration: &mut BrowserRunnerConfig,
+        registry: &mut BrowserHostFunctionRegistry,
     ) -> Result<(), exs_runner::BrowserRegistryError> {
-        configuration.registry_mut().fn_sync(
-            "fleet.vehicle",
-            |id: String| -> Result<Vehicle, ExsError> {
-                Ok(Vehicle {
-                    id,
-                    registration: "ZH 421 742".into(),
-                    status: VehicleStatus::InService {
-                        until: "2026-09-04".into(),
-                    },
-                    odometer_km: 48_120,
-                    maintenance_dates: vec!["2026-02-12".into(), "2026-08-20".into()],
-                    inspection_photo: Bytes::new(vec![0x89, 0x50, 0x4e, 0x47]),
-                    note: Some("Awaiting replacement front sensor.".into()),
-                })
-            },
-        )?;
-        configuration.registry_mut().stream(
+        registry.fn_sync("fleet.vehicle", |id: String| -> Result<Vehicle, ExsError> {
+            Ok(Vehicle {
+                id,
+                registration: "ZH 421 742".into(),
+                status: VehicleStatus::InService {
+                    until: "2026-09-04".into(),
+                },
+                odometer_km: 48_120,
+                maintenance_dates: vec!["2026-02-12".into(), "2026-08-20".into()],
+                inspection_photo: Bytes::new(vec![0x89, 0x50, 0x4e, 0x47]),
+                note: Some("Awaiting replacement front sensor.".into()),
+            })
+        })?;
+        registry.stream(
             "fleet.visits",
             |_vehicle_id: String| -> Result<Vec<ServiceVisit>, ExsError> {
                 Ok(vec![

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use exs_abi::{ErrorSeverity, ExsError, ExsValue, SourcePositionId};
+use exs_abi::{ExsError, ExsValue, SourcePositionId};
 use jiff::{Timestamp, Zoned, civil::DateTime as CivilDateTime};
 
 /// Resolves one serialized DateTime in the requested IANA time zone.
@@ -192,15 +192,7 @@ pub(crate) fn duration_parts(arguments: Vec<ExsValue>) -> Result<(u64, u32), Str
 
 /// Builds a recoverable Host sleep capability Error.
 pub(crate) fn sleep_error(message: String, origin: Option<SourcePositionId>) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "HostSleepError".to_owned(),
-        message,
-        data: Box::new(ExsValue::None),
-        origin,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(ExsError::recoverable("HostSleepError".to_owned(), message).with_origin(origin))
 }
 
 /// Builds a recoverable invalid-input Error for one built-in time operation.
@@ -209,26 +201,14 @@ pub(crate) fn time_error(
     data: ExsValue,
     origin: Option<SourcePositionId>,
 ) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "TypeError".to_owned(),
-        message: message.to_owned(),
-        data: Box::new(data),
-        origin,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(
+        ExsError::recoverable("TypeError".to_owned(), message.to_owned())
+            .with_data(data)
+            .with_origin(origin),
+    )
 }
 
 /// Builds a recoverable Error returned when one DateTime operation cannot resolve its request.
 pub(crate) fn date_time_error(message: String, origin: Option<SourcePositionId>) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "DateTimeError".to_owned(),
-        message,
-        data: Box::new(ExsValue::None),
-        origin,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(ExsError::recoverable("DateTimeError".to_owned(), message).with_origin(origin))
 }

@@ -4,26 +4,21 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
-use exs_compiler::{
-    CompileOptions, ModuleResolver, ResolvedSource, SourceInput, compile_with_resolver,
-};
-use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
+use exs_compiler::{CompileOptions, ModuleResolver, Source, compile};
+use exs_runner::{ExsValue, ServerRunner};
 
 /// Provides the libraries of `exs-libs` and rejects file imports.
 struct LibraryResolver;
 
 impl ModuleResolver for LibraryResolver {
     /// Rejects every import; the tests only name libraries.
-    fn resolve(&mut self, _importer: &str, path: &str) -> Result<ResolvedSource, String> {
+    fn resolve(&self, _importer: &str, path: &str) -> Result<Source<'_>, String> {
         Err(format!("unexpected import `{path}`"))
     }
 
     /// Returns the enabled library at `path`.
-    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
-        exs_libs::source(path).map(|text| ResolvedSource {
-            source_id: path.to_owned(),
-            text: text.to_owned(),
-        })
+    fn library(&self, path: &str) -> Option<Source<'_>> {
+        exs_libs::source(path).map(|text| Source::new(path.to_owned(), text.to_owned()))
     }
 }
 
@@ -110,13 +105,9 @@ fn reply(status: &str, headers: &str, body: &[u8]) -> Vec<u8> {
 
 /// Compiles `source` with the libraries and returns the result of its `main` for `base`.
 fn run(source: &str, base: &str) -> ExsValue {
-    let compiled = compile_with_resolver(
-        SourceInput {
-            source_id: "test.exs",
-            text: source,
-        },
-        CompileOptions::default(),
-        &mut LibraryResolver,
+    let compiled = compile(
+        Source::new("test.exs", source),
+        CompileOptions::default().resolver(&LibraryResolver),
     )
     .unwrap_or_else(|error| panic!("{source}\n{error}"));
     let mut runner = ServerRunner::default();
@@ -126,12 +117,7 @@ fn run(source: &str, base: &str) -> ExsValue {
         .build()
         .expect("tokio runtime starts");
     runtime
-        .block_on(runner.execute(
-            &compiled.wasm,
-            "main",
-            &[ExsValue::String(base.to_owned())],
-            &ExecutionCancellation::new(),
-        ))
+        .block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::String(base.to_owned())]))
         .unwrap_or_else(|error| panic!("{source}\n{error}"))
 }
 

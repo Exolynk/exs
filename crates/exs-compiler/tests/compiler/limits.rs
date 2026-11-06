@@ -3,7 +3,7 @@ use super::*;
 use exs_compiler::CompileLimits;
 
 /// Returns options whose limits `limits` adjusts from the defaults.
-fn options(limits: impl FnOnce(&mut CompileLimits)) -> CompileOptions {
+fn options(limits: impl FnOnce(&mut CompileLimits)) -> CompileOptions<'static> {
     let mut options = CompileOptions::default();
     limits(&mut options.limits);
     options
@@ -27,15 +27,9 @@ fn rejects_nesting_beyond_the_limit() {
         )
     };
     let compiles = |text: &str, max_nesting| {
-        compile(
-            SourceInput {
-                source_id: "nested.exs",
-                text,
-            },
-            limited(max_nesting),
-        )
-        .map(|_| ())
-        .map_err(|error| error.diagnostics[0].code)
+        compile(Source::new("nested.exs", text), limited(max_nesting))
+            .map(|_| ())
+            .map_err(|error| error.diagnostics[0].code)
     };
     assert_eq!(compiles(&nested(10), 16), Ok(()));
     assert_eq!(compiles(&nested(10), 8), Err("E0114"));
@@ -65,10 +59,7 @@ fn rejects_nesting_beyond_the_limit() {
 #[test]
 fn rejects_sources_beyond_the_size_limit() {
     let error = match compile(
-        SourceInput {
-            source_id: "large.exs",
-            text: "fn main() { ret 1; }",
-        },
+        Source::new("large.exs", "fn main() { ret 1; }"),
         options(|limits| limits.max_source_bytes = 10),
     ) {
         Ok(_) => panic!("a large source unexpectedly compiled"),
@@ -80,27 +71,32 @@ fn rejects_sources_beyond_the_size_limit() {
 /// Rejects projects with more modules or source bytes than the limits allow.
 #[test]
 fn rejects_projects_beyond_the_module_and_size_limits() {
-    let source = SourceInput {
-        source_id: "./main.exs",
-        text: "import \"./math.exs\"; fn main() -> Int { ret math::one(); }",
-    };
+    let source = Source::new(
+        "./main.exs",
+        "import \"./math.exs\"; fn main() -> Int { ret math::one(); }",
+    );
     let resolver = || TestResolver {
         sources: HashMap::from([(
             "./math.exs".to_owned(),
             "fn one() -> Int { ret 1; }".to_owned(),
         )]),
     };
-    assert!(compile_with_resolver(source, CompileOptions::default(), &mut resolver()).is_ok());
-    let modules = compile_with_resolver(
-        source,
-        options(|limits| limits.max_modules = 1),
-        &mut resolver(),
+    assert!(
+        compile(
+            source.clone(),
+            CompileOptions::default().resolver(&resolver())
+        )
+        .is_ok()
     );
-    assert!(matches!(modules, Err(error) if error.contains("limit of 1 modules")));
-    let total = compile_with_resolver(
-        source,
-        options(|limits| limits.max_total_source_bytes = source.text.len() + 5),
-        &mut resolver(),
+    let modules = compile(
+        source.clone(),
+        options(|limits| limits.max_modules = 1).resolver(&resolver()),
     );
-    assert!(matches!(total, Err(error) if error.contains("sources exceed the limit")));
+    assert!(matches!(modules, Err(error) if error.report.contains("limit of 1 modules")));
+    let total = compile(
+        source.clone(),
+        options(|limits| limits.max_total_source_bytes = source.text.len() + 5)
+            .resolver(&resolver()),
+    );
+    assert!(matches!(total, Err(error) if error.report.contains("sources exceed the limit")));
 }

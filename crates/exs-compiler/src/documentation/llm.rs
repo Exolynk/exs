@@ -3,7 +3,7 @@
 use super::model::{ApiDocumentation, CompactForm, ItemDocs, ItemKind, MemberDocs, ModuleDocs};
 
 /// Compact source-language reference that starts the generated reference.
-const LANGUAGE_SPECIFICATION: &str = include_str!("../../../../LLM_SPECIFICATION.md");
+const LANGUAGE_SPECIFICATION: &str = include_str!("../../LLM_SPECIFICATION.md");
 
 /// Renders the language specification followed by the compact API of `documentation`.
 pub(crate) fn render(documentation: &ApiDocumentation) -> String {
@@ -28,7 +28,7 @@ pub(crate) fn render_core(documentation: &ApiDocumentation, full_modules: &[&str
     let mut output = String::from(LANGUAGE_SPECIFICATION.trim_end());
     output.push_str("\n\n# API Index\n\n");
     output.push_str(
-        "The other modules with their types, enums, traits and namespaces, then their constants and functions(). Look up the entries you use by their module path, such as `http::get` or `exo::dom::Card`, by a bare name, or a whole module.\n\n",
+        "The other modules with their types, enums, traits and namespaces, then their constants and functions(). Look up the entries you use by their module path, such as `http::get` or `app::dom::Card`, by a bare name, or a whole module.\n\n",
     );
     let modules = documentation
         .modules

@@ -1,6 +1,6 @@
-# Exolynk Script (ExS) Language Reference
+# ExS Language Reference
 
-**Language version:** 0.2.0-draft
+**Language version:** 0.2.0
 
 This document defines the ExS source language. It is written for authors of ExS programs: it specifies valid syntax and observable behavior. It deliberately does not describe compiler internals, WebAssembly, runtime layouts, host transport formats, scheduling implementation, or development phases.
 
@@ -50,8 +50,14 @@ Identifiers begin with `_` or an ASCII letter. Later characters may also be ASCI
 The following words are reserved and cannot be used as identifiers:
 
 ```text
-as break const continue else enum Error false fn for if impl import in
+as break const continue else enum Error false fn for Host if impl import in
 is let match None par private ret trait true type Unit use while
+```
+
+These words have no meaning yet and are reserved for future language versions (`E0011`):
+
+```text
+async await loop return struct yield
 ```
 
 ## Literals
@@ -212,7 +218,7 @@ const DEFAULT_TITLE = "Untitled";
 private const LIMIT = PAGE_SIZE;
 ```
 
-Constants are exported, imported, used, and kept private like functions, also from libraries (`log::LEVEL`, `use exo::LIMIT;`). Compilation substitutes a constant's value into every reference that no local binding shadows. Assigning to a constant (`E0120`), a value of another form (`E0119`), constants that refer to each other in a cycle (`E0121`), and a constant named like another declaration are compile errors.
+Constants are exported, imported, used, and kept private like functions, also from libraries (`log::LEVEL`, `use app::LIMIT;`). Compilation substitutes a constant's value into every reference that no local binding shadows. Assigning to a constant (`E0120`), a value of another form (`E0119`), constants that refer to each other in a cycle (`E0121`), and a constant named like another declaration are compile errors.
 
 # 5. Expressions
 
@@ -435,6 +441,8 @@ type User {
 let user = User { name: "Ada" };
 ```
 
+A type, enum, or trait a module declares takes the place of a prelude type of the same name inside that module, so `type Duration { ... }` makes `Duration` name the module's own type there while `Host::elapsed()` still returns the prelude's. Standard types that newer language versions add follow this rule, so they cannot break a program. `Range`, `IteratorStep`, `HostStream`, `Iterator`, `Error`, the built-in value types, and the compiler-owned traits cannot be redeclared (`E0219`).
+
 `Name {` starts a typed Object only when `}` or a field name and `:` follow the brace, so `match Color::Red { ... }` and `if point == Point { x: 1 } { ... }` parse as expected.
 
 Every declared field is present after construction. An omitted field becomes `None` when its contract permits `None` or is `Any`. Missing required fields, unknown fields, duplicate fields, and contract violations produce the ordinary `TypeError` behavior. A nominal value has only its declared fields; reading or assigning another field is a `TypeError`.
@@ -619,12 +627,12 @@ Without `as`, an import namespace is derived from its file name. More than one i
 
 ## Libraries
 
-The application that embeds ExS may provide library modules, such as `log`, `exo`, or `exo::db`. Like the standard library, library modules need no import: every module names their items by path. Library paths start with a lowercase letter, and a library module may have child modules, such as `exo` and `exo::db`.
+The application that embeds ExS may provide library modules, such as `log`, `app`, or `app::db`. Like the standard library, library modules need no import: every module names their items by path. Library paths start with a lowercase letter, and a library module may have child modules, such as `app` and `app::db`.
 
 ```exs
-fn main(id: Int) -> exo::Record {
+fn main(id: Int) -> app::Record {
     log::info("loading record");
-    ret exo::db::load(id);
+    ret app::db::load(id);
 }
 ```
 
@@ -632,8 +640,8 @@ fn main(id: Int) -> exo::Record {
 
 ```exs
 use log::info;
-use exo::db::{load, save as store};
-use exo::db;
+use app::db::{load, save as store};
+use app::db;
 
 fn main(id: Int) -> Unit {
     info("loading record");
@@ -653,7 +661,7 @@ A `use` declaration names an imported or library declaration, or a library modul
 
 Declarations are public by default. The `private` keyword before a module-level function, type, enum, trait, or constant, or before a method of an inherent `impl` block, restricts it to its package:
 
-- a library package contains every module of one library, such as `exo` and `exo::db`;
+- a library package contains every module of one library, such as `app` and `app::db`;
 - the project package contains the root file and every file it imports.
 
 ```exs
@@ -790,7 +798,7 @@ let profile = Host::call("profile.load", user_id);
 
 `Host::call(name, arguments...)` invokes a host-provided operation. `name` must evaluate to a String. Arguments evaluate left to right. The host call returns its result or an Error and may suspend; it does not create an ExS task.
 
-Nominal values keep their type across the host boundary. A value of a `type` declaration reaches the host with its fields and the type's identity: the module's source id or library path followed by the type name, such as `exo::dom::Div`. A host value with the identity of a type the program uses becomes a value of that type, in host responses and in the inputs of `main`, wherever it is nested; its declared fields are taken by name, missing ones are `None`, and other fields are dropped. A host value of a type the program does not use behaves as an Object, and keeps its identity, so it reaches the host as that type again.
+Nominal values keep their type across the host boundary. A value of a `type` declaration reaches the host with its fields and the type's identity: the module's source id or library path followed by the type name, such as `app::dom::Div`. A host value with the identity of a type the program uses becomes a value of that type, in host responses and in the inputs of `main`, wherever it is nested; its declared fields are taken by name, missing ones are `None`, and other fields are dropped. A host value of a type the program does not use behaves as an Object, and keeps its identity, so it reaches the host as that type again.
 
 ```exs
 type Point { x: Int, y: Int }

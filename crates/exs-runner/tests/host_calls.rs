@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 
 use exs_abi::{ErrorSeverity, ExsValue};
-use exs_runner::{ExecutionCancellation, RunnerError, ServerRunner};
+use exs_runner::{ExecutionCancellation, ExecutionOptions, RunnerError, ServerRunner};
 use support::{block_on, compile_source, execute_source, execute_source_with_inputs};
 
 /// Executes an arithmetic result through the linked runtime.
@@ -268,12 +268,7 @@ fn executes_host_calls_inside_formatted_strings() {
                 .unwrap_or(ExsValue::None))
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(42)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(42)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -308,12 +303,7 @@ fn executes_host_calls_inside_to_string_implementations() {
                 .unwrap_or(ExsValue::None))
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -355,12 +345,7 @@ fn executes_resumable_variadic_calls() {
                 .unwrap_or(ExsValue::None))
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -404,12 +389,14 @@ fn executes_a_synchronous_dynamic_host_function() {
             .is_ok()
     );
     let cancellation = ExecutionCancellation::new();
-    let result = match block_on(runner.execute(
+    let result = match block_on(runner.execute_with(
         &compiled.wasm,
         "main",
         &[ExsValue::Int(i64::MAX)],
-        &cancellation,
-    )) {
+        &ExecutionOptions::with_cancellation(&cancellation),
+    ))
+    .map(|report| report.value)
+    {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -449,12 +436,7 @@ fn rejects_unserializable_host_call_arguments() {
                 })
                 .is_ok()
         );
-        let result = match block_on(runner.execute(
-            &compiled.wasm,
-            "main",
-            &[],
-            &ExecutionCancellation::new(),
-        )) {
+        let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
             Ok(result) => result,
             Err(error) => panic!("execution failed: {error}"),
         };
@@ -480,12 +462,8 @@ fn executes_an_asynchronous_dynamic_host_function() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(i64::MIN)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(i64::MIN)]))
+    {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -511,7 +489,13 @@ fn cancels_a_pending_host_execution() {
             })
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, "main", &[], &cancellation));
+    let result = block_on(runner.execute_with(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionOptions::with_cancellation(&cancellation),
+    ))
+    .map(|report| report.value);
     assert!(matches!(result, Err(RunnerError::Cancelled)));
 }
 
@@ -541,7 +525,13 @@ fn cancels_a_pending_host_call_inside_a_closure() {
             })
             .is_ok()
     );
-    let result = block_on(runner.execute(&compiled.wasm, "main", &[], &cancellation));
+    let result = block_on(runner.execute_with(
+        &compiled.wasm,
+        "main",
+        &[],
+        &ExecutionOptions::with_cancellation(&cancellation),
+    ))
+    .map(|report| report.value);
     assert!(matches!(result, Err(RunnerError::Cancelled)));
 }
 
@@ -568,7 +558,13 @@ fn reports_pending_execution_without_host_future_as_deadlock() {
     );
     let cancellation = ExecutionCancellation::new();
     let runner = ServerRunner::default();
-    let result = block_on(runner.execute(wasm.as_bytes(), "main", &[], &cancellation));
+    let result = block_on(runner.execute_with(
+        wasm.as_bytes(),
+        "main",
+        &[],
+        &ExecutionOptions::with_cancellation(&cancellation),
+    ))
+    .map(|report| report.value);
     assert!(
         matches!(result, Err(RunnerError::Deadlock(message)) if message.contains("without a runner host future"))
     );
@@ -617,12 +613,7 @@ fn executes_a_host_stream_in_for_loop() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -639,12 +630,7 @@ fn propagates_a_host_stream_open_error() {
     "#;
     let compiled = compile_source(source);
     let runner = ServerRunner::default();
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -674,12 +660,7 @@ fn closes_a_host_stream_after_end() {
             .stream_raw("empty", |_| Ok(TestStream { items: Vec::new() }))
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -713,12 +694,7 @@ fn rejects_concurrent_host_stream_advances() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -822,12 +798,7 @@ fn decodes_typed_host_call_results_recursively() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };

@@ -634,13 +634,13 @@ pub extern "C" fn __exs_core_range_finish(range: i64, range_type: i32, cursor: i
 
 #[link(wasm_import_module = "exs")]
 unsafe extern "C" {
-    /// Starts one host call through the runner, which reads the arguments from memory.
-    fn __exs_host_call_start_value(
+    /// Starts one host call through the runner with the image of its arguments.
+    fn __exs_host_call_start(
         call_id: i64,
         name_pointer: i32,
         name_length: i32,
-        arguments: i64,
-        vm: i32,
+        request_pointer: i32,
+        request_length: i32,
         source_position: i32,
     ) -> i32;
     /// Returns the byte length of one ready host response.
@@ -658,18 +658,18 @@ impl exs_core::Host for RunnerHost {
         call_id: u64,
         name: u32,
         name_len: u32,
-        arguments: u64,
-        vm: u32,
+        request: u32,
+        request_len: u32,
         position: u32,
     ) -> i32 {
         // SAFETY: the runner provides the host-call imports for every module.
         unsafe {
-            __exs_host_call_start_value(
+            __exs_host_call_start(
                 call_id.cast_signed(),
                 name.cast_signed(),
                 name_len.cast_signed(),
-                arguments.cast_signed(),
-                vm.cast_signed(),
+                request.cast_signed(),
+                request_len.cast_signed(),
                 position.cast_signed(),
             )
         }
@@ -762,6 +762,13 @@ pub extern "C" fn __exs_core_frame_return(vm: i32, frame: i32, result: i64) -> i
 #[unsafe(no_mangle)]
 pub extern "C" fn __exs_core_take_completed(vm: i32) -> i64 {
     exs_core::take_completed(&mut memory(), address(vm)).cast_signed()
+}
+
+/// Writes the image of the completed result and returns its location: its address in the low
+/// and its length in the high 32 bits.
+#[unsafe(no_mangle)]
+pub extern "C" fn __exs_core_result_image(vm: i32) -> i64 {
+    value(exs_core::result_image(&mut memory(), address(vm)))
 }
 
 /// Starts the host call of the function `name` with the List `arguments`.

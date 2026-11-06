@@ -5,9 +5,6 @@ use super::*;
 #[wasm_bindgen(inline_js = r#"
 const HOST_CALL_READY = 0;
 const HOST_CALL_PENDING = 1;
-const HOST_CALL_UNSUPPORTED = 3;
-const PAGE_SIZE = 65536;
-const RESULT_VALUE_EXPORT = "__exs_result_value";
 const RESULT_IMAGE_EXPORT = "__exs_result_image";
 const STATUS_COMPLETE = 2;
 const STATUS_PENDING = 1;
@@ -42,24 +39,6 @@ function write(memory, pointer, value, label) {
     new Uint8Array(memory.buffer).set(output, start);
 }
 
-function valueReader(memory, value, vm) {
-    const bits = BigInt.asUintN(64, BigInt(value));
-    return {
-        low: Number(bits & 0xffffffffn),
-        high: Number(bits >> 32n),
-        vm: vm >>> 0,
-        size: memory.buffer.byteLength,
-        page(index) {
-            const start = index * PAGE_SIZE;
-            const end = Math.min(start + PAGE_SIZE, memory.buffer.byteLength);
-            if (!Number.isInteger(index) || index < 0 || start >= end) {
-                throw new RangeError("memory page lies outside linear memory");
-            }
-            return new Uint8Array(memory.buffer.slice(start, end));
-        },
-    };
-}
-
 function exportedFunction(exports, name) {
     const value = exports[name];
     if (typeof value !== "function") {
@@ -68,7 +47,7 @@ function exportedFunction(exports, name) {
     return value;
 }
 
-export async function createBrowserRunner(wasm, host, release, expectedAbiVersion) {
+export async function createBrowserRunner(wasm, host, release, minAbiVersion, maxAbiVersion) {
     const module = await WebAssembly.compile(bytes(wasm, "compiled ExS module"));
     if (typeof host !== "function") {
         throw new TypeError("browser host dispatcher must be a function");
@@ -77,13 +56,12 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
         throw new TypeError("browser host cleanup callback must be a function");
     }
     const exportNames = WebAssembly.Module.exports(module).map((entry) => entry.name);
-    const direct = exportNames.includes(RESULT_VALUE_EXPORT);
-    if (!direct && !exportNames.includes(RESULT_IMAGE_EXPORT)) {
-        throw new TypeError(`module exports neither ${RESULT_VALUE_EXPORT} nor ${RESULT_IMAGE_EXPORT}`);
+    if (!exportNames.includes(RESULT_IMAGE_EXPORT)) {
+        throw new TypeError(`module does not export ${RESULT_IMAGE_EXPORT}`);
     }
     let nextExecutionId = 1;
     return {
-        async execute(functionName, input) {
+        async execute(functionName, input, isCancelled) {
             if (nextExecutionId > 2_147_483_647) {
                 throw new RangeError("browser execution identity overflow");
             }
@@ -98,9 +76,6 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
             );
             const startHostCall = (callId, name, request, sourcePosition) => {
                 const response = host(name, request, sourcePosition, executionId, executionStartedAt);
-                if (response === null) {
-                    return HOST_CALL_UNSUPPORTED;
-                }
                 if (response && typeof response.then === "function") {
                     pending.set(
                         callId,
@@ -116,10 +91,6 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
                 exs: {
                     __exs_host_call_start(callId, namePointer, nameLength, requestPointer, requestLength, sourcePosition) {
                         const request = read(memory, requestPointer, requestLength, "host-call request");
-                        return startHostCall(callId, hostName(namePointer, nameLength), request, sourcePosition);
-                    },
-                    __exs_host_call_start_value(callId, namePointer, nameLength, args, vm, sourcePosition) {
-                        const request = valueReader(memory, args, vm);
                         return startHostCall(callId, hostName(namePointer, nameLength), request, sourcePosition);
                     },
                     __exs_host_call_response_len(callId) {
@@ -162,8 +133,8 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
                 throw new TypeError("missing exported ExS linear memory");
                 }
                 const version = exportedFunction(instance.exports, "__exs_abi_version")();
-                if (version !== expectedAbiVersion) {
-                throw new TypeError(`expected ExS ABI version ${expectedAbiVersion}, received ${version}`);
+                if (version < minAbiVersion || version > maxAbiVersion) {
+                throw { exsAbiVersion: version };
                 }
                 const inputBytes = bytes(input, "ExS input");
                 const allocate = exportedFunction(instance.exports, "__exs_input_alloc");
@@ -173,13 +144,12 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
                 throw new TypeError("ExS function name must be a non-empty string");
                 }
                 const start = exportedFunction(instance.exports, `__exs_start_${functionName}`);
+                if (isCancelled()) {
+                    throw { exsCancelled: true };
+                }
                 let status = start(inputPointer, inputBytes.length);
                 while (true) {
                 if (status === STATUS_COMPLETE) {
-                    if (direct) {
-                        const vm = exportedFunction(instance.exports, "__exs_vm")();
-                        return valueReader(memory, exportedFunction(instance.exports, RESULT_VALUE_EXPORT)(), vm);
-                    }
                     const location = BigInt.asUintN(64, BigInt(exportedFunction(instance.exports, RESULT_IMAGE_EXPORT)()));
                     return read(memory, Number(location & 0xffffffffn), Number(location >> 32n), "ExS result");
                 }
@@ -194,6 +164,10 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
                 }
                 const { callId, value } = await Promise.race(pending.values());
                 pending.delete(callId);
+                if (isCancelled()) {
+                    exportedFunction(instance.exports, "__exs_cancel")();
+                    throw { exsCancelled: true };
+                }
                 const responsePointer = allocate(value.length);
                 write(memory, responsePointer, value, "host response");
                 const resume = exportedFunction(instance.exports, "__exs_resume_host");
@@ -206,11 +180,11 @@ export async function createBrowserRunner(wasm, host, release, expectedAbiVersio
     };
 }
 
-export function executeBrowserRunner(controller, functionName, input) {
+export function executeBrowserRunner(controller, functionName, input, isCancelled) {
     if (!controller || typeof controller.execute !== "function") {
         throw new TypeError("invalid ExS browser runner controller");
     }
-    return controller.execute(functionName, input);
+    return controller.execute(functionName, input, isCancelled);
 }
 "#)]
 extern "C" {
@@ -220,7 +194,8 @@ extern "C" {
         wasm: &Uint8Array,
         host: &Function,
         release: &Function,
-        expected_abi_version: i32,
+        min_abi_version: i32,
+        max_abi_version: i32,
     ) -> Result<Promise, JsValue>;
 
     /// Executes one isolated ExS instance through the JavaScript controller.
@@ -229,33 +204,8 @@ extern "C" {
         controller: &JsValue,
         function: &str,
         input: &Uint8Array,
+        is_cancelled: &Function,
     ) -> Result<Promise, JsValue>;
-}
-
-#[wasm_bindgen]
-extern "C" {
-    /// A value in the memory of a compiled module, whose pages JavaScript copies on demand.
-    pub(super) type ValueReader;
-
-    /// Returns the low 32 bits of the value.
-    #[wasm_bindgen(method, getter)]
-    pub(super) fn low(this: &ValueReader) -> u32;
-
-    /// Returns the high 32 bits of the value.
-    #[wasm_bindgen(method, getter)]
-    pub(super) fn high(this: &ValueReader) -> u32;
-
-    /// Returns the address of the module's VM state block.
-    #[wasm_bindgen(method, getter)]
-    pub(super) fn vm(this: &ValueReader) -> u32;
-
-    /// Returns the byte size of the module's memory.
-    #[wasm_bindgen(method, getter)]
-    pub(super) fn size(this: &ValueReader) -> f64;
-
-    /// Returns a copy of 64 KiB page `index` of the module's memory.
-    #[wasm_bindgen(method, catch)]
-    pub(super) fn page(this: &ValueReader, index: u32) -> Result<Uint8Array, JsValue>;
 }
 
 #[wasm_bindgen(inline_js = r#"

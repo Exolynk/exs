@@ -1,6 +1,5 @@
 //! Guest execution control for the ExS start, resume, and result ABI.
 
-use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
@@ -10,11 +9,12 @@ use exs_abi::{
     STATUS_COMPLETE, STATUS_PENDING,
 };
 
+use crate::__private::GuestFuture;
 use crate::imports::{
     host_call_response_copy, host_call_response_len, host_call_start, task_acquire, task_release,
 };
 use crate::state::{Execution, buffers_mut, execution_mut, host_state_mut};
-use crate::{ErrorSeverity, ExsError, ExsValue, GuestFuture};
+use crate::{ExsError, ExsValue};
 
 /// Allocates one runner-writable input or host-response buffer in guest linear memory.
 pub fn input_alloc(length: i32) -> i32 {
@@ -146,15 +146,7 @@ pub(crate) fn take_host_response(call_id: i64) -> Option<ExsValue> {
 
 /// Constructs one fatal ExS error for failures at the Rust guest boundary.
 pub(crate) fn guest_error(kind: &str, message: &str) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Fatal,
-        kind: String::from(kind),
-        message: String::from(message),
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(ExsError::fatal(String::from(kind), String::from(message)))
 }
 
 fn poll_execution() -> i32 {

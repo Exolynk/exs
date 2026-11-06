@@ -100,7 +100,7 @@ private fn __exs_datetime_parts(
     if month == 2 {
         ordinal = (31 + day)?;
     } else if month > 2 {
-        ordinal = (day_of_year + 59)?;
+        ordinal = (day_of_year + 60)?;
         if __exs_datetime_is_leap_year(final_year) {
             ordinal = (ordinal + 1)?;
         }

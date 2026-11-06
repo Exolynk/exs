@@ -177,14 +177,16 @@ impl<'a> CompileDiagnostics<'a> {
         self.diagnostics.is_empty()
     }
 
-    /// Renders compiler diagnostics with source excerpts for terminal output.
+    /// Renders compiler diagnostics with excerpts of the source `text_of` returns for each
+    /// diagnostic's source identity.
     #[must_use]
-    pub fn render(&self, source: &str) -> String {
+    pub(crate) fn render_sources<'t>(&self, text_of: impl Fn(&str) -> &'t str) -> String {
         let mut output = String::new();
         for (index, diagnostic) in self.diagnostics.iter().enumerate() {
             if index > 0 {
                 output.push('\n');
             }
+            let source = text_of(diagnostic.span.source_id);
             render_diagnostic(&mut output, diagnostic, source, "");
         }
         output
@@ -302,67 +304,100 @@ pub(crate) fn unknown_name(kind: &str, name: &str) -> String {
     }
 }
 
-/// One diagnostic located in the checked or compiled entry source.
+/// One located diagnostic of a checked or compiled source.
 ///
-/// Unlike [`CompileDiagnostic`] it owns its data, so it outlives the source text, for example
-/// when it is sent to an editor.
+/// It owns its data, so it outlives the source text, for example when it is sent to an editor.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SourceDiagnostic {
     /// Stable machine-readable diagnostic code.
     pub code: &'static str,
     /// Concise diagnostic message.
     pub message: String,
-    /// Inclusive byte offset in the entry source.
+    /// Identity of the source it is located in, the entry source or one the resolver provided.
+    pub source_id: String,
+    /// Inclusive byte offset in that source.
     pub start_byte: u32,
-    /// Exclusive byte offset in the entry source.
+    /// Exclusive byte offset in that source.
     pub end_byte: u32,
 }
 
 impl SourceDiagnostic {
+    /// Returns the owned form of `diagnostic`.
+    fn from_diagnostic(diagnostic: &CompileDiagnostic<'_>) -> Self {
+        Self {
+            code: diagnostic.code,
+            message: diagnostic.message.clone(),
+            source_id: diagnostic.span.source_id.to_owned(),
+            start_byte: diagnostic.span.start_byte,
+            end_byte: diagnostic.span.end_byte,
+        }
+    }
+
     /// Collects the diagnostics of `diagnostics` that are located in the source `source_id`.
     #[must_use]
-    pub fn located_in(diagnostics: &CompileDiagnostics<'_>, source_id: &str) -> Vec<Self> {
+    pub(crate) fn located_in(diagnostics: &CompileDiagnostics<'_>, source_id: &str) -> Vec<Self> {
         diagnostics
             .diagnostics
             .iter()
             .filter(|diagnostic| diagnostic.span.source_id == source_id)
-            .map(|diagnostic| Self {
-                code: diagnostic.code,
-                message: diagnostic.message.clone(),
-                start_byte: diagnostic.span.start_byte,
-                end_byte: diagnostic.span.end_byte,
-            })
+            .map(Self::from_diagnostic)
             .collect()
     }
 }
 
-/// A failed compilation: the rendered report and the diagnostics located in the entry source.
+/// A failed compilation: the rendered report and every located diagnostic.
 ///
-/// Failures without a source location, such as unresolved imports, only carry the report.
+/// A failure without a source location only carries the report.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct CompileFailure {
+#[non_exhaustive]
+pub struct CompileError {
     /// Complete human-readable report with source excerpts.
     pub report: String,
-    /// Diagnostics located in the entry source.
+    /// The located diagnostics, in the order of the report.
     pub diagnostics: Vec<SourceDiagnostic>,
 }
 
-impl CompileFailure {
-    /// Creates a failure from compiler diagnostics, keeping those of the entry source.
+impl CompileError {
+    /// Creates a failure from diagnostics located in the source `text`.
     #[must_use]
-    pub fn from_diagnostics(
+    pub(crate) fn from_diagnostics(diagnostics: &CompileDiagnostics<'_>, text: &str) -> Self {
+        Self::from_sources(diagnostics, |_| text)
+    }
+
+    /// Creates a failure from diagnostics, whose excerpts come from the source `text_of` returns
+    /// for each diagnostic's source identity.
+    #[must_use]
+    pub(crate) fn from_sources<'t>(
         diagnostics: &CompileDiagnostics<'_>,
-        source_id: &str,
-        text: &str,
+        text_of: impl Fn(&str) -> &'t str,
     ) -> Self {
         Self {
-            report: diagnostics.render(text),
-            diagnostics: SourceDiagnostic::located_in(diagnostics, source_id),
+            report: diagnostics.render_sources(text_of),
+            diagnostics: diagnostics
+                .diagnostics
+                .iter()
+                .map(SourceDiagnostic::from_diagnostic)
+                .collect(),
         }
+    }
+
+    /// Creates a failure from one diagnostic of `code` at `span` in the source `text`.
+    #[must_use]
+    pub(crate) fn at(
+        code: &'static str,
+        span: SourceSpan<'_>,
+        text: &str,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::from_diagnostics(
+            &CompileDiagnostics::from(CompileDiagnostic::new(code, span, message)),
+            text,
+        )
     }
 }
 
-impl From<String> for CompileFailure {
+impl From<String> for CompileError {
     fn from(report: String) -> Self {
         Self {
             report,
@@ -371,8 +406,10 @@ impl From<String> for CompileFailure {
     }
 }
 
-impl fmt::Display for CompileFailure {
+impl fmt::Display for CompileError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.report)
     }
 }
+
+impl std::error::Error for CompileError {}

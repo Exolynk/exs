@@ -1,25 +1,21 @@
 use std::time::Duration;
 
-use exs_runner::{ExecutionCancellation, ProtectionLevel, ServerRunner, ServerRunnerConfig};
+use exs_runner::{ProtectionLevel, ServerRunner, ServerRunnerConfig};
 
 use super::*;
 
 /// Executes `main` with a fuel budget large enough to run several collections.
 fn execute_collecting(source: &str, input: ExsValue) -> ExsValue {
     let compiled = super::support::compile_source(source);
-    let runner = ServerRunner::new(ServerRunnerConfig {
-        max_memory_bytes: 64 * 1024 * 1024,
-        max_fuel: 1_000_000_000,
-        timeout: Duration::from_secs(60),
-        protection: ProtectionLevel::Standard,
-        ..ServerRunnerConfig::default()
+    let runner = ServerRunner::new({
+        let mut options = ServerRunnerConfig::default();
+        options.max_memory_bytes = 64 * 1024 * 1024;
+        options.max_fuel = 1_000_000_000;
+        options.timeout = Duration::from_secs(60);
+        options.protection = ProtectionLevel::Standard;
+        options
     });
-    match super::support::block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[input],
-        &ExecutionCancellation::new(),
-    )) {
+    match super::support::block_on(runner.execute(&compiled.wasm, "main", &[input])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     }

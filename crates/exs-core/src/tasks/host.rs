@@ -1,11 +1,12 @@
 //! Host calls of the task: started through the runner, finished at once or resumed later.
 
-use exs_abi::{HOST_CALL_READY, HOST_CALL_UNSUPPORTED};
+use exs_abi::HOST_CALL_READY;
 
 use super::state::{Field, load, store};
 use crate::errors::recoverable;
 use crate::execution::reserve_input;
 use crate::image::adopt_at;
+use crate::image_writer::{WriteError, write_image};
 use crate::lists::list_object;
 use crate::memory::Memory;
 use crate::strings::{byte_len, string_object};
@@ -13,17 +14,15 @@ use crate::strings::{byte_len, string_object};
 /// The runner's host-call imports.
 pub trait Host {
     /// Starts the host call `call_id` of the function named by the `name_len` bytes at `name`
-    /// with the List `arguments`, which the runner reads from the memory of the VM at `vm`,
-    /// reported at `position`. Returns `HOST_CALL_READY`, `HOST_CALL_PENDING`,
-    /// `HOST_CALL_FATAL`, or `HOST_CALL_UNSUPPORTED` when the arguments cannot cross the
-    /// boundary.
+    /// with the image of the `request_len` bytes at `request`, reported at `position`. Returns
+    /// `HOST_CALL_READY`, `HOST_CALL_PENDING` or `HOST_CALL_FATAL`.
     fn start(
         &mut self,
         call_id: u64,
         name: u32,
         name_len: u32,
-        arguments: u64,
-        vm: u32,
+        request: u32,
+        request_len: u32,
         position: u32,
     ) -> i32;
 
@@ -77,20 +76,23 @@ pub fn host_call_start(
     store(memory, vm, Field::NextHostCall, call_id.checked_add(1)?);
     store(memory, vm, Field::HostCall, call_id);
     let position = crate::vm::Vm(vm).source_position(memory);
-    let status = host.start(
+    let (request, request_len) = match write_image(memory, vm, arguments) {
+        Ok(location) => location,
+        Err(WriteError::OutOfMemory) => return None,
+        Err(WriteError::Unsupported) => {
+            // Arguments that cannot cross the boundary are a recoverable Error value.
+            let error = crate::boundary::serialization_error(memory, vm, arguments, false)?;
+            return ready(memory, vm, error);
+        }
+    };
+    Some(host.start(
         call_id,
         name_object + crate::strings::DATA,
         byte_len(memory, name_object),
-        arguments,
-        vm,
+        request,
+        request_len,
         position,
-    );
-    if status == HOST_CALL_UNSUPPORTED {
-        // Arguments that cannot cross the boundary are a recoverable Error value.
-        let error = crate::boundary::serialization_error(memory, vm, arguments, false)?;
-        return ready(memory, vm, error);
-    }
-    Some(status)
+    ))
 }
 
 /// Makes `value` the ready result of the current host call.

@@ -4,13 +4,7 @@ use super::*;
 #[test]
 fn compiles_a_minimal_main_function() {
     let source = "fn main(input) { ret 42; }";
-    let module = compile(
-        SourceInput {
-            source_id: "test.exs",
-            text: source,
-        },
-        CompileOptions::default(),
-    );
+    let module = compile(Source::new("test.exs", source), CompileOptions::default());
     assert!(module.is_ok());
 }
 
@@ -18,10 +12,10 @@ fn compiles_a_minimal_main_function() {
 #[test]
 fn compiles_direct_and_qualified_test_assertions() {
     let module = compile(
-        SourceInput {
-            source_id: "standard-assertions.exs",
-            text: "fn main() { assert(true); std::test::assert_eq(21 * 2, 42); ret None; }",
-        },
+        Source::new(
+            "standard-assertions.exs",
+            "fn main() { assert(true); std::test::assert_eq(21 * 2, 42); ret None; }",
+        ),
         CompileOptions::default(),
     );
     if let Err(error) = module {
@@ -33,10 +27,10 @@ fn compiles_direct_and_qualified_test_assertions() {
 #[test]
 fn rejects_removed_standard_assertion_aliases() {
     let error = match compile(
-        SourceInput {
-            source_id: "removed-standard-assertion.exs",
-            text: "fn main() { std::assert(true); ret None; }",
-        },
+        Source::new(
+            "removed-standard-assertion.exs",
+            "fn main() { std::assert(true); ret None; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
@@ -49,10 +43,10 @@ fn rejects_removed_standard_assertion_aliases() {
 #[test]
 fn rejects_shadowing_standard_assert_functions() {
     let error = match compile(
-        SourceInput {
-            source_id: "shadow-standard-function.exs",
-            text: "fn assert() { ret None; } fn main() { ret None; }",
-        },
+        Source::new(
+            "shadow-standard-function.exs",
+            "fn assert() { ret None; } fn main() { ret None; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
@@ -69,10 +63,10 @@ fn rejects_shadowing_standard_assert_functions() {
 #[test]
 fn compiles_a_builtin_host_sleep() {
     let module = compile(
-        SourceInput {
-            source_id: "timer.exs",
-            text: "fn main() { Host::sleep(Duration::seconds(1)); ret None; }",
-        },
+        Source::new(
+            "timer.exs",
+            "fn main() { Host::sleep(Duration::seconds(1)); ret None; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -82,10 +76,10 @@ fn compiles_a_builtin_host_sleep() {
 #[test]
 fn compiles_builtin_host_time_operations() {
     let module = compile(
-        SourceInput {
-            source_id: "clock.exs",
-            text: "fn main() -> Duration | Error { let now = Host::now(); let elapsed = Host::elapsed(); ret now.duration_since(now)? + elapsed; }",
-        },
+        Source::new(
+            "clock.exs",
+            "fn main() -> Duration | Error { let now = Host::now(); let elapsed = Host::elapsed(); ret now.duration_since(now)? + elapsed; }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_ok());
@@ -95,10 +89,10 @@ fn compiles_builtin_host_time_operations() {
 #[test]
 fn rejects_lowercase_host_call() {
     let module = compile(
-        SourceInput {
-            source_id: "lowercase-host.exs",
-            text: "fn main() { ret host.call(\"echo\"); }",
-        },
+        Source::new(
+            "lowercase-host.exs",
+            "fn main() { ret host.call(\"echo\"); }",
+        ),
         CompileOptions::default(),
     );
     assert!(module.is_err());
@@ -109,10 +103,7 @@ fn rejects_lowercase_host_call() {
 fn compiles_variadic_function_parameters() {
     let source = "fn total(values: Int...) -> Int { let sum = 0; for value in values { sum = sum + value; } ret sum; } fn main(inputs: Int...) -> Int { ret total(1, 2, 3); }";
     let compiled = match compile(
-        SourceInput {
-            source_id: "variadic.exs",
-            text: source,
-        },
+        Source::new("variadic.exs", source),
         CompileOptions::default(),
     ) {
         Ok(compiled) => compiled,
@@ -136,10 +127,7 @@ fn compiles_formatted_strings() {
         }
     "##;
     let compiled = match compile(
-        SourceInput {
-            source_id: "formatted-strings.exs",
-            text: source,
-        },
+        Source::new("formatted-strings.exs", source),
         CompileOptions::default(),
     ) {
         Ok(compiled) => compiled,
@@ -154,23 +142,14 @@ fn compiles_formatted_strings() {
 #[test]
 fn compiles_and_formats_bytes_literals() {
     let source = "fn main() -> Bytes { ret b\"hello\\n\"; }";
-    let compiled = match compile(
-        SourceInput {
-            source_id: "bytes.exs",
-            text: source,
-        },
-        CompileOptions::default(),
-    ) {
+    let compiled = match compile(Source::new("bytes.exs", source), CompileOptions::default()) {
         Ok(compiled) => compiled,
         Err(error) => panic!("compilation failed: {error}"),
     };
     if let Err(error) = Validator::new().validate_all(&compiled.wasm) {
         panic!("generated Wasm is invalid: {error}");
     }
-    let formatted = match format(SourceInput {
-        source_id: "bytes.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("bytes.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -184,10 +163,7 @@ fn formats_formatted_strings() {
     {second}
     done
 "#;}"##;
-    let formatted = match format(SourceInput {
-        source_id: "format-formatted-strings.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("format-formatted-strings.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -196,11 +172,8 @@ fn formats_formatted_strings() {
     assert!(formatted.contains("fd#\"{second}\ndone\"#"));
     assert!(
         compile(
-            SourceInput {
-                source_id: "formatted-after-format.exs",
-                text: &formatted,
-            },
-            CompileOptions::default(),
+            Source::new("formatted-after-format.exs", &formatted),
+            CompileOptions::default()
         )
         .is_ok()
     );
@@ -210,10 +183,10 @@ fn formats_formatted_strings() {
 #[test]
 fn rejects_non_final_variadic_parameter() {
     let error = match compile(
-        SourceInput {
-            source_id: "invalid-variadic.exs",
-            text: "fn main(values..., tail) { ret tail; }",
-        },
+        Source::new(
+            "invalid-variadic.exs",
+            "fn main(values..., tail) { ret tail; }",
+        ),
         CompileOptions::default(),
     ) {
         Ok(_) => panic!("compilation unexpectedly succeeded"),
@@ -232,10 +205,7 @@ fn rejects_non_final_variadic_parameter() {
 #[test]
 fn prunes_unreachable_runtime_and_prelude_functions() {
     let compiled = match compile(
-        SourceInput {
-            source_id: "main.exs",
-            text: "fn main() {}",
-        },
+        Source::new("main.exs", "fn main() {}"),
         CompileOptions::default(),
     ) {
         Ok(module) => module,

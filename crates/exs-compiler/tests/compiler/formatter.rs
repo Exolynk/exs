@@ -4,10 +4,7 @@ use super::*;
 #[test]
 fn formats_source_into_canonical_layout() {
     let source = "import \"./math.exs\" as math;use math::{add as plus,Point};fn main(value:Int)->Int{let point=Point{value:value};if value>0{ret plus(point.value,1);}else{ret 0;}}";
-    let formatted = match format(SourceInput {
-        source_id: "format.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("format.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -15,10 +12,7 @@ fn formats_source_into_canonical_layout() {
         formatted,
         "import \"./math.exs\" as math;\nuse math::{add as plus, Point};\n\nfn main(value: Int) -> Int {\n    let point = Point {value: value};\n    if value > 0 {\n        ret plus(point.value, 1);\n    }\n    else {\n        ret 0;\n    }\n}\n"
     );
-    let reformatted = match format(SourceInput {
-        source_id: "format.exs",
-        text: &formatted,
-    }) {
+    let reformatted = match format(Source::new("format.exs", &formatted)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("reformatting failed: {error}"),
     };
@@ -29,10 +23,7 @@ fn formats_source_into_canonical_layout() {
 #[test]
 fn formats_general_type_tests() {
     let source = "type Label{text:String}fn main(value:Any){ret value is String|Label;}";
-    let formatted = match format(SourceInput {
-        source_id: "format-is-type.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("format-is-type.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -46,10 +37,7 @@ fn formats_general_type_tests() {
 #[test]
 fn formatter_preserves_comments_and_blank_lines() {
     let source = "//file\n\nfn main(){\n//before\nlet value=1; //trailing\n\n//between\nret value;\n//last\n}";
-    let formatted = match format(SourceInput {
-        source_id: "format-trivia.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("format-trivia.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -57,10 +45,7 @@ fn formatter_preserves_comments_and_blank_lines() {
         formatted,
         "// file\n\nfn main() {\n    // before\n    let value = 1;\n    // trailing\n\n    // between\n    ret value;\n    // last\n}\n"
     );
-    let reformatted = match format(SourceInput {
-        source_id: "format-trivia.exs",
-        text: &formatted,
-    }) {
+    let reformatted = match format(Source::new("format-trivia.exs", &formatted)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -71,10 +56,7 @@ fn formatter_preserves_comments_and_blank_lines() {
 #[test]
 fn formatter_normalizes_empty_blocks_and_preserves_declaration_spacing() {
     let source = "\n\n///asdasdasd\nfn main() {\n    let value = 21 * 2;\n    Host::call(\"println\", \"The result is\", value);\n    //lala\n    ret value;\n}\n\n\n///Hallo\n\nfn test() {\n\n\n}\n";
-    let formatted = match format(SourceInput {
-        source_id: "format-empty-block.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("format-empty-block.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -82,10 +64,7 @@ fn formatter_normalizes_empty_blocks_and_preserves_declaration_spacing() {
         formatted,
         "/// asdasdasd\nfn main() {\n    let value = 21 * 2;\n    Host::call(\"println\", \"The result is\", value);\n    // lala\n    ret value;\n}\n\n/// Hallo\nfn test() {}\n"
     );
-    let reformatted = match format(SourceInput {
-        source_id: "format-empty-block.exs",
-        text: &formatted,
-    }) {
+    let reformatted = match format(Source::new("format-empty-block.exs", &formatted)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("reformatting failed: {error}"),
     };
@@ -96,10 +75,7 @@ fn formatter_normalizes_empty_blocks_and_preserves_declaration_spacing() {
 #[test]
 fn formats_else_if_chains() {
     let source = "fn main(value:Int)->Int{if value>0{ret 1;}else if value<0{ret -1;}else{ret 0;}}";
-    let formatted = match format(SourceInput {
-        source_id: "format-else-if.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("format-else-if.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -109,11 +85,8 @@ fn formats_else_if_chains() {
     );
     assert!(
         compile(
-            SourceInput {
-                source_id: "format-else-if.exs",
-                text: &formatted,
-            },
-            CompileOptions::default(),
+            Source::new("format-else-if.exs", &formatted),
+            CompileOptions::default()
         )
         .is_ok()
     );
@@ -123,10 +96,7 @@ fn formats_else_if_chains() {
 #[test]
 fn formats_standalone_lexical_blocks() {
     let source = "fn main(input)->Int{let value=1;{let value=2;}ret value;}";
-    let formatted = match format(SourceInput {
-        source_id: "format-block.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("format-block.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -136,11 +106,8 @@ fn formats_standalone_lexical_blocks() {
     );
     assert!(
         compile(
-            SourceInput {
-                source_id: "format-block.exs",
-                text: &formatted,
-            },
-            CompileOptions::default(),
+            Source::new("format-block.exs", &formatted),
+            CompileOptions::default()
         )
         .is_ok()
     );
@@ -149,10 +116,7 @@ fn formats_standalone_lexical_blocks() {
 /// Rejects malformed source instead of attempting a best-effort rewrite.
 #[test]
 fn formatter_returns_syntax_diagnostics() {
-    let error = match format(SourceInput {
-        source_id: "format-error.exs",
-        text: "fn main( {",
-    }) {
+    let error = match format(Source::new("format-error.exs", "fn main( {")) {
         Ok(_) => panic!("malformed source was formatted"),
         Err(error) => error,
     };
@@ -162,10 +126,10 @@ fn formatter_returns_syntax_diagnostics() {
 /// Formats statement-block match arms in their compact expression position.
 #[test]
 fn formats_match_block_arms() {
-    let formatted = match format(SourceInput {
-        source_id: "format-match.exs",
-        text: "enum Color{Transparent,}fn main(value:Color)->Int{ret match value{Color::Transparent=>{ret -1;}};}",
-    }) {
+    let formatted = match format(Source::new(
+        "format-match.exs",
+        "enum Color{Transparent,}fn main(value:Color)->Int{ret match value{Color::Transparent=>{ret -1;}};}",
+    )) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -179,10 +143,7 @@ fn formats_match_block_arms() {
 #[test]
 fn keeps_declarations_in_source_order() {
     let source = "// Helpers\n/// Helper.\nfn helper() { ret 1; }\n\n// Types\n/// A point.\ntype Point { x: Int }\n\nfn main() { ret helper(); }\n";
-    let formatted = match format(SourceInput {
-        source_id: "./main.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("./main.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -197,10 +158,10 @@ fn keeps_declarations_in_source_order() {
 /// Keeps closures with an expression body in their short form.
 #[test]
 fn formats_expression_closures() {
-    let formatted = match format(SourceInput {
-        source_id: "./main.exs",
-        text: "fn main(){let f=(v)=>v*2;let g=(v)=>{ret v;};ret f(1);}",
-    }) {
+    let formatted = match format(Source::new(
+        "./main.exs",
+        "fn main(){let f=(v)=>v*2;let g=(v)=>{ret v;};ret f(1);}",
+    )) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -219,10 +180,7 @@ fn formats_closures_without_changing_their_meaning() {
         let typed=(value:Int,more:Int...)=>more;let text=((x)=>x).to_string();\
         let negated=!((x)=>x).to_string().is_empty();let passed=[(x)=>x*2];\
         ret [make(),rest(1,2),typed(1,2),text,negated,passed];}";
-    let formatted = match format(SourceInput {
-        source_id: "./main.exs",
-        text: source,
-    }) {
+    let formatted = match format(Source::new("./main.exs", source)) {
         Ok(formatted) => formatted,
         Err(error) => panic!("formatting failed: {error}"),
     };
@@ -236,19 +194,13 @@ fn formats_closures_without_changing_their_meaning() {
     ] {
         assert!(formatted.contains(expected), "{expected}\n{formatted}");
     }
-    let reformatted = match format(SourceInput {
-        source_id: "./main.exs",
-        text: &formatted,
-    }) {
+    let reformatted = match format(Source::new("./main.exs", &formatted)) {
         Ok(reformatted) => reformatted,
         Err(error) => panic!("reformatting failed: {error}"),
     };
     assert_eq!(reformatted, formatted);
     if let Err(error) = compile(
-        SourceInput {
-            source_id: "./main.exs",
-            text: &formatted,
-        },
+        Source::new("./main.exs", &formatted),
         CompileOptions::default(),
     ) {
         panic!("formatted source does not compile: {error}");

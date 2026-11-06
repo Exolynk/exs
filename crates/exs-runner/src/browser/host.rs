@@ -1,12 +1,11 @@
-use super::bindings::{ValueReader, browser_host_elapsed, browser_host_now, browser_host_sleep};
-use super::direct;
+use super::bindings::{browser_host_elapsed, browser_host_now, browser_host_sleep};
+use super::images;
 use super::*;
 use crate::arguments::decode_arguments;
 use crate::host_values::{
     date_time_from_components, date_time_in_timezone, date_time_value_from_parts, duration_parts,
     duration_value, sleep_error, time_error,
 };
-use crate::value_reader::ReadError;
 use exs_abi::BoundaryLimits;
 use exs_abi::{BuiltinHostOperation, builtin_host_operation};
 
@@ -20,8 +19,7 @@ pub(super) fn start_host_call(
     execution_started_at: f64,
 ) -> JsValue {
     let arguments = match request_arguments(request) {
-        Ok(Some(arguments)) => arguments,
-        Ok(None) => return JsValue::NULL,
+        Ok(arguments) => arguments,
         Err(error) => return rejected_browser_value(&error),
     };
     let origin = u32::try_from(source_position).ok().map(SourcePositionId);
@@ -208,15 +206,13 @@ fn javascript_integer(value: &JsValue) -> Option<i64> {
 
 /// Builds one recoverable Error for a malformed browser time-provider response.
 fn invalid_time_response_error(origin: Option<SourcePositionId>) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "HostTimeError".to_owned(),
-        message: "browser time provider returned an invalid response".to_owned(),
-        data: Box::new(ExsValue::None),
-        origin,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(
+        ExsError::recoverable(
+            "HostTimeError".to_owned(),
+            "browser time provider returned an invalid response".to_owned(),
+        )
+        .with_origin(origin),
+    )
 }
 
 /// Builds one recoverable browser Host stream error.
@@ -226,15 +222,11 @@ fn stream_error(
     data: ExsValue,
     origin: Option<SourcePositionId>,
 ) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: kind.to_owned(),
-        message,
-        data: Box::new(data),
-        origin,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(
+        ExsError::recoverable(kind.to_owned(), message)
+            .with_data(data)
+            .with_origin(origin),
+    )
 }
 
 /// Builds the Error returned when Host::stream omits its registered stream name.
@@ -310,29 +302,18 @@ pub(super) fn missing_stream_error(name: &str, origin: Option<SourcePositionId>)
     )
 }
 
-/// Returns the arguments of one host-call request: the image of a Rust guest, or the argument
-/// List a compiled module holds in memory. Returns `None` for arguments that cannot cross the
-/// boundary, which the module turns into a recoverable SerializationError.
-fn request_arguments(request: &JsValue) -> Result<Option<Vec<ExsValue>>, String> {
-    if let Some(bytes) = request.dyn_ref::<Uint8Array>() {
-        return decode_arguments(&bytes.to_vec(), BoundaryLimits::default())
-            .map(Some)
-            .map_err(|error| format!("invalid host-call request: {error}"));
-    }
-    if !request.is_object() {
+/// Returns the arguments of one host-call request image.
+fn request_arguments(request: &JsValue) -> Result<Vec<ExsValue>, String> {
+    let Some(bytes) = request.dyn_ref::<Uint8Array>() else {
         return Err("invalid host-call request".to_owned());
-    }
-    match direct::read(request.unchecked_ref::<ValueReader>()) {
-        Ok(ExsValue::List(arguments)) => Ok(Some(arguments)),
-        Ok(_) => Err("host-call arguments must be represented as a List".to_owned()),
-        Err(ReadError::Unsupported(_)) => Ok(None),
-        Err(error) => Err(format!("invalid host-call request: {error:?}")),
-    }
+    };
+    decode_arguments(&bytes.to_vec(), BoundaryLimits::default())
+        .map_err(|error| format!("invalid host-call request: {error}"))
 }
 
 /// Encodes one host response as the image the JavaScript bridge passes to the module.
 fn browser_response(value: &ExsValue) -> Result<JsValue, String> {
-    let bytes = direct::image(value)?;
+    let bytes = images::image(value)?;
     Ok(Uint8Array::from(bytes.as_slice()).into())
 }
 
@@ -343,13 +324,11 @@ pub(super) fn rejected_browser_value(message: &str) -> JsValue {
 
 /// Builds the recoverable language value used for an unregistered browser host name.
 fn missing_host_error(name: String, origin: Option<SourcePositionId>) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "HostFunctionNotFound".to_owned(),
-        message: format!("Host function `{name}` is not registered."),
-        data: Box::new(ExsValue::None),
-        origin,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(
+        ExsError::recoverable(
+            "HostFunctionNotFound".to_owned(),
+            format!("Host function `{name}` is not registered."),
+        )
+        .with_origin(origin),
+    )
 }

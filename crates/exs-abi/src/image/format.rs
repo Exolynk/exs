@@ -1,5 +1,5 @@
-//! The image format of values crossing the boundary: inputs and host-call responses for
-//! compiled modules, and every value both ways for Rust guests.
+//! The image format of every value crossing the boundary of a module, both ways. `ABI.md` in the
+//! repository describes it as part of the ABI.
 //!
 //! An image is a sequence of 8-byte aligned records. It starts with an 8-byte header, the
 //! [`IMAGE_MAGIC`] followed by the offset of the root record. Every record starts with a `u32`

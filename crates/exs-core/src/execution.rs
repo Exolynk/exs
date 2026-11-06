@@ -98,6 +98,66 @@ pub(crate) fn input(memory: &impl Memory, vm: u32) -> (u32, u32) {
     )
 }
 
+/// Returns the completed entry's result.
+pub(crate) fn result_value(memory: &impl Memory, vm: u32) -> u64 {
+    memory.load_u64(vm + vm_offset!(boundary.result_value))
+}
+
+/// Returns the address and byte capacity of the output buffer.
+pub(crate) fn output(memory: &impl Memory, vm: u32) -> (u32, u32) {
+    (
+        memory.load_u32(vm + vm_offset!(boundary.output)),
+        memory.load_u32(vm + vm_offset!(boundary.output_capacity)),
+    )
+}
+
+/// Moves the output buffer, whose first `used` bytes it keeps, to storage for at least `needed`
+/// bytes and returns its address and capacity. When memory runs short it collects, with `root`
+/// as a root, before it gives up with `None`.
+pub(crate) fn grow_output(
+    memory: &mut impl Memory,
+    vm: u32,
+    used: u32,
+    needed: u32,
+    root: u64,
+) -> Option<(u32, u32)> {
+    let state = crate::vm::Vm(vm);
+    let (old, capacity) = output(memory, vm);
+    let pages = |length: u32| {
+        Some(
+            length
+                .checked_add(PAGE_HEADER_SIZE)?
+                .div_ceil(exs_layout::PAGE_SIZE)
+                .max(1),
+        )
+    };
+    let minimum = pages(needed)?;
+    let doubled = pages(capacity.saturating_mul(2))
+        .unwrap_or(minimum)
+        .max(minimum);
+    let mut count = doubled;
+    let page = match take_system_pages(memory, vm, doubled) {
+        Some(page) => page,
+        None => {
+            let slot = state.push_root(memory, root)?;
+            crate::collector::collect(memory, vm);
+            state.pop_roots(memory, slot);
+            count = minimum;
+            take_system_pages(memory, vm, minimum)?
+        }
+    };
+    let address = page + PAGE_HEADER_SIZE;
+    if old != 0 {
+        memory.copy(address, old, used);
+        let old_pages = (capacity + PAGE_HEADER_SIZE) / exs_layout::PAGE_SIZE;
+        release_run(memory, state, old - PAGE_HEADER_SIZE, old_pages);
+    }
+    let capacity = pages_bytes(count)? - PAGE_HEADER_SIZE;
+    memory.store_u32(vm + vm_offset!(boundary.output), address);
+    memory.store_u32(vm + vm_offset!(boundary.output_capacity), capacity);
+    Some((address, capacity))
+}
+
 /// Ensures the boundary buffer described by two VM fields holds `length` bytes.
 fn reserve(
     memory: &mut impl Memory,
