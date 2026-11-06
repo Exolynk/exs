@@ -1,0 +1,13 @@
+[package]
+name = "exs-compatibility"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+exs = { path = "../../crates/exs", features = ["json", "url"] }

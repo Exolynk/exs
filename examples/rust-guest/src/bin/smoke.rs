@@ -1,4 +1,4 @@
-//! Native smoke test for the Rust guest's Host stream integration.
+//! Native smoke test for the Rust guest's Host stream, sleep and typed values.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
@@ -8,9 +8,7 @@ mod native {
     use std::pin::pin;
     use std::task::{Context, Poll, Waker};
 
-    use exs_runner::{
-        ExecutionCancellation, ExsValue, HostStream, HostStreamFuture, HostStreamItem, ServerRunner,
-    };
+    use exs_runner::{ExsValue, HostStream, HostStreamFuture, HostStreamItem, ServerRunner};
 
     /// A finite integer stream registered exclusively by this example smoke test.
     struct CounterStream {
@@ -50,13 +48,36 @@ mod native {
                 Ok(CounterStream { next: 1, end })
             })
             .map_err(|error| format!("could not register counter stream: {error}"))?;
-        let result =
-            block_on(runner.execute(&wasm, "sum_stream", &[], &ExecutionCancellation::new()))
-                .map_err(|error| format!("guest execution failed: {error}"))?;
+        let result = block_on(runner.execute(&wasm, "sum_stream", &[]))
+            .map_err(|error| format!("guest execution failed: {error}"))?;
         if result != ExsValue::Int(6) {
             return Err(format!("expected stream sum 6, received {result:?}"));
         }
         println!("guest Host stream smoke test passed");
+
+        let result = block_on(runner.execute(&wasm, "pause", &[ExsValue::Int(20)]))
+            .map_err(|error| format!("guest sleep failed: {error}"))?;
+        if !matches!(result, ExsValue::Int(elapsed) if elapsed >= 20) {
+            return Err(format!(
+                "expected at least 20 ms elapsed, received {result:?}"
+            ));
+        }
+        println!("guest sleep smoke test passed");
+
+        let line = |price, quantity| {
+            ExsValue::Object(vec![
+                ("price".to_owned(), ExsValue::Int(price)),
+                ("quantity".to_owned(), ExsValue::Int(quantity)),
+            ])
+        };
+        let lines = ExsValue::List(vec![line(3, 2), line(5, 4)]);
+        let result = block_on(runner.execute(&wasm, "total", &[lines]))
+            .map_err(|error| format!("typed guest failed: {error}"))?;
+        let expected = ExsValue::Object(vec![("amount".to_owned(), ExsValue::Int(26))]);
+        if result != expected {
+            return Err(format!("expected {expected:?}, received {result:?}"));
+        }
+        println!("guest typed values smoke test passed");
         Ok(())
     }
 

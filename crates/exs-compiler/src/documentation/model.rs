@@ -3,6 +3,7 @@
 
 /// The documented API: the standard library, library modules, and project modules.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ApiDocumentation {
     /// Modules in order: `std` and its submodules first, then libraries, then project files.
     pub modules: Vec<ModuleDocs>,
@@ -10,12 +11,13 @@ pub struct ApiDocumentation {
 
 /// One documented module.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ModuleDocs {
-    /// Displayed module name: `std`, a library path such as `exo::db`, or a project file
+    /// Displayed module name: `std`, a library path such as `app::db`, or a project file
     /// path such as `./math.exs`.
     pub name: String,
     /// Unique lowercase path segments that place the module in generated output, such as
-    /// `["exo", "db"]`.
+    /// `["app", "db"]`.
     pub segments: Vec<String>,
     /// Where the module comes from.
     pub origin: ModuleOrigin,
@@ -28,6 +30,7 @@ pub struct ModuleDocs {
 
 /// Where a documented module comes from.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ModuleOrigin {
     /// The built-in standard library.
     Standard,
@@ -39,6 +42,7 @@ pub enum ModuleOrigin {
 
 /// One documented public declaration.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ItemDocs {
     /// The kind of declaration.
     pub kind: ItemKind,
@@ -56,6 +60,7 @@ pub struct ItemDocs {
 
 /// The kind of a documented declaration.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ItemKind {
     /// A nominal or runtime-owned type.
     Type,
@@ -95,6 +100,7 @@ impl ItemKind {
 
 /// One detail section of a documented declaration.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SectionDocs {
     /// Section title, such as `Variants` or `Inherent methods`.
     pub title: String,
@@ -115,6 +121,7 @@ pub struct SectionDocs {
 
 /// How the compact reference shows one section.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum CompactForm {
     /// Lists the member declarations inside an ExS block with this header, such as
     /// `impl Iterator for Point`.
@@ -127,6 +134,7 @@ pub enum CompactForm {
 
 /// One documented member of a section, such as a method or a variant.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct MemberDocs {
     /// Member name used for headings and anchors.
     pub name: String,
@@ -140,6 +148,7 @@ pub struct MemberDocs {
 
 /// A reference to one documented declaration.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ItemRef {
     /// Name of the module that declares the item.
     pub module: String,

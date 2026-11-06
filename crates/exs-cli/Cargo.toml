@@ -1,9 +1,11 @@
 [package]
 name = "exs-cli"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Command-line tool of the ExS language: run, test, format and document scripts"
 
 [lints]
 workspace = true
@@ -11,8 +13,10 @@ workspace = true
 [[bin]]
 name = "exs"
 path = "src/main.rs"
+# The library of the crate `exs` has this documentation name.
+doc = false
 
 [dependencies]
-exs-compiler = { path = "../exs-compiler" }
-exs-runner = { path = "../exs-runner" }
-exs-libs = { path = "../exs-libs" }
+exs-compiler.workspace = true
+exs-runner = { workspace = true, features = ["server"] }
+exs-libs = { workspace = true, features = ["server", "json", "url", "rand"] }

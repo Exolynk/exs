@@ -1,6 +1,6 @@
 //! Shared typed host-registry conversion at the `ExsValue` boundary.
 
-use exs_abi::{ErrorSeverity, ExsError, ExsValue};
+use exs_abi::{ExsError, ExsValue};
 use serde::de::DeserializeOwned;
 
 /// Decodes the zero-or-one argument contract accepted by typed host functions.
@@ -34,13 +34,5 @@ pub(crate) fn typed_encode_error(message: String) -> ExsValue {
 
 /// Builds one recoverable error emitted by a typed host adapter.
 fn typed_error(kind: &str, message: String) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: kind.to_owned(),
-        message,
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(ExsError::recoverable(kind.to_owned(), message))
 }

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use exs_abi::{
     ABI_VERSION, ABI_VERSION_EXPORT, INPUT_ALLOC_EXPORT, MODULE_METADATA_SECTION,
-    RESULT_VALUE_EXPORT, START_EXPORT_PREFIX, VM_EXPORT,
+    RESULT_IMAGE_EXPORT, START_EXPORT_PREFIX,
 };
 use exs_abi::{CANCEL_EXPORT, RESUME_HOST_EXPORT};
 use exs_layout::value::layout::type_kind;
@@ -468,11 +468,10 @@ pub(in crate::codegen) fn compile<'a>(
     for (name, type_index, body) in [
         (ABI_VERSION_EXPORT, version_type, EntryLayout::abi_version()),
         (INPUT_ALLOC_EXPORT, allocate_type, layout.input_alloc(span)?),
-        (VM_EXPORT, version_type, layout.vm_address()),
         (
-            RESULT_VALUE_EXPORT,
-            program.type_index(Vec::new(), vec![VALUE_TYPE]),
-            layout.result_value(),
+            RESULT_IMAGE_EXPORT,
+            program.type_index(Vec::new(), vec![ValType::I64]),
+            layout.result_image(span)?,
         ),
     ] {
         program.function_types.push(type_index);
@@ -558,7 +557,8 @@ struct StaticStrings {
 
 impl StaticStrings {
     /// Lays out one static String object per String literal and one static Bytes object per
-    /// Bytes literal starting at `base`.
+    /// Bytes literal starting at `base`, in sorted order, so one program always compiles to the
+    /// same bytes.
     fn build(literals: &[String], bytes_literals: &[String], base: u32) -> Option<Self> {
         let base = base.next_multiple_of(8);
         let mut statics = Self {
@@ -567,6 +567,10 @@ impl StaticStrings {
             references: HashMap::new(),
             bytes_references: HashMap::new(),
         };
+        let mut literals = literals.iter().collect::<Vec<_>>();
+        literals.sort_unstable();
+        let mut bytes_literals = bytes_literals.iter().collect::<Vec<_>>();
+        bytes_literals.sort_unstable();
         for literal in literals {
             let reference = statics.push(literal, ObjectKind::String, TYPE_STRING)?;
             statics.references.insert(literal.clone(), reference);

@@ -3,13 +3,14 @@
 //!
 //! Each Cargo feature enables one library: `json` converts between values and JSON text, `url`
 //! encodes query strings and URL parts, `rand` returns secure random values, and `http` sends
-//! HTTP requests (see [`http`] for its transport). Scripts name library items without imports, such
+//! HTTP requests (see the `http` module for its transport). Scripts name library items without imports, such
 //! as `json::parse(text)`.
 //!
 //! An application integrates the enabled libraries in two places:
 //!
-//! - its `ModuleResolver` returns [`library`] (feature `compiler`) or [`source`] from
-//!   `library(path)` and [`libraries`] from `libraries()`,
+//! - its `exs_compiler::Sources` receive them with `add_to` (feature `compiler`), or its own
+//!   `ModuleResolver` returns `library` or [`source`] from `library(path)` and [`libraries`]
+//!   from `libraries()`,
 //! - its runner registers the host functions with [`register`].
 
 // Without the `server` or `browser` feature only the library sources are used.
@@ -38,7 +39,7 @@ mod register;
 mod url;
 
 #[cfg(feature = "compiler")]
-pub use libraries::library;
+pub use libraries::{add_to, library};
 pub use libraries::{libraries, source};
 #[cfg(any(
     all(feature = "server", not(target_arch = "wasm32")),

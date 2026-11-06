@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use exs_compiler::{
-    SourceInput, source_lex, standard_library_enums, standard_library_namespace,
-    standard_library_types,
+    Source, source_lex, standard_library_enums, standard_library_namespace, standard_library_types,
 };
 
 use crate::catalog::{
@@ -23,13 +22,13 @@ use crate::{CompletionItem, CompletionKind, CompletionRequest, CompletionRespons
 /// provides.
 #[derive(Clone, Debug, Default)]
 pub struct CompletionEngine {
-    /// Public declarations of every library module, keyed by its path such as `exo::db`.
+    /// Public declarations of every library module, keyed by its path such as `app::db`.
     modules: BTreeMap<String, DocumentSymbols>,
 }
 
 impl CompletionEngine {
     /// Adds the public declarations of the library module at `path`, such as `log` or
-    /// `exo::db`, which documents may name without importing it.
+    /// `app::db`, which documents may name without importing it.
     #[must_use]
     pub fn with_library(mut self, path: &str, source: &str) -> Self {
         self.modules
@@ -40,10 +39,7 @@ impl CompletionEngine {
     /// Produces context-sensitive ExS completions for one document position.
     #[must_use]
     pub fn complete(&self, request: CompletionRequest<'_>) -> CompletionResponse {
-        let lexed = source_lex(SourceInput {
-            source_id: "<autocomplete>",
-            text: request.source,
-        });
+        let lexed = source_lex(Source::new("<autocomplete>", request.source));
         if lexed.is_comment_position(request.cursor) {
             return CompletionResponse::default();
         }
@@ -949,22 +945,22 @@ mod tests {
     fn completes_configured_virtual_module_members() {
         let engine = CompletionEngine::default()
             .with_library(
-                "exo",
-                "/// Localized text.\ntype Language {}\n/// Returns the active environment.\nfn get_environment() {}\nprivate fn __exo_hydrate_environment() {}",
+                "app",
+                "/// Localized text.\ntype Language {}\n/// Returns the active environment.\nfn get_environment() {}\nprivate fn __app_hydrate_environment() {}",
             )
             .with_library(
-                "exo::ui",
+                "app::ui",
                 "/// Reloads the browser page.\nfn reload() {}",
             );
 
-        let module_source = "ex";
+        let module_source = "ap";
         let module_response = engine.complete(CompletionRequest {
             source: module_source,
             cursor: module_source.len(),
         });
-        assert_eq!(item(&module_response, "exo").insert_text, "exo::");
+        assert_eq!(item(&module_response, "app").insert_text, "app::");
 
-        let root_source = "exo::get";
+        let root_source = "app::get";
         let root_response = engine.complete(CompletionRequest {
             source: root_source,
             cursor: root_source.len(),
@@ -974,7 +970,7 @@ mod tests {
             "get_environment()"
         );
 
-        let type_source = "exo::Lan";
+        let type_source = "app::Lan";
         let type_response = engine.complete(CompletionRequest {
             source: type_source,
             cursor: type_source.len(),
@@ -983,7 +979,7 @@ mod tests {
         assert_eq!(language.kind, CompletionKind::Type);
         assert_eq!(language.documentation.as_deref(), Some("Localized text."));
 
-        let namespace_source = "exo::u";
+        let namespace_source = "app::u";
         let namespace_response = engine.complete(CompletionRequest {
             source: namespace_source,
             cursor: namespace_source.len(),
@@ -992,7 +988,7 @@ mod tests {
         assert_eq!(namespace.kind, CompletionKind::Module);
         assert_eq!(namespace.insert_text, "ui::");
 
-        let nested_source = "exo::ui::re";
+        let nested_source = "app::ui::re";
         let nested_response = engine.complete(CompletionRequest {
             source: nested_source,
             cursor: nested_source.len(),
@@ -1004,7 +1000,7 @@ mod tests {
             Some("Reloads the browser page.")
         );
 
-        let private_source = "exo::__exo";
+        let private_source = "app::__app";
         let private_response = engine.complete(CompletionRequest {
             source: private_source,
             cursor: private_source.len(),
@@ -1071,13 +1067,13 @@ mod tests {
     #[test]
     fn completes_used_library_items() {
         let engine = CompletionEngine::default()
-            .with_library("exo", "/// A stored record.\ntype Record {}")
+            .with_library("app", "/// A stored record.\ntype Record {}")
             .with_library(
-                "exo::ui",
+                "app::ui",
                 "/// Reloads the browser page.\nfn reload() {}\n/// Opens a popup.\nfn popup(title: String) {}",
             );
         let source =
-            "use exo::ui::{reload, popup as open};\nuse exo::ui;\nuse exo::Record;\nfn main() { ";
+            "use app::ui::{reload, popup as open};\nuse app::ui;\nuse app::Record;\nfn main() { ";
         let complete = |text: &str| {
             let source = format!("{source}{text}");
             engine.complete(CompletionRequest {

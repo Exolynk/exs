@@ -1,9 +1,9 @@
-//! Rust counterpart of the Exolynk-style record round trip.
+//! Rust counterpart of the typed record round trip.
 //!
 //! Hydrates host Objects into Rust structs and enums, processes them and dehydrates them back
 //! into the identical host Object shape the ExS script produces.
 
-use exs_guest::{ExsValue, Vec};
+use exs_guest::ExsValue;
 
 use crate::basic::field;
 use crate::datetime::DateTime;
@@ -81,7 +81,7 @@ fn int(value: &ExsValue, key: &str) -> Option<i64> {
     }
 }
 
-/// Parses Exolynk's `date time offset` timestamp text.
+/// Parses the `date time offset` timestamp text.
 fn hydrate_datetime(value: &str) -> Option<DateTime> {
     let mut parts = value.split(' ');
     let (date, time, offset) = (parts.next()?, parts.next()?, parts.next()?);

@@ -150,8 +150,8 @@ impl EntryLayout<'_> {
         self.finish_start(function, frame, span)
     }
 
-    /// Stores the result on the stack above the VM address in the VM state block, where the
-    /// runner reads it.
+    /// Stores the result on the stack above the VM address in the VM state block, where
+    /// `__exs_result_image` takes it.
     pub(super) fn store_result(function: &mut Function) {
         function.instruction(&Instruction::I64Store(MemArg {
             offset: offset_of!(VmState, boundary.result_value) as u64,
@@ -160,24 +160,19 @@ impl EntryLayout<'_> {
         }));
     }
 
-    /// Returns `__exs_result_value() -> i64`, the completed result.
-    pub(super) fn result_value(&self) -> Function {
-        let mut function = Function::new([]);
-        function.instruction(&Instruction::I32Const(0));
-        function.instruction(&Instruction::I64Load(vm_field(
-            self.vm,
-            offset_of!(VmState, boundary.result_value) as u32,
-        )));
-        function.instruction(&Instruction::End);
-        function
-    }
-
-    /// Returns `__exs_vm() -> i32`, the address of the VM state block.
-    pub(super) fn vm_address(&self) -> Function {
+    /// Returns `__exs_result_image() -> i64`, the location of the completed result's image: its
+    /// address in the low and its length in the high 32 bits.
+    pub(super) fn result_image<'a>(
+        &self,
+        span: SourceSpan<'a>,
+    ) -> Result<Function, CompileDiagnostics<'a>> {
         let mut function = Function::new([]);
         function.instruction(&Instruction::I32Const(self.vm.cast_signed()));
+        function.instruction(&Instruction::Call(
+            self.core("__exs_core_result_image", span)?,
+        ));
         function.instruction(&Instruction::End);
-        function
+        Ok(function)
     }
 
     /// Returns `__exs_input_alloc(length) -> address`, which initializes the VM on first use.

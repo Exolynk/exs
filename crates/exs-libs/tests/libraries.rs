@@ -4,30 +4,25 @@ use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-use exs_compiler::{
-    CompileOptions, ModuleResolver, ResolvedSource, SourceInput, compile_with_resolver,
-};
-use exs_runner::{ExecutionCancellation, ExsValue, ServerRunner};
+use exs_compiler::{CompileOptions, ModuleResolver, Source, compile};
+use exs_runner::{ExsValue, ServerRunner};
 
 /// Provides the libraries of `exs-libs` and rejects file imports.
 struct LibraryResolver;
 
 impl ModuleResolver for LibraryResolver {
     /// Rejects every import; the tests only name libraries.
-    fn resolve(&mut self, _importer: &str, path: &str) -> Result<ResolvedSource, String> {
+    fn resolve(&self, _importer: &str, path: &str) -> Result<Source<'_>, String> {
         Err(format!("unexpected import `{path}`"))
     }
 
     /// Returns the enabled library at `path`.
-    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
-        exs_libs::source(path).map(|text| ResolvedSource {
-            source_id: path.to_owned(),
-            text: text.to_owned(),
-        })
+    fn library(&self, path: &str) -> Option<Source<'_>> {
+        exs_libs::source(path).map(|text| Source::new(path.to_owned(), text.to_owned()))
     }
 
     /// Returns every enabled library.
-    fn libraries(&mut self) -> Vec<String> {
+    fn libraries(&self) -> Vec<String> {
         exs_libs::libraries()
     }
 }
@@ -46,18 +41,14 @@ fn block_on<F: Future>(future: F) -> F::Output {
 
 /// Compiles `source` with the libraries and returns the result of its `main`.
 fn run(source: &str) -> ExsValue {
-    let compiled = compile_with_resolver(
-        SourceInput {
-            source_id: "test.exs",
-            text: source,
-        },
-        CompileOptions::default(),
-        &mut LibraryResolver,
+    let compiled = compile(
+        Source::new("test.exs", source),
+        CompileOptions::default().resolver(&LibraryResolver),
     )
     .unwrap_or_else(|error| panic!("{source}\n{error}"));
     let mut runner = ServerRunner::default();
     exs_libs::register(runner.registry_mut()).expect("library host functions register");
-    block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()))
+    block_on(runner.execute(&compiled.wasm, "main", &[]))
         .unwrap_or_else(|error| panic!("{source}\n{error}"))
 }
 
@@ -139,8 +130,10 @@ fn draws_random_values() {
 /// Documents the libraries from their sources.
 #[test]
 fn documents_libraries() {
-    let documentation =
-        exs_compiler::document_libraries(&mut LibraryResolver).expect("libraries document");
+    let documentation = exs_compiler::document_libraries(
+        exs_compiler::CompileOptions::default().resolver(&LibraryResolver),
+    )
+    .expect("libraries document");
     let reference = documentation.llm();
     for declaration in [
         "fn parse(text: String) -> Any | Error",

@@ -5,6 +5,7 @@ use crate::codegen::standard as codegen_standard;
 
 /// One source-visible standard-library type and its documentation metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct StandardType {
     /// Source-visible built-in type name.
     pub name: &'static str,
@@ -18,6 +19,7 @@ pub struct StandardType {
 
 /// One documented runtime-owned standard-library method.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct StandardMethod {
     /// Source-level method signature.
     pub signature: &'static str,
@@ -29,6 +31,7 @@ pub struct StandardMethod {
 
 /// One globally callable standard-library function and its documentation metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct StandardFunction {
     /// Source-visible function name.
     pub name: &'static str,
@@ -42,6 +45,7 @@ pub struct StandardFunction {
 
 /// One source-visible standard-library namespace and its static operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct StandardNamespace {
     /// Source-visible namespace name.
     pub name: &'static str,
@@ -53,6 +57,7 @@ pub struct StandardNamespace {
 
 /// One source-visible standard-library trait.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct StandardTrait {
     /// Source-visible trait name.
     pub name: &'static str,
@@ -60,6 +65,7 @@ pub struct StandardTrait {
 
 /// One source-visible standard-library enum and its variants.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct StandardEnum {
     /// Source-visible enum name.
     pub name: &'static str,

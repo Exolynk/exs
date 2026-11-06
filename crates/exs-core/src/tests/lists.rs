@@ -155,11 +155,11 @@ fn converts_lists_and_typed_objects() {
     let slot = list_object(cyclic).map(|list| execution.memory.load_u32(list + 12) + 8);
     execution.memory.store_u64(slot.expect("a List"), cyclic);
     assert_eq!(
-        super::walk::walked(&execution.memory, VM, cyclic),
-        Err(crate::WalkError::Unsupported)
+        super::image_writer::written(&mut execution.memory, VM, cyclic),
+        Err(crate::image_writer::WriteError::Unsupported)
     );
     assert_eq!(
-        crate::serialization_message(&execution.memory, cyclic),
+        crate::boundary::serialization_message(&execution.memory, cyclic),
         "value graph contains a cycle and cannot cross the runner boundary"
     );
 }

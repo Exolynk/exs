@@ -8,6 +8,7 @@ use crate::{Documentation, DocumentationPage};
 
 /// How declarations are spread over pages.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum PageLayout {
     /// One page per module that documents every declaration of the module.
     #[default]
@@ -19,6 +20,7 @@ pub enum PageLayout {
 
 /// What a generated page documents.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum PageKind {
     /// The overview of every module.
     Index,
@@ -30,6 +32,7 @@ pub enum PageKind {
 
 /// What a front-matter callback learns about one page.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct PageInfo<'a> {
     /// Path of the page within the generated output.
     pub path: &'a str,
@@ -45,6 +48,7 @@ pub struct PageInfo<'a> {
 
 /// Options of the Markdown renderer.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub struct MarkdownOptions<'a> {
     /// How declarations are spread over pages.
     pub layout: PageLayout,

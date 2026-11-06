@@ -134,9 +134,9 @@ impl Execution {
         raw
     }
 
-    /// Walks `raw` as the runner reads a result and returns the value it builds.
+    /// Writes the image of `raw` as a module passes a result and returns the value it holds.
     pub(super) fn encoded(&mut self, raw: u64) -> ExsValue {
-        super::walk::walked(&self.memory, VM, raw).expect("crosses the boundary")
+        super::image_writer::written(&mut self.memory, VM, raw).expect("crosses the boundary")
     }
 
     /// Adopts the single runner argument of `value` into a rooted slot and returns it.

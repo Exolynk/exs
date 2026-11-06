@@ -33,6 +33,9 @@ fn mixed() -> Vec<ExsValue> {
     ]
 }
 
+/// A program whose host function `stop` cancels the execution before it finishes.
+pub const CANCELLED_SOURCE: &str = r#"fn main() { Host::call("stop"); ret 1; }"#;
+
 /// The programs both runners execute.
 pub const CASES: &[Case] = &[
     Case {
@@ -103,15 +106,11 @@ fn guest_values() -> Vec<ExsValue> {
         variant: "Gray".to_owned(),
         fields: vec![ExsValue::Int(3)],
     });
-    values.push(ExsValue::Error(exs_abi::ExsError {
-        severity: exs_abi::ErrorSeverity::Recoverable,
-        kind: "K".to_owned(),
-        message: "m".to_owned(),
-        data: Box::new(ExsValue::None),
-        origin: Some(exs_abi::SourcePositionId(4)),
-        trace: Vec::new(),
-        cause: Some(Box::new(ExsValue::String("cause".to_owned()))),
-    }));
+    values.push(ExsValue::Error(
+        exs_abi::ExsError::recoverable("K".to_owned(), "m".to_owned())
+            .with_origin(Some(exs_abi::SourcePositionId(4)))
+            .with_cause(ExsValue::String("cause".to_owned())),
+    ));
     values
 }
 

@@ -16,8 +16,8 @@ mod support;
 use std::time::Duration;
 
 use exs_runner::{
-    CompilerStrategy, ExecutionCancellation, ExecutionReport, ProtectionLevel, ServerRunner,
-    ServerRunnerConfig,
+    CompilerStrategy, ExecutionCancellation, ExecutionOptions, ExecutionReport, ProtectionLevel,
+    ServerRunner, ServerRunnerConfig,
 };
 use scenarios::Scenario;
 use support::{block_on, compile_source};
@@ -25,11 +25,11 @@ use support::{block_on, compile_source};
 /// Fuel budget of the measuring runner, far above every ceiling.
 const FUEL_BUDGET: u64 = 1_000_000_000;
 /// Fuel ceiling for an empty function, which measures pure ABI and runtime overhead.
-const EMPTY_MAIN_FUEL: u64 = 17_139;
+const EMPTY_MAIN_FUEL: u64 = 17_614;
 /// Fuel ceiling for a show function that only returns `true`.
-const SHOW_TRUE_FUEL: u64 = 17_146;
+const SHOW_TRUE_FUEL: u64 = 17_623;
 /// Fuel ceiling for a show function comparing fields of a host-supplied record object.
-const SHOW_COMPARE_RECORD_FUEL: u64 = 26_934;
+const SHOW_COMPARE_RECORD_FUEL: u64 = 27_273;
 /// Fuel ceiling for concatenating one field of 10 host-supplied objects.
 const CONCAT_10_OBJECTS_FUEL: u64 = 56_372;
 /// Fuel ceiling for concatenating one field of 100 host-supplied objects.
@@ -43,9 +43,9 @@ const ASYNC_EMPTY_WHILE_1000_FUEL: u64 = 133_035;
 /// Fuel ceiling for 1000 iterations of a resumable integer arithmetic `while` loop.
 const ASYNC_INT_WHILE_1000_FUEL: u64 = 275_044;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range.
-const FOR_RANGE_1000_FUEL: u64 = 47_378;
+const FOR_RANGE_1000_FUEL: u64 = 47_874;
 /// Fuel ceiling for 1000 iterations of an empty `for` loop over a Range held in a variable.
-const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 41_897;
+const FOR_RANGE_VARIABLE_1000_FUEL: u64 = 42_382;
 /// Fuel ceiling for 100 calls of a small function with a `match`.
 const ASYNC_CALL_LOOP_100_FUEL: u64 = 38_456;
 /// Fuel ceiling for 100 calls of a small resumable function.
@@ -58,24 +58,30 @@ const LIST_CHURN_6000_FUEL: u64 = 3_385_124;
 const SYNC_CALL_LOOP_1000_FUEL: u64 = 217_356;
 /// Fuel ceiling for parsing and formatting 100 RFC 3339 DateTimes.
 const DATETIME_ROUNDTRIP_100_FUEL: u64 = 3_189_117;
-/// Fuel ceiling for the Exolynk-style round trip of 20 records.
-const RECORD_ROUNDTRIP_20_FUEL: u64 = 1_889_866;
+/// Fuel ceiling for the typed round trip of 20 records.
+const RECORD_ROUNDTRIP_20_FUEL: u64 = 2_026_759;
 
 /// Compiles and executes one scenario with a Winch runner and returns its execution report.
 fn execute_report(scenario: &Scenario) -> ExecutionReport {
     let compiled = compile_source(scenario.source);
     // A large budget lets ceilings, not the default budget, catch regressions.
-    let runner = ServerRunner::new(ServerRunnerConfig {
-        max_memory_bytes: 64 * 1024 * 1024,
-        max_fuel: FUEL_BUDGET,
-        timeout: Duration::from_secs(60),
-        protection: ProtectionLevel::Standard,
-        compiler: CompilerStrategy::Winch,
-        ..ServerRunnerConfig::default()
+    let runner = ServerRunner::new({
+        let mut options = ServerRunnerConfig::default();
+        options.max_memory_bytes = 64 * 1024 * 1024;
+        options.max_fuel = FUEL_BUDGET;
+        options.timeout = Duration::from_secs(60);
+        options.protection = ProtectionLevel::Standard;
+        options.compiler = CompilerStrategy::Winch;
+        options
     });
     let cancellation = ExecutionCancellation::new();
     let inputs = (scenario.inputs)();
-    match block_on(runner.execute_with_report(&compiled.wasm, "main", &inputs, &cancellation)) {
+    match block_on(runner.execute_with(
+        &compiled.wasm,
+        "main",
+        &inputs,
+        &ExecutionOptions::with_cancellation(&cancellation),
+    )) {
         Ok(report) => report,
         Err(error) => panic!("{} execution failed: {error}", scenario.name),
     }

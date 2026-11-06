@@ -532,6 +532,7 @@ fn append_u32(bytes: &mut Vec<u8>, value: usize) {
 
 /// One source range resolved from a compiler-assigned position identifier.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SourcePosition {
     /// Human-readable source identity.
     pub source_id: String,
@@ -543,6 +544,7 @@ pub struct SourcePosition {
 
 /// One generated function name resolved from a compiler-assigned function identifier.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct FunctionDebugInfo {
     /// Stable generated function identifier.
     pub function_id: u32,
@@ -552,6 +554,7 @@ pub struct FunctionDebugInfo {
 
 /// One optional embedded source unit from a resolved module graph.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct EmbeddedSource {
     /// Canonical source identity.
     pub source_id: String,
@@ -561,16 +564,13 @@ pub struct EmbeddedSource {
 
 /// Debug metadata decoded from ExS custom sections in one linked Wasm module.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ModuleDebugInfo {
-    /// Default source identity retained for single-source compatibility.
-    pub source_id: String,
     /// Position records ordered by one-based `SourcePositionId`.
     pub positions: Vec<SourcePosition>,
     /// Source-level function names keyed by generated function identifier.
     pub functions: Vec<FunctionDebugInfo>,
-    /// Optional UTF-8 source text embedded in the module.
-    pub source: Option<String>,
-    /// All embedded sources when compilation included a resolved module graph.
+    /// The sources embedded in the module, when embedding was requested.
     pub sources: Vec<EmbeddedSource>,
 }
 
@@ -598,16 +598,12 @@ impl ModuleDebugInfo {
             .iter()
             .find(|source| source.source_id == source_id)
             .map(|source| source.source.as_str())
-            .or_else(|| {
-                (self.source_id == source_id)
-                    .then_some(self.source.as_deref())
-                    .flatten()
-            })
     }
 }
 
 /// Failure while reading ExS debugging metadata from a Wasm module.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum DebugInfoError {
     /// The input is not a valid Wasm module.
     InvalidWasm,
@@ -654,18 +650,7 @@ pub fn read_debug_info(wasm: &[u8]) -> Result<ModuleDebugInfo, DebugInfoError> {
     let source_map = source_map.ok_or(DebugInfoError::MissingSourceMap)?;
     let mut info = decode_source_map(&source_map)?;
     if let Some(source) = source {
-        let sources = decode_sources(&source)?;
-        if !sources
-            .iter()
-            .any(|source| source.source_id == info.source_id)
-        {
-            return Err(DebugInfoError::Malformed);
-        }
-        info.source = sources
-            .iter()
-            .find(|source| source.source_id == info.source_id)
-            .map(|source| source.source.clone());
-        info.sources = sources;
+        info.sources = decode_sources(&source)?;
     }
     Ok(info)
 }
@@ -727,10 +712,8 @@ fn decode_source_map(bytes: &[u8]) -> Result<ModuleDebugInfo, DebugInfoError> {
     }
     reader.finish()?;
     Ok(ModuleDebugInfo {
-        source_id,
         positions,
         functions,
-        source: None,
         sources: Vec::new(),
     })
 }

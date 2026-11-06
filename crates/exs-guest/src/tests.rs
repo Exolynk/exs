@@ -5,10 +5,11 @@ use std::sync::Mutex;
 use core::future::poll_fn;
 use core::task::Poll;
 
+use crate::__private::{boxed_future, cancel};
 use crate::execution::{resume_response, start_inputs};
 use crate::imports::{set_test_host_call_status, test_host_call_start_count};
 use crate::state::execution_mut;
-use crate::{ExsValue, boxed_future, cancel};
+use crate::{ExsError, ExsValue};
 use exs_abi::{
     HOST_CALL_FATAL, HOST_CALL_PENDING, STANDARD_ITERATOR_STEP_TYPE_IDENTITY, STATUS_COMPLETE,
     STATUS_PENDING,
@@ -110,19 +111,14 @@ fn consumes_a_host_stream() {
     set_test_host_call_status(HOST_CALL_PENDING);
     let status = start_inputs(Vec::new(), |_| {
         boxed_future(async move {
-            let mut stream = match crate::host::stream("counter", [ExsValue::Int(1)]).await {
-                Ok(stream) => stream,
-                Err(error) => return error,
+            let mut stream = crate::host::stream("counter", [ExsValue::Int(1)]).await?;
+            let item = match stream.next().await? {
+                crate::host::IteratorStep::Item(item) => item,
+                crate::host::IteratorStep::Done => ExsValue::None,
             };
-            let item = match stream.next().await {
-                Ok(crate::host::IteratorStep::Item(item)) => item,
-                Ok(crate::host::IteratorStep::Done) => return ExsValue::None,
-                Err(error) => return error,
-            };
-            match stream.next().await {
-                Ok(crate::host::IteratorStep::Done) => item,
-                Ok(crate::host::IteratorStep::Item(_)) => ExsValue::None,
-                Err(error) => error,
+            match stream.next().await? {
+                crate::host::IteratorStep::Done => Ok::<_, ExsError>(item),
+                crate::host::IteratorStep::Item(_) => Ok(ExsValue::None),
             }
         })
     });
@@ -162,15 +158,9 @@ fn consumes_host_time() {
     set_test_host_call_status(HOST_CALL_PENDING);
     let status = start_inputs(Vec::new(), |_| {
         boxed_future(async move {
-            let now = match crate::host::now().await {
-                Ok(now) => now,
-                Err(error) => return error,
-            };
-            let elapsed = match crate::host::elapsed().await {
-                Ok(elapsed) => elapsed,
-                Err(error) => return error,
-            };
-            ExsValue::Int(now.unix_seconds + elapsed.as_secs() as i64)
+            let now = crate::host::now().await?;
+            let elapsed = crate::host::elapsed().await?;
+            Ok::<_, ExsError>(ExsValue::Int(now.unix_seconds + elapsed.as_secs() as i64))
         })
     });
     assert_eq!(status, STATUS_PENDING);
@@ -211,26 +201,17 @@ fn resolves_guest_datetime_time_zones() {
     set_test_host_call_status(HOST_CALL_PENDING);
     let status = start_inputs(Vec::new(), |_| {
         boxed_future(async move {
-            let constructed = match crate::host::from_components_in_timezone(
-                2024,
-                1,
-                1,
-                12,
-                0,
-                0,
-                0,
-                "Europe/Zurich",
-            )
-            .await
-            {
-                Ok(value) => value,
-                Err(error) => return error,
+            let components = crate::host::DateTimeComponents {
+                year: 2024,
+                month: 1,
+                day: 1,
+                hour: 12,
+                ..crate::host::DateTimeComponents::default()
             };
-            let converted = match crate::host::in_timezone(constructed, "UTC").await {
-                Ok(value) => value,
-                Err(error) => return error,
-            };
-            ExsValue::Int(i64::from(converted.utc_offset_seconds))
+            let constructed =
+                crate::host::from_components_in_timezone(components, "Europe/Zurich").await?;
+            let converted = crate::host::in_timezone(&constructed, "UTC").await?;
+            Ok::<_, ExsError>(ExsValue::Int(i64::from(converted.utc_offset_seconds)))
         })
     });
     assert_eq!(status, STATUS_PENDING);
@@ -263,4 +244,91 @@ fn resolves_guest_datetime_time_zones() {
     );
     assert_eq!(read_result(), ExsValue::Int(0));
     set_test_host_call_status(HOST_CALL_FATAL);
+}
+
+/// Completes a sleep when the runner responds with Unit.
+#[test]
+fn completes_a_sleep() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    cancel();
+    set_test_host_call_status(HOST_CALL_PENDING);
+    let status = start_inputs(Vec::new(), |_| {
+        boxed_future(async move {
+            crate::host::sleep(core::time::Duration::from_millis(5)).await?;
+            Ok::<_, ExsError>(ExsValue::Int(1))
+        })
+    });
+    assert_eq!(status, STATUS_PENDING);
+    assert_eq!(resume_response(1, ExsValue::Unit), STATUS_COMPLETE);
+    assert_eq!(read_result(), ExsValue::Int(1));
+    set_test_host_call_status(HOST_CALL_FATAL);
+}
+
+/// Reports a response to a sleep that is neither Unit nor an Error as a fatal protocol Error.
+#[test]
+fn rejects_a_malformed_sleep_response() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    cancel();
+    set_test_host_call_status(HOST_CALL_PENDING);
+    let status = start_inputs(Vec::new(), |_| {
+        boxed_future(async move {
+            crate::host::sleep(core::time::Duration::ZERO).await?;
+            Ok::<_, ExsError>(ExsValue::Int(1))
+        })
+    });
+    assert_eq!(status, STATUS_PENDING);
+    assert_eq!(resume_response(1, ExsValue::Int(2)), STATUS_COMPLETE);
+    let ExsValue::Error(error) = read_result() else {
+        panic!("a malformed response must fail the entry");
+    };
+    assert_eq!(error.kind, "InvalidHostTimeResponse");
+    set_test_host_call_status(HOST_CALL_FATAL);
+}
+
+/// Converts between Rust types and values, and keeps an Error as that Error.
+#[cfg(feature = "serde")]
+#[test]
+fn decodes_and_encodes_typed_values() {
+    use std::collections::BTreeMap;
+
+    let list = crate::encode(&vec![1_i64, 2]).expect("a list encodes");
+    assert_eq!(
+        list,
+        ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)])
+    );
+    assert_eq!(crate::decode::<Vec<i64>>(list.clone()), Ok(vec![1, 2]));
+
+    let mismatch = crate::decode::<String>(list).expect_err("a list is no String");
+    assert_eq!(mismatch.kind, "WireDecodeError");
+
+    let error = ExsError::recoverable("Denied", "no access");
+    assert_eq!(
+        crate::decode::<i64>(ExsValue::Error(error.clone())),
+        Err(error)
+    );
+
+    let keys = BTreeMap::from([(1_i64, 2_i64)]);
+    let unsupported = crate::encode(&keys).expect_err("Object keys are strings");
+    assert_eq!(unsupported.kind, "WireEncodeError");
+}
+
+/// Completes an entry whose `?` met an Error with that Error as its result.
+#[test]
+fn completes_an_entry_with_the_error_of_a_question_mark() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    cancel();
+    set_test_host_call_status(HOST_CALL_PENDING);
+    let status = start_inputs(Vec::new(), |_| {
+        boxed_future(async move {
+            crate::host::now().await?;
+            Ok::<_, ExsError>(ExsValue::Int(1))
+        })
+    });
+    assert_eq!(status, STATUS_PENDING);
+    let error = ExsError::recoverable("Denied", "no clock");
+    assert_eq!(
+        resume_response(1, ExsValue::Error(error.clone())),
+        STATUS_COMPLETE
+    );
+    assert_eq!(read_result(), ExsValue::Error(error));
 }

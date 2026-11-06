@@ -13,15 +13,12 @@ const MATH: &str = "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int
 
 /// Documents `MAIN` and `MATH`.
 fn project_documentation() -> ApiDocumentation {
-    let mut resolver = TestResolver {
+    let resolver = TestResolver {
         sources: HashMap::from([("./math.exs".to_owned(), MATH.to_owned())]),
     };
-    match document_with_resolver(
-        SourceInput {
-            source_id: "./main.exs",
-            text: MAIN,
-        },
-        &mut resolver,
+    match document(
+        Source::new("./main.exs", MAIN),
+        CompileOptions::default().resolver(&resolver),
     ) {
         Ok(documentation) => documentation,
         Err(error) => panic!("documentation generation failed: {error}"),
@@ -149,9 +146,10 @@ fn renders_one_page_per_module() {
 /// Gives types, enums, traits, and namespaces their own pages in the per-item layout.
 #[test]
 fn renders_one_page_per_item() {
-    let documentation = project_documentation().markdown(&MarkdownOptions {
-        layout: PageLayout::PerItem,
-        ..MarkdownOptions::default()
+    let documentation = project_documentation().markdown(&{
+        let mut options = MarkdownOptions::default();
+        options.layout = PageLayout::PerItem;
+        options
     });
     let math = &page(&documentation, "math/index.md").markdown;
     assert!(math.contains("## Types\n\n- [`Point`](point.md)"));
@@ -182,19 +180,21 @@ fn renders_front_matter_and_absolute_links() {
     let front_matter = |info: &PageInfo<'_>| {
         let template = match info.kind {
             PageKind::Index | PageKind::Module => "section",
-            PageKind::Item(_) => "page",
+            _ => "page",
         };
         format!(
             "+++\ntitle = \"{}\"\ntemplate = \"{template}\"\n+++\n\n",
             info.title
         )
     };
-    let documentation = project_documentation().markdown(&MarkdownOptions {
-        layout: PageLayout::PerItem,
-        index_file: "_index.md",
-        link_prefix: Some("@/exs/"),
-        title_heading: false,
-        front_matter: Some(&front_matter),
+    let documentation = project_documentation().markdown(&{
+        let mut options = MarkdownOptions::default();
+        options.layout = PageLayout::PerItem;
+        options.index_file = "_index.md";
+        options.link_prefix = Some("@/exs/");
+        options.title_heading = false;
+        options.front_matter = Some(&front_matter);
+        options
     });
     let index = &page(&documentation, "_index.md").markdown;
     assert!(index.starts_with(
@@ -211,24 +211,24 @@ fn renders_front_matter_and_absolute_links() {
 /// Combines the language specification and a compact reference of the API.
 #[test]
 fn renders_the_compact_llm_reference() {
-    let mut resolver = TestResolver {
+    let resolver = TestResolver {
         sources: HashMap::from([(
             "./math.exs".to_owned(),
             "/// Adds two integers.\nfn add(left: Int, right: Int) -> Int { ret left + right; }\n\ntype Counter {}\n\nimpl Counter {\n/// Returns the current count.\nfn count(self) -> Int { ret 0; }\n}"
                 .to_owned(),
         )]),
     };
-    let documentation = match document_with_resolver(
-        SourceInput {
-            source_id: "./main.exs",
-            text: "import \"./math.exs\" as math;\n/// Runs the program.\nfn main() -> Int { ret math::add(20, 22); }",
-        },
-        &mut resolver,
+    let documentation = match document(
+        Source::new(
+            "./main.exs",
+            "import \"./math.exs\" as math;\n/// Runs the program.\nfn main() -> Int { ret math::add(20, 22); }",
+        ),
+        CompileOptions::default().resolver(&resolver),
     ) {
         Ok(documentation) => documentation.llm(),
         Err(error) => panic!("LLM documentation generation failed: {error}"),
     };
-    assert!(documentation.starts_with("# Exolynk Script (ExS) LLM Specification"));
+    assert!(documentation.starts_with("# ExS LLM Specification"));
     assert!(documentation.contains("# Compact API Reference"));
     assert!(documentation.contains("fn next(self) -> IteratorStep | Error;"));
     assert!(documentation.contains("Adds two integers."));
@@ -252,15 +252,15 @@ fn renders_the_compact_llm_reference() {
 /// Links a standard trait implementation and inherits its method documentation.
 #[test]
 fn documents_standard_add_implementations() {
-    let mut resolver = TestResolver {
+    let resolver = TestResolver {
         sources: HashMap::new(),
     };
-    let documentation = match document_with_resolver(
-        SourceInput {
-            source_id: "./add.exs",
-            text: "enum Abc { A, B, } impl Add for Abc { fn add(self, other: Any) -> Any { ret self; } } fn main() { ret Abc::A; }",
-        },
-        &mut resolver,
+    let documentation = match document(
+        Source::new(
+            "./add.exs",
+            "enum Abc { A, B, } impl Add for Abc { fn add(self, other: Any) -> Any { ret self; } } fn main() { ret Abc::A; }",
+        ),
+        CompileOptions::default().resolver(&resolver),
     ) {
         Ok(documentation) => documentation.markdown(&MarkdownOptions::default()),
         Err(error) => panic!("documentation generation failed: {error}"),
@@ -273,15 +273,15 @@ fn documents_standard_add_implementations() {
 /// Prefers an implementation method's own documentation over inherited trait documentation.
 #[test]
 fn prefers_implementation_documentation_over_standard_add_documentation() {
-    let mut resolver = TestResolver {
+    let resolver = TestResolver {
         sources: HashMap::new(),
     };
-    let documentation = match document_with_resolver(
-        SourceInput {
-            source_id: "./custom-add.exs",
-            text: "type Counter {} impl Add for Counter {\n/// Adds one application-specific count.\nfn add(self, other: Any) -> Any { ret self; } } fn main() { ret Counter {}; }",
-        },
-        &mut resolver,
+    let documentation = match document(
+        Source::new(
+            "./custom-add.exs",
+            "type Counter {} impl Add for Counter {\n/// Adds one application-specific count.\nfn add(self, other: Any) -> Any { ret self; } } fn main() { ret Counter {}; }",
+        ),
+        CompileOptions::default().resolver(&resolver),
     ) {
         Ok(documentation) => documentation.markdown(&MarkdownOptions::default()),
         Err(error) => panic!("documentation generation failed: {error}"),
@@ -291,45 +291,42 @@ fn prefers_implementation_documentation_over_standard_add_documentation() {
     assert!(!counter.contains("Adds the receiver to the evaluated `other` operand."));
 }
 
-/// Provides the libraries `log`, `exo`, and `exo::db`.
+/// Provides the libraries `log`, `app`, and `app::db`.
 struct Libraries;
 
 impl ModuleResolver for Libraries {
     /// Rejects file imports.
-    fn resolve(&mut self, _importer: &str, path: &str) -> Result<ResolvedSource, String> {
+    fn resolve(&self, _importer: &str, path: &str) -> Result<Source<'_>, String> {
         Err(format!("no file `{path}`"))
     }
 
     /// Returns the library module at `path`.
-    fn library(&mut self, path: &str) -> Option<ResolvedSource> {
+    fn library(&self, path: &str) -> Option<Source<'_>> {
         let text = match path {
             "log" => {
                 "//! Logging.\n/// The default level.\nconst LEVEL = \"info\";\nprivate const HIDDEN = 1;\n/// Logs an informational message.\nfn info(message: String) -> None { ret None; }"
             }
-            "exo" => {
-                "//! The Exolynk API.\n/// A stored record.\ntype Record { id: Int }\nprivate fn internal() -> Int { ret 1; }"
+            "app" => {
+                "//! The application API.\n/// A stored record.\ntype Record { id: Int }\nprivate fn internal() -> Int { ret 1; }"
             }
-            "exo::db" => {
-                "/// Loads one record.\nfn load(id: Int) -> exo::Record { ret exo::Record { id: id }; }"
+            "app::db" => {
+                "/// Loads one record.\nfn load(id: Int) -> app::Record { ret app::Record { id: id }; }"
             }
             _ => return None,
         };
-        Some(ResolvedSource {
-            source_id: path.to_owned(),
-            text: text.to_owned(),
-        })
+        Some(Source::new(path.to_owned(), text.to_owned()))
     }
 
     /// Lists every library module.
-    fn libraries(&mut self) -> Vec<String> {
-        vec!["log".to_owned(), "exo::db".to_owned(), "exo".to_owned()]
+    fn libraries(&self) -> Vec<String> {
+        vec!["log".to_owned(), "app::db".to_owned(), "app".to_owned()]
     }
 }
 
 /// Documents the standard library and every listed library module, sorted by path.
 #[test]
 fn documents_listed_libraries() {
-    let documentation = match document_libraries(&mut Libraries) {
+    let documentation = match document_libraries(CompileOptions::default().resolver(&Libraries)) {
         Ok(documentation) => documentation,
         Err(error) => panic!("library documentation failed: {error}"),
     };
@@ -338,16 +335,16 @@ fn documents_listed_libraries() {
         .iter()
         .map(|module| module.name.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(names, ["std", "std::test", "exo", "exo::db", "log"]);
-    let exo = documentation.module("exo").expect("exo module");
-    assert_eq!(exo.description, "The Exolynk API.");
-    assert_eq!(exo.items.len(), 1);
+    assert_eq!(names, ["std", "std::test", "app", "app::db", "log"]);
+    let app = documentation.module("app").expect("app module");
+    assert_eq!(app.description, "The application API.");
+    assert_eq!(app.items.len(), 1);
     let pages = documentation.markdown(&MarkdownOptions::default());
-    let exo = &page(&pages, "exo/index.md").markdown;
-    assert!(exo.contains("## Modules\n\n- [`exo::db`](db/index.md)"));
-    assert!(!exo.contains("internal"));
-    let db = &page(&pages, "exo/db/index.md").markdown;
-    assert!(db.contains("fn load(id: Int) -> exo::Record"));
+    let app = &page(&pages, "app/index.md").markdown;
+    assert!(app.contains("## Modules\n\n- [`app::db`](db/index.md)"));
+    assert!(!app.contains("internal"));
+    let db = &page(&pages, "app/db/index.md").markdown;
+    assert!(db.contains("fn load(id: Int) -> app::Record"));
     let log = &page(&pages, "log/index.md").markdown;
     assert!(log.contains("Logging.\n\n## Constants\n\n### `LEVEL`\n\nThe default level."));
     assert!(log.contains("const LEVEL = \"info\";"));
@@ -369,16 +366,17 @@ fn rejects_missing_listed_libraries() {
 
     impl ModuleResolver for Missing {
         /// Rejects file imports.
-        fn resolve(&mut self, _importer: &str, path: &str) -> Result<ResolvedSource, String> {
+        fn resolve(&self, _importer: &str, path: &str) -> Result<Source<'_>, String> {
             Err(format!("no file `{path}`"))
         }
 
         /// Lists the library `ghost`.
-        fn libraries(&mut self) -> Vec<String> {
+        fn libraries(&self) -> Vec<String> {
             vec!["ghost".to_owned()]
         }
     }
 
-    let error = document_libraries(&mut Missing).expect_err("missing library documented");
-    assert!(error.contains("library `ghost` is listed"));
+    let error = document_libraries(CompileOptions::default().resolver(&Missing))
+        .expect_err("missing library documented");
+    assert!(error.report.contains("library `ghost` is listed"));
 }

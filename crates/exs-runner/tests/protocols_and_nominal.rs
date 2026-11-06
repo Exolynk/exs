@@ -3,7 +3,7 @@
 mod support;
 
 use exs_abi::{ErrorSeverity, ExsValue};
-use exs_runner::{ExecutionCancellation, ServerRunner};
+use exs_runner::ServerRunner;
 use support::{block_on, compile_source, execute_source, execute_source_with_inputs};
 
 /// Resolves Self in inherited trait methods to the concrete implementation target.
@@ -225,12 +225,7 @@ fn suspends_through_standard_add_implementations() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -266,12 +261,7 @@ fn suspends_through_standard_div_implementations() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -307,12 +297,7 @@ fn suspends_through_standard_compare_implementations() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -337,12 +322,7 @@ fn traces_errors_through_suspendable_child_frames() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(7)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(7)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -441,12 +421,7 @@ fn constructs_enum_after_a_host_call() {
             .fn_sync_raw("value", |_| ExsValue::Int(42))
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -558,12 +533,7 @@ fn resumes_host_call_inside_enum_match_arm() {
             .fn_sync_raw("value", |_| ExsValue::Int(42))
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -835,12 +805,7 @@ fn exchanges_nominal_values_with_their_type() {
         ),
         foreign.clone(),
     ]);
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[point, nodes],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[point, nodes])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -859,6 +824,54 @@ fn exchanges_nominal_values_with_their_type() {
                 vec![("x", ExsValue::Int(1)), ("y", ExsValue::Int(2))],
             ),
             foreign,
+        ])
+    );
+}
+
+/// Lets a program's own types and enums take the place of prelude types of the same name, while
+/// the standard library keeps using its own.
+#[test]
+fn own_declarations_take_the_place_of_prelude_types() {
+    assert_eq!(
+        execute_source(
+            r#"
+            type Duration { value: Int }
+
+            impl Duration {
+                fn make(value: Int) -> Duration {
+                    ret Duration { value: value };
+                }
+
+                fn twice(self) -> Int {
+                    ret self.value * 2;
+                }
+            }
+
+            enum DateTime {
+                Now,
+                At(value: Int),
+            }
+
+            fn main(input) -> List {
+                let own = Duration::make(21);
+                let at = match DateTime::At(5) {
+                    DateTime::At(value) => value,
+                    DateTime::Now => 0,
+                };
+                ret [own.twice(), own is Duration, at, Host::elapsed().seconds >= 0, own];
+            }
+            "#,
+            ExsValue::None,
+        ),
+        ExsValue::List(vec![
+            ExsValue::Int(42),
+            ExsValue::Bool(true),
+            ExsValue::Int(5),
+            ExsValue::Bool(true),
+            ExsValue::Typed {
+                type_id: "test.exs::Duration".to_owned(),
+                fields: vec![("value".to_owned(), ExsValue::Int(21))],
+            },
         ])
     );
 }

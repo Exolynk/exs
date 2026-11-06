@@ -343,9 +343,9 @@ pub const DATETIME_ROUNDTRIP_100: Scenario = Scenario {
     expected: || ExsValue::List((0..100).map(datetime_output).collect()),
 };
 
-/// Measures an Exolynk-style round trip of 20 records through typed ExS values.
+/// Measures a round trip of 20 records through typed ExS values.
 ///
-/// Like the Exolynk script API, the script hydrates host Objects into nominal types and enums
+/// The script hydrates host Objects into nominal types and enums
 /// (including an enum with payload, nested Lists, a tagged `Datetime` and a tagged `Currency`),
 /// processes them and dehydrates them back into the host Object shape.
 pub const RECORD_ROUNDTRIP_20: Scenario = Scenario {
@@ -355,7 +355,7 @@ pub const RECORD_ROUNDTRIP_20: Scenario = Scenario {
     expected: || ExsValue::List((0..20).map(record_output).collect()),
 };
 
-/// Script hydrating, processing and dehydrating Exolynk-style records.
+/// Script hydrating, processing and dehydrating host records.
 const RECORD_SOURCE: &str = r#"
     enum Status { Open, Paid, Cancelled }
     enum ItemKind { Product, Service(hours: Int) }
@@ -585,7 +585,7 @@ const RECORD_STATUSES: [&str; 4] = ["open", "paid", "cancelled", "open"];
 /// UTC offsets cycled through by the record creation timestamps.
 const RECORD_OFFSETS: [&str; 3] = ["+01:00", "+00:00", "-05:30"];
 
-/// Builds one Exolynk-style host record.
+/// Builds one host record.
 fn record_input(index: i64) -> ExsValue {
     object(vec![
         ("id", ExsValue::Int(index)),
@@ -736,7 +736,7 @@ fn record_item_amount(index: i64, item: i64) -> i64 {
     record_quantity(index, item) * record_price(index, item) + surcharge
 }
 
-/// Builds one tagged Exolynk Currency object.
+/// Builds one tagged Currency object.
 fn currency(amount: i64, code: &str) -> ExsValue {
     object(vec![(
         "Currency",

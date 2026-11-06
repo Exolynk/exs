@@ -5,17 +5,16 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use exs_abi::{
-    BuiltinHostOperation, ErrorSeverity, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
+    BuiltinHostOperation, ExsError, ExsValue, HOST_CALL_PENDING, HOST_CALL_READY,
     HOST_CALL_RESPONSE_COPY_IMPORT, HOST_CALL_RESPONSE_LENGTH_IMPORT, HOST_CALL_START_IMPORT,
-    HOST_CALL_START_VALUE_IMPORT, HOST_CALL_UNSUPPORTED, HOST_IMPORT_MODULE, RUNNER_IMPORT_MODULE,
-    RUNNER_TASK_ACQUIRE_IMPORT, RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY,
-    SourcePositionId, builtin_host_operation,
+    HOST_IMPORT_MODULE, RUNNER_IMPORT_MODULE, RUNNER_TASK_ACQUIRE_IMPORT,
+    RUNNER_TASK_RELEASE_IMPORT, STANDARD_ITERATOR_STEP_TYPE_IDENTITY, SourcePositionId,
+    builtin_host_operation,
 };
 use wasmtime::{Caller, Extern, Linker, ResourceLimiter};
 
 use crate::arguments::{ArgumentsError, decode_arguments};
 use crate::limits::ExecutionLimits;
-use crate::value_reader::ReadError;
 use crate::{HostFunctionRegistry, HostFuture, HostStream, LimitKind, RegistryError, RunnerTimer};
 
 /// Runner-owned state accessed by imported host functions for one Wasm instance.
@@ -54,17 +53,6 @@ pub(crate) struct HostAbiState {
     store_limits: crate::guest_limiter::GuestLimiter,
     /// The most recent hard-limit violation reported through a Wasm import.
     limit_violation: Option<LimitKind>,
-    /// How boundary values cross between the runner and the module.
-    boundary: Boundary,
-}
-
-/// How boundary values cross between the runner and a module.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Boundary {
-    /// Images in both directions, as for Rust guests.
-    Image,
-    /// Images to the module and values read from its memory, as for compiled modules.
-    Direct,
 }
 
 impl HostAbiState {
@@ -94,19 +82,12 @@ impl HostAbiState {
             deadline_at,
             timer,
             limit_violation: None,
-            boundary: Boundary::Image,
         }
     }
 
-    /// Returns how boundary values cross between the runner and the module.
-    pub(crate) const fn boundary(&self) -> Boundary {
-        self.boundary
-    }
-
-    /// Makes the runner read the module's results and host-call arguments from its memory, and
-    /// lets its memory refuse to grow beyond the limit so its collector can reclaim memory first.
-    pub(crate) fn use_direct_boundary(&mut self) {
-        self.boundary = Boundary::Direct;
+    /// Lets the module's memory refuse to grow beyond the limit, so a module with a collector can
+    /// reclaim memory first.
+    pub(crate) fn refuse_memory_growth(&mut self) {
         self.store_limits.refuse_memory_growth();
     }
 
@@ -247,28 +228,25 @@ impl HostAbiState {
         origin: Option<SourcePositionId>,
     ) -> Result<crate::HostCall, RegistryError> {
         if arguments.is_empty() {
-            return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
-                severity: ErrorSeverity::Recoverable,
-                kind: "TypeError".to_owned(),
-                message: "Host::stream expects a stream name as its first argument".to_owned(),
-                data: Box::new(ExsValue::None),
-                origin,
-                trace: Vec::new(),
-                cause: None,
-            })));
+            return Ok(crate::HostCall::Ready(ExsValue::Error(
+                ExsError::recoverable(
+                    "TypeError".to_owned(),
+                    "Host::stream expects a stream name as its first argument".to_owned(),
+                )
+                .with_origin(origin),
+            )));
         }
         let stream_name = match arguments.remove(0) {
             ExsValue::String(name) => name,
             other => {
-                return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
-                    severity: ErrorSeverity::Recoverable,
-                    kind: "TypeError".to_owned(),
-                    message: "Host::stream expects a String stream name".to_owned(),
-                    data: Box::new(other),
-                    origin,
-                    trace: Vec::new(),
-                    cause: None,
-                })));
+                return Ok(crate::HostCall::Ready(ExsValue::Error(
+                    ExsError::recoverable(
+                        "TypeError".to_owned(),
+                        "Host::stream expects a String stream name".to_owned(),
+                    )
+                    .with_data(other)
+                    .with_origin(origin),
+                )));
             }
         };
         match self.registry.open_stream(&stream_name, arguments) {
@@ -291,26 +269,23 @@ impl HostAbiState {
         let stream_id = match arguments.as_slice() {
             [ExsValue::Int(id)] => *id,
             [other, ..] => {
-                return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
-                    severity: ErrorSeverity::Recoverable,
-                    kind: "TypeError".to_owned(),
-                    message: "stream handle must be an Int".to_owned(),
-                    data: Box::new(other.clone()),
-                    origin,
-                    trace: Vec::new(),
-                    cause: None,
-                })));
+                return Ok(crate::HostCall::Ready(ExsValue::Error(
+                    ExsError::recoverable(
+                        "TypeError".to_owned(),
+                        "stream handle must be an Int".to_owned(),
+                    )
+                    .with_data(other.clone())
+                    .with_origin(origin),
+                )));
             }
             [] => {
-                return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
-                    severity: ErrorSeverity::Recoverable,
-                    kind: "TypeError".to_owned(),
-                    message: "stream next expects a stream handle".to_owned(),
-                    data: Box::new(ExsValue::None),
-                    origin,
-                    trace: Vec::new(),
-                    cause: None,
-                })));
+                return Ok(crate::HostCall::Ready(ExsValue::Error(
+                    ExsError::recoverable(
+                        "TypeError".to_owned(),
+                        "stream next expects a stream handle".to_owned(),
+                    )
+                    .with_origin(origin),
+                )));
             }
         };
 
@@ -319,27 +294,25 @@ impl HostAbiState {
             .values()
             .any(|id| *id == stream_id)
         {
-            return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
-                severity: ErrorSeverity::Recoverable,
-                kind: "StreamBusy".to_owned(),
-                message: format!("stream handle `{stream_id}` already has a pending next call"),
-                data: Box::new(ExsValue::Int(stream_id)),
-                origin,
-                trace: Vec::new(),
-                cause: None,
-            })));
+            return Ok(crate::HostCall::Ready(ExsValue::Error(
+                ExsError::recoverable(
+                    "StreamBusy".to_owned(),
+                    format!("stream handle `{stream_id}` already has a pending next call"),
+                )
+                .with_data(ExsValue::Int(stream_id))
+                .with_origin(origin),
+            )));
         }
 
         let Some(stream) = self.active_streams.get_mut(&stream_id) else {
-            return Ok(crate::HostCall::Ready(ExsValue::Error(ExsError {
-                severity: ErrorSeverity::Recoverable,
-                kind: "InvalidStreamHandle".to_owned(),
-                message: format!("stream handle `{stream_id}` is not open"),
-                data: Box::new(ExsValue::Int(stream_id)),
-                origin,
-                trace: Vec::new(),
-                cause: None,
-            })));
+            return Ok(crate::HostCall::Ready(ExsValue::Error(
+                ExsError::recoverable(
+                    "InvalidStreamHandle".to_owned(),
+                    format!("stream handle `{stream_id}` is not open"),
+                )
+                .with_data(ExsValue::Int(stream_id))
+                .with_origin(origin),
+            )));
         };
 
         let future = stream.next();
@@ -370,11 +343,6 @@ impl HostAbiState {
 /// Returns an error when Wasmtime rejects one import definition.
 pub(crate) fn define(linker: &mut Linker<HostAbiState>) -> Result<(), wasmtime::Error> {
     linker.func_wrap(HOST_IMPORT_MODULE, HOST_CALL_START_IMPORT, host_call_start)?;
-    linker.func_wrap(
-        HOST_IMPORT_MODULE,
-        HOST_CALL_START_VALUE_IMPORT,
-        host_call_start_value,
-    )?;
     linker.func_wrap(
         HOST_IMPORT_MODULE,
         HOST_CALL_RESPONSE_LENGTH_IMPORT,
@@ -439,74 +407,6 @@ fn host_call_start(
     )?;
     let arguments = decode_arguments(&request, limits.boundary_limits())
         .map_err(|error| host_boundary_error(&mut caller, error))?;
-    dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
-}
-
-/// Starts one dynamically resolved host call of a compiled module, whose arguments the
-/// runner reads as the List value `arguments` from the module's memory with its VM state
-/// block at `vm`. Returns `HOST_CALL_UNSUPPORTED` without starting the call when the
-/// arguments cannot cross the boundary.
-fn host_call_start_value(
-    mut caller: Caller<'_, HostAbiState>,
-    call_id: i64,
-    name_pointer: i32,
-    name_length: i32,
-    arguments: i64,
-    vm: i32,
-    source_position: i32,
-) -> Result<i32, wasmtime::Error> {
-    let limits = caller.data().limits.clone();
-    let read = crate::direct::read(
-        memory(&mut caller)?.data(&caller),
-        vm.cast_unsigned(),
-        arguments.cast_unsigned(),
-        limits.max_payload_bytes,
-        limits.boundary_limits(),
-    );
-    match read {
-        Err(ReadError::Unsupported(_)) => return Ok(HOST_CALL_UNSUPPORTED),
-        Err(ReadError::TooLarge) => {
-            caller.data_mut().report_limit_violation(LimitKind::Payload);
-            return Err(wasmtime::Error::msg(
-                "host-call payload exceeds configured limit",
-            ));
-        }
-        Err(ReadError::Malformed) => {
-            return Err(wasmtime::Error::msg(
-                "host-call arguments lie outside linear memory or are malformed",
-            ));
-        }
-        _ => {}
-    }
-    caller.data_mut().starting_stream_id = None;
-    if !caller.data_mut().start_host_call() {
-        return Err(wasmtime::Error::msg("host-call limit exceeded"));
-    }
-    let name_bytes = read_memory(
-        &mut caller,
-        name_pointer,
-        name_length,
-        limits.max_payload_bytes,
-    )?;
-    let name = std::str::from_utf8(&name_bytes)
-        .map_err(|_| wasmtime::Error::msg("host function name is not valid UTF-8"))?;
-    // Like the decoding of a request image, limits apply once the call counts.
-    let arguments = match read {
-        Ok(ExsValue::List(arguments)) => arguments,
-        Ok(_) => {
-            return Err(wasmtime::Error::msg(
-                "host-call arguments must be represented as a List",
-            ));
-        }
-        Err(error) => {
-            if let Some(kind) = crate::direct::limit_kind(error) {
-                caller.data_mut().report_limit_violation(kind);
-            }
-            return Err(wasmtime::Error::msg(
-                "host-call payload exceeds configured limits",
-            ));
-        }
-    };
     dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
 }
 
@@ -671,15 +571,13 @@ fn memory(caller: &mut Caller<'_, HostAbiState>) -> Result<wasmtime::Memory, was
 
 /// Builds the recoverable language value used for an unregistered dynamic host name.
 fn missing_host_error(name: String, origin: Option<SourcePositionId>) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "HostFunctionNotFound".to_owned(),
-        message: format!("Host function `{name}` is not registered."),
-        data: Box::new(ExsValue::None),
-        origin,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(
+        ExsError::recoverable(
+            "HostFunctionNotFound".to_owned(),
+            format!("Host function `{name}` is not registered."),
+        )
+        .with_origin(origin),
+    )
 }
 
 /// Serializes a ready language value into the response table for one call identifier.

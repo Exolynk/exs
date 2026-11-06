@@ -43,14 +43,70 @@ jobs:
       - name: Build Rust guest example
         run: cargo build -p exs-rust-guest --target wasm32-unknown-unknown
       - name: Build no-std Rust guest library
-        run: cargo build -p exs-guest --no-default-features --features no-std --target wasm32-unknown-unknown
+        run: cargo build -p exs-guest --no-default-features --target wasm32-unknown-unknown
+      - name: Build no-std Rust guest library with serde
+        run: cargo build -p exs-guest --no-default-features --features serde --target wasm32-unknown-unknown
       - name: Build core Wasm template
         run: cargo rustc -p exs-core-template --features template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory -C link-arg=--export=__heap_base -C link-arg=-zstack-size=262144
+      - name: Install Nushell
+        uses: hustcer/setup-nu@v3
+        with:
+          version: "0.115.1"
+      - name: Smoke test Rust guest
+        run: nu examples/rust-guest/test.nu
+      - name: Compare fuel with Rust guests
+        run: nu examples/fuel-baseline/compare.nu
+      - name: Compare browser and server runners
+        run: nu examples/browser-check/check.nu
       - name: Install Trunk
         run: cargo install trunk --version 0.22.0 --locked
       - name: Build playground
         working-directory: examples/playground
         run: trunk build --release --public-url "/${{ github.event.repository.name }}/"
+
+  template:
+    name: Verify committed core Wasm template
+    # Builds of the template differ between operating systems, and it is built on arm64 macOS.
+    runs-on: macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install Rust 1.99.1 toolchain
+        uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install Nushell
+        uses: hustcer/setup-nu@v3
+        with:
+          version: "0.115.1"
+      - name: Rebuild template
+        run: nu crates/exs-core-template/build-template.nu
+      - name: Compare with the committed template
+        run: git diff --exit-code -- crates/exs-core-template/exs-core-template.wasm
+
+  public-api:
+    name: Check public API for breaking changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install Rust 1.99.1 toolchain
+        uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+      - name: Compare with the latest published release
+        run: |
+          # There is nothing to compare with before the first release.
+          if ! cargo info exs-guest --registry crates-io > /dev/null 2>&1; then
+            echo "exs-guest is not published yet"
+            exit 0
+          fi
+          cargo semver-checks -p exs --only-explicit-features --features compiler,server,serde,tooling,json,url,rand,http
+          cargo semver-checks -p exs-guest --only-explicit-features --features std,serde
 
   deploy-playground:
     name: Deploy Playground to GitHub Pages

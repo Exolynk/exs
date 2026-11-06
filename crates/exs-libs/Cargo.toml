@@ -1,10 +1,11 @@
 [package]
 name = "exs-libs"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Optional ExS library modules, such as json and url, with their host functions"
+repository.workspace = true
+description = "Internal crate of ExS: optional library modules such as json and url, with their host functions. Use the exs crate; this one has no stability promise"
 
 [lints]
 workspace = true
@@ -15,7 +16,7 @@ default = ["server", "json", "url", "rand"]
 server = ["exs-runner/server"]
 # Registers the host functions with the browser runner.
 browser = ["exs-runner/browser"]
-# Provides library sources as `exs_compiler::ResolvedSource` for module resolvers.
+# Provides library sources as `exs_compiler::Source` and adds them to `exs_compiler::Sources`.
 compiler = ["dep:exs-compiler"]
 json = ["dep:serde", "dep:serde_json"]
 url = ["dep:form_urlencoded", "dep:percent-encoding"]
@@ -24,9 +25,9 @@ rand = ["dep:getrandom", "dep:js-sys", "dep:wasm-bindgen"]
 http = ["json", "dep:reqwest", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures"]
 
 [dependencies]
-exs-abi = { path = "../exs-abi" }
-exs-runner = { path = "../exs-runner", default-features = false }
-exs-compiler = { path = "../exs-compiler", optional = true }
+exs-abi.workspace = true
+exs-runner.workspace = true
+exs-compiler = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { version = "1.0.145", optional = true }
 form_urlencoded = { version = "1.2.2", optional = true }
@@ -45,7 +46,7 @@ wasm-bindgen-futures = { version = "0.4.56", optional = true }
 web-sys = { version = "0.3.80", features = ["AbortSignal", "Headers", "Request", "RequestInit", "Response"], optional = true }
 
 [dev-dependencies]
-exs-compiler = { path = "../exs-compiler" }
+exs-compiler.workspace = true
 
 # Native HTTP tests run the requests in a tokio runtime.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

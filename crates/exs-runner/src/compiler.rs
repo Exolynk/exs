@@ -5,6 +5,7 @@
 /// Every root execution compiles its module, so compile time is part of every start. Winch
 /// compiles several times faster, while Cranelift produces faster code for long-running scripts.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CompilerStrategy {
     /// Wasmtime's single-pass baseline compiler with fast compilation and slower generated code.
     #[default]

@@ -1,21 +1,13 @@
 //! Errors and argument checks shared by the host functions.
 
-use exs_abi::{ErrorSeverity, ExsError, ExsValue};
+use exs_abi::{ExsError, ExsValue};
 
 /// A synchronous host function of a library.
 pub(crate) type HostFunction = fn(Vec<ExsValue>) -> ExsValue;
 
 /// Returns a recoverable ExS error of `kind` that the script can handle with `?`.
 pub(crate) fn error(kind: &str, message: impl Into<String>) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: kind.to_owned(),
-        message: message.into(),
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(ExsError::recoverable(kind.to_owned(), message.into()))
 }
 
 /// Returns the single argument of `function`, or a type error when the call passes another

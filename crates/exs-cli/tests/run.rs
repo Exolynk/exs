@@ -3,6 +3,22 @@
 use std::fs;
 use std::process::Command;
 
+/// Prints the version of the crate under both spellings of the flag.
+#[test]
+fn prints_the_version() {
+    for flag in ["--version", "-V"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_exs"))
+            .arg(flag)
+            .output()
+            .unwrap_or_else(|error| panic!("could not execute exs: {error}"));
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            format!("exs {}\n", env!("CARGO_PKG_VERSION"))
+        );
+    }
+}
+
 /// Formats a source file in place through the compiler library formatter.
 #[test]
 fn formats_source_files_in_place() {
@@ -138,7 +154,7 @@ fn generates_single_llm_markdown_documentation() {
     if let Err(error) = fs::remove_dir_all(&directory) {
         panic!("could not remove LLM documentation fixture directory: {error}");
     }
-    assert!(documentation.starts_with("# Exolynk Script (ExS) LLM Specification"));
+    assert!(documentation.starts_with("# ExS LLM Specification"));
     assert!(documentation.contains("# Compact API Reference"));
     assert!(documentation.contains("### Type `Int`"));
     assert!(documentation.contains("Runs the program."));

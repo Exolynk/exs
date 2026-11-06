@@ -6,7 +6,7 @@ use std::fmt;
 use std::future::{Future, ready};
 use std::sync::Arc;
 
-use exs_abi::{ErrorSeverity, ExsError, ExsValue, is_reserved_host_name};
+use exs_abi::{ExsError, ExsValue, is_reserved_host_name};
 #[cfg(feature = "serde")]
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -17,6 +17,7 @@ use crate::{AsyncHostFunction, HostCall, HostStream, HostStreamFunction};
 
 /// An error caused by host-function registration or lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RegistryError {
     /// A registration name was empty.
     EmptyName,
@@ -215,6 +216,7 @@ impl HostFunctionRegistry {
     /// # Errors
     ///
     /// Returns an error when no implementation is registered for `name`.
+    #[doc(hidden)]
     pub fn start(&self, name: &str, arguments: Vec<ExsValue>) -> Result<HostCall, RegistryError> {
         self.functions
             .get(name)
@@ -227,6 +229,7 @@ impl HostFunctionRegistry {
     /// # Errors
     ///
     /// Returns an error or language Error when opening the stream fails.
+    #[doc(hidden)]
     pub fn open_stream(
         &self,
         name: &str,
@@ -286,13 +289,8 @@ where
 
 /// Builds the recoverable language value used for an unregistered dynamic stream name.
 fn missing_stream_error(name: &str) -> ExsValue {
-    ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "HostFunctionNotFound".to_owned(),
-        message: format!("unknown host stream `{name}`"),
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: None,
-    })
+    ExsValue::Error(ExsError::recoverable(
+        "HostFunctionNotFound".to_owned(),
+        format!("unknown host stream `{name}`"),
+    ))
 }

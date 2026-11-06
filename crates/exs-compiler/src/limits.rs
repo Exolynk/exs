@@ -4,6 +4,7 @@
 /// exists: the size of each source file and of all of them, the number of modules an entry
 /// imports, and how deeply expressions, blocks and type annotations nest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CompileLimits {
     /// Maximum bytes of one source file.
     pub max_source_bytes: usize,

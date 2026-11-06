@@ -1,8 +1,8 @@
 //! External public-function execution integration tests.
 
-use exs_compiler::{CompileOptions, SourceInput, compile};
+use exs_compiler::{CompileOptions, Source, compile};
 use exs_runner::{
-    CompilerStrategy, ExecutionCancellation, ExsValue, ServerRunner, ServerRunnerConfig,
+    CompilerStrategy, ExecutionOptions, ExsValue, ServerRunner, ServerRunnerConfig,
     SharedModuleCache,
 };
 
@@ -31,32 +31,27 @@ fn executes_named_public_function() {
         fn value() -> Int { ret 7; }
     "#;
     let compiled = match compile(
-        SourceInput {
-            source_id: "public-functions.exs",
-            text: source,
-        },
+        Source::new("public-functions.exs", source),
         CompileOptions::default(),
     ) {
         Ok(compiled) => compiled,
         Err(error) => panic!("could not compile public function fixture: {error}"),
     };
     let runner = ServerRunner::default();
-    let cancellation = ExecutionCancellation::new();
     let result = block_on(runner.execute(
         &compiled.wasm,
         "add",
         &[ExsValue::Int(20), ExsValue::Int(22)],
-        &cancellation,
     ));
     assert_eq!(
         result.unwrap_or_else(|error| panic!("add execution failed: {error}")),
         ExsValue::Int(42)
     );
 
-    let delayed = block_on(runner.execute(&compiled.wasm, "delayed", &[], &cancellation));
+    let delayed = block_on(runner.execute(&compiled.wasm, "delayed", &[]));
     assert!(matches!(delayed, Ok(ExsValue::Int(9))));
 
-    let value = block_on(runner.execute(&compiled.wasm, "value", &[], &cancellation));
+    let value = block_on(runner.execute(&compiled.wasm, "value", &[]));
     assert!(matches!(value, Ok(ExsValue::Int(7))));
 }
 
@@ -65,34 +60,25 @@ fn executes_named_public_function() {
 fn executes_root_main_without_visibility_modifier() {
     let source = "fn main() -> Int { ret 0; } fn value() -> Int { ret 42; }";
     let compiled = match compile(
-        SourceInput {
-            source_id: "private-main.exs",
-            text: source,
-        },
+        Source::new("private-main.exs", source),
         CompileOptions::default(),
     ) {
         Ok(compiled) => compiled,
         Err(error) => panic!("could not compile private main fixture: {error}"),
     };
     let runner = ServerRunner::default();
-    let cancellation = ExecutionCancellation::new();
-    let result = block_on(runner.execute(&compiled.wasm, "main", &[], &cancellation));
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
     assert!(matches!(result, Ok(ExsValue::Int(0))));
 }
 
 /// Returns identical results and fuel whether a module is compiled or taken from the cache.
 #[test]
 fn reuses_cached_modules_with_identical_results() {
-    let compile_text = |text: &str| match compile(
-        SourceInput {
-            source_id: "test.exs",
-            text,
-        },
-        CompileOptions::default(),
-    ) {
-        Ok(module) => module.wasm,
-        Err(error) => panic!("compilation failed: {error}"),
-    };
+    let compile_text =
+        |text: &str| match compile(Source::new("test.exs", text), CompileOptions::default()) {
+            Ok(module) => module.wasm,
+            Err(error) => panic!("compilation failed: {error}"),
+        };
     let doubled = compile_text("fn main(input: Int) -> Int { ret input * 2; }");
     let greeted = compile_text(r#"fn main(input: String) -> String { ret "hi " + input; }"#);
     let cases = [
@@ -103,25 +89,27 @@ fn reuses_cached_modules_with_identical_results() {
             ExsValue::String("hi ExS".to_owned()),
         ),
     ];
-    let uncached = ServerRunner::new(ServerRunnerConfig {
-        module_cache_capacity: 0,
-        ..ServerRunnerConfig::default()
+    let uncached = ServerRunner::new({
+        let mut options = ServerRunnerConfig::default();
+        options.module_cache_capacity = 0;
+        options
     });
     // A single cache slot makes the alternating modules evict each other every time.
     for runner in [
         ServerRunner::default(),
-        ServerRunner::new(ServerRunnerConfig {
-            module_cache_capacity: 1,
-            ..ServerRunnerConfig::default()
+        ServerRunner::new({
+            let mut options = ServerRunnerConfig::default();
+            options.module_cache_capacity = 1;
+            options
         }),
     ] {
         for _ in 0..3 {
             for (wasm, input, expected) in &cases {
-                let execute = |runner: &ServerRunner| match block_on(runner.execute_with_report(
+                let execute = |runner: &ServerRunner| match block_on(runner.execute_with(
                     wasm,
                     "main",
                     std::slice::from_ref(input),
-                    &ExecutionCancellation::new(),
+                    &ExecutionOptions::default(),
                 )) {
                     Ok(report) => report,
                     Err(error) => panic!("execution failed: {error}"),
@@ -141,10 +129,10 @@ fn reuses_cached_modules_with_identical_results() {
 #[test]
 fn shares_compiled_modules_between_runners() {
     let compiled = match compile(
-        SourceInput {
-            source_id: "test.exs",
-            text: r#"fn main(input: Int) -> Int { ret Host::call("offset") + input; }"#,
-        },
+        Source::new(
+            "test.exs",
+            r#"fn main(input: Int) -> Int { ret Host::call("offset") + input; }"#,
+        ),
         CompileOptions::default(),
     ) {
         Ok(module) => module.wasm,
@@ -152,10 +140,11 @@ fn shares_compiled_modules_between_runners() {
     };
     let cache = SharedModuleCache::new(&ServerRunnerConfig::default());
     let runner = |offset: i64, compiler: CompilerStrategy| {
-        let mut runner = ServerRunner::new(ServerRunnerConfig {
-            compiler,
-            module_cache: Some(cache.clone()),
-            ..ServerRunnerConfig::default()
+        let mut runner = ServerRunner::new({
+            let mut options = ServerRunnerConfig::default();
+            options.compiler = compiler;
+            options.module_cache = Some(cache.clone());
+            options
         });
         let registration = runner
             .registry_mut()
@@ -166,13 +155,7 @@ fn shares_compiled_modules_between_runners() {
         runner
     };
     let execute = |runner: &ServerRunner| {
-        block_on(runner.execute(
-            &compiled,
-            "main",
-            &[ExsValue::Int(1)],
-            &ExecutionCancellation::new(),
-        ))
-        .ok()
+        block_on(runner.execute(&compiled, "main", &[ExsValue::Int(1)])).ok()
     };
     for offset in [10, 20, 30] {
         let shared = runner(offset, CompilerStrategy::Winch);

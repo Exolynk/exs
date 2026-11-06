@@ -80,8 +80,12 @@ pub struct BoundaryState {
     pub input_capacity: u32,
     /// Nonzero once the heap and root stack are initialized.
     pub initialized: u32,
-    /// The completed entry's result, which the runner reads from memory.
+    /// The completed entry's result, which `__exs_result_image` writes as an image.
     pub result_value: u64,
+    /// Address of the buffer holding the images written for the runner, 0 before the first.
+    pub output: u32,
+    /// Byte capacity of the output buffer.
+    pub output_capacity: u32,
 }
 
 /// Language Error context: the trace of active source functions and the current position.
@@ -136,7 +140,7 @@ pub struct TypeEntry {
     /// [`TYPE_ENTRY_OBJECT`] or [`TYPE_ENTRY_ENUM`], combined with
     /// [`TYPE_ENTRY_CUSTOM_EQUALITY`] and [`TYPE_ENTRY_CUSTOM_RENDERING`].
     pub kind: u32,
-    /// Raw `ValueRef` of the static host-boundary identity String, such as `exo::dom::Div`:
+    /// Raw `ValueRef` of the static host-boundary identity String, such as `app::dom::Div`:
     /// the identity values of the type carry when they cross the boundary.
     pub boundary: u64,
 }

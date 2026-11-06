@@ -191,7 +191,7 @@ pub const HOST_ENUM_VARIANT: u32 = u32::MAX;
 /// The [`FrameObject::trace`] of a frame without a trace entry, which no entry equals.
 pub const FRAME_UNTRACED: u64 = u64::MAX;
 
-/// One task of a resumable execution; `header.word` is its [`TaskObject::state`] code.
+/// One task of a resumable execution; `header.word` is its `state` code.
 ///
 /// The running task's frame, host call, ready result and quantum live in the VM's task state
 /// and are saved here when it stops running.

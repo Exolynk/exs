@@ -5,7 +5,7 @@ mod support;
 use std::sync::{Arc, Mutex};
 
 use exs_abi::{ErrorSeverity, ExsValue};
-use exs_runner::{ExecutionCancellation, ServerRunner};
+use exs_runner::ServerRunner;
 use support::{block_on, compile_source};
 
 /// Registers the host functions used by the continuation source-position matrix.
@@ -244,12 +244,7 @@ fn executes_sequential_continuation_states_for_synchronous_host_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(4)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(4)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -274,12 +269,7 @@ fn executes_the_minimum_signed_64_bit_literal_in_a_continuation() {
             .fn_sync_raw("ready", |_| ExsValue::None)
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -306,12 +296,7 @@ fn terminates_continuation_after_a_fatal_direct_call_result() {
             .fn_sync_raw("ready", |_| ExsValue::None)
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -343,12 +328,7 @@ fn executes_sequential_continuation_states_for_asynchronous_host_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(41)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(41)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -396,12 +376,7 @@ fn executes_control_flow_continuation_states_for_asynchronous_host_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::None],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::None])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -431,12 +406,7 @@ fn executes_asynchronous_host_calls_after_scheduler_quantum_yields() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -451,12 +421,7 @@ fn short_circuits_logical_continuations_for_synchronous_host_calls() {
     let mut runner = ServerRunner::default();
     register_logical_host(&mut runner, false, Arc::clone(&calls));
 
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -478,12 +443,7 @@ fn short_circuits_logical_continuations_for_asynchronous_host_calls() {
     let mut runner = ServerRunner::default();
     register_logical_host(&mut runner, true, Arc::clone(&calls));
 
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -515,7 +475,6 @@ fn constructs_typed_objects_for_synchronous_host_calls() {
         &compiled.wasm,
         "main",
         &[ExsValue::String("Ada".to_owned())],
-        &ExecutionCancellation::new(),
     )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
@@ -541,7 +500,6 @@ fn constructs_typed_objects_for_asynchronous_host_calls() {
         &compiled.wasm,
         "main",
         &[ExsValue::String("Ada".to_owned())],
-        &ExecutionCancellation::new(),
     )) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
@@ -568,12 +526,7 @@ fn validates_typed_object_fields_after_asynchronous_host_calls() {
             .is_ok()
     );
 
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -592,12 +545,7 @@ fn executes_continuation_source_positions_for_synchronous_host_calls() {
     let mut runner = ServerRunner::default();
     register_continuation_matrix_hosts(&mut runner, false, Arc::clone(&calls));
 
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(3)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(3)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -613,12 +561,7 @@ fn executes_continuation_source_positions_for_asynchronous_host_calls() {
     let mut runner = ServerRunner::default();
     register_continuation_matrix_hosts(&mut runner, true, Arc::clone(&calls));
 
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(3)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(3)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -645,12 +588,7 @@ fn validates_resumable_function_type_contracts() {
             ))
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(1)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(1)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -683,12 +621,7 @@ fn executes_transitive_suspendable_direct_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(20)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(20)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -716,12 +649,7 @@ fn executes_transitive_suspendable_static_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(20)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(20)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -750,12 +678,7 @@ fn executes_transitive_suspendable_instance_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(20)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(20)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -788,12 +711,7 @@ fn executes_transitive_suspendable_trait_calls() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(20)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(20)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };

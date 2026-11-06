@@ -8,8 +8,8 @@ use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use exs_abi::ExsValue;
-use exs_compiler::{CompileOptions, SourceInput, compile};
-use exs_runner::{ExecutionCancellation, ServerRunner};
+use exs_compiler::{CompileOptions, Source, compile};
+use exs_runner::ServerRunner;
 
 const ITERATIONS: u64 = 100;
 const LIMIT: i64 = 10_000;
@@ -56,10 +56,7 @@ fn main() {
 /// Compiles the benchmark program once so the measurement excludes source compilation.
 fn compile_source(source: &str) -> exs_compiler::CompiledModule {
     match compile(
-        SourceInput {
-            source_id: "basic_script.exs",
-            text: source,
-        },
+        Source::new("basic_script.exs", source),
         CompileOptions::default(),
     ) {
         Ok(module) => module,
@@ -85,8 +82,7 @@ fn register_print(runner: &mut ServerRunner, checksum: Arc<AtomicU64>) {
 
 /// Executes one already-compiled benchmark module through the public runner path.
 fn execute(runner: &ServerRunner, wasm: &[u8]) -> ExsValue {
-    let cancellation = ExecutionCancellation::new();
-    match block_on(runner.execute(wasm, "main", &[ExsValue::Int(LIMIT)], &cancellation)) {
+    match block_on(runner.execute(wasm, "main", &[ExsValue::Int(LIMIT)])) {
         Ok(value) => value,
         Err(error) => panic!("benchmark execution failed: {error}"),
     }

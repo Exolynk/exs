@@ -1,6 +1,6 @@
 //! Minimal RFC 3339 parsing and formatting matching ExS's native `DateTime`.
 
-use exs_guest::{ExsValue, Vec};
+use exs_guest::ExsValue;
 
 /// One instant with the UTC offset it was written in.
 #[derive(Clone, Copy)]

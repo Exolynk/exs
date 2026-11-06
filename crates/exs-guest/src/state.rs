@@ -3,7 +3,8 @@
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 
-use crate::{ExsValue, GuestFuture};
+use crate::__private::GuestFuture;
+use crate::ExsValue;
 
 /// Retains the guest future or completed result for the current guest instance.
 pub(crate) enum Execution {
@@ -65,12 +66,12 @@ pub(crate) fn host_state_mut() -> &'static mut HostState {
 }
 
 /// Supplies the global allocator required by `alloc` on no-std Wasm guests.
-#[cfg(all(target_arch = "wasm32", feature = "no-std"))]
+#[cfg(all(target_arch = "wasm32", not(feature = "std")))]
 #[global_allocator]
 static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
 /// Traps immediately when a no-std guest panics.
-#[cfg(all(target_arch = "wasm32", feature = "no-std"))]
+#[cfg(all(target_arch = "wasm32", not(feature = "std")))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
     core::arch::wasm32::unreachable()

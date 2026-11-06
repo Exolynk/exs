@@ -1,22 +1,18 @@
 //! Integration tests for the image boundary representation.
 
 use exs_abi::value::{ExsStackFrame, SourcePositionId};
-use exs_abi::{BoundaryError, BoundaryLimits, ErrorSeverity, ExsError, ExsValue};
+use exs_abi::{BoundaryError, BoundaryLimits, ExsError, ExsValue};
 
 /// Returns one value of every kind, nested.
 fn sample() -> ExsValue {
-    let error = ExsError {
-        severity: ErrorSeverity::Fatal,
-        kind: "Kind".to_owned(),
-        message: "message ü".to_owned(),
-        data: Box::new(ExsValue::List(vec![ExsValue::Int(1)])),
-        origin: Some(SourcePositionId(70_000)),
-        trace: vec![ExsStackFrame {
+    let error = ExsError::fatal("Kind".to_owned(), "message ü".to_owned())
+        .with_data(ExsValue::List(vec![ExsValue::Int(1)]))
+        .with_origin(Some(SourcePositionId(70_000)))
+        .with_trace(vec![ExsStackFrame {
             function_id: 300,
             call_site: SourcePositionId(5),
-        }],
-        cause: Some(Box::new(ExsValue::String("cause".to_owned()))),
-    };
+        }])
+        .with_cause(ExsValue::String("cause".to_owned()));
     ExsValue::List(vec![
         ExsValue::None,
         ExsValue::Bool(true),
@@ -162,15 +158,9 @@ fn rejects_malformed_images() {
 /// Reads a None cause as no cause.
 #[test]
 fn reads_a_none_cause_as_no_cause() {
-    let value = ExsValue::Error(ExsError {
-        severity: ErrorSeverity::Recoverable,
-        kind: "K".to_owned(),
-        message: "m".to_owned(),
-        data: Box::new(ExsValue::None),
-        origin: None,
-        trace: Vec::new(),
-        cause: Some(Box::new(ExsValue::None)),
-    });
+    let value = ExsValue::Error(
+        ExsError::recoverable("K".to_owned(), "m".to_owned()).with_cause(ExsValue::None),
+    );
     let image = value
         .to_image_with_limits(BoundaryLimits::unrestricted())
         .expect("image");

@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use exs_browser_check::cases::{CASES, GUEST_CASES, add, counter, echo, line};
-use exs_compiler::{CompileOptions, SourceInput};
+use exs_browser_check::cases::{CANCELLED_SOURCE, CASES, GUEST_CASES, add, counter, echo, line};
+use exs_compiler::{CompileOptions, Source};
 use exs_runner::{
-    ExecutionCancellation, ExsValue, HostStream, HostStreamFuture, HostStreamItem, ProtectionLevel,
-    ServerRunner, ServerRunnerConfig,
+    ExecutionCancellation, ExecutionOptions, ExsValue, HostStream, HostStreamFuture,
+    HostStreamItem, ProtectionLevel, ServerRunner, ServerRunnerConfig,
 };
 
 /// The host stream `counter` on the server.
@@ -39,25 +39,20 @@ fn block_on<Output>(future: impl std::future::Future<Output = Output>) -> Output
 
 /// Compiles `source`.
 fn compile(source: &str) -> Result<Vec<u8>, String> {
-    exs_compiler::compile(
-        SourceInput {
-            source_id: "test.exs",
-            text: source,
-        },
-        CompileOptions::default(),
-    )
-    .map(|module| module.wasm)
-    .map_err(|error| error.to_string())
+    exs_compiler::compile(Source::new("test.exs", source), CompileOptions::default())
+        .map(|module| module.wasm)
+        .map_err(|error| error.to_string())
 }
 
-/// Runs the entry `function` of the module `wasm` in the server runner.
-fn run(wasm: &[u8], function: &str, inputs: &[ExsValue]) -> Result<ExsValue, String> {
-    let mut runner = ServerRunner::new(ServerRunnerConfig {
-        max_memory_bytes: 64 << 20,
-        max_fuel: 1_000_000_000,
-        timeout: Duration::from_secs(60),
-        protection: ProtectionLevel::Standard,
-        ..ServerRunnerConfig::default()
+/// Returns a server runner with the host functions of the cases.
+fn runner() -> Result<ServerRunner, String> {
+    let mut runner = ServerRunner::new({
+        let mut options = ServerRunnerConfig::default();
+        options.max_memory_bytes = 64 << 20;
+        options.max_fuel = 1_000_000_000;
+        options.timeout = Duration::from_secs(60);
+        options.protection = ProtectionLevel::Standard;
+        options
     });
     let registry = runner.registry_mut();
     registry
@@ -77,8 +72,34 @@ fn run(wasm: &[u8], function: &str, inputs: &[ExsValue]) -> Result<ExsValue, Str
             Ok(Counter(counter(&arguments).into_iter()))
         })
         .map_err(|error| error.to_string())?;
-    block_on(runner.execute(wasm, function, inputs, &ExecutionCancellation::new()))
-        .map_err(|error| error.to_string())
+    Ok(runner)
+}
+
+/// Runs the entry `function` of the module `wasm` in the server runner.
+fn run(wasm: &[u8], function: &str, inputs: &[ExsValue]) -> Result<ExsValue, String> {
+    block_on(runner()?.execute(wasm, function, inputs)).map_err(|error| error.to_string())
+}
+
+/// Runs the module `wasm` until its host function `stop` cancels the execution.
+fn cancelled(wasm: &[u8]) -> Result<ExsValue, String> {
+    let cancellation = ExecutionCancellation::new();
+    let stop = cancellation.clone();
+    let mut runner = runner()?;
+    runner
+        .registry_mut()
+        .fn_async_raw("stop", move |_: Vec<ExsValue>| {
+            stop.cancel();
+            async { ExsValue::None }
+        })
+        .map_err(|error| error.to_string())?;
+    block_on(runner.execute_with(
+        wasm,
+        "main",
+        &[],
+        &ExecutionOptions::with_cancellation(&cancellation),
+    ))
+    .map(|report| report.value)
+    .map_err(|error| error.to_string())
 }
 
 /// Compares every line the browser runner wrote with the server runner's result; the Rust
@@ -106,5 +127,10 @@ fn browser_matches_server() {
         );
         assert_eq!(browser.next(), Some(expected.as_str()));
     }
+    let result = compile(CANCELLED_SOURCE).and_then(|wasm| cancelled(&wasm));
+    assert_eq!(
+        browser.next(),
+        Some(line("cancelled", "exs", &result).as_str())
+    );
     assert_eq!(browser.next(), None);
 }

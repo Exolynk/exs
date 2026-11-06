@@ -8,7 +8,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use exs_abi::{ErrorSeverity, ExsValue};
-use exs_runner::{ExecutionCancellation, ProtectionLevel, ServerRunner, ServerRunnerConfig};
+use exs_runner::{ProtectionLevel, ServerRunner, ServerRunnerConfig};
 use support::{block_on, compile_source, execute_source, execute_source_with_inputs};
 
 /// Executes a closure passed through an unparameterized Fn contract.
@@ -64,15 +64,15 @@ fn reuses_parallel_child_frames_within_a_constrained_memory_budget() {
         }
         "#,
     );
-    let runner = ServerRunner::new(ServerRunnerConfig {
-        max_memory_bytes: 2 * 1024 * 1024,
-        max_fuel: u64::MAX,
-        timeout: Duration::from_secs(10),
-        protection: ProtectionLevel::Standard,
-        ..ServerRunnerConfig::default()
+    let runner = ServerRunner::new({
+        let mut options = ServerRunnerConfig::default();
+        options.max_memory_bytes = 2 * 1024 * 1024;
+        options.max_fuel = u64::MAX;
+        options.timeout = Duration::from_secs(10);
+        options.protection = ProtectionLevel::Standard;
+        options
     });
-    let result =
-        block_on(runner.execute(&compiled.wasm, "main", &[], &ExecutionCancellation::new()));
+    let result = block_on(runner.execute(&compiled.wasm, "main", &[]));
     match result {
         Ok(result) => assert_eq!(result, ExsValue::Int(20_000)),
         Err(error) => panic!("execution failed: {error}"),
@@ -198,12 +198,7 @@ fn polls_parallel_host_calls_concurrently() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -311,12 +306,7 @@ fn rejects_a_non_callable_dynamic_binding() {
             .fn_sync_raw("callback", |_| ExsValue::Int(1))
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };
@@ -403,12 +393,7 @@ fn resumes_host_calls_inside_closures() {
             })
             .is_ok()
     );
-    let result = match block_on(runner.execute(
-        &compiled.wasm,
-        "main",
-        &[ExsValue::Int(40)],
-        &ExecutionCancellation::new(),
-    )) {
+    let result = match block_on(runner.execute(&compiled.wasm, "main", &[ExsValue::Int(40)])) {
         Ok(result) => result,
         Err(error) => panic!("execution failed: {error}"),
     };

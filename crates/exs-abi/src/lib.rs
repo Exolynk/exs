@@ -56,7 +56,10 @@ pub use value::{
 ///
 /// Version 27 exchanges values of nominal Object types as [`ExsValue::Typed`] with their type
 /// identity.
-pub const ABI_VERSION: u32 = 28;
+pub const ABI_VERSION: u32 = 29;
+/// The oldest ABI version a runner executes. Raising it is a breaking change, because it stops
+/// modules from running without being rebuilt.
+pub const MIN_SUPPORTED_ABI_VERSION: u32 = 29;
 
 /// Stable host-boundary identity used by the compiler-owned `IteratorStep` enum.
 pub const STANDARD_ITERATOR_STEP_TYPE_IDENTITY: &str = "<std>/iterator.exs::IteratorStep";
@@ -146,23 +149,15 @@ pub const START_EXPORT_PREFIX: &str = "__exs_start_";
 pub const ABI_VERSION_EXPORT: &str = "__exs_abi_version";
 /// The runtime export allocating a host-writable input buffer in linear memory.
 pub const INPUT_ALLOC_EXPORT: &str = "__exs_input_alloc";
-/// The export of a Rust guest returning where the image of its completed result lies: the
+/// The export of a module returning where the image of its completed result lies: the
 /// linear-memory address in the low 32 bits and the byte length in the high 32 bits.
 pub const RESULT_IMAGE_EXPORT: &str = "__exs_result_image";
-/// The export of a compiled module returning the completed result as a raw `ValueRef`,
-/// which the runner reads from memory instead of a result image.
-pub const RESULT_VALUE_EXPORT: &str = "__exs_result_value";
-/// The export of a compiled module returning the address of its VM state block.
-pub const VM_EXPORT: &str = "__exs_vm";
 /// The module name containing runner-provided Host ABI imports.
 pub const HOST_IMPORT_MODULE: &str = "exs";
 /// The language-neutral module name containing runner resource-metering imports.
 pub const RUNNER_IMPORT_MODULE: &str = "runner";
 /// The generic runner import that starts one host call.
 pub const HOST_CALL_START_IMPORT: &str = "__exs_host_call_start";
-/// The runner import of compiled modules that starts one host call with the arguments as a
-/// List value the runner reads from module memory.
-pub const HOST_CALL_START_VALUE_IMPORT: &str = "__exs_host_call_start_value";
 /// The runner import returning one ready host response byte length.
 pub const HOST_CALL_RESPONSE_LENGTH_IMPORT: &str = "__exs_host_call_response_len";
 /// The runner import copying one ready host response into Wasm linear memory.
@@ -189,6 +184,3 @@ pub const HOST_CALL_READY: i32 = 0;
 pub const HOST_CALL_PENDING: i32 = 1;
 /// A host call failed at the runner-technical layer.
 pub const HOST_CALL_FATAL: i32 = 2;
-/// The arguments of a direct-boundary host call cannot cross the boundary; the module reports
-/// a recoverable SerializationError instead of calling.
-pub const HOST_CALL_UNSUPPORTED: i32 = 3;

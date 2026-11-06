@@ -1,14 +1,16 @@
 [package]
 name = "exs-core"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Internal crate of ExS: the runtime library linked into compiled modules. Use the exs crate; this one has no stability promise"
 
 [lints]
 workspace = true
 
 [dependencies]
-exs-abi = { path = "../exs-abi" }
-exs-layout = { path = "../exs-layout" }
+exs-abi.workspace = true
+exs-layout.workspace = true
 libm = "0.2.15"

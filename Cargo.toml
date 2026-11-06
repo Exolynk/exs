@@ -9,18 +9,22 @@ members = [
     "crates/exs-autocomplete",
     "crates/exs-runner",
     "crates/exs-libs",
+    "crates/exs",
     "crates/exs-cli",
     "examples/playground",
     "examples/rust-guest",
     "examples/fuel-baseline",
     "examples/browser-check",
+    "tests/compatibility",
 ]
 resolver = "3"
 
 [workspace.package]
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
+repository = "https://github.com/Exolynk/exs"
 
 [workspace.lints.rust]
 missing_docs = "warn"
@@ -30,6 +34,17 @@ all = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 
 [workspace.dependencies]
+# The crates of this workspace, pinned because only `exs` and `exs-guest` follow semantic
+# versioning.
+exs-abi = { path = "crates/exs-abi", version = "=0.2.0" }
+exs-layout = { path = "crates/exs-layout", version = "=0.2.0" }
+exs-core = { path = "crates/exs-core", version = "=0.2.0" }
+exs-core-template = { path = "crates/exs-core-template", version = "=0.2.0" }
+exs-guest = { path = "crates/exs-guest", version = "=0.2.0" }
+exs-compiler = { path = "crates/exs-compiler", version = "=0.2.0" }
+exs-autocomplete = { path = "crates/exs-autocomplete", version = "=0.2.0" }
+exs-runner = { path = "crates/exs-runner", version = "=0.2.0", default-features = false }
+exs-libs = { path = "crates/exs-libs", version = "=0.2.0", default-features = false }
 wasm-encoder = { version = "0.245.1", features = ["wasmparser"] }
 wasmparser = "0.245.1"
 # Only the core runtime, async execution and the two code generators: no component model, GC,

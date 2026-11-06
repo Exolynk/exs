@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::SourceInput;
+use crate::Source;
 use crate::ast::{
     AssignmentTarget, Block, ElseBranch, Expression, FunctionDeclaration, Identifier, MatchArmBody,
     MatchPattern, Module, ObjectProperty, Parameter, Statement, TypeAnnotation,
@@ -12,6 +12,7 @@ use crate::lexer::{Token, TokenKind};
 
 /// One stable category of source text suitable for an editor highlighter.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
 pub enum HighlightKind {
     /// A language keyword or built-in literal keyword.
     Keyword,
@@ -43,6 +44,7 @@ pub enum HighlightKind {
 
 /// One byte range and its parser-aware highlighting category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct HighlightSpan {
     /// Inclusive UTF-8 byte offset in the supplied source text.
     pub start: usize,
@@ -54,6 +56,7 @@ pub struct HighlightSpan {
 
 /// A tolerant source token returned for editor features that work on incomplete input.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SourceToken {
     /// Source spelling of this token.
     pub text: String,
@@ -67,6 +70,7 @@ pub struct SourceToken {
 
 /// One source comment retained as trivia for editor features.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SourceComment {
     /// Inclusive UTF-8 byte offset in the supplied source text.
     pub start: usize,
@@ -78,6 +82,7 @@ pub struct SourceComment {
 
 /// Tolerant lexical analysis shared by editor integrations.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SourceLex {
     /// Tokens recognized after malformed fragments were skipped during recovery.
     pub tokens: Vec<SourceToken>,
@@ -100,6 +105,7 @@ impl SourceLex {
 
 /// Broad source-token categories that remain stable across parser implementation details.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum SourceTokenKind {
     /// A user-defined identifier.
     Identifier,
@@ -120,13 +126,14 @@ pub enum SourceTokenKind {
 /// Malformed fragments are omitted after lexer recovery so editor features can continue to work
 /// while the document is being edited.
 #[must_use]
-pub fn tokens(source: SourceInput<'_>) -> Vec<SourceToken> {
+pub fn tokens(source: Source<'_>) -> Vec<SourceToken> {
     source_lex(source).tokens
 }
 
 /// Returns tolerant tokens and comment trivia for one source document.
 #[must_use]
-pub fn source_lex(source: SourceInput<'_>) -> SourceLex {
+pub fn source_lex(source: Source<'_>) -> SourceLex {
+    let source = source.input();
     let lexed = crate::lexer::lex(source);
     SourceLex {
         tokens: lexed
@@ -148,7 +155,8 @@ pub fn source_lex(source: SourceInput<'_>) -> SourceLex {
 /// Lexical spans are returned even when the source does not parse. Semantic identifier categories
 /// replace their lexical counterparts only after a successful parse.
 #[must_use]
-pub fn highlight(source: SourceInput<'_>) -> Vec<HighlightSpan> {
+pub fn highlight(source: Source<'_>) -> Vec<HighlightSpan> {
+    let source = source.input();
     let lexed = crate::lexer::lex(source);
     let mut spans = BTreeMap::new();
     for token in &lexed.tokens {
@@ -704,19 +712,16 @@ fn insert_span(
 #[cfg(test)]
 mod tests {
     use super::{HighlightKind, highlight, tokens};
-    use crate::SourceInput;
+    use crate::Source;
 
     /// Returns the category assigned to the selected source occurrence.
     fn kind_at(source: &str, needle: &str, occurrence: usize) -> Option<HighlightKind> {
         let start = source.match_indices(needle).nth(occurrence)?.0;
         let end = start + needle.len();
-        highlight(SourceInput {
-            source_id: "highlight-test.exs",
-            text: source,
-        })
-        .into_iter()
-        .find(|span| span.start == start && span.end == end)
-        .map(|span| span.kind)
+        highlight(Source::new("highlight-test.exs", source))
+            .into_iter()
+            .find(|span| span.start == start && span.end == end)
+            .map(|span| span.kind)
     }
 
     /// Uses parser structure to distinguish declarations, references, and members.
@@ -776,13 +781,10 @@ mod tests {
     #[test]
     fn returns_tolerant_source_tokens() {
         let source = "fn main(";
-        let text = tokens(SourceInput {
-            source_id: "tokens-test.exs",
-            text: source,
-        })
-        .into_iter()
-        .map(|token| token.text)
-        .collect::<Vec<_>>();
+        let text = tokens(Source::new("tokens-test.exs", source))
+            .into_iter()
+            .map(|token| token.text)
+            .collect::<Vec<_>>();
         assert_eq!(text, ["fn", "main", "("]);
     }
 
@@ -790,10 +792,7 @@ mod tests {
     #[test]
     fn retains_comment_cursor_positions() {
         let source = "// comment\n/* incomplete";
-        let lexed = super::source_lex(SourceInput {
-            source_id: "comment-test.exs",
-            text: source,
-        });
+        let lexed = super::source_lex(Source::new("comment-test.exs", source));
         assert!(lexed.is_comment_position(4));
         assert!(!lexed.is_comment_position(10));
         assert!(lexed.is_comment_position(source.len()));

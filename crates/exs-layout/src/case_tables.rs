@@ -4,7 +4,7 @@
 /// Unicode version of the standard library the tables were generated from.
 pub const CASE_TABLES_UNICODE_VERSION: (u8, u8, u8) = (17, 0, 0);
 
-/// The case-mapping tables described in [`crate::case_mapping`].
+/// The case-mapping tables described in `case_mapping`.
 pub static CASE_TABLES: [u8; 3412] = [
     28, 0, 0, 0, 193, 2, 0, 0, 200, 2, 0, 0, 157, 5, 0, 0, 45, 8, 0, 0, 8, 12, 0, 0, 84, 13, 0, 0,
     65, 52, 64, 101, 46, 64, 1, 14, 64, 33, 49, 2, 3, 7, 2, 2, 17, 2, 2, 47, 2, 1, 2, 241, 1, 0, 7,

@@ -8,6 +8,7 @@ use exs_abi::BoundaryLimits;
 
 /// Identifies the resource exhausted by one runner execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum LimitKind {
     /// The WebAssembly linear memory grew beyond its configured byte limit.
     Memory,
@@ -64,6 +65,7 @@ impl std::fmt::Display for LimitKind {
 
 /// Selects the private host-resource budget used for one execution.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ProtectionLevel {
     /// Allows the broadest resource headroom for trusted, ABI-compatible guests.
     Low,

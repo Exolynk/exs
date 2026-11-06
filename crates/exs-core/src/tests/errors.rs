@@ -1,11 +1,9 @@
 //! Language Error tests: kinds and messages, origins, traces and their encoding.
 
 use core::mem::offset_of;
-use std::boxed::Box;
 use std::vec;
-use std::vec::Vec;
 
-use exs_abi::{ErrorSeverity, ExsError, ExsStackFrame, ExsValue, SourcePositionId};
+use exs_abi::{ExsError, ExsStackFrame, ExsValue, SourcePositionId};
 use exs_layout::ValueRef;
 use exs_layout::VmState;
 
@@ -102,15 +100,10 @@ fn fails_concatenation_steps_like_v1() {
     assert_eq!(inner_data, none);
     assert_eq!(
         execution.encoded(inner),
-        ExsValue::Error(ExsError {
-            severity: ErrorSeverity::Recoverable,
-            kind: "TypeError".into(),
-            message: inner_message,
-            data: Box::new(ExsValue::None),
-            origin: Some(SourcePositionId(12)),
-            trace: Vec::new(),
-            cause: None,
-        })
+        ExsValue::Error(
+            ExsError::recoverable("TypeError", inner_message)
+                .with_origin(Some(SourcePositionId(12)))
+        )
     );
     let ExsValue::Error(outer) = execution.encoded(result) else {
         panic!("an Error");
@@ -132,24 +125,21 @@ fn records_origin_and_trace() {
     let error = error_new(&mut execution.memory, VM, kind, message, data).expect("room");
     assert_eq!(
         execution.encoded(error),
-        ExsValue::Error(ExsError {
-            severity: ErrorSeverity::Recoverable,
-            kind: "Custom".into(),
-            message: "went wrong".into(),
-            data: Box::new(ExsValue::List(vec![ExsValue::Int(1)])),
-            origin: Some(SourcePositionId(33)),
-            trace: vec![
-                ExsStackFrame {
-                    function_id: 7,
-                    call_site: SourcePositionId(21),
-                },
-                ExsStackFrame {
-                    function_id: 4,
-                    call_site: SourcePositionId(0),
-                },
-            ],
-            cause: None,
-        })
+        ExsValue::Error(
+            ExsError::recoverable("Custom", "went wrong")
+                .with_data(ExsValue::List(vec![ExsValue::Int(1)]))
+                .with_origin(Some(SourcePositionId(33)))
+                .with_trace(vec![
+                    ExsStackFrame {
+                        function_id: 7,
+                        call_site: SourcePositionId(21),
+                    },
+                    ExsStackFrame {
+                        function_id: 4,
+                        call_site: SourcePositionId(0),
+                    },
+                ])
+        )
     );
     let invalid = error_new(&mut execution.memory, VM, data, message, data).expect("room");
     assert_eq!(

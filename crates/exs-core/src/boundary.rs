@@ -65,7 +65,7 @@ pub(crate) fn serialization_error(
 /// Returns the message of the SerializationError for the value `raw` the encoder rejected,
 /// naming its first obstacle in depth-first order.
 #[must_use]
-pub fn serialization_message(memory: &impl Memory, raw: u64) -> &'static str {
+pub(crate) fn serialization_message(memory: &impl Memory, raw: u64) -> &'static str {
     let mut path = [0_u32; MAX_DEPTH];
     match obstacle(memory, raw, &mut path, 0) {
         Some(Obstacle::Cycle) => {
