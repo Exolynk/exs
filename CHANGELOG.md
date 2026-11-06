@@ -2,7 +2,7 @@
 
 Notable changes to ExS. The [compatibility promise](COMPATIBILITY.md) starts with 0.2.0.
 
-## 0.2.0 - Unreleased
+## 0.2.0 - 2026-11-06
 
 The first public release. From here on, scripts and compiled modules keep working across releases. Modules built before this version must be rebuilt from source.
 
