@@ -17,7 +17,7 @@ The first public release. From here on, scripts and compiled modules keep workin
 - `exs --version`.
 - `ABI.md`, which describes the contract between a module and a runner.
 - `tests/compatibility`, which runs a script corpus through the current compiler and through modules frozen by each release.
-- CI checks for the committed core template, the public API, the browser runner, the Rust guest, and the fuel comparison.
+- A test that the committed core template matches its sources, and CI checks for the public API, the browser runner, the Rust guest, and the fuel comparison.
 
 ### Changed
 

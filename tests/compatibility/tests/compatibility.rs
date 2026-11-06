@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use exs_compatibility::{
     CANCELLABLE, RUST_GUEST, SCRIPTS, cases, check, check_cancellation, compile_script, runner,
+    template,
 };
 
 /// Returns the directory that holds one directory of frozen modules per release.
@@ -20,6 +21,18 @@ fn entries(directory: &Path) -> Vec<PathBuf> {
     entries
         .map(|entry| entry.expect("a directory entry").path())
         .collect()
+}
+
+/// Requires the committed core template to be built from the current sources.
+#[test]
+fn the_core_template_matches_its_sources() {
+    let root = template::workspace();
+    let stamp = fs::read_to_string(root.join(template::STAMP)).expect("a stamp file");
+    assert_eq!(
+        stamp.trim(),
+        template::sources_hash(&root).expect("readable sources"),
+        "the core template is out of date: run `nu crates/exs-core-template/build-template.nu`"
+    );
 }
 
 /// Requires the modules of the current version, so that a version bump freezes its modules.

@@ -1,6 +1,8 @@
 //! The behaviour every release of ExS has to keep: scripts and their expected results, which run
 //! both as compiled modules frozen by earlier releases and through the current compiler.
 
+pub mod template;
+
 use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};

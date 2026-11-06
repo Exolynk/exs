@@ -44,7 +44,7 @@ A first version change has not happened yet: ABI 29 is the only version so far, 
 
 - **`tests/compatibility`** runs a corpus of scripts and their expected results two ways: through the current compiler, and through the modules frozen by every release, including a Rust guest. It covers every kind of value in both directions, types the corpus does not declare, suspending and resuming, cancellation, and the built-in operations. Frozen modules are never replaced. A failure means a change broke existing code, so the change has to be fixed rather than the test.
 - **`cargo-semver-checks`** compares the API of `exs` and `exs-guest` with the latest published release in CI.
-- **The core template:** CI rebuilds `exs-core-template.wasm` and compares it with the committed file, so a compiled module always comes from the reviewed source.
+- **The core template:** a test compares a hash of the sources of `exs-core-template.wasm` with the one recorded when it was built, so a change to the runtime cannot ship without rebuilding it. This detects a forgotten rebuild, not deliberate tampering with the binary.
 
 ## Releasing a version
 

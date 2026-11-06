@@ -294,7 +294,7 @@ Values live in the module's linear memory in the layout of `exs-layout`. The com
 
 - Stable Rust is required.
 - `wasm-encoder`, `wasmparser`, and `wasmtime` are approved dependencies for the initial implementation.
-- `crates/exs-core-template/exs-core-template.wasm` is a committed Rust-compiled artifact embedded by the compiler. Compiler users never build it themselves; after changes to `exs-core` or the template, rebuild it on arm64 macOS with `nu crates/exs-core-template/build-template.nu`; builds differ between operating systems, and CI compares the committed file with a macOS build.
+- `crates/exs-core-template/exs-core-template.wasm` is a committed Rust-compiled artifact embedded by the compiler. Compiler users never build it themselves; after changes to `exs-core` or the template, rebuild it with `nu crates/exs-core-template/build-template.nu`. Builds can differ in their bytes between systems, so a test in `tests/compatibility` compares a hash of the template's sources instead, and fails when the template is out of date.
 - `tests/compatibility` runs a corpus of scripts through the current compiler and through the modules frozen by every release, including a Rust guest. A failure there means a change broke existing code or stored modules. `nu tests/compatibility/freeze.nu` freezes the modules of a new version.
 - Run `cargo fmt`, `cargo test`, `cargo check`, and `cargo clippy` after Rust changes.
 
