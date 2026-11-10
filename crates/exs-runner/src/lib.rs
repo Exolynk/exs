@@ -634,8 +634,8 @@ async fn write_input(
     inputs: &[ExsValue],
     limits: &ExecutionLimits,
 ) -> Result<(i32, i32), RunnerError> {
-    let input = ExsValue::List(inputs.to_vec());
-    let bytes = encode_boundary_value(&input, limits, "input")?;
+    let bytes = ExsValue::list_to_image_with_limits(inputs, limits.boundary_limits())
+        .map_err(|error| boundary_error(error, "could not encode input image"))?;
     let length = i32::try_from(bytes.len())
         .map_err(|_| RunnerError::Abi("input exceeds Wasm i32 length".to_owned()))?;
     let allocate = instance

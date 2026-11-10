@@ -22,6 +22,19 @@ impl ExsValue {
         writer::write_image(self, limits)
     }
 
+    /// Writes a List of `items` as an image within `limits`, the same image as
+    /// `ExsValue::List(items.to_vec()).to_image_with_limits(limits)` without copying `items`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exceeded limit, or `TooLarge` for an image beyond 4 GiB.
+    pub fn list_to_image_with_limits(
+        items: &[Self],
+        limits: BoundaryLimits,
+    ) -> Result<alloc::vec::Vec<u8>, BoundaryError> {
+        writer::write_list_image(items, limits)
+    }
+
     /// Reads the value of the image `bytes`, which may be untrusted, within `limits`.
     ///
     /// # Errors

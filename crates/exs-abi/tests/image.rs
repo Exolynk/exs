@@ -173,3 +173,32 @@ fn reads_a_none_cause_as_no_cause() {
         Ok(ExsValue::Error(expected))
     );
 }
+
+/// Writes the same image for a List of borrowed items as for the owned List.
+#[test]
+fn writes_a_list_of_borrowed_items() {
+    let ExsValue::List(items) = sample() else {
+        unreachable!("the sample is a List");
+    };
+    assert_eq!(
+        ExsValue::list_to_image_with_limits(&items, BoundaryLimits::unrestricted()),
+        ExsValue::List(items.clone()).to_image_with_limits(BoundaryLimits::unrestricted())
+    );
+}
+
+/// Writes a repeated Object key once and reads it back for every Object.
+#[test]
+fn writes_repeated_keys_once() {
+    let object = |key: &str, value| ExsValue::Object(vec![(key.to_owned(), ExsValue::Int(value))]);
+    let limits = BoundaryLimits::unrestricted();
+    let repeated = ExsValue::List(vec![object("key", 1), object("key", 2)]);
+    let distinct = ExsValue::List(vec![object("key", 1), object("yek", 2)]);
+    let repeated_image = repeated.to_image_with_limits(limits).expect("image");
+    let distinct_image = distinct.to_image_with_limits(limits).expect("image");
+    // One String record of the key: header, character count and padded text.
+    assert_eq!(repeated_image.len() + 24, distinct_image.len());
+    assert_eq!(
+        ExsValue::from_image_with_limits(&repeated_image, limits),
+        Ok(repeated)
+    );
+}

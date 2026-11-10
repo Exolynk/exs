@@ -5,18 +5,15 @@ use serde::de::DeserializeOwned;
 
 /// Decodes the zero-or-one argument contract accepted by typed host functions.
 pub(crate) fn decode_typed_request<Request: DeserializeOwned>(
-    arguments: Vec<ExsValue>,
+    mut arguments: Vec<ExsValue>,
 ) -> Result<Request, ExsValue> {
-    let value = match arguments.as_slice() {
-        [] => ExsValue::None,
-        [value] => value.clone(),
-        values => {
-            return Err(typed_decode_error(format!(
-                "typed host functions expect zero or one argument, received {}",
-                values.len()
-            )));
-        }
-    };
+    if arguments.len() > 1 {
+        return Err(typed_decode_error(format!(
+            "typed host functions expect zero or one argument, received {}",
+            arguments.len()
+        )));
+    }
+    let value = arguments.pop().unwrap_or(ExsValue::None);
     value
         .into_deserialize()
         .map_err(|error| typed_decode_error(error.to_string()))

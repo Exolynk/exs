@@ -28,6 +28,8 @@ const NEXT_SIBLING: u32 = offset_of!(ShapeObject, next_sibling) as u32;
 const CAPACITY: u32 = 4;
 /// Byte offset of a Buffer's first slot.
 const SLOTS: u32 = size_of::<BufferObject>() as u32;
+/// Fewest slots of a new key Buffer.
+const MIN_KEY_CAPACITY: u32 = 4;
 
 /// Returns the VM's empty root shape, creating it on first use.
 pub(crate) fn root_shape(memory: &mut impl Memory, vm: u32) -> Option<u32> {
@@ -64,19 +66,20 @@ pub(crate) fn find_key(memory: &impl Memory, shape: u32, name: u32) -> Option<u3
     })
 }
 
-/// Returns the key String of the existing shape that extends the shape at `shape` by the key
-/// in the `len` bytes at `start`, if an Object already had that key sequence.
+/// Returns the existing shape that extends the shape at `shape` by the key in the `len` bytes
+/// at `start`, if an Object already had that key sequence.
 ///
-/// Objects adopted from inputs share it instead of copying their keys.
-pub(crate) fn child_key(memory: &impl Memory, shape: u32, start: u32, len: u32) -> Option<u64> {
+/// Objects adopted from inputs move to it directly and share its key instead of a copy; its
+/// keys are distinct, so the key is new to an Object of the shape at `shape`.
+pub(crate) fn child_shape(memory: &impl Memory, shape: u32, start: u32, len: u32) -> Option<u32> {
     let count = key_count(memory, shape);
     let mut child = memory.load_u32(shape + FIRST_CHILD);
     while child != 0 {
-        if key_count(memory, child) == count + 1 {
-            let last = key(memory, child, count);
-            if string_object(last).is_some_and(|key| text_equals(memory, key, start, len)) {
-                return Some(last);
-            }
+        if key_count(memory, child) == count + 1
+            && string_object(key(memory, child, count))
+                .is_some_and(|key| text_equals(memory, key, start, len))
+        {
+            return Some(child);
         }
         child = memory.load_u32(child + NEXT_SIBLING);
     }
@@ -111,17 +114,40 @@ pub(crate) fn transition(memory: &mut impl Memory, vm: u32, shape: u32, name: u6
     memory.store_u32(child + PARENT, shape);
     memory.store_u32(child + NEXT_SIBLING, memory.load_u32(shape + FIRST_CHILD));
     memory.store_u32(shape + FIRST_CHILD, child);
-    let keys_size = (count + 1).checked_mul(8)?.checked_add(SLOTS)?;
-    let keys = allocate(memory, vm, keys_size, ObjectKind::Buffer)?;
-    memory.store_u32(keys + CAPACITY, count + 1);
-    if count > 0 {
-        let parent_keys = memory.load_u32(shape + KEYS);
-        memory.copy(keys + SLOTS, parent_keys + SLOTS, count * 8);
-    }
+    let keys = extended_keys(memory, vm, shape, count)?;
     memory.store_u64(keys + SLOTS + count * 8, name);
     memory.store_u32(child + KEYS, keys);
     memory.store_u32(child + KEY_COUNT, count + 1);
     Some(child)
+}
+
+/// Returns a key Buffer for a child of the shape at `shape`, whose `count` keys it holds in its
+/// first slots, with slot `count` free for the child's last key.
+///
+/// The first child to extend a shape shares its parent's Buffer while the Buffer has a free
+/// slot after the parent's keys: a slot holds a key only once a shape of that many keys claims
+/// it, and only a shape whose keys are the Buffer's first slots may use the Buffer. Other
+/// children get a new Buffer with room to grow, so a chain of shapes needs linear storage
+/// rather than one copy of every prefix.
+fn extended_keys(memory: &mut impl Memory, vm: u32, shape: u32, count: u32) -> Option<u32> {
+    let parent_keys = memory.load_u32(shape + KEYS);
+    if parent_keys != 0
+        && memory.load_u32(parent_keys + CAPACITY) > count
+        && memory.load_u64(parent_keys + SLOTS + count * 8) == 0
+    {
+        return Some(parent_keys);
+    }
+    let capacity = count.checked_add(1)?.checked_mul(2)?.max(MIN_KEY_CAPACITY);
+    let keys_size = capacity.checked_mul(8)?.checked_add(SLOTS)?;
+    // A fresh Buffer is zeroed, so its slots after the copied keys are free.
+    let keys = allocate(memory, vm, keys_size, ObjectKind::Buffer)?;
+    memory.store_u32(keys + CAPACITY, capacity);
+    if count > 0 {
+        // The allocation may have collected, but shapes and their Buffers are never collected.
+        let parent_keys = memory.load_u32(shape + KEYS);
+        memory.copy(keys + SLOTS, parent_keys + SLOTS, count * 8);
+    }
+    Some(keys)
 }
 
 /// Returns the shape of the `count` distinct key Strings at `keys`, which must be rooted or
