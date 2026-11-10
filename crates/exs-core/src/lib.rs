@@ -41,6 +41,7 @@ mod pages;
 mod parts;
 mod ranges;
 mod render;
+mod shape_cache;
 mod shapes;
 mod strings;
 mod tasks;

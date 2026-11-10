@@ -60,3 +60,24 @@ fn collects_garbage_when_an_image_does_not_fit() {
     assert_eq!(execution.encoded(value), ExsValue::String(text));
     assert_eq!(vm.collections(&execution.memory), collections + 1);
 }
+
+/// Writes the keys every Object of a shape shares once, as the runner's writer does.
+#[test]
+fn writes_shared_keys_once() {
+    let mut execution = Execution::new();
+    let record = |id| {
+        ExsValue::Object(std::vec![
+            ("id".into(), ExsValue::Int(id)),
+            ("name".into(), ExsValue::String(std::format!("name {id}"))),
+        ])
+    };
+    let value = ExsValue::List((0..3).map(record).collect());
+    let decoded = execution.decoded(&value).expect("decodable");
+    execution.root(&[decoded]);
+    let (_, length) = write_image(&mut execution.memory, VM, decoded).expect("memory has room");
+    let runner_image = value
+        .to_image_with_limits(BoundaryLimits::unrestricted())
+        .expect("encodable");
+    assert_eq!(length as usize, runner_image.len());
+    assert_eq!(execution.encoded(decoded), value);
+}

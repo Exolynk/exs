@@ -210,3 +210,37 @@ fn adopts_wide_objects_while_collecting_at_every_allocation() {
     collect(&mut execution.memory, VM);
     assert_eq!(execution.encoded(decoded), input);
 }
+
+/// Adopts Objects whose keys share String records, as the runner writes them, across known,
+/// branching and wide key sequences, and rejects a key repeated within one Object.
+#[test]
+fn adopts_objects_sharing_key_records() {
+    let mut execution = Execution::new();
+    let small = |second: &str| {
+        object(&[
+            ("a", ExsValue::Int(1)),
+            (second, object(&[("a", ExsValue::None)])),
+        ])
+    };
+    let input = ExsValue::List(std::vec![
+        small("b"),
+        small("b"),
+        small("c"),
+        wide(20),
+        small("b"),
+        wide(20),
+    ]);
+    let decoded = execution.decoded(&input).expect("decodable");
+    assert_eq!(execution.encoded(decoded), input);
+    let repeated = ExsValue::List(std::vec![
+        small("b"),
+        object(&[("a", ExsValue::Int(1)), ("a", ExsValue::Int(2))]),
+    ]);
+    assert_eq!(execution.decoded(&repeated), Err(BoundaryError::Malformed));
+    let mut wide_repeated = wide(20);
+    if let ExsValue::Object(entries) = &mut wide_repeated {
+        entries.push(("key3".into(), ExsValue::None));
+    }
+    let repeated = ExsValue::List(std::vec![wide(20), wide_repeated]);
+    assert_eq!(execution.decoded(&repeated), Err(BoundaryError::Malformed));
+}

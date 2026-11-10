@@ -14,6 +14,7 @@ use exs_abi::image::{
 };
 use exs_layout::{TYPE_ENTRY_ENUM, TypeEntry, ValueRef};
 
+use crate::allocator::without_volume_collections;
 use crate::boundary::BoundaryError;
 use crate::bytes::new_bytes;
 use crate::enums::resolve_enum;
@@ -28,6 +29,7 @@ use crate::objects::{
     empty_object, find_value, object_append, object_append_shape, object_reference,
     set_foreign_identity, shape,
 };
+use crate::shape_cache::ShapeCache;
 use crate::shapes::{child_shape, key, key_count};
 use crate::strings::{DATA, byte_len, copy_string, string_object};
 use crate::typed::{allocate_typed, slot_address, type_entry_at};
@@ -124,7 +126,7 @@ pub(crate) fn adopt_at(
 ) -> Result<u64, BoundaryError> {
     let image = Image::at(memory, address, length)?;
     let root = image.root(memory);
-    adopt(memory, vm, image, root, 0)
+    adopt(memory, vm, image, &mut ShapeCache::new(), root, 0)
 }
 
 /// Returns the input image and the record of its argument List.
@@ -149,6 +151,7 @@ fn input_list(memory: &impl Memory, vm: u32) -> Result<(Image, Record), Boundary
 ///
 /// Stores at most `capacity` arguments, filling the remaining slots with None, and returns the
 /// number of arguments the input holds. The slots must be rooted, because adoption allocates.
+/// Adoption does not collect for its allocation volume, which builds only live values.
 ///
 /// # Errors
 ///
@@ -159,11 +162,24 @@ pub fn image_inputs(
     slots: u32,
     capacity: u32,
 ) -> Result<u32, BoundaryError> {
+    without_volume_collections(memory, vm, |memory| {
+        adopt_inputs(memory, vm, slots, capacity)
+    })
+}
+
+/// Adopts the runner's argument List like [`image_inputs`], collecting as usual.
+fn adopt_inputs(
+    memory: &mut impl Memory,
+    vm: u32,
+    slots: u32,
+    capacity: u32,
+) -> Result<u32, BoundaryError> {
     let (image, list) = input_list(memory, vm)?;
     let count = list.argument;
+    let shapes = &mut ShapeCache::new();
     for index in 0..count {
         let offset = memory.load_u32(list.payload + index * 4);
-        let raw = adopt(memory, vm, image, offset, 1)?;
+        let raw = adopt(memory, vm, image, shapes, offset, 1)?;
         if index < capacity {
             memory.store_u64(slots + index * 8, raw);
         }
@@ -176,7 +192,8 @@ pub fn image_inputs(
 
 /// Adopts the runner's argument List for an entry with `fixed` parameters and a trailing
 /// variadic one: the first `fixed` arguments into the root slots at `slots`, None for missing
-/// ones, and a List of the rest into the slot after them.
+/// ones, and a List of the rest into the slot after them, without collecting for the
+/// allocation volume of the adoption.
 ///
 /// # Errors
 ///
@@ -187,8 +204,21 @@ pub fn image_variadic_inputs(
     slots: u32,
     fixed: u32,
 ) -> Result<(), BoundaryError> {
+    without_volume_collections(memory, vm, |memory| {
+        adopt_variadic_inputs(memory, vm, slots, fixed)
+    })
+}
+
+/// Adopts the runner's argument List like [`image_variadic_inputs`], collecting as usual.
+fn adopt_variadic_inputs(
+    memory: &mut impl Memory,
+    vm: u32,
+    slots: u32,
+    fixed: u32,
+) -> Result<(), BoundaryError> {
     let (image, list) = input_list(memory, vm)?;
     let count = list.argument;
+    let shapes = &mut ShapeCache::new();
     for index in 0..fixed {
         memory.store_u64(slots + index * 8, ValueRef::NONE.raw());
     }
@@ -201,7 +231,7 @@ pub fn image_variadic_inputs(
     );
     for index in 0..count {
         let offset = memory.load_u32(list.payload + index * 4);
-        let raw = adopt(memory, vm, image, offset, 1)?;
+        let raw = adopt(memory, vm, image, shapes, offset, 1)?;
         if index < fixed {
             memory.store_u64(slots + index * 8, raw);
         } else {
@@ -238,6 +268,7 @@ fn adopt(
     memory: &mut impl Memory,
     vm: u32,
     image: Image,
+    shapes: &mut ShapeCache,
     offset: u32,
     depth: u32,
 ) -> Result<u64, BoundaryError> {
@@ -268,11 +299,11 @@ fn adopt(
             .ok_or(BoundaryError::OutOfMemory)
         }
         _ if depth >= MAX_DEPTH => Err(BoundaryError::Unsupported),
-        RECORD_LIST => adopt_list(memory, vm, image, record, depth),
-        RECORD_OBJECT => adopt_object(memory, vm, image, record, depth),
-        RECORD_TYPED => adopt_typed(memory, vm, image, record, depth),
-        RECORD_ENUM => adopt_enum(memory, vm, image, record, depth),
-        RECORD_ERROR => adopt_error(memory, vm, image, record, depth),
+        RECORD_LIST => adopt_list(memory, vm, image, shapes, record, depth),
+        RECORD_OBJECT => adopt_object(memory, vm, image, shapes, record, depth),
+        RECORD_TYPED => adopt_typed(memory, vm, image, shapes, record, depth),
+        RECORD_ENUM => adopt_enum(memory, vm, image, shapes, record, depth),
+        RECORD_ERROR => adopt_error(memory, vm, image, shapes, record, depth),
         _ => Err(BoundaryError::Malformed),
     }
 }
@@ -292,6 +323,7 @@ fn adopt_list(
     memory: &mut impl Memory,
     vm: u32,
     image: Image,
+    shapes: &mut ShapeCache,
     record: Record,
     depth: u32,
 ) -> Result<u64, BoundaryError> {
@@ -305,7 +337,7 @@ fn adopt_list(
     let mut adopted = Ok(raw);
     for index in 0..count {
         let offset = memory.load_u32(items + index * 4);
-        match adopt(memory, vm, image, offset, depth + 1) {
+        match adopt(memory, vm, image, shapes, offset, depth + 1) {
             Ok(item) => push_unchecked(memory, list, item),
             Err(error) => {
                 adopted = Err(error);
@@ -322,10 +354,11 @@ fn adopt_object(
     memory: &mut impl Memory,
     vm: u32,
     image: Image,
+    shapes: &mut ShapeCache,
     record: Record,
     depth: u32,
 ) -> Result<u64, BoundaryError> {
-    adopt_entries(memory, vm, image, record, None, depth)
+    adopt_entries(memory, vm, image, shapes, record, None, depth)
 }
 
 /// Adopts the entries of an Object record, or of a Typed record after its identity, into a new
@@ -334,6 +367,7 @@ fn adopt_entries(
     memory: &mut impl Memory,
     vm: u32,
     image: Image,
+    shapes: &mut ShapeCache,
     record: Record,
     identity: Option<(u32, u32)>,
     depth: u32,
@@ -371,30 +405,57 @@ fn adopt_entries(
         };
         for index in 0..count {
             let entry = entries + index * 8;
-            let (start, len) = image.text(memory, memory.load_u32(entry))?;
-            let hash = keys.map(|_| KeySet::hash(memory, start, len));
+            let offset = memory.load_u32(entry);
+            let parent = shape(memory, object);
+            // A key offset this image already led from `parent` holds the same text, so the
+            // Object takes the same transition without reading the key. Wide Objects still
+            // read it, because their set must hold every key.
+            let cached = shapes.child(parent, offset);
+            let text = match (cached, keys) {
+                (Some(_), None) => None,
+                _ => Some(image.text(memory, offset)?),
+            };
+            let hash = keys
+                .zip(text)
+                .map(|(_, (start, len))| KeySet::hash(memory, start, len));
             // Objects of an existing key sequence move to its shape and share its key instead
             // of a copy. Its keys are distinct, so the key needs no check for repetition.
-            let known = child_shape(memory, shape(memory, object), start, len);
+            let known = cached
+                .or_else(|| text.and_then(|(start, len)| child_shape(memory, parent, start, len)));
+            let mark = state.root_stack_end(memory);
             let name = match known {
                 Some(next) => key(memory, next, key_count(memory, next) - 1),
                 None => {
+                    // Without a cached transition the text was read.
+                    let Some((start, len)) = text else {
+                        return Err(BoundaryError::Malformed);
+                    };
                     if let (Some(keys), Some(hash)) = (keys, hash)
                         && keys.contains(memory, hash, start, len)
                     {
                         return Err(BoundaryError::Malformed);
                     }
                     let chars = memory.load_u32(start - 8);
-                    copy_string(memory, vm, start, len, chars).ok_or(BoundaryError::OutOfMemory)?
+                    let name = copy_string(memory, vm, start, len, chars)
+                        .ok_or(BoundaryError::OutOfMemory)?;
+                    // A shape keeps its keys reachable; a new key needs a root until appended.
+                    state
+                        .push_root(memory, name)
+                        .ok_or(BoundaryError::OutOfMemory)?;
+                    name
                 }
             };
             if let (Some(keys), Some(hash)) = (keys, hash) {
                 keys.insert(memory, hash, name);
             }
-            let mark = state
-                .push_root(memory, name)
-                .ok_or(BoundaryError::OutOfMemory)?;
-            let value = adopt(memory, vm, image, memory.load_u32(entry + 4), depth + 1)?;
+            let value = adopt(
+                memory,
+                vm,
+                image,
+                shapes,
+                memory.load_u32(entry + 4),
+                depth + 1,
+            )?;
             state
                 .push_root(memory, value)
                 .ok_or(BoundaryError::OutOfMemory)?;
@@ -408,6 +469,9 @@ fn adopt_entries(
                 }
             }
             .ok_or(BoundaryError::OutOfMemory)?;
+            if cached.is_none() {
+                shapes.insert(parent, offset, shape(memory, object));
+            }
             state.pop_roots(memory, mark);
         }
         Ok(raw)
@@ -425,6 +489,7 @@ fn adopt_typed(
     memory: &mut impl Memory,
     vm: u32,
     image: Image,
+    shapes: &mut ShapeCache,
     record: Record,
     depth: u32,
 ) -> Result<u64, BoundaryError> {
@@ -440,7 +505,7 @@ fn adopt_typed(
     )?;
     let identity = image.text(memory, memory.load_u32(words))?;
     let Some(entry) = object_type(memory, vm, identity) else {
-        return adopt_entries(memory, vm, image, record, Some(identity), depth);
+        return adopt_entries(memory, vm, image, shapes, record, Some(identity), depth);
     };
     let raw = allocate_typed(memory, vm, entry.type_id, entry.field_count)
         .ok_or(BoundaryError::OutOfMemory)?;
@@ -465,6 +530,7 @@ fn adopt_typed(
                 memory,
                 vm,
                 image,
+                shapes,
                 memory.load_u32(entry_words + 4),
                 depth + 1,
             )?;
@@ -498,6 +564,7 @@ fn adopt_enum(
     memory: &mut impl Memory,
     vm: u32,
     image: Image,
+    shapes: &mut ShapeCache,
     record: Record,
     depth: u32,
 ) -> Result<u64, BoundaryError> {
@@ -536,7 +603,7 @@ fn adopt_enum(
     let mut adopted = Ok(raw);
     for field in 0..count {
         let offset = memory.load_u32(words + (field + 2) * 4);
-        match adopt(memory, vm, image, offset, depth + 1) {
+        match adopt(memory, vm, image, shapes, offset, depth + 1) {
             Ok(value) => memory.store_u64(enum_field(raw as u32, field), value),
             Err(error) => {
                 adopted = Err(error);
@@ -553,6 +620,7 @@ fn adopt_error(
     memory: &mut impl Memory,
     vm: u32,
     image: Image,
+    shapes: &mut ShapeCache,
     record: Record,
     depth: u32,
 ) -> Result<u64, BoundaryError> {
@@ -572,6 +640,7 @@ fn adopt_error(
                 memory,
                 vm,
                 image,
+                shapes,
                 memory.load_u32(words + word * 4),
                 depth + 1,
             )?;
@@ -582,7 +651,14 @@ fn adopt_error(
                 .push_root(memory, *text)
                 .ok_or(BoundaryError::OutOfMemory)?;
         }
-        let data = adopt(memory, vm, image, memory.load_u32(words + 8), depth + 1)?;
+        let data = adopt(
+            memory,
+            vm,
+            image,
+            shapes,
+            memory.load_u32(words + 8),
+            depth + 1,
+        )?;
         state
             .push_root(memory, data)
             .ok_or(BoundaryError::OutOfMemory)?;
@@ -601,7 +677,7 @@ fn adopt_error(
         };
         let cause = match memory.load_u32(words + 16) {
             0 => ValueRef::NONE.raw(),
-            offset => adopt(memory, vm, image, offset, depth + 1)?,
+            offset => adopt(memory, vm, image, shapes, offset, depth + 1)?,
         };
         let parts = ErrorParts {
             fatal: record.argument != 0,

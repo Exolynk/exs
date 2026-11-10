@@ -2,8 +2,10 @@
 //!
 //! The writer applies the runner's limits to the value: nesting, collection entries and its
 //! payload size. A parent record comes before its parts, whose offsets it receives as they are
-//! written.
+//! written. Equal Object keys, Typed field names and type names share one String record, so
+//! the image holds each name once.
 
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -71,16 +73,18 @@ pub(super) const fn int_len(value: i64) -> usize {
 }
 
 /// The image being written, with its payload size.
-struct Writer {
+struct Writer<'a> {
     /// The image so far.
     bytes: Vec<u8>,
     /// Payload size so far.
     payload_len: usize,
     /// The limits the value must keep.
     limits: BoundaryLimits,
+    /// Offsets of the String records written for names, by their text.
+    names: BTreeMap<&'a str, u32>,
 }
 
-impl Writer {
+impl<'a> Writer<'a> {
     /// Returns a writer holding the image header, with the root offset still unset.
     fn new(limits: BoundaryLimits) -> Self {
         let mut bytes = Vec::with_capacity(64);
@@ -91,6 +95,7 @@ impl Writer {
             bytes,
             payload_len: 0,
             limits,
+            names: BTreeMap::new(),
         }
     }
 
@@ -163,7 +168,7 @@ impl Writer {
     }
 
     /// Writes a List record of `items` at nesting depth `depth` and returns its offset.
-    fn list(&mut self, items: &[ExsValue], depth: usize) -> Result<u32, BoundaryError> {
+    fn list(&mut self, items: &'a [ExsValue], depth: usize) -> Result<u32, BoundaryError> {
         if depth > self.limits.max_nesting {
             return Err(BoundaryError::NestingLimitExceeded);
         }
@@ -183,16 +188,30 @@ impl Writer {
         &mut self,
         record: u32,
         first: usize,
-        entries: &[(String, ExsValue)],
+        entries: &'a [(String, ExsValue)],
         depth: usize,
     ) -> Result<(), BoundaryError> {
         for (index, (key, item)) in entries.iter().enumerate() {
-            let part = self.string(key)?;
+            let part = self.name(key)?;
             self.set_word(record, first + index * 2, part);
             let part = self.value(item, depth + 1)?;
             self.set_word(record, first + index * 2 + 1, part);
         }
         Ok(())
+    }
+
+    /// Returns the offset of the String record of the name `text`, written on its first use.
+    ///
+    /// The payload size counts every use, as the reader does.
+    fn name(&mut self, text: &'a str) -> Result<u32, BoundaryError> {
+        if let Some(offset) = self.names.get(text) {
+            let offset = *offset;
+            self.account(head_len(text.len() as u64) + text.len())?;
+            return Ok(offset);
+        }
+        let offset = self.string(text)?;
+        self.names.insert(text, offset);
+        Ok(offset)
     }
 
     /// Writes a String record and returns its offset.
@@ -207,7 +226,7 @@ impl Writer {
     }
 
     /// Writes the records of `value` at nesting depth `depth` and returns its offset.
-    fn value(&mut self, value: &ExsValue, depth: usize) -> Result<u32, BoundaryError> {
+    fn value(&mut self, value: &'a ExsValue, depth: usize) -> Result<u32, BoundaryError> {
         if depth > self.limits.max_nesting {
             return Err(BoundaryError::NestingLimitExceeded);
         }
@@ -255,7 +274,7 @@ impl Writer {
                 self.collection(fields.len())?;
                 self.account(head_len(TYPED_TAG) + 1 + head_len(fields.len() as u64))?;
                 let offset = self.reserved(RECORD_TYPED, fields.len(), fields.len() * 8 + 4)?;
-                let part = self.string(type_id)?;
+                let part = self.name(type_id)?;
                 self.set_word(offset, 0, part);
                 self.entries(offset, 1, fields, depth)?;
                 Ok(offset)
@@ -268,9 +287,9 @@ impl Writer {
                 self.collection(fields.len())?;
                 self.account(head_len(ENUM_TAG) + 1 + head_len(fields.len() as u64))?;
                 let offset = self.reserved(RECORD_ENUM, fields.len(), fields.len() * 4 + 8)?;
-                let part = self.string(type_id)?;
+                let part = self.name(type_id)?;
                 self.set_word(offset, 0, part);
-                let part = self.string(variant)?;
+                let part = self.name(variant)?;
                 self.set_word(offset, 1, part);
                 for (index, field) in fields.iter().enumerate() {
                     let part = self.value(field, depth + 1)?;
@@ -283,7 +302,7 @@ impl Writer {
     }
 
     /// Writes an Error record at nesting depth `depth` and returns its offset.
-    fn error(&mut self, error: &ExsError, depth: usize) -> Result<u32, BoundaryError> {
+    fn error(&mut self, error: &'a ExsError, depth: usize) -> Result<u32, BoundaryError> {
         self.collection(error.trace.len())?;
         // Tag, map head and the seven keys, the severity and the trace array head.
         self.account(head_len(ERROR_TAG) + 1 + 7 + 1 + head_len(error.trace.len() as u64))?;

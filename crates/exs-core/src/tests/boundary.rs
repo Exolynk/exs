@@ -108,3 +108,24 @@ fn round_trips_strings() {
         );
     }
 }
+
+/// Adopts initial inputs larger than the collection threshold without collecting, and without
+/// counting their allocation volume toward the next collection.
+#[test]
+fn adopts_large_inputs_without_collecting() {
+    let values = (0..20_000)
+        .map(|index| ExsValue::String(std::format!("{index:040}")))
+        .collect();
+    let mut memory = memory_with_input(&image(std::vec![ExsValue::List(values)]));
+    let state = crate::vm::Vm(VM);
+    let allocated = state.allocated_since_collection(&memory);
+    assert_eq!(image_inputs(&mut memory, VM, SLOTS, 1), Ok(1));
+    assert_eq!(crate::vm::collection_count(&memory, VM), 0);
+    assert_eq!(state.allocated_since_collection(&memory), allocated);
+    assert_eq!(
+        state.collection_threshold(&memory),
+        crate::allocator::INITIAL_COLLECTION_THRESHOLD
+    );
+    let list = crate::list_object(memory.load_u64(SLOTS)).expect("decoded a List");
+    assert_eq!(crate::lists::len(&memory, list), 20_000);
+}

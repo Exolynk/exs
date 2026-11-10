@@ -6,7 +6,8 @@
 //! Objects carry their boundary identity followed by their present declared fields in entry
 //! order and their extra keys, as do untyped Objects that keep the identity of a type the
 //! program does not use. Closures, Cells and nesting beyond [`MAX_DEPTH`] cannot cross the
-//! boundary.
+//! boundary. A name written before, such as the key every Object of a shape shares, is not
+//! written again: its later uses point to the same record.
 
 use exs_abi::image::{
     IMAGE_HEADER_SIZE, IMAGE_MAGIC, RECORD_BOOL, RECORD_BYTES, RECORD_ENUM, RECORD_ERROR,
@@ -40,6 +41,8 @@ const ERROR_WORDS: u32 = 6;
 const TRACE_ENTRY_SIZE: u32 = 8;
 /// Bytes of a String record's payload before its text: the character count and padding.
 const STRING_PREFIX: u32 = 8;
+/// Number of entries of the cache of written names, a power of two.
+const NAME_CACHE_ENTRIES: usize = 128;
 
 /// Why a value could not be written.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,6 +74,7 @@ pub(crate) fn write_image(
         base,
         capacity,
         length: 0,
+        names: [(0, 0); NAME_CACHE_ENTRIES],
     };
     writer.reserve(IMAGE_HEADER_SIZE)?;
     let root = writer.value(raw, 0)?;
@@ -109,6 +113,11 @@ struct Writer<'w, M> {
     capacity: u32,
     /// Byte length of the image so far.
     length: u32,
+    /// A direct-mapped cache of written names: the String's address and its record offset.
+    ///
+    /// Strings never change, and writing allocates no heap object, so an address names the
+    /// same text for the whole write.
+    names: [(u32, u32); NAME_CACHE_ENTRIES],
 }
 
 impl<M: Memory> Writer<'_, M> {
@@ -150,6 +159,29 @@ impl<M: Memory> Writer<'_, M> {
     fn set_word(&mut self, record: u32, index: u32, value: u32) {
         let address = self.base + record + RECORD_HEADER_SIZE + index * 4;
         self.memory.store_u32(address, value);
+    }
+
+    /// Writes the name String at `object`, a key, field name, type identity or variant name,
+    /// and returns its offset, or returns the offset of its record when this image already
+    /// holds it.
+    fn name(&mut self, object: u32) -> Result<u32, WriteError> {
+        // Heap objects are 8-byte aligned; the low bits carry no information.
+        let slot = (object >> 3) as usize % NAME_CACHE_ENTRIES;
+        if let Some((cached, offset)) = self.names.get(slot).copied()
+            && cached == object
+        {
+            return Ok(offset);
+        }
+        let offset = self.string(object)?;
+        if let Some(entry) = self.names.get_mut(slot) {
+            *entry = (object, offset);
+        }
+        Ok(offset)
+    }
+
+    /// Writes the name String value `raw` like [`Self::name`] and returns its offset.
+    fn name_value(&mut self, raw: u64) -> Result<u32, WriteError> {
+        self.name(string_object(raw).ok_or(WriteError::Unsupported)?)
     }
 
     /// Writes the String at `object` and returns its offset.
@@ -250,7 +282,7 @@ impl<M: Memory> Writer<'_, M> {
             identity => {
                 let words = words.checked_add(1).ok_or(WriteError::OutOfMemory)?;
                 let offset = self.words(RECORD_TYPED, count, words)?;
-                let part = self.string(identity)?;
+                let part = self.name(identity)?;
                 self.set_word(offset, 0, part);
                 self.entries(offset, 1, object, depth)?;
                 Ok(offset)
@@ -271,7 +303,7 @@ impl<M: Memory> Writer<'_, M> {
         let mut word = first;
         for index in 0..key_count(self.memory, shape) {
             let name = key(self.memory, shape, index);
-            let part = self.string_value(name)?;
+            let part = self.name_value(name)?;
             self.set_word(record, word, part);
             let value = self
                 .memory
@@ -310,7 +342,7 @@ impl<M: Memory> Writer<'_, M> {
             .and_then(|words| words.checked_add(1))
             .ok_or(WriteError::OutOfMemory)?;
         let offset = self.words(RECORD_TYPED, count, words)?;
-        let part = self.string_value(entry.boundary)?;
+        let part = self.name_value(entry.boundary)?;
         self.set_word(offset, 0, part);
         let mut word = 1;
         for position in 0..entry.field_count {
@@ -320,7 +352,7 @@ impl<M: Memory> Writer<'_, M> {
                 continue;
             }
             let name = self.memory.load_u64(entry.field_names + index * 8);
-            let part = self.string_value(name)?;
+            let part = self.name_value(name)?;
             self.set_word(offset, word, part);
             let part = self.value(value, depth + 1)?;
             self.set_word(offset, word + 1, part);
@@ -342,9 +374,9 @@ impl<M: Memory> Writer<'_, M> {
         let count = payload_count(self.memory, object);
         let words = count.checked_add(2).ok_or(WriteError::OutOfMemory)?;
         let offset = self.words(RECORD_ENUM, count, words)?;
-        let part = self.string(identity)?;
+        let part = self.name(identity)?;
         self.set_word(offset, 0, part);
-        let part = self.string(name)?;
+        let part = self.name(name)?;
         self.set_word(offset, 1, part);
         for index in 0..count {
             let value = self.memory.load_u64(enum_field(object, index));

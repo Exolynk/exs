@@ -185,3 +185,20 @@ fn writes_a_list_of_borrowed_items() {
         ExsValue::List(items.clone()).to_image_with_limits(BoundaryLimits::unrestricted())
     );
 }
+
+/// Writes a repeated Object key once and reads it back for every Object.
+#[test]
+fn writes_repeated_keys_once() {
+    let object = |key: &str, value| ExsValue::Object(vec![(key.to_owned(), ExsValue::Int(value))]);
+    let limits = BoundaryLimits::unrestricted();
+    let repeated = ExsValue::List(vec![object("key", 1), object("key", 2)]);
+    let distinct = ExsValue::List(vec![object("key", 1), object("yek", 2)]);
+    let repeated_image = repeated.to_image_with_limits(limits).expect("image");
+    let distinct_image = distinct.to_image_with_limits(limits).expect("image");
+    // One String record of the key: header, character count and padded text.
+    assert_eq!(repeated_image.len() + 24, distinct_image.len());
+    assert_eq!(
+        ExsValue::from_image_with_limits(&repeated_image, limits),
+        Ok(repeated)
+    );
+}
