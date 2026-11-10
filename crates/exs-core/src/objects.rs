@@ -163,7 +163,22 @@ pub(crate) fn object_append(
 ) -> Option<()> {
     let current = shape(memory, object);
     let next = transition(memory, vm, current, name)?;
-    let count = key_count(memory, current);
+    object_append_shape(memory, vm, object, next, value)
+}
+
+/// Appends `value` as the last key of the shape at `next`, which must extend the shape of the
+/// untyped Object at `object` by one key.
+///
+/// The Object and `value` must be reachable from the roots, because growing its slots may
+/// allocate.
+pub(crate) fn object_append_shape(
+    memory: &mut impl Memory,
+    vm: u32,
+    object: u32,
+    next: u32,
+    value: u64,
+) -> Option<()> {
+    let count = key_count(memory, shape(memory, object));
     let values = memory.load_u32(object + VALUES);
     let capacity = memory.load_u32(values + CAPACITY);
     if count == capacity {

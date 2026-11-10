@@ -171,3 +171,42 @@ fn rejects_invalid_maps() {
     let repeated = object(&[("a", ExsValue::Int(1)), ("a", ExsValue::Int(2))]);
     assert_eq!(execution.decoded(&repeated), Err(BoundaryError::Malformed));
 }
+
+/// Returns an Object of `count` Int entries named `key0`, `key1` and so on.
+fn wide(count: i64) -> ExsValue {
+    ExsValue::Object(
+        (0..count)
+            .map(|index| (std::format!("key{index}"), ExsValue::Int(index)))
+            .collect(),
+    )
+}
+
+/// Rejects a repeated key of a wide Object, which is checked in a key set, whether the
+/// repetition is new to every shape or follows a known key sequence.
+#[test]
+fn rejects_repeated_keys_of_wide_objects() {
+    let mut execution = Execution::new();
+    let mut repeated = wide(40);
+    if let ExsValue::Object(entries) = &mut repeated {
+        entries.push(("key7".into(), ExsValue::None));
+    }
+    assert_eq!(execution.decoded(&repeated), Err(BoundaryError::Malformed));
+    let known = wide(40);
+    let decoded = execution.decoded(&known).expect("decodable");
+    assert_eq!(execution.encoded(decoded), known);
+    // Now the first 40 keys follow a known sequence and only the repetition is new.
+    assert_eq!(execution.decoded(&repeated), Err(BoundaryError::Malformed));
+}
+
+/// Adopts wide Objects, which use a key set and shapes that share key Buffers, while
+/// collecting at every allocation.
+#[test]
+fn adopts_wide_objects_while_collecting_at_every_allocation() {
+    let mut execution = Execution::new();
+    set_heap_flags(&mut execution.memory, VM, VM_FLAG_COLLECT_EVERY_ALLOCATION);
+    let input = ExsValue::List(std::vec![wide(300), wide(20), wide(300)]);
+    let decoded = execution.decoded(&input).expect("decodable");
+    execution.root(&[decoded]);
+    collect(&mut execution.memory, VM);
+    assert_eq!(execution.encoded(decoded), input);
+}

@@ -20,13 +20,15 @@ use crate::enums::resolve_enum;
 use crate::enums::{allocate_enum, field_address as enum_field, host_enum};
 use crate::errors::{ErrorParts, error_from_parts, new_error};
 use crate::execution::input;
+use crate::key_set::{self, KeySet};
 use crate::lists::{allocate_list, list_reference, push_unchecked};
 use crate::memory::Memory;
 use crate::numbers::{float_value, int_value};
 use crate::objects::{
-    empty_object, find_value, object_append, object_reference, set_foreign_identity, shape,
+    empty_object, find_value, object_append, object_append_shape, object_reference,
+    set_foreign_identity, shape,
 };
-use crate::shapes::child_key;
+use crate::shapes::{child_shape, key, key_count};
 use crate::strings::{DATA, byte_len, copy_string, string_object};
 use crate::typed::{allocate_typed, slot_address, type_entry_at};
 use crate::vm::Vm;
@@ -357,28 +359,55 @@ fn adopt_entries(
                 copy_string(memory, vm, start, len, chars).ok_or(BoundaryError::OutOfMemory)?;
             set_foreign_identity(memory, object, name as u32);
         }
+        // Wide Objects check their keys for repetition in a hash set instead of their shape.
+        let keys = if count >= key_set::MIN_KEYS {
+            let (keys, list) = KeySet::new(memory, vm, count).ok_or(BoundaryError::OutOfMemory)?;
+            state
+                .push_root(memory, list)
+                .ok_or(BoundaryError::OutOfMemory)?;
+            Some(keys)
+        } else {
+            None
+        };
         for index in 0..count {
             let entry = entries + index * 8;
             let (start, len) = image.text(memory, memory.load_u32(entry))?;
-            // Objects of an existing key sequence share its key instead of a copy.
-            let name = match child_key(memory, shape(memory, object), start, len) {
-                Some(key) => key,
+            let hash = keys.map(|_| KeySet::hash(memory, start, len));
+            // Objects of an existing key sequence move to its shape and share its key instead
+            // of a copy. Its keys are distinct, so the key needs no check for repetition.
+            let known = child_shape(memory, shape(memory, object), start, len);
+            let name = match known {
+                Some(next) => key(memory, next, key_count(memory, next) - 1),
                 None => {
+                    if let (Some(keys), Some(hash)) = (keys, hash)
+                        && keys.contains(memory, hash, start, len)
+                    {
+                        return Err(BoundaryError::Malformed);
+                    }
                     let chars = memory.load_u32(start - 8);
                     copy_string(memory, vm, start, len, chars).ok_or(BoundaryError::OutOfMemory)?
                 }
             };
+            if let (Some(keys), Some(hash)) = (keys, hash) {
+                keys.insert(memory, hash, name);
+            }
             let mark = state
                 .push_root(memory, name)
                 .ok_or(BoundaryError::OutOfMemory)?;
             let value = adopt(memory, vm, image, memory.load_u32(entry + 4), depth + 1)?;
-            if find_value(memory, object, name as u32).is_some() {
-                return Err(BoundaryError::Malformed);
-            }
             state
                 .push_root(memory, value)
                 .ok_or(BoundaryError::OutOfMemory)?;
-            object_append(memory, vm, object, name, value).ok_or(BoundaryError::OutOfMemory)?;
+            match known {
+                Some(next) => object_append_shape(memory, vm, object, next, value),
+                None => {
+                    if keys.is_none() && find_value(memory, object, name as u32).is_some() {
+                        return Err(BoundaryError::Malformed);
+                    }
+                    object_append(memory, vm, object, name, value)
+                }
+            }
+            .ok_or(BoundaryError::OutOfMemory)?;
             state.pop_roots(memory, mark);
         }
         Ok(raw)

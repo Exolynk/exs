@@ -30,6 +30,7 @@ mod execution;
 mod float_text;
 mod image;
 mod image_writer;
+mod key_set;
 mod lists;
 mod literal;
 mod memory;

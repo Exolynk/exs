@@ -391,23 +391,29 @@ fn host_call_start(
         return Err(wasmtime::Error::msg("host-call limit exceeded"));
     }
     let limits = caller.data().limits.clone();
-    let name_bytes = read_memory(
+    let name_range = guest_range(
         &mut caller,
         name_pointer,
         name_length,
         limits.max_payload_bytes,
     )?;
-    let name = std::str::from_utf8(&name_bytes)
-        .map_err(|_| wasmtime::Error::msg("host function name is not valid UTF-8"))?;
-    let request = read_memory(
+    let request_range = guest_range(
         &mut caller,
         request_pointer,
         request_length,
         limits.max_payload_bytes,
     )?;
-    let arguments = decode_arguments(&request, limits.boundary_limits())
+    // The request is decoded in place, without first copying it out of linear memory.
+    let memory = memory(&mut caller)?;
+    let data = memory.data(&caller);
+    let outside = || wasmtime::Error::msg("host-call buffer lies outside linear memory");
+    let name = std::str::from_utf8(data.get(name_range).ok_or_else(outside)?)
+        .map_err(|_| wasmtime::Error::msg("host function name is not valid UTF-8"))?
+        .to_owned();
+    let request = data.get(request_range).ok_or_else(outside)?;
+    let arguments = decode_arguments(request, limits.boundary_limits())
         .map_err(|error| host_boundary_error(&mut caller, error))?;
-    dispatch_host_call(&mut caller, call_id, name, arguments, source_position)
+    dispatch_host_call(&mut caller, call_id, &name, arguments, source_position)
 }
 
 /// Starts the host call `call_id` of the function `name` with the decoded `arguments`, reported
@@ -528,13 +534,14 @@ fn host_call_response_copy(
     Ok(0)
 }
 
-/// Reads one validated byte range from the importing instance's exported memory.
-fn read_memory(
+/// Validates one guest byte range of at most `maximum_length` bytes and returns it as a native
+/// range, reporting an oversized one as a payload-limit violation.
+fn guest_range(
     caller: &mut Caller<'_, HostAbiState>,
     pointer: i32,
     length: i32,
     maximum_length: usize,
-) -> Result<Vec<u8>, wasmtime::Error> {
+) -> Result<std::ops::Range<usize>, wasmtime::Error> {
     let (pointer, length) = memory_range(pointer, length)?;
     if length > maximum_length {
         caller.data_mut().report_limit_violation(LimitKind::Payload);
@@ -542,11 +549,7 @@ fn read_memory(
             "host-call payload exceeds configured limit",
         ));
     }
-    let bytes = memory(caller)?
-        .data(&*caller)
-        .get(pointer..pointer + length)
-        .ok_or_else(|| wasmtime::Error::msg("host-call buffer lies outside linear memory"))?;
-    Ok(bytes.to_vec())
+    Ok(pointer..pointer + length)
 }
 
 /// Validates an i32 Wasm pointer-length pair and converts it to a native range.

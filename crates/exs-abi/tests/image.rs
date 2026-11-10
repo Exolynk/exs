@@ -173,3 +173,15 @@ fn reads_a_none_cause_as_no_cause() {
         Ok(ExsValue::Error(expected))
     );
 }
+
+/// Writes the same image for a List of borrowed items as for the owned List.
+#[test]
+fn writes_a_list_of_borrowed_items() {
+    let ExsValue::List(items) = sample() else {
+        unreachable!("the sample is a List");
+    };
+    assert_eq!(
+        ExsValue::list_to_image_with_limits(&items, BoundaryLimits::unrestricted()),
+        ExsValue::List(items.clone()).to_image_with_limits(BoundaryLimits::unrestricted())
+    );
+}
