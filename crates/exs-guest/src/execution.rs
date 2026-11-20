@@ -111,7 +111,8 @@ pub(crate) fn begin_host_call(
     arguments: &[ExsValue],
 ) -> Option<(i64, Option<ExsValue>)> {
     let call_id = existing.unwrap_or_else(next_host_call_id);
-    let request = write_image(&ExsValue::List(arguments.to_vec())).ok()?;
+    let request =
+        ExsValue::list_to_image_with_limits(arguments, BoundaryLimits::unrestricted()).ok()?;
     let status = host_call_start(
         call_id,
         name.as_ptr(),

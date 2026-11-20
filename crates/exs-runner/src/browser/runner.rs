@@ -147,8 +147,7 @@ impl BrowserRunner {
         let started = js_sys::Date::now();
         let module = self.load(wasm).await?;
         let loaded = js_sys::Date::now();
-        let inputs = ExsValue::List(inputs.to_vec());
-        let input = images::image(&inputs).map_err(RunnerError::Abi)?;
+        let input = images::list_image(inputs).map_err(RunnerError::Abi)?;
         let input = Uint8Array::from(input.as_slice());
         let cancellation = options.cancellation.clone();
         let is_cancelled = Closure::wrap(Box::new(move || {

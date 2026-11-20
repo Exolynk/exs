@@ -383,3 +383,69 @@ fn accesses_literal_properties_on_every_receiver_kind() {
         ]
     );
 }
+
+/// Adopts and returns an input Object with a thousand keys within the default memory limit,
+/// next to Objects whose key sequences branch from a shared prefix.
+#[test]
+fn round_trips_wide_and_branching_input_objects() {
+    let wide = ExsValue::Object(
+        (0..1000)
+            .map(|index| (format!("key_{index}"), ExsValue::Int(index)))
+            .collect(),
+    );
+    let branch = |last: &str| {
+        ExsValue::Object(vec![
+            ("a".to_owned(), ExsValue::Int(1)),
+            ("b".to_owned(), ExsValue::Int(2)),
+            (last.to_owned(), ExsValue::Int(3)),
+        ])
+    };
+    let input = ExsValue::List(vec![
+        wide.clone(),
+        branch("c"),
+        branch("d"),
+        branch("c"),
+        ExsValue::Object(vec![("a".to_owned(), ExsValue::Int(4))]),
+        wide,
+    ]);
+    assert_eq!(
+        execute_source("fn main(input) { ret input; }", input.clone()),
+        input
+    );
+}
+
+/// Extends Objects key by key after inputs with the same key prefix were adopted.
+#[test]
+fn extends_objects_sharing_adopted_key_sequences() {
+    let input = ExsValue::Object(vec![
+        ("a".to_owned(), ExsValue::Int(1)),
+        ("b".to_owned(), ExsValue::Int(2)),
+    ]);
+    assert_eq!(
+        execute_source(
+            r#"
+            fn main(input) {
+                let first = { a: 1 };
+                first.c = 3;
+                let second = { a: 1 };
+                second.b = 2;
+                second.d = 4;
+                ret [input, first, second];
+            }
+            "#,
+            input.clone(),
+        ),
+        ExsValue::List(vec![
+            input,
+            ExsValue::Object(vec![
+                ("a".to_owned(), ExsValue::Int(1)),
+                ("c".to_owned(), ExsValue::Int(3)),
+            ]),
+            ExsValue::Object(vec![
+                ("a".to_owned(), ExsValue::Int(1)),
+                ("b".to_owned(), ExsValue::Int(2)),
+                ("d".to_owned(), ExsValue::Int(4)),
+            ]),
+        ])
+    );
+}

@@ -168,6 +168,29 @@ fn allocate_large(memory: &mut impl Memory, vm: Vm, size: u32) -> Option<(u32, u
     Some((page + PAGE_HEADER_SIZE, pages))
 }
 
+/// Runs `adopt`, which builds only values that stay reachable, without collecting for its
+/// allocation volume and without counting that volume toward the next collection.
+///
+/// Collecting while adopting the initial inputs cannot free anything the inputs did not just
+/// build. Collections for exhausted memory still run; after one, the volume counts from it.
+pub(crate) fn without_volume_collections<M: Memory, T>(
+    memory: &mut M,
+    vm: u32,
+    adopt: impl FnOnce(&mut M) -> T,
+) -> T {
+    let state = Vm(vm);
+    let allocated = state.allocated_since_collection(memory);
+    let threshold = state.collection_threshold(memory);
+    let collections = state.collections(memory);
+    state.set_collection_threshold(memory, u32::MAX);
+    let result = adopt(memory);
+    if state.collections(memory) == collections {
+        state.set_allocated_since_collection(memory, allocated);
+        state.set_collection_threshold(memory, threshold);
+    }
+    result
+}
+
 /// Returns whether enough was allocated since the last collection to collect again.
 fn over_threshold(memory: &impl Memory, vm: Vm) -> bool {
     vm.allocated_since_collection(memory) >= vm.collection_threshold(memory)

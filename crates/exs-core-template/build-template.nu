@@ -13,7 +13,10 @@ $env.RUSTFLAGS = if ($rustflags | is-empty) {
 } else {
   $"($rustflags) ($remap_flag)"
 }
-cargo rustc -p exs-core-template --features template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory -C link-arg=--export=__heap_base -C link-arg=-zstack-size=262144
+# One codegen unit lets the optimizer inline across the whole core, which lowers fuel.
+with-env { CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1" } {
+  cargo rustc -p exs-core-template --features template --target wasm32-unknown-unknown --release --crate-type cdylib -- -C link-arg=--export-memory -C link-arg=--export=__heap_base -C link-arg=-zstack-size=262144
+}
 
 let template = ($crate_dir | path join "exs-core-template.wasm")
 cp target/wasm32-unknown-unknown/release/exs_core_template.wasm $template

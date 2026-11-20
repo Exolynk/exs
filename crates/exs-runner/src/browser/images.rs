@@ -13,3 +13,9 @@ pub(super) fn image(value: &ExsValue) -> Result<Vec<u8>, String> {
         .to_image_with_limits(BoundaryLimits::unrestricted())
         .map_err(|error| format!("could not encode image: {error}"))
 }
+
+/// Encodes the List of `items` the runner passes to a module as an image, without copying them.
+pub(super) fn list_image(items: &[ExsValue]) -> Result<Vec<u8>, String> {
+    ExsValue::list_to_image_with_limits(items, BoundaryLimits::unrestricted())
+        .map_err(|error| format!("could not encode image: {error}"))
+}
