@@ -1,6 +1,6 @@
 # ExS Language Reference
 
-**Language version:** 0.2.0
+**Language version:** 0.2.1
 
 This document defines the ExS source language. It is written for authors of ExS programs: it specifies valid syntax and observable behavior. It deliberately does not describe compiler internals, WebAssembly, runtime layouts, host transport formats, scheduling implementation, or development phases.
 

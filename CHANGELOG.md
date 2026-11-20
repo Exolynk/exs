@@ -2,6 +2,17 @@
 
 Notable changes to ExS. The [compatibility promise](COMPATIBILITY.md) starts with 0.2.0.
 
+## 0.2.1 - 2026-11-20
+
+### Changed
+
+- **Boundary:** values cross between host and module faster and with less fuel. Host-side images are written without copying the values, and a name repeated in a value, such as an Object key, is stored once. The image format is unchanged, and modules of 0.2.0 read the new images. Wide Objects now take linear rather than quadratic memory and time: a 1,000-key Object fits in the default 16 MiB, and 4,000 keys are adopted in 4.4 ms instead of 156 ms.
+
+### Fixed
+
+- A `match` whose String or Bytes literal pattern appeared nowhere else in the program failed to compile with `E0999`.
+- The formatter rewrote `//!` module comments as `// !` and removed blank lines between leading comments and a documented declaration.
+
 ## 0.2.0 - 2026-11-06
 
 The first public release. From here on, scripts and compiled modules keep working across releases. Modules built before this version must be rebuilt from source.

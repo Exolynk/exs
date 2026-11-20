@@ -1,6 +1,6 @@
 # ExS LLM Specification
 
-**Language version:** 0.2.0
+**Language version:** 0.2.1
 
 This compact authoring reference is derived from the full ExS language specification, which
 remains authoritative. The generated Compact API Reference supplies all standard-library and

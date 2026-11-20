@@ -864,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "exs"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-abi",
  "exs-autocomplete",
@@ -876,21 +876,21 @@ dependencies = [
 
 [[package]]
 name = "exs-abi"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "exs-autocomplete"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-compiler",
 ]
 
 [[package]]
 name = "exs-browser-check"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-abi",
  "exs-compiler",
@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "exs-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-compiler",
  "exs-libs",
@@ -910,14 +910,14 @@ dependencies = [
 
 [[package]]
 name = "exs-compatibility"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs",
 ]
 
 [[package]]
 name = "exs-compiler"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-abi",
  "exs-core-template",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "exs-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-abi",
  "exs-layout",
@@ -937,14 +937,14 @@ dependencies = [
 
 [[package]]
 name = "exs-core-template"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-core",
 ]
 
 [[package]]
 name = "exs-fuel-baseline"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-abi",
  "exs-compiler",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "exs-guest"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dlmalloc",
  "exs-abi",
@@ -963,11 +963,11 @@ dependencies = [
 
 [[package]]
 name = "exs-layout"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "exs-libs"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-abi",
  "exs-compiler",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "exs-playground"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "birei",
  "exs-autocomplete",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "exs-runner"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-abi",
  "exs-compiler",
@@ -1016,7 +1016,7 @@ dependencies = [
 
 [[package]]
 name = "exs-rust-guest"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "exs-guest",
  "exs-runner",
