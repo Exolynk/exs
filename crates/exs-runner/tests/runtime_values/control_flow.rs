@@ -164,6 +164,33 @@ fn matches_literal_patterns() {
     }
 }
 
+/// Compiles String and Bytes patterns whose literals appear nowhere else in the program, in
+/// direct and resumable functions.
+#[test]
+fn matches_literals_that_only_patterns_use() {
+    let source = r#"
+        fn main(input: List) -> List {
+            ret [
+                match input[0] { "only" => 1, _ => 0 },
+                match input[1] { b"raw" => 2, _ => 0 },
+            ];
+        }
+    "#;
+    let input = ExsValue::List(vec![
+        ExsValue::String("only".to_owned()),
+        ExsValue::Bytes(b"raw".to_vec()),
+    ]);
+    let expected = ExsValue::List(vec![ExsValue::Int(1), ExsValue::Int(2)]);
+    let resumable = source.replace(
+        "ret [",
+        "Host::sleep(Duration::milliseconds(0));\n            ret [",
+    );
+    assert_ne!(resumable, source);
+    for source in [source, resumable.as_str()] {
+        assert_eq!(execute_source(source, input.clone()), expected);
+    }
+}
+
 /// Reads `Name {` as a typed Object only when fields or `}` follow, so a match on a variant
 /// literal parses.
 #[test]

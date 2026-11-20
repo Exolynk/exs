@@ -9,7 +9,7 @@ use super::intrinsics::{DATETIME_KEYS, is_datetime_parser};
 use super::units::Unit;
 use crate::ast::{
     AssignmentTarget, BinaryOperator, Block, ElseBranch, Expression, FormattedStringPart,
-    FunctionDeclaration, HostTimeOperation, MatchArmBody, ObjectProperty, Statement,
+    FunctionDeclaration, HostTimeOperation, MatchArmBody, MatchPattern, ObjectProperty, Statement,
 };
 use crate::codegen::trait_registry::TraitOperator;
 use crate::codegen::types::TypeRegistry;
@@ -468,6 +468,10 @@ fn visit_expression<'e, 'a>(
         Expression::Match { value, arms, .. } => {
             visit_expression(value, visit);
             for arm in arms {
+                // Literal patterns need their static String or Bytes like any other literal.
+                if let MatchPattern::Literal(literal) = &arm.pattern {
+                    visit_expression(literal, visit);
+                }
                 match &arm.body {
                     MatchArmBody::Expression(value) => visit_expression(value, visit),
                     MatchArmBody::Block(block) => visit_block(block, visit),
