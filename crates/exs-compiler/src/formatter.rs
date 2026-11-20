@@ -467,8 +467,13 @@ impl Formatter {
         }
     }
 
-    /// Emits retained comments before an offset while consuming intervening blank source lines.
+    /// Emits retained comments before a documented declaration at an offset.
+    ///
+    /// Blank source lines before the first documentation comment stay as at most one blank line,
+    /// so module and header comments keep their separation; later ones are consumed, so the
+    /// documentation stays attached to its declaration.
     fn trivia_before_without_blank_lines(&mut self, offset: usize) {
+        let mut documented = false;
         while self
             .trivia
             .get(self.trivia_index)
@@ -476,8 +481,16 @@ impl Formatter {
         {
             let kind = self.trivia[self.trivia_index].kind.clone();
             self.trivia_index += 1;
-            if let TriviaKind::Comment(comment) | TriviaKind::DocumentationComment(comment) = kind {
-                self.comment(&comment);
+            match kind {
+                TriviaKind::DocumentationComment(comment) => {
+                    documented = true;
+                    self.comment(&comment);
+                }
+                TriviaKind::Comment(comment) => self.comment(&comment),
+                TriviaKind::BlankLine if !documented && !self.output.is_empty() => {
+                    self.blank_line();
+                }
+                TriviaKind::BlankLine => {}
             }
         }
     }
@@ -518,10 +531,9 @@ impl Formatter {
     fn comment(&mut self, comment: &str) {
         for line in comment.lines() {
             let line = line.trim();
-            let prefix_and_text = line
-                .strip_prefix("///")
-                .map(|text| ("///", text))
-                .or_else(|| line.strip_prefix("//").map(|text| ("//", text)));
+            let prefix_and_text = ["///", "//!", "//"]
+                .into_iter()
+                .find_map(|prefix| line.strip_prefix(prefix).map(|text| (prefix, text)));
             if let Some((prefix, text)) = prefix_and_text
                 && !text.is_empty()
                 && !text.chars().next().is_some_and(char::is_whitespace)

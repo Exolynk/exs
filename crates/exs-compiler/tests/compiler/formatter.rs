@@ -52,6 +52,37 @@ fn formatter_preserves_comments_and_blank_lines() {
     assert_eq!(reformatted, formatted);
 }
 
+/// Keeps module documentation and header comments, and the blank line after them, above a
+/// documented declaration.
+#[test]
+fn formatter_preserves_module_documentation() {
+    let formatted_source =
+        "//! Module docs.\n//! Second line.\n\n/// Function docs.\nfn main() {\n    ret 1;\n}\n";
+    let cases = [
+        (formatted_source, formatted_source),
+        (
+            "//!Module docs.\n//!Second line.\n\n\n/// Function docs.\n\nfn main(){ret 1;}",
+            formatted_source,
+        ),
+        (
+            "// Header.\n\n/// Function docs.\nfn main() {\n    ret 1;\n}\n",
+            "// Header.\n\n/// Function docs.\nfn main() {\n    ret 1;\n}\n",
+        ),
+    ];
+    for (source, expected) in cases {
+        let formatted = match format(Source::new("format-module-docs.exs", source)) {
+            Ok(formatted) => formatted,
+            Err(error) => panic!("formatting failed: {error}"),
+        };
+        assert_eq!(formatted, expected);
+        let reformatted = match format(Source::new("format-module-docs.exs", &formatted)) {
+            Ok(formatted) => formatted,
+            Err(error) => panic!("reformatting failed: {error}"),
+        };
+        assert_eq!(reformatted, formatted);
+    }
+}
+
 /// Canonicalizes empty functions and documentation-declaration boundaries on reformatting.
 #[test]
 fn formatter_normalizes_empty_blocks_and_preserves_declaration_spacing() {
